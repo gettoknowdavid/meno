@@ -1,15 +1,32 @@
 # Rust
-/target
-**/target
+target/
 **/*.rs.bk
 
-# JetBrains
-.idea/
-*.iml
+# Node / Next.js
+node_modules/
+.next/
+out/
+.env*.local
 
-# VS Code
-.vscode/
+# Flutter
+mobile/.dart_tool/
+mobile/build/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/pubspec.lock  # optional: commit this for reproducibility
+
+# Environment files (all projects)
+.env
+.env.local
+.env.development
+.env.production
 
 # OS
 .DS_Store
 Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.iml
