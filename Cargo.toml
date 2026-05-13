@@ -1,0 +1,17 @@
+[workspace]
+members = ["apps/api"]
+resolver = "2"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+axum = { version = "0.8.9", features = ["multipart", "ws"] }
+config = "0.15.22"
+dotenv = "0.15.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "time", "uuid"] }
+thiserror = "2.0.18"
+time = { version = "0.3.47", features = ["serde"] }
+tokio = { version = "1.52.3", features = ["full"] }
+tracing = "0.1.44"
+uuid = { version = "1.23.1", features = ["v4", "serde"] }
