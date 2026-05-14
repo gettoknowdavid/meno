@@ -1,3 +1,6 @@
+use crate::modules::auth::errors::AuthError;
+use crate::shared::utils::error_response;
+
 use axum::{
     http::StatusCode,
     response::{IntoResponse, Response},
@@ -9,14 +12,26 @@ use validator::{ValidationError, ValidationErrors};
 
 #[derive(Error, Debug)]
 pub enum MenoError {
+    #[error("Auth error: {0}")]
+    Auth(#[from] AuthError),
+
+    #[error("Bad request")]
+    BadRequest(String),
+
     #[error("Database error: {0}")]
     Database(#[from] sqlx::Error),
+
+    #[error("Access Denied.")]
+    Forbidden,
 
     #[error("Internal error: {0}")]
     Internal(String),
 
     #[error("Redis error")]
     Redis(#[from] fred::error::Error),
+
+    #[error("Too many request")]
+    TooManyRequests(String),
 
     #[error("Validation error")]
     ValidatorError(ValidationErrors),
@@ -31,6 +46,10 @@ impl From<ValidationErrors> for MenoError {
 impl IntoResponse for MenoError {
     fn into_response(self) -> Response {
         match &self {
+            MenoError::Auth(e) => AuthError::error_response(e),
+            MenoError::BadRequest(message) => {
+                error_response(StatusCode::BAD_REQUEST, "BAD_REQUEST", message)
+            }
             MenoError::Database(_) => {
                 error!("Database error: {:?}", self);
                 error_response(
@@ -38,6 +57,9 @@ impl IntoResponse for MenoError {
                     "INTERNAL_ERROR",
                     "An internal error occurred",
                 )
+            }
+            MenoError::Forbidden => {
+                error_response(StatusCode::FORBIDDEN, "FORBIDDEN", "Access denied")
             }
             MenoError::Internal(_) => {
                 error!("Internal error: {:?}", self);
@@ -55,6 +77,9 @@ impl IntoResponse for MenoError {
                     "An internal error occurred",
                 )
             }
+            MenoError::TooManyRequests(message) => {
+                error_response(StatusCode::TOO_MANY_REQUESTS, "TOO_MANY_REQUESTS", message)
+            }
             MenoError::ValidatorError(err) => {
                 error!("Validation error: {:?}", self);
                 validation_error_response(err.clone())
@@ -63,17 +88,6 @@ impl IntoResponse for MenoError {
     }
 }
 
-fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
-    let body = axum::Json(serde_json::json!({
-        "data": null,
-        "meta": null,
-        "error": {
-            "code": code,
-            "message": message,
-        }
-    }));
-    (status, body).into_response()
-}
 fn validation_error_response(validation_errors: ValidationErrors) -> Response {
     fn get_message(arg: (&Cow<str>, &&Vec<ValidationError>)) -> (String, Vec<String>) {
         let messages = arg
