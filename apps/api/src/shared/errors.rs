@@ -1,0 +1,103 @@
+use axum::{
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
+use std::{borrow::Cow, collections::HashMap};
+use thiserror::Error;
+use tracing::error;
+use validator::{ValidationError, ValidationErrors};
+
+#[derive(Error, Debug)]
+pub enum MenoError {
+    #[error("Database error: {0}")]
+    Database(#[from] sqlx::Error),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
+
+    #[error("Redis error")]
+    Redis(#[from] fred::error::Error),
+
+    #[error("Validation error")]
+    ValidatorError(ValidationErrors),
+}
+
+impl From<ValidationErrors> for MenoError {
+    fn from(err: ValidationErrors) -> Self {
+        MenoError::ValidatorError(err)
+    }
+}
+
+impl IntoResponse for MenoError {
+    fn into_response(self) -> Response {
+        match &self {
+            MenoError::Database(_) => {
+                error!("Database error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            MenoError::Internal(_) => {
+                error!("Internal error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            MenoError::Redis(_) => {
+                error!("Redis error: {:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            MenoError::ValidatorError(err) => {
+                error!("Validation error: {:?}", self);
+                validation_error_response(err.clone())
+            }
+        }
+    }
+}
+
+fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
+    let body = axum::Json(serde_json::json!({
+        "data": null,
+        "meta": null,
+        "error": {
+            "code": code,
+            "message": message,
+        }
+    }));
+    (status, body).into_response()
+}
+fn validation_error_response(validation_errors: ValidationErrors) -> Response {
+    fn get_message(arg: (&Cow<str>, &&Vec<ValidationError>)) -> (String, Vec<String>) {
+        let messages = arg
+            .1
+            .iter()
+            .map(|e| e.message.as_deref().unwrap_or("Invalid value").to_string())
+            .collect();
+        (arg.0.to_string(), messages)
+    }
+
+    let error_map: HashMap<String, Vec<String>> = validation_errors
+        .field_errors()
+        .iter()
+        .map(get_message)
+        .collect();
+
+    let body = axum::Json(serde_json::json!({
+        "data": null,
+        "meta": null,
+        "error": {
+            "code": "VALIDATION_ERROR",
+            "message": "One or more fields are invalid",
+            "errors": error_map,
+        }
+    }));
+    (StatusCode::BAD_REQUEST, body).into_response()
+}
