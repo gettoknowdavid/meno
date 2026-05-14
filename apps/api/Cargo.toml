@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.102"
 axum = { version = "0.8.9", features = ["multipart", "ws", "macros"] }
 dotenvy = "0.15.7"
-fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts"] }
+fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts", "native-tls", "enable-native-tls"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "time", "uuid"] }

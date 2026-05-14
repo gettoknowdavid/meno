@@ -105,11 +105,12 @@ fn extract_identifier(req: &Request<Body>) -> String {
 
 pub async fn rate_limit_middleware(
     State(state): State<Arc<MenoState>>,
-    Extension(maybe_custom): Extension<Option<RateLimitConfig>>,
+    // Extension(maybe_custom): Extension<Option<RateLimitConfig>>,
     req: Request<Body>,
     next: Next,
 ) -> Response {
-    let config = maybe_custom.unwrap_or(state.config.default_rate_limit);
+    // let config = maybe_custom.unwrap_or(state.config.default_rate_limit);
+    let config = state.config.default_rate_limit;
 
     let identifier = extract_identifier(&req);
     let key = format!("{}:{}", RATE_LIMIT_PREFIX, identifier);
@@ -140,4 +141,8 @@ pub async fn rate_limit_middleware(
             .into_response(),
         Err(_) => next.run(req).await,
     }
+}
+
+pub fn with_rate_limit(limit: usize, window_secs: u64) -> Extension<Option<RateLimitConfig>> {
+    Extension(Some(RateLimitConfig::new(limit, window_secs)))
 }
