@@ -1,33 +1,116 @@
-use crate::shared::utils::error_response;
+use crate::shared::errors::error_response;
+
 use axum::http::StatusCode;
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum AuthError {
+    #[error("Email already in use")]
+    EmailTaken,
+
     #[error("Invalid credentials")]
     InvalidCredentials,
 
-    #[error("User not found: {0}")]
-    UserNotFound(String),
+    #[error("Account registered with Google — use Google sign-in")]
+    GoogleAccountConflict,
 
-    #[error("Token expired")]
-    TokenExpired(String),
+    #[error("Email not verified — check your inbox")]
+    EmailNotVerified,
+
+    #[error("Invalid or expired OTP")]
+    InvalidOtp,
+
+    #[error("OTP already used")]
+    OtpAlreadyUsed,
+
+    #[error("Token expired — please sign in again")]
+    AccessTokenExpired,
+
+    #[error("Refresh token expired — please sign in again")]
+    RefreshTokenExpired,
+
+    #[error("Invalid token")]
+    InvalidToken,
+
+    #[error("Token not found — please sign in again")]
+    RefreshTokenNotFound,
+
+    #[error("User not found")]
+    UserNotFound,
+
+    #[error("Google authentication failed: {0}")]
+    GoogleAuthFailed(String),
+
+    #[error(transparent)]
+    Database(#[from] sqlx::Error),
+
+    #[error(transparent)]
+    Internal(#[from] anyhow::Error),
 }
 
-impl AuthError {
-    pub fn error_response(error: &AuthError) -> Response {
-        match error {
+impl IntoResponse for AuthError {
+    fn into_response(self) -> Response {
+        match &self {
+            AuthError::EmailTaken => {
+                error_response(StatusCode::CONFLICT, "EMAIL_TAKEN", &self.to_string())
+            }
             AuthError::InvalidCredentials => error_response(
                 StatusCode::UNAUTHORIZED,
                 "INVALID_CREDENTIALS",
-                "Invalid credentials",
+                &self.to_string(),
             ),
-            AuthError::UserNotFound(message) => {
-                error_response(StatusCode::NOT_FOUND, "NOT_FOUND", message)
+            AuthError::GoogleAccountConflict => error_response(
+                StatusCode::CONFLICT,
+                "GOOGLE_ACCOUNT_CONFLICT",
+                &self.to_string(),
+            ),
+            AuthError::EmailNotVerified => error_response(
+                StatusCode::FORBIDDEN,
+                "EMAIL_NOT_VERIFIED",
+                &self.to_string(),
+            ),
+            AuthError::InvalidOtp => {
+                error_response(StatusCode::BAD_REQUEST, "INVALID_OTP", &self.to_string())
             }
-            AuthError::TokenExpired(message) => {
-                error_response(StatusCode::UNAUTHORIZED, "TOKEN_EXPIRED", message)
+            AuthError::OtpAlreadyUsed => error_response(
+                StatusCode::BAD_REQUEST,
+                "OTP_ALREADY_USED",
+                &self.to_string(),
+            ),
+            AuthError::AccessTokenExpired => error_response(
+                StatusCode::UNAUTHORIZED,
+                "ACCESS_TOKEN_EXPIRED",
+                &self.to_string(),
+            ),
+            AuthError::RefreshTokenExpired => error_response(
+                StatusCode::UNAUTHORIZED,
+                "REFRESH_TOKEN_EXPIRED",
+                &self.to_string(),
+            ),
+            AuthError::InvalidToken => {
+                error_response(StatusCode::UNAUTHORIZED, "INVALID_TOKEN", &self.to_string())
+            }
+            AuthError::RefreshTokenNotFound => error_response(
+                StatusCode::UNAUTHORIZED,
+                "REFRESH_TOKEN_NOT_FOUND",
+                &self.to_string(),
+            ),
+            AuthError::UserNotFound => {
+                error_response(StatusCode::NOT_FOUND, "USER_NOT_FOUND", &self.to_string())
+            }
+            AuthError::GoogleAuthFailed(_) => error_response(
+                StatusCode::UNAUTHORIZED,
+                "GOOGLE_AUTH_FAILED",
+                &self.to_string(),
+            ),
+            AuthError::Database(_) | AuthError::Internal(_) => {
+                tracing::error!("{:?}", self);
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
             }
         }
     }
