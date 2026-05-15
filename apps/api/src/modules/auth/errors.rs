@@ -33,6 +33,9 @@ pub enum AuthError {
     #[error("Invalid token")]
     InvalidToken,
 
+    #[error("Missing or invalid token")]
+    MissingToken,
+
     #[error("Token not found — please sign in again")]
     RefreshTokenNotFound,
 
@@ -90,6 +93,9 @@ impl IntoResponse for AuthError {
             ),
             AuthError::InvalidToken => {
                 error_response(StatusCode::UNAUTHORIZED, "INVALID_TOKEN", &self.to_string())
+            }
+            AuthError::MissingToken => {
+                error_response(StatusCode::UNAUTHORIZED, "MISSING_TOKEN", &self.to_string())
             }
             AuthError::RefreshTokenNotFound => error_response(
                 StatusCode::UNAUTHORIZED,
