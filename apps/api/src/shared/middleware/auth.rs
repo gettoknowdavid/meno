@@ -2,10 +2,10 @@ use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt::decode_access_token;
 use crate::modules::auth::model::{AccountProvider, UserRole};
 use crate::state::MenoState;
-use axum::extract::State;
-use axum::{extract::Request, middleware::Next, response::Response};
+use axum::{extract::Request, extract::State, middleware::Next, response::Response};
 use jsonwebtoken::errors::ErrorKind::ExpiredSignature;
 use serde::Serialize;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize)]
@@ -20,7 +20,7 @@ pub struct AuthUser {
 }
 
 pub async fn auth_middleware(
-    State(app): State<MenoState>,
+    State(app): State<Arc<MenoState>>,
     mut req: Request,
     next: Next,
 ) -> Result<Response, AuthError> {
