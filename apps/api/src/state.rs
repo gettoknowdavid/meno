@@ -1,18 +1,22 @@
 use crate::config::MenoConfig;
+use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
-use axum::http::header;
-use axum::{Router, http::StatusCode, middleware::from_fn_with_state};
+use axum::{
+    Router,
+    http::{StatusCode, header},
+    middleware::from_fn_with_state,
+    routing::get,
+};
+use axum_prometheus::PrometheusMetricLayer;
 use fred::clients::Pool;
 use sqlx::PgPool;
 use std::{sync::Arc, time::Duration};
 use tower::ServiceBuilder;
-use tower_http::cors::AllowHeaders;
 use tower_http::{
-    cors::{AllowOrigin, Any, CorsLayer},
+    cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
-use crate::routes::build_meno_routes;
 
 #[derive(Clone)]
 pub struct MenoState {
@@ -49,7 +53,12 @@ pub async fn build_app_router(config: MenoConfig, db_pool: PgPool, redis_pool: P
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
 
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
     Router::new()
+        .route("/metrics", get(|| async move { metric_handle.render() }))
+        .layer(prometheus_layer)
+        .layer(TraceLayer::new_for_http())
         .merge(build_meno_routes(state.clone()))
         .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(middleware_stack)
