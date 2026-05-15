@@ -1,4 +1,5 @@
 use crate::config::MenoConfig;
+use crate::modules::auth::jwt_service::JwtService;
 use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use axum::{
@@ -23,15 +24,28 @@ pub struct MenoState {
     pub config: MenoConfig,
     pub db: Arc<PgPool>,
     pub redis: Arc<Pool>,
+    pub jwt: Arc<JwtService>,
 }
 
 pub async fn build_app_router(config: MenoConfig, db_pool: PgPool, redis_pool: Pool) -> Router {
     let db = Arc::new(db_pool);
     let redis = Arc::new(redis_pool);
 
+    let jwt = Arc::new(JwtService::new(
+        &config.jwt_secret,
+        &config.jwt_refresh_secret,
+        config.access_token_expiration,
+        config.refresh_token_expiration,
+    ));
+
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
-    let state = Arc::new(MenoState { config, db, redis });
+    let state = Arc::new(MenoState {
+        config,
+        db,
+        redis,
+        jwt,
+    });
 
     let status_code = StatusCode::REQUEST_TIMEOUT;
     let timeout = Duration::from_secs(30);

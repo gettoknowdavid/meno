@@ -39,6 +39,9 @@ pub enum AuthError {
     #[error("Token not found — please sign in again")]
     RefreshTokenNotFound,
 
+    #[error("Failed to create token")]
+    TokenCreationFailed,
+
     #[error("User not found")]
     UserNotFound,
 
@@ -100,6 +103,11 @@ impl IntoResponse for AuthError {
             AuthError::RefreshTokenNotFound => error_response(
                 StatusCode::UNAUTHORIZED,
                 "REFRESH_TOKEN_NOT_FOUND",
+                &self.to_string(),
+            ),
+            AuthError::TokenCreationFailed => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "TOKEN_CREATION_FAILED",
                 &self.to_string(),
             ),
             AuthError::UserNotFound => {

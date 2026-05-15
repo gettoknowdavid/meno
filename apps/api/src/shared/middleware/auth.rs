@@ -1,9 +1,7 @@
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt::decode_access_token;
 use crate::modules::auth::model::{AccountProvider, UserRole};
 use crate::state::MenoState;
 use axum::{extract::Request, extract::State, middleware::Next, response::Response};
-use jsonwebtoken::errors::ErrorKind::ExpiredSignature;
 use serde::Serialize;
 use std::sync::Arc;
 use uuid::Uuid;
@@ -31,11 +29,7 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(AuthError::MissingToken)?;
 
-    let secret = &app.config.jwt_secret;
-    let claims = decode_access_token(token, secret).map_err(|e| match e.kind() {
-        ExpiredSignature => AuthError::AccessTokenExpired,
-        _ => AuthError::InvalidToken,
-    })?;
+    let claims = app.jwt.decode_access(token)?;
 
     if !claims.verified {
         return Err(AuthError::EmailNotVerified);
