@@ -1,8 +1,9 @@
-use crate::shared::errors::error_response;
+use crate::shared::errors::{error_response, validation_error_response};
 
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
+use validator::ValidationErrors;
 
 #[derive(Error, Debug)]
 pub enum AuthError {
@@ -53,6 +54,12 @@ pub enum AuthError {
 
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
+
+    #[error("Failed to hash password")]
+    PasswordHash,
+
+    #[error("Validation error")]
+    ValidationError(#[from] ValidationErrors),
 }
 
 impl IntoResponse for AuthError {
@@ -126,6 +133,12 @@ impl IntoResponse for AuthError {
                     "An internal error occurred",
                 )
             }
+            AuthError::PasswordHash => error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "INTERNAL_ERROR",
+                "An internal error occurred",
+            ),
+            AuthError::ValidationError(errs) => validation_error_response(errs.clone()),
         }
     }
 }

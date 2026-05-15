@@ -97,7 +97,7 @@ pub fn error_response(status_code: StatusCode, code: &str, message: &str) -> Res
     });
     (status_code, body).into_response()
 }
-fn validation_error_response(errs: ValidationErrors) -> Response {
+pub fn validation_error_response(errs: ValidationErrors) -> Response {
     fn extract(arg: (&Cow<str>, &&Vec<ValidationError>)) -> (String, Vec<String>) {
         let messages = arg
             .1

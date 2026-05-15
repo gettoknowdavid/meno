@@ -1,19 +1,19 @@
 -- Users
 CREATE TABLE public.users
 (
-    id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    full_name     TEXT    NOT NULL,
-    bio           TEXT,
-    email         TEXT    NOT NULL UNIQUE,
-    password      TEXT    NOT NULL,
-    avatar_id     TEXT,
-    avatar_url    TEXT,
-    verified      BOOLEAN NOT NULL DEFAULT FALSE,
-    role          TEXT    NOT NULL DEFAULT 'user' CHECK ( role IN ('user', 'admin') ),
-    auth_provider TEXT    NOT NULL CHECK ( auth_provider IN ('email', 'google', 'apple', 'facebook') ),
-    created_at    TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-    updated_at    TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-    deleted_at    TIMESTAMPTZ(3)
+    id               UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    full_name        TEXT    NOT NULL,
+    bio              TEXT,
+    email            TEXT    NOT NULL UNIQUE,
+    password         TEXT    NOT NULL,
+    avatar_id        TEXT,
+    avatar_url       TEXT,
+    verified         BOOLEAN NOT NULL DEFAULT FALSE,
+    role             TEXT    NOT NULL DEFAULT 'user' CHECK ( role IN ('user', 'admin') ),
+    account_provider TEXT    NOT NULL CHECK ( account_provider IN ('email', 'google', 'apple', 'facebook') ),
+    created_at       TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+    updated_at       TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
+    deleted_at       TIMESTAMPTZ(3)
 );
 
 CREATE INDEX idx_users_email ON users (email);

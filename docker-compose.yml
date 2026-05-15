@@ -1,16 +1,20 @@
 services:
   api:
-    build: .
+    build:
+      context: .
+      network: host
+      args: [ ]   # no longer needed
     container_name: meno-api
     environment:
       - RUST_LOG=info
+      - DATABASE_URL=postgres://meno:password@postgres:5432/meno_dev   # runtime
     ports:
       - "8080:8080"
     networks:
       - meno-network
     depends_on:
-      - postgres
-      - redis
+      postgres:
+        condition: service_healthy
 
   postgres:
     image: postgres:18
@@ -21,6 +25,11 @@ services:
     ports: [ "5432:5432" ]
     networks:
       - meno-network
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U meno -d meno_dev" ]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   redis:
     image: redis:8-alpine
