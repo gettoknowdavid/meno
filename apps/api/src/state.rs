@@ -3,6 +3,7 @@ use crate::modules::auth::jwt_service::JwtService;
 use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
+
 use axum::{
     Router,
     http::{StatusCode, header},
@@ -11,6 +12,7 @@ use axum::{
 };
 use axum_prometheus::PrometheusMetricLayer;
 use fred::clients::Pool;
+use moka::future::Cache;
 use sqlx::PgPool;
 use std::time::Duration;
 use tower::ServiceBuilder;
@@ -26,7 +28,7 @@ pub struct MenoState {
     pub db: PgPool,
     pub redis: Pool,
     pub jwt: JwtService,
-
+    pub local_rate_cache: Cache<String, u64>,
     pub auth_service: AuthService,
 }
 
@@ -40,10 +42,15 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
         config.refresh_token_expiration,
     );
 
+    let local_rate_cache = Cache::builder()
+        .max_capacity(100_000)
+        .time_to_live(Duration::from_secs(60))
+        .build();
 
     let state = std::sync::Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone()),
         jwt,
+        local_rate_cache,
         config,
         db,
         redis,

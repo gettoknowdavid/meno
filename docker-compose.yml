@@ -40,7 +40,7 @@ services:
   prometheus:
     image: prom/prometheus
     volumes:
-      - "./resources/prometheus:/etc/prometheus"
+      - "./resources/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"
     ports: [ "9090:9090" ]
     networks:
       - meno-network

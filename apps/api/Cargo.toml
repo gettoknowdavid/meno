@@ -33,3 +33,4 @@ lettre = { version = "0.11.22", features = ["tokio1-native-tls", "builder"] }
 rand = "0.10.1"
 sha2 = "0.11.0"
 hex = "0.4.3"
+moka = { version = "0.12.15", features = ["future"] }
