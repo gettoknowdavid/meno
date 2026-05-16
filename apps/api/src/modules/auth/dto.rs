@@ -52,6 +52,12 @@ pub struct ForgotPasswordRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
+pub struct ResendVerificationEmailRequest {
+    #[validate(custom(function = "validate_email"))]
+    pub email: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct ResetPasswordRequest {
     #[validate(custom(function = "validate_email"))]
     pub email: String,

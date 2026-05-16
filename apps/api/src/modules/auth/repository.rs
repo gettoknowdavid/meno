@@ -10,6 +10,9 @@ use uuid::Uuid;
 const RD_VERIFICATION_OTP_PREFIX: &str = "meno_auth_verify";
 const RD_VERIFICATION_OTP_TTL_SECS: i64 = 900;
 
+const RD_RESEND_RATE_LIMIT_PREFIX: &str = "meno_auth_resend";
+const RD_RESEND_RATE_LIMIT_TTL_SECS: i64 = 60;
+
 #[derive(Clone)]
 pub struct AuthRepository {
     db: sqlx::PgPool,
@@ -50,6 +53,12 @@ impl AuthRepository {
         .map_err(AuthError::Database)?;
         tx.commit().await.map_err(AuthError::Database)?;
         Ok(user)
+    }
+    pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, AuthError> {
+        sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", email)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(AuthError::Database)
     }
     pub async fn user_exists(&self, email: &str) -> Result<bool, AuthError> {
         sqlx::query_scalar!(
@@ -101,8 +110,6 @@ impl AuthRepository {
             .map_err(AuthError::Database)?;
         Ok(())
     }
-
-    // Redis
     pub async fn set_verification_otp(&self, email: &str) -> Result<String, AuthError> {
         let otp = generate_otp();
         if self.use_redis_otp {
@@ -165,5 +172,32 @@ impl AuthRepository {
                 }
             }
         }
+    }
+    pub async fn revoke_otp(&self, email: &str) -> Result<(), AuthError> {
+        if self.use_redis_otp {
+            let key = format!("{}:{}", RD_VERIFICATION_OTP_PREFIX, email);
+            self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
+        } else {
+            sqlx::query!("UPDATE otps SET used = true WHERE email = $1 AND expires_at <> now() AND used = false", email)
+                .execute(&self.db)
+                .await
+                .map_err(AuthError::Database)?;
+        }
+        Ok(())
+    }
+
+    // Redis
+    pub async fn can_resend_verification_otp(&self, email: &str) -> Result<bool, AuthError> {
+        let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
+        let exists: Option<String> = self.rd.get(&key).await.map_err(AuthError::Redis)?;
+        Ok(exists.is_none())
+    }
+    pub async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError> {
+        let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
+        let ttl = Expiration::EX(RD_RESEND_RATE_LIMIT_TTL_SECS);
+        self.rd
+            .set::<(), _, _>(key, "1", Some(ttl), None, false)
+            .await
+            .map_err(AuthError::Redis)
     }
 }

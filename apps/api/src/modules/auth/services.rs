@@ -1,4 +1,7 @@
-use crate::modules::auth::dto::{AuthResponse, RegisterRequest};
+use crate::config::MenoConfig;
+use crate::modules::auth::dto::{
+    AuthResponse, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest,
+};
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::password::hash_password;
 use crate::modules::auth::repository::AuthRepository;
@@ -38,14 +41,9 @@ impl AuthService {
         let email = user.email.clone();
 
         let otp = self.repo.set_verification_otp(&email).await?;
-        let email_service = EmailService::new(&app.config);
-        let email_html = email_service.verification_email_html(&user.full_name, &otp);
 
-        tokio::spawn(async move {
-            if let Err(e) = email_service.send(&email, "Verify your Meno account", email_html).await {
-                tracing::warn!(error = %e, "Failed to send verification email");
-            }
-        });
+        let html = verification_email_html(&user.full_name, &otp);
+        self.send_email(&app.config, req.email.clone(), html).await;
 
         let access_token = app.jwt.sign_access(
             user.id,
@@ -58,7 +56,9 @@ impl AuthService {
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
         let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
-        self.repo.store_refresh_token(jti, user.id, &refresh_token, expires_at).await?;
+        self.repo
+            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .await?;
 
         Ok(AuthResponse {
             access_token,
@@ -66,4 +66,75 @@ impl AuthService {
             user: user.into_response(),
         })
     }
+
+    pub async fn verify_email(&self, req: &VerifyEmailRequest) -> Result<(), AuthError> {
+        if !self.repo.verify_otp(&req.email, &req.code).await? {
+            return Err(AuthError::InvalidOtp);
+        }
+
+        self.repo.set_verified(&req.email).await?;
+        Ok(())
+    }
+
+    pub async fn resend_verification_email(
+        &self,
+        app: &MenoState,
+        req: &ResendVerificationEmailRequest,
+    ) -> Result<(), AuthError> {
+        let user = match self.repo.find_by_email(&req.email).await? {
+            Some(value) => value,
+            None => return Ok(()),
+        };
+
+        if user.verified {
+            return Err(AuthError::EmailAlreadyVerified);
+        }
+
+        if !self.repo.can_resend_verification_otp(&req.email).await? {
+            return Err(AuthError::TooManyRequests);
+        }
+
+        self.repo.revoke_otp(&req.email).await?;
+
+        let otp = self.repo.set_verification_otp(&req.email).await?;
+
+        let html = verification_email_html(&user.full_name, &otp);
+        self.send_email(&app.config, req.email.clone(), html).await;
+
+        self.repo.set_resend_cooldown(&req.email).await?;
+
+        Ok(())
+    }
+
+    async fn send_email(&self, config: &MenoConfig, to: String, html: String) -> () {
+        let service = EmailService::new(&config);
+        tokio::spawn(async move {
+            if let Err(e) = service.send(&to, "Verify your Meno account", html).await {
+                tracing::warn!(error = %e, "Failed to send verification email");
+                tracing::info!(email = %to, "Verification email resent");
+            }
+        });
+    }
+}
+
+fn verification_email_html(full_name: &str, otp: &str) -> String {
+    format!(
+        r#"
+            <!DOCTYPE html>
+            <html>
+            <body style="margin:0;padding:0;background:#0f0f1a;font-family:sans-serif;">
+              <div style="max-width:480px;margin:40px auto;background:#1a1a2e;border-radius:16px;padding:40px;text-align:center;">
+                <h1 style="color:#ffffff;font-size:24px;margin-bottom:8px;">Verify your email</h1>
+                <p style="color:#a0a0b8;margin-bottom:32px;">Hi {full_name}, enter this code in the app to verify your account.</p>
+                <div style="background:#2a2a3e;border-radius:12px;padding:24px;margin-bottom:32px;">
+                  <span style="color:#7c3aed;font-size:48px;font-weight:700;letter-spacing:12px;">{otp}</span>
+                </div>
+                <p style="color:#606080;font-size:14px;">This code expires in 15 minutes.<br/>If you didn't create a Meno account, ignore this email.</p>
+              </div>
+            </body>
+            </html>
+            "#,
+        full_name = full_name,
+        otp = otp
+    )
 }

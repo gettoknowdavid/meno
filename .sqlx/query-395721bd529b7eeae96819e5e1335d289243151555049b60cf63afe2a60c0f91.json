@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE otps SET used = true WHERE email = $1 AND expires_at <> now() AND used = false",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "395721bd529b7eeae96819e5e1335d289243151555049b60cf63afe2a60c0f91"
+}

@@ -1,4 +1,4 @@
-use crate::modules::auth::dto::{AuthResponse, RegisterRequest};
+use crate::modules::auth::dto::{AuthResponse, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest};
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
 use crate::shared::types::meno_response::MenoResponse;
@@ -14,4 +14,22 @@ pub async fn register(
     body.validate()?;
     let user = app.auth_service.register(&app, &body).await?;
     Ok(MenoResponse::created("Account created successfully", user))
+}
+
+pub async fn verify_email(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<VerifyEmailRequest>,
+) -> Result<MenoResponse<()>, AuthError> {
+    body.validate()?;
+    app.auth_service.verify_email(&body).await?;
+    Ok(MenoResponse::no_content("Email verified successfully"))
+}
+
+pub async fn resend_verification_email(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<ResendVerificationEmailRequest>,
+) -> Result<MenoResponse<()>, AuthError> {
+    body.validate()?;
+    app.auth_service.resend_verification_email(&app, &body).await?;
+    Ok(MenoResponse::no_content("Verification email resent"))
 }

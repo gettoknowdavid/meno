@@ -19,6 +19,9 @@ pub enum AuthError {
     #[error("Email not verified — check your inbox")]
     EmailNotVerified,
 
+    #[error("Email has already been verified")]
+    EmailAlreadyVerified,
+
     #[error("Invalid or expired OTP")]
     InvalidOtp,
 
@@ -48,6 +51,9 @@ pub enum AuthError {
 
     #[error("Google authentication failed: {0}")]
     GoogleAuthFailed(String),
+
+    #[error("Too many requests. Please try again later.")]
+    TooManyRequests,
 
     #[error(transparent)]
     Database(#[from] sqlx::Error),
@@ -84,6 +90,11 @@ impl IntoResponse for AuthError {
             AuthError::EmailNotVerified => error_response(
                 StatusCode::FORBIDDEN,
                 "EMAIL_NOT_VERIFIED",
+                &self.to_string(),
+            ),
+            AuthError::EmailAlreadyVerified => error_response(
+                StatusCode::BAD_REQUEST,
+                "EMAIL_ALREADY_VERIFIED",
                 &self.to_string(),
             ),
             AuthError::InvalidOtp => {
@@ -126,6 +137,11 @@ impl IntoResponse for AuthError {
             AuthError::GoogleAuthFailed(_) => error_response(
                 StatusCode::UNAUTHORIZED,
                 "GOOGLE_AUTH_FAILED",
+                &self.to_string(),
+            ),
+            AuthError::TooManyRequests => error_response(
+                StatusCode::TOO_MANY_REQUESTS,
+                "TOO_MANY_REQUESTS",
                 &self.to_string(),
             ),
             AuthError::Database(_) | AuthError::Redis(_) | AuthError::Internal(_) => {
