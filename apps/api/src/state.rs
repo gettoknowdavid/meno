@@ -1,5 +1,6 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::jwt_service::JwtService;
+use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use axum::{
@@ -11,7 +12,7 @@ use axum::{
 use axum_prometheus::PrometheusMetricLayer;
 use fred::clients::Pool;
 use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
@@ -22,29 +23,30 @@ use tower_http::{
 #[derive(Clone)]
 pub struct MenoState {
     pub config: MenoConfig,
-    pub db: Arc<PgPool>,
-    pub redis: Arc<Pool>,
-    pub jwt: Arc<JwtService>,
+    pub db: PgPool,
+    pub redis: Pool,
+    pub jwt: JwtService,
+
+    pub auth_service: AuthService,
 }
 
-pub async fn build_app_router(config: MenoConfig, db_pool: PgPool, redis_pool: Pool) -> Router {
-    let db = Arc::new(db_pool);
-    let redis = Arc::new(redis_pool);
+pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Router {
+    let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
-    let jwt = Arc::new(JwtService::new(
+    let jwt = JwtService::new(
         &config.jwt_secret,
         &config.jwt_refresh_secret,
         config.access_token_expiration,
         config.refresh_token_expiration,
-    ));
+    );
 
-    let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
-    let state = Arc::new(MenoState {
+    let state = std::sync::Arc::new(MenoState {
+        auth_service: AuthService::new(db.clone(), redis.clone()),
+        jwt,
         config,
         db,
         redis,
-        jwt,
     });
 
     let status_code = StatusCode::REQUEST_TIMEOUT;

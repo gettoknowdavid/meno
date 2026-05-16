@@ -34,6 +34,12 @@ pub struct MenoConfig {
     pub default_rate_limit: RateLimitConfig,
 
     pub origins: Vec<String>,
+
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_user: String,
+    pub smtp_password: String,
+    pub smtp_from: String,
 }
 
 impl MenoConfig {
@@ -74,6 +80,14 @@ impl MenoConfig {
                 "https://app.yourdomain.com".to_string(),
                 "https://staging.yourdomain.com".to_string(),
             ],
+            smtp_host: var("SMTP_HOST").context("SMTP_HOST is missing")?,
+            smtp_port: var("SMTP_PORT")
+                .unwrap_or_else(|_| "465".to_string())
+                .parse::<u16>()
+                .context("SMTP_PORT must be a valid number")?,
+            smtp_user: var("SMTP_USER").context("SMTP_USER is missing")?,
+            smtp_password: var("SMTP_PASSWORD").context("SMTP_PASSWORD is missing")?,
+            smtp_from: var("SMTP_FROM").context("SMTP_FROM is missing")?,
         })
     }
 }

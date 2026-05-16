@@ -53,6 +53,9 @@ pub enum AuthError {
     Database(#[from] sqlx::Error),
 
     #[error(transparent)]
+    Redis(#[from] fred::error::Error),
+
+    #[error(transparent)]
     Internal(#[from] anyhow::Error),
 
     #[error("Failed to hash password")]
@@ -125,7 +128,7 @@ impl IntoResponse for AuthError {
                 "GOOGLE_AUTH_FAILED",
                 &self.to_string(),
             ),
-            AuthError::Database(_) | AuthError::Internal(_) => {
+            AuthError::Database(_) | AuthError::Redis(_) | AuthError::Internal(_) => {
                 tracing::error!("{:?}", self);
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,

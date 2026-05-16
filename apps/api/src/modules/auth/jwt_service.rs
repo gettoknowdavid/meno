@@ -2,6 +2,7 @@ use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AccountProvider, UserRole};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 /// Payload embedded in every access token.
@@ -132,4 +133,13 @@ impl JwtService {
 // Helpers
 fn now_unix() -> u64 {
     time::OffsetDateTime::now_utc().unix_timestamp() as u64
+}
+
+pub fn hash_token(token: &str) -> String {
+    hex::encode(Sha256::digest(token.as_bytes()))
+}
+
+pub fn verify_token_hash(token: &str, stored_hash: &str) -> bool {
+    let computed_hash = hash_token(token);
+    computed_hash == stored_hash
 }
