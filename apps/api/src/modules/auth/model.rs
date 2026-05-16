@@ -4,6 +4,7 @@ use sqlx::FromRow;
 use strum::{AsRefStr, Display, EnumString};
 use time::OffsetDateTime;
 use uuid::Uuid;
+use validator::Validate;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display, AsRefStr, EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -44,7 +45,7 @@ impl From<String> for AccountProvider {
     }
 }
 
-#[derive(Clone, Debug, EnumString)]
+#[derive(Clone, Debug, EnumString, Deserialize, Serialize)]
 #[strum(serialize_all = "snake_case")]
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]

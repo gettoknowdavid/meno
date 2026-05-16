@@ -1,4 +1,4 @@
-use crate::modules::auth::model::{AccountProvider, User};
+use crate::modules::auth::model::{AccountProvider, OtpType, User};
 use crate::modules::auth::validators::{validate_email, validate_password};
 
 use serde::{Deserialize, Serialize};
@@ -52,9 +52,11 @@ pub struct ForgotPasswordRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct ResendVerificationEmailRequest {
+pub struct ResendOtpRequest {
     #[validate(custom(function = "validate_email"))]
     pub email: String,
+
+    pub otp_type: OtpType,
 }
 
 #[derive(Debug, Deserialize, Validate)]

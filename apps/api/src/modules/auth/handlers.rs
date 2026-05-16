@@ -1,5 +1,5 @@
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest,
+    AuthResponse, LoginRequest, RegisterRequest, ResendOtpRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
@@ -27,13 +27,13 @@ pub async fn verify_email(
     Ok(MenoResponse::ok("Account created successfully", user))
 }
 
-pub async fn resend_verification_email(
+pub async fn resend_otp(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<ResendVerificationEmailRequest>,
+    MenoJson(body): MenoJson<ResendOtpRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
     app.auth_service
-        .resend_verification_email(&app, &body)
+        .resend_otp(&app, &body)
         .await?;
     Ok(MenoResponse::no_content("Verification email resent"))
 }

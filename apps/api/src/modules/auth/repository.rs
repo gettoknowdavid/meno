@@ -81,8 +81,8 @@ impl AuthRepository {
         jti: Uuid,
         user_id: Uuid,
         refresh_token: &str,
-        expires_at: OffsetDateTime,
     ) -> Result<(), AuthError> {
+        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
         sqlx::query!(
             r#"INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
                VALUES ($1, $2, $3, $4)"#,
@@ -187,7 +187,7 @@ impl AuthRepository {
     }
 
     // Redis
-    pub async fn can_resend_verification_otp(&self, email: &str) -> Result<bool, AuthError> {
+    pub async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
         let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
         let exists: Option<String> = self.rd.get(&key).await.map_err(AuthError::Redis)?;
         Ok(exists.is_none())

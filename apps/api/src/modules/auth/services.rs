@@ -1,8 +1,9 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest,
+    AuthResponse, LoginRequest, RegisterRequest, ResendOtpRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
+use crate::modules::auth::model::OtpType;
 use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::services::email::EmailService;
@@ -55,9 +56,8 @@ impl AuthService {
         )?;
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .store_refresh_token(jti, user.id, &refresh_token)
             .await?;
         Ok(AuthResponse {
             access_token,
@@ -97,9 +97,8 @@ impl AuthService {
         )?;
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .store_refresh_token(jti, user.id, &refresh_token)
             .await?;
 
         Ok(AuthResponse {
@@ -109,44 +108,36 @@ impl AuthService {
         })
     }
 
-    pub async fn resend_verification_email(
+    pub async fn resend_otp(
         &self,
         app: &MenoState,
-        req: &ResendVerificationEmailRequest,
+        req: &ResendOtpRequest,
     ) -> Result<(), AuthError> {
         let user = match self.repo.find_by_email(&req.email).await? {
             Some(value) => value,
             None => return Ok(()),
         };
 
-        if user.verified {
-            return Err(AuthError::EmailAlreadyVerified);
-        }
+        match &req.otp_type {
+            OtpType::VerifyEmail if user.verified => return Err(AuthError::EmailAlreadyVerified),
+            _ => {}
+        };
 
-        if !self.repo.can_resend_verification_otp(&req.email).await? {
+        if !self.repo.can_resend_otp(&req.email).await? {
             return Err(AuthError::TooManyRequests);
         }
 
         self.repo.revoke_otp(&req.email).await?;
-
         let otp = self.repo.set_verification_otp(&req.email).await?;
 
-        let html = verification_email_html(&user.full_name, &otp);
+        let html = match &req.otp_type {
+            OtpType::VerifyEmail => verification_email_html(&user.full_name, &otp),
+            OtpType::ResetPassword => reset_password_email_html(&user.full_name, &otp),
+        };
+
         self.send_email(&app.config, req.email.clone(), html).await;
-
         self.repo.set_resend_cooldown(&req.email).await?;
-
         Ok(())
-    }
-
-    async fn send_email(&self, config: &MenoConfig, to: String, html: String) -> () {
-        let service = EmailService::new(&config);
-        tokio::spawn(async move {
-            if let Err(e) = service.send(&to, "Verify your Meno account", html).await {
-                tracing::warn!(error = %e, "Failed to send verification email");
-                tracing::info!(email = %to, "Verification email resent");
-            }
-        });
     }
 
     pub async fn login(
@@ -170,15 +161,25 @@ impl AuthService {
             user.role.clone(),
         )?;
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .store_refresh_token(jti, user.id, &refresh_token)
             .await?;
         Ok(AuthResponse {
             access_token,
             refresh_token,
             user: user.into_response(),
         })
+    }
+
+    // Helper functions
+    async fn send_email(&self, config: &MenoConfig, to: String, html: String) -> () {
+        let service = EmailService::new(&config);
+        tokio::spawn(async move {
+            if let Err(e) = service.send(&to, "Verify your Meno account", html).await {
+                tracing::warn!(error = %e, "Failed to send verification email");
+                tracing::info!(email = %to, "Verification email resent");
+            }
+        });
     }
 }
 
@@ -203,16 +204,37 @@ fn verification_email_html(full_name: &str, otp: &str) -> String {
         otp = otp
     )
 }
+fn reset_password_email_html(full_name: &str, otp: &str) -> String {
+    format!(
+        r#"
+        <!DOCTYPE html>
+            <html>
+            <body style="margin:0;padding:0;background:#0f0f1a;font-family:sans-serif;">
+              <div style="max-width:480px;margin:40px auto;background:#1a1a2e;border-radius:16px;padding:40px;text-align:center;">
+                <h1 style="color:#ffffff;font-size:24px;margin-bottom:8px;">Reset your password</h1>
 
-// Concerning the verification via otp, here are some questions:
-//
-//
-//
-//
-//
-// I see the verify_email endpoint returns no data; if that is the case, how does the front-end automatically authenticate a registered user once verified, since the access & refresh token from the registration endpoint both carry old claims with verified=false​. I see the refresh​ endpoint, but I read somewhere that current industry standard leans towards sending the AuthResponse​ with on successful verification. Is this valid, and how does this pose any security risks? If the current method is superior, explain why.
-//
-//
-//
-// The login​ endpoint has a check for the user's verification; if false, it returns an early 403 error. Is this in support of good UI/UX? Isn't it better to allow the user log in but limit certain features until verified? I know this may be a bit more complex to code, but I believe it is better UX, so how would this change our current code and how would we ensure the main features are restricted until verification?
-//
+                <p style="color:#a0a0b8;margin-bottom:32px;">
+                    Hi {full_name},<br>
+                    You requested to reset your Meno account password.
+                </p>
+
+                <div style="background:#2a2a3e;border-radius:12px;padding:24px;margin-bottom:32px;">
+                  <span style="color:#7c3aed;font-size:48px;font-weight:700;letter-spacing:12px;">{otp}</span>
+                </div>
+
+                <p style="color:#606080;font-size:14px;">
+                    This code expires in 15 minutes.<br>
+                    If you didn't request a password reset, please ignore this email.
+                </p>
+
+                <p style="color:#606080;font-size:13px;margin-top:32px;">
+                    For security reasons, never share this code with anyone.
+                </p>
+              </div>
+            </body>
+            </html>
+            "#,
+        full_name = full_name,
+        otp = otp
+    )
+}
