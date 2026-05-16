@@ -1,6 +1,6 @@
 use crate::config::MenoConfig;
 use lettre::message::header::ContentType;
-use lettre::transport::smtp::authentication::Credentials;
+use lettre::transport::smtp::{authentication::Credentials, client::Tls};
 use lettre::{AsyncSmtpTransport, AsyncTransport, Message, Tokio1Executor};
 
 #[derive(Clone)]
@@ -15,6 +15,7 @@ impl EmailService {
             .unwrap()
             .port(config.smtp_port)
             .credentials(creds)
+            .tls(Tls::None)
             .build();
         Self {
             from: config.smtp_from.clone(),
