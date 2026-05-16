@@ -4,6 +4,8 @@ use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
 
+use crate::shared::middleware::timing::timing_middleware;
+use axum::middleware::from_fn;
 use axum::{
     Router,
     http::{StatusCode, header},
@@ -48,7 +50,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
         .build();
 
     let state = std::sync::Arc::new(MenoState {
-        auth_service: AuthService::new(db.clone(), redis.clone()),
+        auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
         jwt,
         local_rate_cache,
         config,
@@ -85,5 +87,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
         .merge(build_meno_routes(state.clone()))
         .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
         .layer(middleware_stack)
+        .layer(from_fn(timing_middleware))
         .with_state(state)
 }

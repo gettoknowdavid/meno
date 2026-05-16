@@ -3,6 +3,7 @@ use crate::modules::auth::validators::{validate_email, validate_password};
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
+use time::serde::rfc3339;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -16,7 +17,7 @@ pub struct RegisterRequest {
     ))]
     pub full_name: String,
 
-    #[validate(custom(function = "validate_email"))]
+    #[validate(email(message = "Invalid email format"))]
     pub email: String,
 
     #[validate(custom(function = "validate_password"))]
@@ -82,7 +83,11 @@ pub struct UserResponse {
     pub verified: bool,
     pub avatar_id: Option<String>,
     pub avatar_url: Option<String>,
+
+    #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
+
+    #[serde(with = "rfc3339::option")]
     pub deleted_at: Option<OffsetDateTime>,
 }
 impl From<User> for UserResponse {

@@ -18,7 +18,7 @@ pub fn validate_password(password: &str) -> Result<(), ValidationError> {
     let mut errors: Vec<&str> = Vec::new();
 
     if password.len() < 8 {
-        errors.push("Password must be at least 12 characters");
+        errors.push("Password must be at least 8 characters");
     }
 
     if password.len() > 128 {

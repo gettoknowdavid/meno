@@ -4,6 +4,7 @@ use crate::modules::auth::jwt_service::hash_token;
 use crate::modules::auth::model::{AccountProvider, User};
 use crate::modules::auth::utils::generate_otp;
 use fred::prelude::*;
+use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
 const RD_VERIFICATION_OTP_PREFIX: &str = "meno_auth_verify";
@@ -13,10 +14,15 @@ const RD_VERIFICATION_OTP_TTL_SECS: i64 = 900;
 pub struct AuthRepository {
     db: sqlx::PgPool,
     rd: Pool,
+    use_redis_otp: bool,
 }
 impl AuthRepository {
-    pub fn new(db: sqlx::PgPool, rd: Pool) -> Self {
-        Self { db, rd }
+    pub fn new(db: sqlx::PgPool, rd: Pool, env: &str) -> Self {
+        Self {
+            db,
+            rd,
+            use_redis_otp: env != "dev" && env != "development",
+        }
     }
 
     // DB
@@ -66,13 +72,15 @@ impl AuthRepository {
         jti: Uuid,
         user_id: Uuid,
         refresh_token: &str,
+        expires_at: OffsetDateTime,
     ) -> Result<(), AuthError> {
         sqlx::query!(
             r#"INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
-               VALUES ($1, $2, $3, now() + interval '30 days')"#,
+               VALUES ($1, $2, $3, $4)"#,
             jti,
             user_id,
             hash_token(refresh_token),
+            expires_at
         )
         .execute(&self.db)
         .await
@@ -97,24 +105,65 @@ impl AuthRepository {
     // Redis
     pub async fn set_verification_otp(&self, email: &str) -> Result<String, AuthError> {
         let otp = generate_otp();
-        let key = format!("{}:{}", RD_VERIFICATION_OTP_PREFIX, email);
-        let ttl = Expiration::EX(RD_VERIFICATION_OTP_TTL_SECS);
-        self.rd
-            .set::<(), _, _>(key, otp.clone(), Some(ttl), None, false)
+        if self.use_redis_otp {
+            let key = format!("{}:{}", RD_VERIFICATION_OTP_PREFIX, email);
+            let ttl = Expiration::EX(RD_VERIFICATION_OTP_TTL_SECS);
+            self.rd
+                .set::<(), _, _>(key, otp.clone(), Some(ttl), None, false)
+                .await
+                .map_err(AuthError::Redis)?;
+        } else {
+            let expires_at = OffsetDateTime::now_utc() + Duration::minutes(15);
+            sqlx::query!(
+                r#"INSERT INTO otps (email, code, type, expires_at)
+                    VALUES ($1, $2, 'verify_email', $3)
+                    ON CONFLICT (email) DO UPDATE
+                    SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at, used = false"#,
+                email,
+                otp,
+                expires_at,
+            )
+            .execute(&self.db)
             .await
-            .map_err(AuthError::Redis)?;
+            .map_err(AuthError::Database)?;
+        }
         Ok(otp)
     }
     pub async fn verify_otp(&self, email: &str, code: &str) -> Result<bool, AuthError> {
-        let key = format!("{}:{}", RD_VERIFICATION_OTP_PREFIX, email);
-        let stored: Option<String> = self.rd.get(key.clone()).await.map_err(AuthError::Redis)?;
-        match stored {
-            Some(ref s) if s == code => {
-                self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
-                Ok(true)
+        if self.use_redis_otp {
+            let key = format!("{}:{}", RD_VERIFICATION_OTP_PREFIX, email);
+            let stored: Option<String> =
+                self.rd.get(key.clone()).await.map_err(AuthError::Redis)?;
+            match stored {
+                Some(ref s) if s == code => {
+                    self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
+                    Ok(true)
+                }
+                Some(_) => Ok(false),
+                None => Err(AuthError::InvalidOtp),
             }
-            Some(_) => Ok(false),
-            None => Err(AuthError::InvalidOtp),
+        } else {
+            let row = sqlx::query!(
+                r#"SELECT code, expires_at, used FROM otps WHERE email = $1 AND type = 'verify_email'"#,
+                email
+            )
+            .fetch_optional(&self.db)
+            .await
+            .map_err(AuthError::Database)?;
+
+            match row {
+                None => Err(AuthError::InvalidOtp),
+                Some(r) if r.used => Err(AuthError::OtpAlreadyUsed),
+                Some(r) if r.expires_at < OffsetDateTime::now_utc() => Err(AuthError::InvalidOtp),
+                Some(r) if r.code != code => Ok(false),
+                Some(_) => {
+                    sqlx::query!("UPDATE otps SET used = true WHERE email = $1", email)
+                        .execute(&self.db)
+                        .await
+                        .map_err(AuthError::Database)?;
+                    Ok(true)
+                }
+            }
         }
     }
 }

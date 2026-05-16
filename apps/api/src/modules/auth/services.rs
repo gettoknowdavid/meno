@@ -4,15 +4,16 @@ use crate::modules::auth::password::hash_password;
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::services::email::EmailService;
 use crate::state::MenoState;
+use time::{Duration, OffsetDateTime};
 
 #[derive(Clone)]
 pub struct AuthService {
     repo: AuthRepository,
 }
 impl AuthService {
-    pub fn new(db: sqlx::PgPool, rd: fred::clients::Pool) -> Self {
+    pub fn new(db: sqlx::PgPool, rd: fred::clients::Pool, env: &str) -> Self {
         Self {
-            repo: AuthRepository::new(db, rd),
+            repo: AuthRepository::new(db, rd, env),
         }
     }
 
@@ -34,16 +35,17 @@ impl AuthService {
         .map_err(|_| AuthError::PasswordHash)?;
 
         let user = self.repo.create(&req, pwd_hash).await?;
+        let email = user.email.clone();
 
-        let otp = self.repo.set_verification_otp(&user.email).await?;
+        let otp = self.repo.set_verification_otp(&email).await?;
         let email_service = EmailService::new(&app.config);
         let email_html = email_service.verification_email_html(&user.full_name, &otp);
-        if let Err(e) = email_service
-            .send(&user.email, "Verify your Meno account", email_html)
-            .await
-        {
-            tracing::warn!(error = %e, email = %user.email, "Failed to send verification email");
-        }
+
+        tokio::spawn(async move {
+            if let Err(e) = email_service.send(&email, "Verify your Meno account", email_html).await {
+                tracing::warn!(error = %e, "Failed to send verification email");
+            }
+        });
 
         let access_token = app.jwt.sign_access(
             user.id,
@@ -55,10 +57,8 @@ impl AuthService {
         )?;
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-
-        self.repo
-            .store_refresh_token(jti, user.id, &refresh_token)
-            .await?;
+        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
+        self.repo.store_refresh_token(jti, user.id, &refresh_token, expires_at).await?;
 
         Ok(AuthResponse {
             access_token,
