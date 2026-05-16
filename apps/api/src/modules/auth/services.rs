@@ -1,9 +1,9 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest,
+    AuthResponse, LoginRequest, RegisterRequest, ResendVerificationEmailRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::password::hash_password;
+use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::services::email::EmailService;
 use crate::state::MenoState;
@@ -59,7 +59,6 @@ impl AuthService {
         self.repo
             .store_refresh_token(jti, user.id, &refresh_token, expires_at)
             .await?;
-
         Ok(AuthResponse {
             access_token,
             refresh_token,
@@ -67,13 +66,47 @@ impl AuthService {
         })
     }
 
-    pub async fn verify_email(&self, req: &VerifyEmailRequest) -> Result<(), AuthError> {
+    pub async fn verify_email(
+        &self,
+        app: &MenoState,
+        req: &VerifyEmailRequest,
+    ) -> Result<AuthResponse, AuthError> {
+        let user = self
+            .repo
+            .find_by_email(&req.email)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        if user.verified {
+            return Err(AuthError::EmailAlreadyVerified);
+        }
+
         if !self.repo.verify_otp(&req.email, &req.code).await? {
             return Err(AuthError::InvalidOtp);
         }
 
         self.repo.set_verified(&req.email).await?;
-        Ok(())
+
+        let access_token = app.jwt.sign_access(
+            user.id,
+            &user.full_name,
+            &user.email,
+            true,
+            user.account_provider.clone(),
+            user.role.clone(),
+        )?;
+
+        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
+        self.repo
+            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .await?;
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: user.into_response_verified(),
+        })
     }
 
     pub async fn resend_verification_email(
@@ -115,6 +148,38 @@ impl AuthService {
             }
         });
     }
+
+    pub async fn login(
+        &self,
+        app: &MenoState,
+        req: &LoginRequest,
+    ) -> Result<AuthResponse, AuthError> {
+        let user = match self.repo.find_by_email(&req.email).await? {
+            None => return Err(AuthError::InvalidCredentials),
+            Some(value) => value,
+        };
+        if !verify_password(&req.password, &user.password) {
+            return Err(AuthError::InvalidCredentials);
+        }
+        let access_token = app.jwt.sign_access(
+            user.id,
+            &user.email,
+            &user.full_name,
+            user.verified,
+            user.account_provider.clone(),
+            user.role.clone(),
+        )?;
+        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
+        self.repo
+            .store_refresh_token(jti, user.id, &refresh_token, expires_at)
+            .await?;
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: user.into_response(),
+        })
+    }
 }
 
 fn verification_email_html(full_name: &str, otp: &str) -> String {
@@ -138,3 +203,16 @@ fn verification_email_html(full_name: &str, otp: &str) -> String {
         otp = otp
     )
 }
+
+// Concerning the verification via otp, here are some questions:
+//
+//
+//
+//
+//
+// I see the verify_email endpoint returns no data; if that is the case, how does the front-end automatically authenticate a registered user once verified, since the access & refresh token from the registration endpoint both carry old claims with verified=false​. I see the refresh​ endpoint, but I read somewhere that current industry standard leans towards sending the AuthResponse​ with on successful verification. Is this valid, and how does this pose any security risks? If the current method is superior, explain why.
+//
+//
+//
+// The login​ endpoint has a check for the user's verification; if false, it returns an early 403 error. Is this in support of good UI/UX? Isn't it better to allow the user log in but limit certain features until verified? I know this may be a bit more complex to code, but I believe it is better UX, so how would this change our current code and how would we ensure the main features are restricted until verification?
+//

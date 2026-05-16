@@ -84,6 +84,20 @@ impl User {
             deleted_at: self.deleted_at,
         }
     }
+    pub fn into_response_verified(self) -> UserResponse {
+        UserResponse {
+            id: self.id,
+            full_name: self.full_name,
+            bio: self.bio,
+            email: self.email,
+            account_provider: self.account_provider,
+            verified: true,
+            avatar_id: self.avatar_id,
+            avatar_url: self.avatar_url,
+            created_at: self.created_at,
+            deleted_at: self.deleted_at,
+        }
+    }
 }
 
 #[derive(Debug, Clone, FromRow)]
