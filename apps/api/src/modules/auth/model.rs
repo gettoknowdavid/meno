@@ -4,7 +4,6 @@ use sqlx::FromRow;
 use strum::{AsRefStr, Display, EnumString};
 use time::OffsetDateTime;
 use uuid::Uuid;
-use validator::Validate;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display, AsRefStr, EnumString)]
 #[strum(serialize_all = "lowercase")]
@@ -14,6 +13,15 @@ pub enum UserRole {
     User,
     Admin,
 }
+impl From<String> for UserRole {
+    fn from(s: String) -> Self {
+        match s.to_lowercase().as_str() {
+            "admin" => UserRole::Admin,
+            _ => UserRole::User,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Display, AsRefStr, EnumString)]
 #[strum(serialize_all = "lowercase")]
 #[derive(sqlx::Type)]
@@ -24,16 +32,6 @@ pub enum AccountProvider {
     Apple,
     Facebook,
 }
-
-impl From<String> for UserRole {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "admin" => UserRole::Admin,
-            _ => UserRole::User,
-        }
-    }
-}
-
 impl From<String> for AccountProvider {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {

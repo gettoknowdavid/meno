@@ -8,7 +8,6 @@ use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::services::email::EmailService;
 use crate::state::MenoState;
-use time::{Duration, OffsetDateTime};
 
 #[derive(Clone)]
 pub struct AuthService {
