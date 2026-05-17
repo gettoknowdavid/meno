@@ -29,7 +29,9 @@ CREATE TABLE public.refresh_tokens
     expires_at TIMESTAMPTZ(3) NOT NULL
 );
 
+CREATE INDEX idx_refresh_tokens_jti ON refresh_tokens (id);
 CREATE INDEX idx_refresh_tokens_user_id ON refresh_tokens (user_id);
+CREATE INDEX idx_refresh_tokens_expires_at ON refresh_tokens (expires_at);
 
 -- OTP
 CREATE TABLE public.otps

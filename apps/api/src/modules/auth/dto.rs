@@ -34,6 +34,11 @@ pub struct LoginRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
+pub struct LogoutRequest {
+    pub refresh_token: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct RefreshTokenRequest {
     #[validate(length(min = 1, message = "Refresh token is required"))]
     pub refresh_token: String,

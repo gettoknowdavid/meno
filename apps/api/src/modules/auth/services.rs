@@ -1,6 +1,7 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, RegisterRequest, ResendOtpRequest, VerifyEmailRequest,
+    AuthResponse, LoginRequest, LogoutRequest, RegisterRequest, ResendOtpRequest,
+    VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::OtpType;
@@ -168,6 +169,13 @@ impl AuthService {
             refresh_token,
             user: user.into_response(),
         })
+    }
+
+    pub async fn logout(&self, app: &MenoState, req: &LogoutRequest) -> Result<(), AuthError> {
+        let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
+        self.repo.revoke_refresh_token(claims.jti).await?;
+        self.repo.revoke_all_refresh_tokens(claims.sub).await?;
+        Ok(())
     }
 
     // Helper functions

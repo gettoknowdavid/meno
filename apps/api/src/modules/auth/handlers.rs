@@ -1,5 +1,6 @@
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, RegisterRequest, ResendOtpRequest, VerifyEmailRequest,
+    AuthResponse, LoginRequest, LogoutRequest, RegisterRequest, ResendOtpRequest,
+    VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
@@ -32,9 +33,7 @@ pub async fn resend_otp(
     MenoJson(body): MenoJson<ResendOtpRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth_service
-        .resend_otp(&app, &body)
-        .await?;
+    app.auth_service.resend_otp(&app, &body).await?;
     Ok(MenoResponse::no_content("Verification email resent"))
 }
 
@@ -45,4 +44,13 @@ pub async fn login(
     body.validate()?;
     let user = app.auth_service.login(&app, &body).await?;
     Ok(MenoResponse::ok("Login successful", user))
+}
+
+pub async fn logout(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<LogoutRequest>,
+) -> Result<MenoResponse<()>, AuthError> {
+    body.validate()?;
+    app.auth_service.logout(&app, &body).await?;
+    Ok(MenoResponse::no_content("Logout successful"))
 }
