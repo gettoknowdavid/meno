@@ -185,6 +185,39 @@ impl AuthRepository {
         }
         Ok(())
     }
+    pub async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError> {
+        let mut total_deleted: u64 = 0;
+        loop {
+            let chunk_deleted: Option<i64> = sqlx::query_scalar!(
+                r#"
+                WITH deleted_rows AS (
+                    DELETE FROM refresh_tokens
+                    WHERE id IN (
+                        SELECT id FROM refresh_tokens
+                        WHERE expires_at < NOW()
+                        LIMIT 5000
+                    )
+                    RETURNING 1
+                )
+                SELECT COUNT(*) FROM deleted_rows;
+                "#
+            )
+            .fetch_one(&self.db)
+            .await
+            .map_err(AuthError::Database)?;
+
+            let count = chunk_deleted.unwrap_or(0) as u64;
+            total_deleted += count;
+
+            if count < 5000 {
+                // Breaks out of the loop cleanly
+                break;
+            }
+
+            tokio::task::yield_now().await;
+        }
+        Ok(total_deleted)
+    }
 
     // Redis
     pub async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
