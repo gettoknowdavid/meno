@@ -1,6 +1,6 @@
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, LogoutRequest, RegisterRequest, ResendOtpRequest,
-    VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
+    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
@@ -53,4 +53,22 @@ pub async fn logout(
     body.validate()?;
     app.auth_service.logout(&app, &body).await?;
     Ok(MenoResponse::no_content("Logout successful"))
+}
+
+pub async fn forgot_password(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<ForgotPasswordRequest>,
+) -> Result<MenoResponse<()>, AuthError> {
+    body.validate()?;
+    app.auth_service.forgot_password(&app, &body).await?;
+    Ok(MenoResponse::no_content("Password reset email sent"))
+}
+
+pub async fn reset_password(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<ResetPasswordRequest>,
+) -> Result<MenoResponse<()>, AuthError> {
+    body.validate()?;
+    app.auth_service.reset_password(&body).await?;
+    Ok(MenoResponse::no_content("Password reset successful"))
 }

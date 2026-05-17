@@ -1,10 +1,10 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, LoginRequest, LogoutRequest, RegisterRequest, ResendOtpRequest,
-    VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
+    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::model::OtpType;
+use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
 use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::services::email::EmailService;
@@ -30,18 +30,12 @@ impl AuthService {
             return Err(AuthError::EmailTaken);
         }
 
-        let pwd_hash = tokio::task::spawn_blocking({
-            let password = req.password.clone();
-            move || hash_password(&password)
-        })
-        .await
-        .map_err(|e| AuthError::Internal(e.into()))?
-        .map_err(|_| AuthError::PasswordHash)?;
+        let pwd_hash = self.spawn_hash_pwd(req.password.clone()).await?;
 
         let user = self.repo.create(&req, pwd_hash).await?;
         let email = user.email.clone();
 
-        let otp = self.repo.set_verification_otp(&email).await?;
+        let otp = self.repo.store_otp(&email, VerifyEmail).await?;
 
         let html = verification_email_html(&user.full_name, &otp);
         self.send_email(&app.config, req.email.clone(), html).await;
@@ -81,7 +75,7 @@ impl AuthService {
             return Err(AuthError::EmailAlreadyVerified);
         }
 
-        if !self.repo.verify_otp(&req.email, &req.code).await? {
+        if !self.repo.verify_otp(&req.email, &req.code, &VerifyEmail).await? {
             return Err(AuthError::InvalidOtp);
         }
 
@@ -119,7 +113,7 @@ impl AuthService {
         };
 
         match &req.otp_type {
-            OtpType::VerifyEmail if user.verified => return Err(AuthError::EmailAlreadyVerified),
+            VerifyEmail if user.verified => return Err(AuthError::EmailAlreadyVerified),
             _ => {}
         };
 
@@ -127,12 +121,17 @@ impl AuthService {
             return Err(AuthError::TooManyRequests);
         }
 
-        self.repo.revoke_otp(&req.email).await?;
-        let otp = self.repo.set_verification_otp(&req.email).await?;
+        self.repo
+            .revoke_otp(&req.email, req.otp_type.clone())
+            .await?;
+        let otp = self
+            .repo
+            .store_otp(&req.email, req.otp_type.clone())
+            .await?;
 
         let html = match &req.otp_type {
-            OtpType::VerifyEmail => verification_email_html(&user.full_name, &otp),
-            OtpType::ResetPassword => reset_password_email_html(&user.full_name, &otp),
+            VerifyEmail => verification_email_html(&user.full_name, &otp),
+            ResetPassword => reset_password_email_html(&user.full_name, &otp),
         };
 
         self.send_email(&app.config, req.email.clone(), html).await;
@@ -171,10 +170,39 @@ impl AuthService {
         })
     }
 
+    pub async fn forgot_password(
+        &self,
+        app: &MenoState,
+        req: &ForgotPasswordRequest,
+    ) -> Result<(), AuthError> {
+        let user = match self.repo.find_by_email(&req.email).await? {
+            Some(u) => u,
+            None => return Ok(()),
+        };
+        let otp = self.repo.store_otp(&req.email, ResetPassword).await?;
+        let html = reset_password_email_html(&user.full_name, &otp);
+        self.send_email(&app.config, req.email.clone(), html).await;
+        Ok(())
+    }
+
+    pub async fn reset_password(&self, req: &ResetPasswordRequest) -> Result<(), AuthError> {
+        let user = match self.repo.find_by_email(&req.email).await? {
+            Some(value) => value,
+            None => return Ok(()),
+        };
+        if !self.repo.verify_otp(&user.email, &req.code, &ResetPassword).await? {
+            return Err(AuthError::InvalidOtp);
+        }
+        let pwd_hash = self.spawn_hash_pwd(req.new_password.clone()).await?;
+        self.repo.update_password(&user.email, pwd_hash).await?;
+        self.repo.revoke_otp(&user.email, ResetPassword).await?;
+        self.repo.revoke_all_refresh_tokens(user.id).await?;
+        Ok(())
+    }
+
     pub async fn logout(&self, app: &MenoState, req: &LogoutRequest) -> Result<(), AuthError> {
         let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
         self.repo.revoke_refresh_token(claims.jti).await?;
-        self.repo.revoke_all_refresh_tokens(claims.sub).await?;
         Ok(())
     }
 
@@ -187,6 +215,15 @@ impl AuthService {
                 tracing::info!(email = %to, "Verification email resent");
             }
         });
+    }
+    async fn spawn_hash_pwd(&self, password: String) -> Result<String, AuthError> {
+        tokio::task::spawn_blocking({
+            let password = password.clone();
+            move || hash_password(&password)
+        })
+        .await
+        .map_err(|e| AuthError::Internal(e.into()))?
+        .map_err(|_| AuthError::PasswordHash)
     }
 }
 

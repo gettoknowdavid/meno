@@ -1,1 +1,0 @@
-ALTER TABLE otps ADD CONSTRAINT otps_email_unique UNIQUE (email);

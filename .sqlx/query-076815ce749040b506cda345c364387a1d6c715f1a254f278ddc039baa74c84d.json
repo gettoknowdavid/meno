@@ -1,14 +1,15 @@
 {
   "db_name": "PostgreSQL",
-  "query": "UPDATE otps SET used = true WHERE email = $1",
+  "query": "UPDATE users SET password = $1 WHERE email = $2",
   "describe": {
     "columns": [],
     "parameters": {
       "Left": [
+        "Text",
         "Text"
       ]
     },
     "nullable": []
   },
-  "hash": "01b82db4c102e81f4e1a5d333580ca56619e1e5e0dcf8d3388fddabcdf3f7404"
+  "hash": "076815ce749040b506cda345c364387a1d6c715f1a254f278ddc039baa74c84d"
 }

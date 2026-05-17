@@ -42,7 +42,9 @@ CREATE TABLE public.otps
     type       TEXT    NOT NULL CHECK ( type IN ('verify_email', 'reset_password') ),
     used       BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
-    expires_at TIMESTAMPTZ(3) NOT NULL
+    expires_at TIMESTAMPTZ(3) NOT NULL,
+
+    CONSTRAINT otps_email_type_unique UNIQUE (email, type)
 );
 
 CREATE INDEX idx_otps_email ON otps (email);

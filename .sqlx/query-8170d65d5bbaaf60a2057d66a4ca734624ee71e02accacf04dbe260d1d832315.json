@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT code, expires_at, used FROM otps WHERE email = $1 AND type = 'verify_email'",
+  "query": "SELECT code, expires_at, used FROM otps WHERE email = $1 AND type = $2",
   "describe": {
     "columns": [
       {
@@ -21,6 +21,7 @@
     ],
     "parameters": {
       "Left": [
+        "Text",
         "Text"
       ]
     },
@@ -30,5 +31,5 @@
       false
     ]
   },
-  "hash": "b58604ff721e629fda3ce3e4f5100b38ab64bc29cae68ce316bcbb16dae9a533"
+  "hash": "8170d65d5bbaaf60a2057d66a4ca734624ee71e02accacf04dbe260d1d832315"
 }

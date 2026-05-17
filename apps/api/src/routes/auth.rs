@@ -10,4 +10,6 @@ pub fn router() -> Router<std::sync::Arc<MenoState>> {
         .route("/resend-otp", post(handlers::resend_otp))
         .route("/login", post(handlers::login))
         .route("/logout", post(handlers::logout))
+        .route("/forgot-password", post(handlers::forgot_password))
+        .route("/reset-password", post(handlers::reset_password))
 }
