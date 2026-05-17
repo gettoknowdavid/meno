@@ -1,7 +1,7 @@
 use crate::modules::auth::dto::RegisterRequest;
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt_service::hash_token;
-use crate::modules::auth::model::{AccountProvider, OtpType, User};
+use crate::modules::auth::model::{AccountProvider, OtpType, RefreshToken, User};
 use crate::modules::auth::utils::generate_otp;
 use fred::prelude::*;
 use time::{Duration, OffsetDateTime};
@@ -74,6 +74,12 @@ impl AuthRepository {
             .await
             .map_err(AuthError::Database)
     }
+    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
+        sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
+            .fetch_optional(&self.db)
+            .await
+            .map_err(AuthError::Database)
+    }
     pub async fn user_exists(&self, email: &str) -> Result<bool, AuthError> {
         sqlx::query_scalar!(
             r#"SELECT EXISTS (SELECT 1 FROM users WHERE email = $1) AS "exists!""#,
@@ -108,6 +114,54 @@ impl AuthRepository {
         .execute(&self.db)
         .await
         .map_err(AuthError::Database)?;
+        Ok(())
+    }
+    pub async fn find_refresh_token(
+        &self,
+        jti: Uuid,
+        user_id: Uuid,
+    ) -> Result<Option<RefreshToken>, AuthError> {
+        sqlx::query_as!(
+            RefreshToken,
+            r#"SELECT * FROM refresh_tokens WHERE id = $1 AND user_id = $2"#,
+            jti,
+            user_id
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(AuthError::Database)
+    }
+    pub async fn rotate_refresh_token(
+        &self,
+        user_id: Uuid,
+        old_jti: Uuid,
+        new_jti: Uuid,
+        new_token: &str,
+    ) -> Result<(), AuthError> {
+        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+
+        sqlx::query!(
+            "DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2",
+            old_jti,
+            user_id
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(AuthError::Database)?;
+
+        sqlx::query!(
+            r#"INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
+               VALUES ($1, $2, $3, $4)"#,
+            new_jti,
+            user_id,
+            hash_token(new_token),
+            OffsetDateTime::now_utc() + Duration::days(30)
+        )
+        .execute(&mut *tx)
+        .await
+        .map_err(AuthError::Database)?;
+
+        tx.commit().await.map_err(AuthError::Database)?;
         Ok(())
     }
     pub async fn revoke_refresh_token(&self, jti: Uuid) -> Result<(), AuthError> {

@@ -12,4 +12,5 @@ pub fn router() -> Router<std::sync::Arc<MenoState>> {
         .route("/logout", post(handlers::logout))
         .route("/forgot-password", post(handlers::forgot_password))
         .route("/reset-password", post(handlers::reset_password))
+        .route("/refresh", post(handlers::refresh))
 }

@@ -1,6 +1,6 @@
 use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshTokenRequest,
+    RegisterRequest, ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
@@ -44,6 +44,15 @@ pub async fn login(
     body.validate()?;
     let user = app.auth_service.login(&app, &body).await?;
     Ok(MenoResponse::ok("Login successful", user))
+}
+
+pub async fn refresh(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<RefreshTokenRequest>,
+) -> Result<MenoResponse<AuthResponse>, AuthError> {
+    body.validate()?;
+    let user = app.auth_service.refresh(&app, &body).await?;
+    Ok(MenoResponse::ok("Token refreshed successfully", user))
 }
 
 pub async fn logout(

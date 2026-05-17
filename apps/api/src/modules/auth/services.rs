@@ -1,9 +1,10 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshTokenRequest,
+    RegisterRequest, ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
+use crate::modules::auth::jwt_service::verify_token_hash;
 use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
 use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
@@ -75,7 +76,11 @@ impl AuthService {
             return Err(AuthError::EmailAlreadyVerified);
         }
 
-        if !self.repo.verify_otp(&req.email, &req.code, &VerifyEmail).await? {
+        if !self
+            .repo
+            .verify_otp(&req.email, &req.code, &VerifyEmail)
+            .await?
+        {
             return Err(AuthError::InvalidOtp);
         }
 
@@ -190,7 +195,11 @@ impl AuthService {
             Some(value) => value,
             None => return Ok(()),
         };
-        if !self.repo.verify_otp(&user.email, &req.code, &ResetPassword).await? {
+        if !self
+            .repo
+            .verify_otp(&user.email, &req.code, &ResetPassword)
+            .await?
+        {
             return Err(AuthError::InvalidOtp);
         }
         let pwd_hash = self.spawn_hash_pwd(req.new_password.clone()).await?;
@@ -204,6 +213,43 @@ impl AuthService {
         let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
         self.repo.revoke_refresh_token(claims.jti).await?;
         Ok(())
+    }
+
+    pub async fn refresh(
+        &self,
+        app: &MenoState,
+        req: &RefreshTokenRequest,
+    ) -> Result<AuthResponse, AuthError> {
+        let claims = app.jwt.decode_refresh(&req.refresh_token)?;
+        let user = match self.repo.find_by_id(claims.sub).await? {
+            None => return Err(AuthError::UserNotFound),
+            Some(value) => value,
+        };
+        let stored = self
+            .repo
+            .find_refresh_token(claims.jti, claims.sub)
+            .await?
+            .ok_or(AuthError::RefreshTokenNotFound)?;
+        if !verify_token_hash(&req.refresh_token, &stored.token_hash) {
+            return Err(AuthError::InvalidToken);
+        }
+        let access_token = app.jwt.sign_access(
+            user.id,
+            &user.email,
+            &user.full_name,
+            user.verified,
+            user.account_provider.clone(),
+            user.role.clone(),
+        )?;
+        let (new_refresh_token, new_jti) = app.jwt.sign_refresh(claims.sub)?;
+        self.repo
+            .rotate_refresh_token(user.id, claims.jti, new_jti, &new_refresh_token)
+            .await?;
+        Ok(AuthResponse {
+            access_token,
+            refresh_token: new_refresh_token,
+            user: user.into_response(),
+        })
     }
 
     // Helper functions
