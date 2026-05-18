@@ -1,3 +1,6 @@
+[[bin]]
+name = "meno-api"
+
 [package]
 name = "meno-api"
 version = "0.1.0"
@@ -8,14 +11,29 @@ anyhow = "1.0.102"
 axum = { version = "0.8.9", features = ["multipart", "ws", "macros"] }
 dotenvy = "0.15.7"
 fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts", "native-tls", "enable-native-tls"] }
+jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
 sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "time", "uuid"] }
 thiserror = "2.0.18"
-time = { version = "0.3.47", features = ["serde"] }
+time = { version = "0.3.47", features = ["serde", "serde-well-known"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tower = "0.5.3"
 tower-http = { version = "0.6.8", features = ["cors", "trace", "timeout"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
+validator = { version = "0.20.0", features = ["derive"] }
+regex = "1.12.3"
+once_cell = "1.21.4"
+axum-prometheus = "0.10.0"
+argon2 = "0.5.3"
+strum = { version = "0.28", features = ["derive"] }
+lettre = { version = "0.11.22", features = ["tokio1-native-tls", "builder"] }
+rand = "0.10.1"
+sha2 = "0.11.0"
+hex = "0.4.3"
+moka = { version = "0.12.15", features = ["future"] }
+tokio-util = "0.7.18"
+oauth2 = { version = "5.0.0", features = ["reqwest", "reqwest-blocking"] }
+reqwest = { version = "0.13.3", features = ["json", "blocking"] }

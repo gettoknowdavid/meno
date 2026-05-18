@@ -15,10 +15,12 @@ pub struct MenoConfig {
     // pub cloudinary_url: String,
 
     // pub firebase_service_account_url: String,
+    pub google_client_id: String,
+    pub google_client_secret: String,
+    pub google_redirect_uri: String,
+    pub google_auth_uri: String,
+    pub google_token_uri: String,
 
-    // pub google_client_id: String,
-    // pub google_secret: String,
-    // pub google_accounts_password: String,
     pub database_url: String,
 
     pub env: String,
@@ -34,6 +36,12 @@ pub struct MenoConfig {
     pub default_rate_limit: RateLimitConfig,
 
     pub origins: Vec<String>,
+
+    pub smtp_host: String,
+    pub smtp_port: u16,
+    pub smtp_user: String,
+    pub smtp_password: String,
+    pub smtp_from: String,
 }
 
 impl MenoConfig {
@@ -48,9 +56,13 @@ impl MenoConfig {
             // email_url: var("EMAIL_URL").context("EMAIL_URL is missing")?,
             // cloudinary_url: var("CLOUDINARY_URL").context("CLOUDINARY_URL is missing")?,
             // firebase_service_account_url: var("FIREBASE_SERVICE_ACCOUNT_URL").context("FIREBASE_SERVICE_ACCOUNT_URL is missing")?,
-            // google_client_id: var("GOOGLE_CLIENT_ID").context("GOOGLE_CLIENT_ID is missing")?,
-            // google_secret: var("GOOGLE_SECRET").context("GOOGLE_SECRET is missing")?,
-            // google_accounts_password: var("GOOGLE_ACCOUNTS_PASSWORD").context("GOOGLE_ACCOUNTS_PASSWORD is missing")?,
+            google_client_id: var("GOOGLE_CLIENT_ID").context("GOOGLE_CLIENT_ID is missing")?,
+            google_client_secret: var("GOOGLE_CLIENT_SECRET")
+                .context("GOOGLE_CLIENT_SECRET is missing")?,
+            google_redirect_uri: var("GOOGLE_REDIRECT_URI")
+                .context("GOOGLE_REDIRECT_URI is missing")?,
+            google_auth_uri: var("GOOGLE_AUTH_URI").context("GOOGLE_AUTH_URI is missing")?,
+            google_token_uri: var("GOOGLE_TOKEN_URI").context("GOOGLE_TOKEN_URI is missing")?,
             database_url: var("DATABASE_URL").context("DATABASE_URL is missing")?,
             env: var("ENV").unwrap_or_else(|_| "dev".to_string()),
             port: var("PORT")
@@ -74,6 +86,14 @@ impl MenoConfig {
                 "https://app.yourdomain.com".to_string(),
                 "https://staging.yourdomain.com".to_string(),
             ],
+            smtp_host: var("SMTP_HOST").context("SMTP_HOST is missing")?,
+            smtp_port: var("SMTP_PORT")
+                .unwrap_or_else(|_| "465".to_string())
+                .parse::<u16>()
+                .context("SMTP_PORT must be a valid number")?,
+            smtp_user: var("SMTP_USER").context("SMTP_USER is missing")?,
+            smtp_password: var("SMTP_PASSWORD").context("SMTP_PASSWORD is missing")?,
+            smtp_from: var("SMTP_FROM").context("SMTP_FROM is missing")?,
         })
     }
 }

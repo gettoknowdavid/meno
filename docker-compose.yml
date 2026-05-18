@@ -1,22 +1,90 @@
 services:
+  api:
+    build:
+      context: .
+      network: host
+      args: [ ]   # no longer needed
+    container_name: meno-api
+    environment:
+      - RUST_LOG=info
+      - DATABASE_URL=postgres://meno:password@postgres:5432/meno_dev   # runtime
+    ports:
+      - "8080:8080"
+    networks:
+      - meno-network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   postgres:
-    image: postgres:18
+    image: postgres:16
     environment:
       POSTGRES_DB: meno_dev
       POSTGRES_USER: meno
       POSTGRES_PASSWORD: password
     ports: [ "5432:5432" ]
+    networks:
+      - meno-network
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "meno", "-d", "meno_dev"]
+      interval: 3s
+      timeout: 3s
+      retries: 5
 
   redis:
     image: redis:8-alpine
     ports: [ "6379:6379" ]
+    networks:
+      - meno-network
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes
 
   prometheus:
     image: prom/prometheus
-    volumes: [ "./resources/prometheus:/etc/prometheus" ]
+    volumes:
+      - "./resources/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml"
     ports: [ "9090:9090" ]
+    networks:
+      - meno-network
+    depends_on:
+      - api
+
+  loki:
+    image: grafana/loki:latest
+    ports:
+      - "3100:3100"
+    networks:
+      - meno-network
+
+  promtail:
+    image: grafana/promtail:latest
+    container_name: meno-promtail
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./resources/promtail/promtail-config.yml:/etc/promtail/config.yml:ro
+    command: -config.file=/etc/promtail/config.yml
+    networks:
+      - meno-network
+    depends_on:
+      - loki
+    restart: unless-stopped
 
   grafana:
     image: grafana/grafana
     ports: [ "3001:3000" ]
-    depends_on: [ prometheus ]
+    networks:
+      - meno-network
+    depends_on:
+      - prometheus
+      - loki
+
+networks:
+  meno-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:

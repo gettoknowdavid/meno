@@ -2,15 +2,12 @@ use meno_api::config::MenoConfig;
 use meno_api::database::create_postgres_pool;
 use meno_api::shared::services::redis::RedisService;
 use meno_api::shared::signals::shutdown_signal;
+use meno_api::shared::telemetry::init_telemetry;
 use meno_api::state::build_app_router;
-use tracing_subscriber::{EnvFilter, fmt, prelude::*, util::SubscriberInitExt};
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::registry()
-        .with(EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()))
-        .with(fmt::layer().json())
-        .init();
+    init_telemetry();
 
     let config = MenoConfig::from_env()?;
 
