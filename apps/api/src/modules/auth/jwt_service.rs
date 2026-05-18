@@ -1,5 +1,5 @@
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::model::{AccountProvider, UserRole};
+use crate::modules::auth::model::{AuthProvider, UserRole};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -19,7 +19,7 @@ pub struct AccessClaims {
     pub email: String,
     pub full_name: String,
     pub verified: bool,
-    pub account_provider: AccountProvider,
+    pub providers: Vec<AuthProvider>,
     pub role: UserRole,
     pub exp: u64,
     pub iat: u64,
@@ -75,7 +75,7 @@ impl JwtService {
         email: &str,
         full_name: &str,
         verified: bool,
-        account_provider: AccountProvider,
+        providers: Vec<AuthProvider>,
         role: UserRole,
     ) -> Result<String, AuthError> {
         let now = now_unix();
@@ -85,7 +85,7 @@ impl JwtService {
             email: email.to_string(),
             full_name: full_name.to_string(),
             verified,
-            account_provider,
+            providers,
             role,
             exp: now + self.access_expires_in,
             iat: now,
@@ -180,7 +180,7 @@ mod tests {
                 &TEST_EMAIL,
                 &TEST_FULL_NAME,
                 true,
-                AccountProvider::Email,
+                Vec::from([AuthProvider::Email]),
                 UserRole::User,
             )
             .expect("sign_access should succeed");
@@ -231,7 +231,7 @@ mod tests {
                 &TEST_EMAIL,
                 &TEST_FULL_NAME,
                 true,
-                AccountProvider::Email,
+                Vec::from([AuthProvider::Email]),
                 UserRole::User,
             )
             .expect("sign should succeed");

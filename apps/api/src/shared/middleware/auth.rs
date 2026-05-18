@@ -1,5 +1,5 @@
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::model::{AccountProvider, UserRole};
+use crate::modules::auth::model::{AuthProvider, UserRole};
 use crate::state::MenoState;
 use axum::{extract::Request, extract::State, middleware::Next, response::Response};
 use serde::Serialize;
@@ -13,7 +13,7 @@ pub struct AuthUser {
     pub full_name: String,
     pub email: String,
     pub verified: bool,
-    pub account_provider: AccountProvider,
+    pub providers: Vec<AuthProvider>,
     pub role: UserRole,
 }
 
@@ -41,7 +41,7 @@ pub async fn auth_middleware(
         full_name: claims.full_name,
         email: claims.email,
         verified: claims.verified,
-        account_provider: claims.account_provider,
+        providers: claims.providers,
         role: claims.role,
     });
 

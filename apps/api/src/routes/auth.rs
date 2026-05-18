@@ -1,6 +1,6 @@
 use crate::modules::auth::handlers;
 use crate::state::MenoState;
-use axum::{Router, routing::post};
+use axum::{Router, routing::get, routing::post};
 
 pub fn router() -> Router<std::sync::Arc<MenoState>> {
     Router::new()
@@ -13,4 +13,7 @@ pub fn router() -> Router<std::sync::Arc<MenoState>> {
         .route("/forgot-password", post(handlers::forgot_password))
         .route("/reset-password", post(handlers::reset_password))
         .route("/refresh", post(handlers::refresh))
+        .route("/google/url", get(handlers::google_auth_url))
+        .route("/google/web", post(handlers::google_web_callback))
+        .route("/google/mobile", post(handlers::google_mobile_auth))
 }

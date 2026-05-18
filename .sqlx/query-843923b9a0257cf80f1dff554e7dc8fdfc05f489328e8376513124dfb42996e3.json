@@ -25,46 +25,36 @@
       },
       {
         "ordinal": 4,
-        "name": "password",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 5,
         "name": "avatar_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "avatar_url",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "verified",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "role",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
-        "name": "account_provider",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 10,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 10,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       }
@@ -79,10 +69,8 @@
       false,
       true,
       false,
-      false,
       true,
       true,
-      false,
       false,
       false,
       false,

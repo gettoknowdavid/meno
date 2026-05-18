@@ -1,4 +1,3 @@
-use crate::modules::auth::dto::UserResponse;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use std::fmt::Display;
@@ -27,19 +26,19 @@ impl From<String> for UserRole {
 #[strum(serialize_all = "lowercase")]
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
-pub enum AccountProvider {
+pub enum AuthProvider {
     Email,
     Google,
     Apple,
     Facebook,
 }
-impl From<String> for AccountProvider {
+impl From<String> for AuthProvider {
     fn from(s: String) -> Self {
         match s.to_lowercase().as_str() {
-            "google" => AccountProvider::Google,
-            "apple" => AccountProvider::Apple,
-            "facebook" => AccountProvider::Facebook,
-            _ => AccountProvider::Email,
+            "google" => AuthProvider::Google,
+            "apple" => AuthProvider::Apple,
+            "facebook" => AuthProvider::Facebook,
+            _ => AuthProvider::Email,
         }
     }
 }
@@ -71,42 +70,26 @@ pub struct User {
     pub avatar_id: Option<String>,
     pub avatar_url: Option<String>,
     pub verified: bool,
-    pub account_provider: AccountProvider,
     pub role: UserRole,
-    pub password: String,
     pub created_at: OffsetDateTime,
     pub updated_at: OffsetDateTime,
     pub deleted_at: Option<OffsetDateTime>,
 }
-impl User {
-    pub fn into_response(self) -> UserResponse {
-        UserResponse {
-            id: self.id,
-            full_name: self.full_name,
-            bio: self.bio,
-            email: self.email,
-            account_provider: self.account_provider,
-            verified: self.verified,
-            avatar_id: self.avatar_id,
-            avatar_url: self.avatar_url,
-            created_at: self.created_at,
-            deleted_at: self.deleted_at,
-        }
-    }
-    pub fn into_response_verified(self) -> UserResponse {
-        UserResponse {
-            id: self.id,
-            full_name: self.full_name,
-            bio: self.bio,
-            email: self.email,
-            account_provider: self.account_provider,
-            verified: true,
-            avatar_id: self.avatar_id,
-            avatar_url: self.avatar_url,
-            created_at: self.created_at,
-            deleted_at: self.deleted_at,
-        }
-    }
+
+#[derive(Debug, Clone, FromRow)]
+pub struct UserIdentity {
+    pub id: Uuid,
+    pub user_id: Uuid,
+    pub provider_type: AuthProvider,
+    pub provider_user_id: String,
+    pub password_hash: Option<String>,
+    pub created_at: OffsetDateTime,
+    pub updated_at: Option<OffsetDateTime>,
+}
+
+pub struct UserWithIdentity {
+    pub user: User,
+    pub identity: UserIdentity,
 }
 
 #[derive(Debug, Clone, FromRow)]

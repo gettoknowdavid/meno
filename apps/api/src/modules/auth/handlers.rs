@@ -1,6 +1,7 @@
 use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshTokenRequest,
-    RegisterRequest, ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
+    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
+    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::shared::middleware::json_rejection::MenoJson;
@@ -80,4 +81,29 @@ pub async fn reset_password(
     body.validate()?;
     app.auth_service.reset_password(&body).await?;
     Ok(MenoResponse::no_content("Password reset successful"))
+}
+
+pub async fn google_auth_url(
+    State(app): State<Arc<MenoState>>,
+) -> Result<MenoResponse<GoogleUrlResponse>, AuthError> {
+    let response = app.auth_service.google_authorize(&app).await?;
+    Ok(MenoResponse::ok("Google auth URL generated", response))
+}
+
+pub async fn google_web_callback(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<GoogleWebAuthRequest>,
+) -> Result<MenoResponse<AuthResponse>, AuthError> {
+    body.validate()?;
+    let response = app.auth_service.google_web_auth(&app, &body).await?;
+    Ok(MenoResponse::ok("Google authentication success", response))
+}
+
+pub async fn google_mobile_auth(
+    State(app): State<Arc<MenoState>>,
+    MenoJson(body): MenoJson<GoogleMobileAuthRequest>,
+) -> Result<MenoResponse<AuthResponse>, AuthError> {
+    body.validate()?;
+    let response = app.auth_service.google_mobile_auth(&app, &body).await?;
+    Ok(MenoResponse::ok("Google authentication success", response))
 }

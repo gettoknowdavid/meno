@@ -1,4 +1,4 @@
-use crate::modules::auth::model::{AccountProvider, OtpType, User};
+use crate::modules::auth::model::{AuthProvider, OtpType};
 use crate::modules::auth::validators::{validate_email, validate_password};
 
 use serde::{Deserialize, Serialize};
@@ -45,7 +45,16 @@ pub struct RefreshTokenRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct GoogleAuthRequest {
+pub struct GoogleWebAuthRequest {
+    #[validate(length(min = 1, message = "Authorization code is required"))]
+    pub code: String,
+
+    #[validate(length(min = 1, message = "State token is required"))]
+    pub state: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct GoogleMobileAuthRequest {
     #[validate(length(min = 1, message = "ID token is required"))]
     pub id_token: String,
 }
@@ -92,32 +101,16 @@ pub struct UserResponse {
     pub full_name: String,
     pub bio: Option<String>,
     pub email: String,
-    pub account_provider: AccountProvider,
     pub verified: bool,
     pub avatar_id: Option<String>,
     pub avatar_url: Option<String>,
+    pub providers: Vec<AuthProvider>,
 
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
 
     #[serde(with = "rfc3339::option")]
     pub deleted_at: Option<OffsetDateTime>,
-}
-impl From<User> for UserResponse {
-    fn from(user: User) -> Self {
-        Self {
-            id: user.id,
-            full_name: user.full_name,
-            bio: user.bio,
-            email: user.email,
-            account_provider: user.account_provider,
-            verified: user.verified,
-            avatar_id: user.avatar_id,
-            avatar_url: user.avatar_url,
-            created_at: user.created_at,
-            deleted_at: user.deleted_at,
-        }
-    }
 }
 
 #[derive(Debug, Serialize)]
@@ -131,4 +124,9 @@ pub struct AuthResponse {
 pub struct TokenResponse {
     pub access_token: String,
     pub refresh_token: String,
+}
+
+#[derive(Debug, Serialize)]
+pub struct GoogleUrlResponse {
+    pub url: String,
 }

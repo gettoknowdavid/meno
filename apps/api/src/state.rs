@@ -6,6 +6,7 @@ use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use std::sync::Arc;
 
 use crate::shared::background_jobs::BackgroundJobs;
+use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
 use axum::middleware::from_fn;
 use axum::{
@@ -33,6 +34,7 @@ pub struct MenoState {
     pub db: PgPool,
     pub redis: Pool,
     pub jwt: JwtService,
+    pub google: GoogleAuthService,
     pub local_rate_cache: Cache<String, u64>,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
@@ -59,6 +61,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
         background_jobs: background_jobs.clone(),
+        google: GoogleAuthService::new(&config),
         jwt,
         local_rate_cache,
         config,

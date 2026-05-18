@@ -1,13 +1,16 @@
 use crate::config::MenoConfig;
 use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, LoginRequest, LogoutRequest, RefreshTokenRequest,
-    RegisterRequest, ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
+    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
+    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
+    ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt_service::verify_token_hash;
 use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
+use crate::modules::auth::model::{AuthProvider, User};
 use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
+use crate::shared::integrations::google::GoogleUserInfo;
 use crate::shared::services::email::EmailService;
 use crate::state::MenoState;
 
@@ -27,38 +30,32 @@ impl AuthService {
         app: &MenoState,
         req: &RegisterRequest,
     ) -> Result<AuthResponse, AuthError> {
-        if self.repo.user_exists(&req.email).await? {
+        let existing = self
+            .repo
+            .find_identity(&AuthProvider::Email, &req.email)
+            .await?;
+
+        if existing.is_some() {
             return Err(AuthError::EmailTaken);
         }
 
         let pwd_hash = self.spawn_hash_pwd(req.password.clone()).await?;
 
-        let user = self.repo.create(&req, pwd_hash).await?;
-        let email = user.email.clone();
+        let user = self
+            .repo
+            .create_user_tx(
+                &req.full_name,
+                &req.email,
+                Some(&pwd_hash),
+                &AuthProvider::Email,
+            )
+            .await?;
 
-        let otp = self.repo.store_otp(&email, VerifyEmail).await?;
-
+        let otp = self.repo.store_otp(&user.email, VerifyEmail).await?;
         let html = verification_email_html(&user.full_name, &otp);
         self.send_email(&app.config, req.email.clone(), html).await;
 
-        let access_token = app.jwt.sign_access(
-            user.id,
-            &user.full_name,
-            &user.email,
-            user.verified,
-            user.account_provider.clone(),
-            user.role.clone(),
-        )?;
-
-        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        self.repo
-            .store_refresh_token(jti, user.id, &refresh_token)
-            .await?;
-        Ok(AuthResponse {
-            access_token,
-            refresh_token,
-            user: user.into_response(),
-        })
+        self.issue_tokens(app, &user).await
     }
 
     pub async fn verify_email(
@@ -86,25 +83,7 @@ impl AuthService {
 
         self.repo.set_verified(&req.email).await?;
 
-        let access_token = app.jwt.sign_access(
-            user.id,
-            &user.full_name,
-            &user.email,
-            true,
-            user.account_provider.clone(),
-            user.role.clone(),
-        )?;
-
-        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        self.repo
-            .store_refresh_token(jti, user.id, &refresh_token)
-            .await?;
-
-        Ok(AuthResponse {
-            access_token,
-            refresh_token,
-            user: user.into_response_verified(),
-        })
+        self.issue_tokens(app, &user).await
     }
 
     pub async fn resend_otp(
@@ -149,30 +128,28 @@ impl AuthService {
         app: &MenoState,
         req: &LoginRequest,
     ) -> Result<AuthResponse, AuthError> {
-        let user = match self.repo.find_by_email(&req.email).await? {
-            None => return Err(AuthError::InvalidCredentials),
-            Some(value) => value,
-        };
-        if !verify_password(&req.password, &user.password) {
+        let identity = self
+            .repo
+            .find_identity(&AuthProvider::Email, &req.email)
+            .await?
+            .ok_or(AuthError::InvalidCredentials)?;
+
+        let password_hash = identity
+            .password_hash
+            .as_deref()
+            .ok_or(AuthError::InvalidCredentials)?;
+
+        if !verify_password(&req.password, password_hash) {
             return Err(AuthError::InvalidCredentials);
         }
-        let access_token = app.jwt.sign_access(
-            user.id,
-            &user.email,
-            &user.full_name,
-            user.verified,
-            user.account_provider.clone(),
-            user.role.clone(),
-        )?;
-        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-        self.repo
-            .store_refresh_token(jti, user.id, &refresh_token)
-            .await?;
-        Ok(AuthResponse {
-            access_token,
-            refresh_token,
-            user: user.into_response(),
-        })
+
+        let user = self
+            .repo
+            .find_by_id(identity.user_id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        self.issue_tokens(app, &user).await
     }
 
     pub async fn forgot_password(
@@ -203,7 +180,7 @@ impl AuthService {
             return Err(AuthError::InvalidOtp);
         }
         let pwd_hash = self.spawn_hash_pwd(req.new_password.clone()).await?;
-        self.repo.update_password(&user.email, pwd_hash).await?;
+        self.repo.update_password(user.id, pwd_hash).await?;
         self.repo.revoke_otp(&user.email, ResetPassword).await?;
         self.repo.revoke_all_refresh_tokens(user.id).await?;
         Ok(())
@@ -221,35 +198,64 @@ impl AuthService {
         req: &RefreshTokenRequest,
     ) -> Result<AuthResponse, AuthError> {
         let claims = app.jwt.decode_refresh(&req.refresh_token)?;
+
         let user = match self.repo.find_by_id(claims.sub).await? {
             None => return Err(AuthError::UserNotFound),
             Some(value) => value,
         };
+
         let stored = self
             .repo
             .find_refresh_token(claims.jti, claims.sub)
             .await?
             .ok_or(AuthError::RefreshTokenNotFound)?;
+
         if !verify_token_hash(&req.refresh_token, &stored.token_hash) {
             return Err(AuthError::InvalidToken);
         }
-        let access_token = app.jwt.sign_access(
-            user.id,
-            &user.email,
-            &user.full_name,
-            user.verified,
-            user.account_provider.clone(),
-            user.role.clone(),
-        )?;
-        let (new_refresh_token, new_jti) = app.jwt.sign_refresh(claims.sub)?;
+
+        self.issue_tokens(app, &user).await
+    }
+
+    pub async fn google_authorize(&self, app: &MenoState) -> Result<GoogleUrlResponse, AuthError> {
+        let (url, csrf_token, pkce_code_verifier) = app.google.authorize_url();
         self.repo
-            .rotate_refresh_token(user.id, claims.jti, new_jti, &new_refresh_token)
+            .store_oauth_state(csrf_token.secret(), pkce_code_verifier.secret())
             .await?;
-        Ok(AuthResponse {
-            access_token,
-            refresh_token: new_refresh_token,
-            user: user.into_response(),
+        Ok(GoogleUrlResponse {
+            url: url.to_string(),
         })
+    }
+
+    pub async fn google_web_auth(
+        &self,
+        app: &MenoState,
+        req: &GoogleWebAuthRequest,
+    ) -> Result<AuthResponse, AuthError> {
+        let raw_verifier = self.repo.consumes_oauth_state(&req.state).await?;
+        let pkce_code_verifier = oauth2::PkceCodeVerifier::new(raw_verifier);
+
+        let userinfo = app
+            .google
+            .exchange_code(req.code.clone(), pkce_code_verifier)
+            .await
+            .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
+
+        self.upsert_google_user(app, &userinfo).await
+    }
+
+    pub async fn google_mobile_auth(
+        &self,
+        app: &MenoState,
+        req: &GoogleMobileAuthRequest,
+    ) -> Result<AuthResponse, AuthError> {
+        let userinfo = app
+            .google
+            .verify_id_token(&req.id_token)
+            .await
+            .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
+
+        self.upsert_google_user(app, &userinfo).await
     }
 
     // Helper functions
@@ -270,6 +276,78 @@ impl AuthService {
         .await
         .map_err(|e| AuthError::Internal(e.into()))?
         .map_err(|_| AuthError::PasswordHash)
+    }
+    async fn upsert_google_user(
+        &self,
+        app: &MenoState,
+        userinfo: &GoogleUserInfo,
+    ) -> Result<AuthResponse, AuthError> {
+        let existing_identity = self
+            .repo
+            .find_identity(&AuthProvider::Google, &userinfo.sub)
+            .await?;
+
+        let user = if let Some(identity) = existing_identity {
+            self.repo
+                .find_by_id(identity.user_id)
+                .await?
+                .ok_or(AuthError::UserNotFound)?
+        } else {
+            let existing_user = self.repo.find_by_email(&userinfo.email).await?;
+            if let Some(user) = existing_user {
+                self.repo
+                    .link_provider(user.id, &AuthProvider::Google, &userinfo.sub)
+                    .await?;
+                user
+            } else {
+                let user = self
+                    .repo
+                    .create_user_tx(&userinfo.name, &userinfo.email, None, &AuthProvider::Google)
+                    .await?;
+
+                if userinfo.email_verified {
+                    self.repo.set_verified(&userinfo.email).await?;
+                }
+
+                user
+            }
+        };
+
+        self.issue_tokens(app, &user).await
+    }
+    async fn issue_tokens(&self, app: &MenoState, user: &User) -> Result<AuthResponse, AuthError> {
+        let providers = self.repo.find_user_providers(user.id).await?;
+
+        let access_token = app.jwt.sign_access(
+            user.id,
+            &user.email,
+            &user.full_name,
+            user.verified,
+            providers.clone(),
+            user.role.clone(),
+        )?;
+
+        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+        self.repo
+            .store_refresh_token(jti, user.id, &refresh_token)
+            .await?;
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: UserResponse {
+                id: user.id,
+                full_name: user.full_name.clone(),
+                bio: user.bio.clone(),
+                email: user.email.clone(),
+                verified: user.verified,
+                avatar_id: user.avatar_id.clone(),
+                avatar_url: user.avatar_url.clone(),
+                providers,
+                created_at: user.created_at,
+                deleted_at: user.deleted_at,
+            },
+        })
     }
 }
 

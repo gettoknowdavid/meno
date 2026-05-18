@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (full_name, email, password, account_provider)\n               VALUES ($1, $2, $3, $4)\n               RETURNING *",
+  "query": "INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *",
   "describe": {
     "columns": [
       {
@@ -25,54 +25,42 @@
       },
       {
         "ordinal": 4,
-        "name": "password",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 5,
         "name": "avatar_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 6,
+        "ordinal": 5,
         "name": "avatar_url",
         "type_info": "Text"
       },
       {
-        "ordinal": 7,
+        "ordinal": 6,
         "name": "verified",
         "type_info": "Bool"
       },
       {
-        "ordinal": 8,
+        "ordinal": 7,
         "name": "role",
         "type_info": "Text"
       },
       {
-        "ordinal": 9,
-        "name": "account_provider",
-        "type_info": "Text"
-      },
-      {
-        "ordinal": 10,
+        "ordinal": 8,
         "name": "created_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 11,
+        "ordinal": 9,
         "name": "updated_at",
         "type_info": "Timestamptz"
       },
       {
-        "ordinal": 12,
+        "ordinal": 10,
         "name": "deleted_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text",
         "Text",
         "Text"
       ]
@@ -82,10 +70,8 @@
       false,
       true,
       false,
-      false,
       true,
       true,
-      false,
       false,
       false,
       false,
@@ -93,5 +79,5 @@
       true
     ]
   },
-  "hash": "cc71b373e2341699e2a0c760799acf3c7da30a0872315b6a3d050c4d39ed683c"
+  "hash": "9bc707118463fb6192f926d1e359cf05c71746a9f55f6c980457f2b331b267b1"
 }
