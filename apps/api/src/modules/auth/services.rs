@@ -317,7 +317,11 @@ impl AuthService {
         self.issue_tokens(app, &user).await
     }
     async fn issue_tokens(&self, app: &MenoState, user: &User) -> Result<AuthResponse, AuthError> {
-        let providers = self.repo.find_user_providers(user.id).await?;
+        let providers = app
+            .user_service
+            .find_user_providers(user.id)
+            .await
+            .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
 
         let access_token = app.jwt.sign_access(
             user.id,

@@ -1,6 +1,7 @@
 use crate::modules::auth::model::{AuthProvider, UserRole};
+use crate::modules::user::model::Display;
 use serde::{Deserialize, Serialize};
-use time::OffsetDateTime;
+use time::{OffsetDateTime, serde::rfc3339};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -27,7 +28,7 @@ pub struct UserSearchParam {
 }
 
 // Response DTOS
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MeResponse {
     pub id: Uuid,
     pub full_name: String,
@@ -36,14 +37,16 @@ pub struct MeResponse {
     pub verified: bool,
     pub avatar_id: Option<String>,
     pub avatar_url: Option<String>,
+    #[serde(with = "rfc3339")]
+    pub created_at: OffsetDateTime,
+    #[serde(with = "rfc3339::option")]
+    pub deleted_at: Option<OffsetDateTime>,
     pub providers: Vec<AuthProvider>,
     pub role: UserRole,
     pub settings: GeneralSettingsResponse,
-    pub created_at: OffsetDateTime,
-    pub deleted_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PublicProfileResponse {
     pub id: Uuid,
     pub full_name: String,
@@ -52,6 +55,8 @@ pub struct PublicProfileResponse {
     pub verified: bool,
     pub follower_count: i64,
     pub following_count: i64,
+
+    #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
 }
 
@@ -71,12 +76,12 @@ pub struct AvatarUploadResponse {
     pub avatar_url: String,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GeneralSettingsResponse {
     pub push_notifications: bool,
     pub app_notifications: bool,
     pub email_notifications: bool,
-    pub display: String,
+    pub display: Display,
     pub language: String,
-    pub notification_settings: serde_json::Value,
+    pub notification_preferences: serde_json::Value,
 }

@@ -1,6 +1,5 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::repository::AuthRepository;
-use fred::prelude::Pool;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;

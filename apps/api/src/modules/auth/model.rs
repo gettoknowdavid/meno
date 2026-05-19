@@ -6,6 +6,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display, AsRefStr, EnumString)]
+#[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
@@ -23,6 +24,7 @@ impl From<String> for UserRole {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, Display, AsRefStr, EnumString)]
+#[serde(rename_all = "lowercase")]
 #[strum(serialize_all = "lowercase")]
 #[derive(sqlx::Type)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
@@ -44,6 +46,7 @@ impl From<String> for AuthProvider {
 }
 
 #[derive(Clone, Debug, EnumString, Deserialize, Serialize, AsRefStr, sqlx::Type)]
+#[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum OtpType {

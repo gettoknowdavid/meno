@@ -1,88 +1,104 @@
-use crate::modules::auth::model::{AuthProvider, User, UserRole};
+use crate::modules::auth::model::{AuthProvider, User};
+use crate::modules::user::dto::{MeResponse, PublicProfileResponse};
 use crate::modules::user::errors::UserError;
-use crate::modules::user::model::{GeneralSettings, UserWithSettings};
+use crate::modules::user::model::GeneralSettings;
+use crate::shared::services::redis::RedisService;
 use std::str::FromStr;
 use uuid::Uuid;
 
+const USER_PROFILE_CACHE_PREFIX: &str = "USER.PROFILE";
+const USER_PROFILE_TTL_SECS: i64 = 60;
+
 #[derive(Clone)]
 pub struct UserRepository {
-    pub db: sqlx::PgPool,
+    pub database: sqlx::PgPool,
+    pub redis: RedisService,
 }
 impl UserRepository {
-    pub fn new(db: sqlx::PgPool) -> Self {
-        Self { db }
+    pub fn new(database: sqlx::PgPool, redis: RedisService) -> Self {
+        Self { database, redis }
     }
-
-    pub async fn find_user_with_settings(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Option<UserWithSettings>, UserError> {
-        let record = sqlx::query!(
-            r#"SELECT u.*,
-                    gs.id as "settings_id",
-                    gs.user_id,
-                    gs.push_notifications,
-                    gs.app_notifications,
-                    gs.email_notifications,
-                    gs.push_notification_token,
-                    gs.notification_preferences,
-                    gs.display,
-                    gs.language,
-                    ARRAY_AGG(DISTINCT ui.provider_type) as "provider_types!: Vec<Option<String>>"
-               FROM users u LEFT JOIN general_settings gs ON gs.user_id = u.id
-                             LEFT JOIN user_identities ui ON ui.user_id = u.id
-               WHERE u.id = $1 AND u.deleted_at IS NULL
-               GROUP BY u.id, u.full_name, u.bio, u.email, u.avatar_id, u.avatar_url,
-                        u.verified, u.role, u.created_at, u.updated_at, u.deleted_at,
-                        gs.id, gs.user_id, gs.push_notifications, gs.app_notifications,
-                        gs.email_notifications, gs.push_notification_token,
-                        gs.notification_preferences, gs.display, gs.language"#,
+    pub async fn find_user(&self, user_id: Uuid) -> Result<Option<User>, UserError> {
+        sqlx::query_as!(
+            User,
+            r#"SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL"#,
             user_id
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.database)
+        .await
+        .map_err(UserError::Database)
+    }
+    pub async fn find_user_settings(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<GeneralSettings>, UserError> {
+        sqlx::query_as!(
+            GeneralSettings,
+            r#"SELECT * FROM general_settings WHERE user_id = $1"#,
+            user_id
+        )
+        .fetch_optional(&self.database)
+        .await
+        .map_err(UserError::Database)
+    }
+    pub async fn find_user_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, UserError> {
+        let rows = sqlx::query!(
+            "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
+            user_id,
+        )
+        .fetch_all(&self.database)
         .await
         .map_err(UserError::Database)?;
 
-        let record = match record {
-            None => return Ok(None),
-            Some(r) => r,
-        };
-
-        let user = User {
-            id: record.id,
-            full_name: record.full_name,
-            bio: record.bio,
-            email: record.email,
-            avatar_id: record.avatar_id,
-            avatar_url: record.avatar_url,
-            verified: record.verified,
-            role: UserRole::from(record.role),
-            created_at: record.created_at,
-            updated_at: record.updated_at,
-            deleted_at: record.deleted_at,
-        };
-        let settings = GeneralSettings {
-            id: record.settings_id,
-            user_id: record.user_id,
-            push_notifications: record.push_notifications,
-            app_notifications: record.app_notifications,
-            email_notifications: record.email_notifications,
-            push_notification_token: record.push_notification_token,
-            notification_settings: record.notification_preferences,
-            display: record.display,
-            language: record.language,
-        };
-        let providers: Vec<AuthProvider> = record
-            .provider_types
-            .into_iter()
-            .filter_map(|opt| opt.and_then(|s| AuthProvider::from_str(&s).ok()))
+        let providers = rows
+            .iter()
+            .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
+            .map(|s| AuthProvider::from(s))
             .collect();
-        let user_with_settings = UserWithSettings {
-            user,
-            settings,
-            providers,
-        };
 
-        Ok(Some(user_with_settings))
+        Ok(providers)
+    }
+
+    // Redis
+    fn profile_cache_key(&self, user_id: Uuid) -> String {
+        format!("{}:{}", USER_PROFILE_CACHE_PREFIX, user_id)
+    }
+    pub async fn cache_me(&self, value: MeResponse) -> Result<(), UserError> {
+        let key = self.profile_cache_key(value.id);
+        self.redis
+            .set(&key, &value, Some(USER_PROFILE_TTL_SECS))
+            .await
+            .map_err(UserError::Redis)?;
+        Ok(())
+    }
+    pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), UserError> {
+        let key = self.profile_cache_key(value.id);
+        self.redis
+            .set(&key, &value, Some(USER_PROFILE_TTL_SECS))
+            .await
+            .map_err(UserError::Redis)?;
+        Ok(())
+    }
+    pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, UserError> {
+        let key = self.profile_cache_key(user_id);
+        self.redis
+            .get::<MeResponse>(&key)
+            .await
+            .map_err(UserError::Redis)
+    }
+    pub async fn get_cached_profile(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<PublicProfileResponse>, UserError> {
+        let key = self.profile_cache_key(user_id);
+        self.redis
+            .get::<PublicProfileResponse>(&key)
+            .await
+            .map_err(UserError::Redis)
+    }
+    pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), UserError> {
+        let key = self.profile_cache_key(user_id);
+        self.redis.del(&key).await.map_err(UserError::Redis)?;
+        Ok(())
     }
 }

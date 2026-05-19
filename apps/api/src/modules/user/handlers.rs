@@ -10,5 +10,6 @@ pub async fn get_me(
     State(app): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<MenoResponse<MeResponse>, UserError> {
-    Err(UserError::NotFound)
+    let me = app.user_service.get_me(auth_user.id).await?;
+    Ok(MenoResponse::ok("User profile retrieved", me))
 }

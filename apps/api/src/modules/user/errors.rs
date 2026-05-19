@@ -22,6 +22,9 @@ pub enum UserError {
     Database(#[from] sqlx::Error),
 
     #[error(transparent)]
+    Redis(#[from] fred::error::Error),
+
+    #[error(transparent)]
     Internal(#[from] anyhow::Error),
 
     #[error("Validation error")]
@@ -51,7 +54,7 @@ impl IntoResponse for UserError {
                     "An internal error occurred",
                 )
             }
-            UserError::Database(_) | UserError::Internal(_) => {
+            UserError::Database(_) | UserError::Redis(_) | UserError::Internal(_) => {
                 tracing::error!("{:?}", self);
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,

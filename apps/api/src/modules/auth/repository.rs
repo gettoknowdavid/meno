@@ -5,7 +5,6 @@ use crate::modules::auth::utils::generate_otp;
 use crate::shared::services::redis::RedisService;
 use fred::prelude::*;
 use std::collections::HashMap;
-use std::str::FromStr;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
@@ -139,23 +138,6 @@ impl AuthRepository {
         .fetch_optional(&self.db)
         .await
         .map_err(AuthError::Database)
-    }
-    pub async fn find_user_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, AuthError> {
-        let rows = sqlx::query!(
-            "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
-            user_id,
-        )
-        .fetch_all(&self.db)
-        .await
-        .map_err(AuthError::Database)?;
-
-        let providers = rows
-            .iter()
-            .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
-            .map(|s| AuthProvider::from(s))
-            .collect();
-
-        Ok(providers)
     }
     pub async fn link_provider(
         &self,
