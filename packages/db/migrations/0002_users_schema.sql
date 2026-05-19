@@ -3,7 +3,7 @@ CREATE TABLE public.users
 (
     id         UUID PRIMARY KEY        DEFAULT gen_random_uuid(),
     full_name  TEXT           NOT NULL,
-    bio        TEXT,
+    bio        VARCHAR(244),
     email      TEXT           NOT NULL UNIQUE,
     avatar_id  TEXT,
     avatar_url TEXT,

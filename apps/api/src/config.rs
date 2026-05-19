@@ -42,6 +42,13 @@ pub struct MenoConfig {
     pub smtp_user: String,
     pub smtp_password: String,
     pub smtp_from: String,
+
+    pub storage_endpoint: String,
+    pub storage_access_key: String,
+    pub storage_secret_key: String,
+    pub storage_bucket: String,
+    pub storage_region: String,
+    pub storage_public_url: String,
 }
 
 impl MenoConfig {
@@ -94,6 +101,12 @@ impl MenoConfig {
             smtp_user: var("SMTP_USER").context("SMTP_USER is missing")?,
             smtp_password: var("SMTP_PASSWORD").context("SMTP_PASSWORD is missing")?,
             smtp_from: var("SMTP_FROM").context("SMTP_FROM is missing")?,
+            storage_endpoint: var("STORAGE_ENDPOINT").context("STORAGE_ENDPOINT is missing")?,
+            storage_access_key: var("STORAGE_ACCESS_KEY").context("STORAGE_ACCESS_KEY is missing")?,
+            storage_secret_key: var("STORAGE_SECRET_KEY").context("STORAGE_SECRET_KEY is missing")?,
+            storage_bucket: var("STORAGE_BUCKET").context("STORAGE_BUCKET is missing")?,
+            storage_region: var("STORAGE_REGION").context("STORAGE_REGION is missing")?,
+            storage_public_url: var("STORAGE_PUBLIC_URL").context("STORAGE_PUBLIC_URL is missing")?,
         })
     }
 }

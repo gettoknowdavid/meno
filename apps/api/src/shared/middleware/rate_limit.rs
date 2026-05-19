@@ -1,6 +1,7 @@
 use crate::shared::constants::{RATE_LIMIT_PREFIX, REDIS_ESCALATION_THRESHOLD};
 use crate::state::MenoState;
 
+use crate::shared::services::redis::RedisService;
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::{
@@ -51,7 +52,7 @@ static SCRIPT: &str = r#"
     end"#;
 async fn check_rate_limit(
     local_cache: &Cache<String, u64>,
-    redis_pool: &Pool,
+    redis: &RedisService,
     base_key: &str,
     config: RateLimitConfig,
 ) -> Result<usize> {
@@ -87,7 +88,7 @@ async fn check_rate_limit(
         config.limit,
     ];
 
-    let result: (usize, usize) = redis_pool.eval(SCRIPT, keys, args).await?;
+    let result: (usize, usize) = redis.client().eval(SCRIPT, keys, args).await?;
 
     // Sync local cache with accurate Redis count so fast path stays calibrated
     local_cache

@@ -12,6 +12,7 @@ use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
 use crate::shared::integrations::google::GoogleUserInfo;
 use crate::shared::services::email::EmailService;
+use crate::shared::services::redis::RedisService;
 use crate::state::MenoState;
 
 #[derive(Clone)]
@@ -19,7 +20,7 @@ pub struct AuthService {
     repo: AuthRepository,
 }
 impl AuthService {
-    pub fn new(db: sqlx::PgPool, rd: fred::clients::Pool, env: &str) -> Self {
+    pub fn new(db: sqlx::PgPool, rd: RedisService, env: &str) -> Self {
         Self {
             repo: AuthRepository::new(db, rd, env),
         }

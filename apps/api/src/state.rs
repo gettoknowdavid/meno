@@ -5,9 +5,11 @@ use crate::routes::build_meno_routes;
 use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use std::sync::Arc;
 
+use crate::modules::user::service::UserService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
+use crate::shared::services::redis::RedisService;
 use axum::middleware::from_fn;
 use axum::{
     Router,
@@ -16,7 +18,6 @@ use axum::{
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
-use fred::clients::Pool;
 use moka::future::Cache;
 use sqlx::PgPool;
 use std::time::Duration;
@@ -32,15 +33,16 @@ use tower_http::{
 pub struct MenoState {
     pub config: MenoConfig,
     pub db: PgPool,
-    pub redis: Pool,
+    pub redis: RedisService,
     pub jwt: JwtService,
     pub google: GoogleAuthService,
     pub local_rate_cache: Cache<String, u64>,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
+    pub user_service: UserService,
 }
 
-pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Router {
+pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
     let jwt = JwtService::new(
@@ -60,6 +62,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
 
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
+        user_service: UserService::new(db.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         jwt,

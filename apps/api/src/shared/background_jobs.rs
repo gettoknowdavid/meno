@@ -6,13 +6,14 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
+use crate::shared::services::redis::RedisService;
 
 #[derive(Clone)]
 pub struct BackgroundJobs {
     auth_repo: AuthRepository,
 }
 impl BackgroundJobs {
-    pub fn new(db: PgPool, redis: Pool, env: &str) -> Self {
+    pub fn new(db: PgPool, redis: RedisService, env: &str) -> Self {
         let auth_repo = AuthRepository::new(db, redis, env);
         Self { auth_repo }
     }

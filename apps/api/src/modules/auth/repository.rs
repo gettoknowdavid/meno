@@ -2,6 +2,7 @@ use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt_service::hash_token;
 use crate::modules::auth::model::{AuthProvider, OtpType, RefreshToken, User, UserIdentity};
 use crate::modules::auth::utils::generate_otp;
+use crate::shared::services::redis::RedisService;
 use fred::prelude::*;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -23,14 +24,14 @@ const RD_OAUTH_STATE_TTL_SECS: i64 = 300;
 #[derive(Clone)]
 pub struct AuthRepository {
     db: sqlx::PgPool,
-    rd: Pool,
+    redis: RedisService,
     use_redis_otp: bool,
 }
 impl AuthRepository {
-    pub fn new(db: sqlx::PgPool, rd: Pool, env: &str) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: RedisService, env: &str) -> Self {
         Self {
             db,
-            rd,
+            redis,
             use_redis_otp: env != "dev" && env != "development",
         }
     }
@@ -317,11 +318,10 @@ impl AuthRepository {
                 OtpType::ResetPassword => RD_RESET_PASSWORD_OTP_PREFIX,
             };
             let key = format!("{}:{}", prefix, email);
-            let stored: Option<String> =
-                self.rd.get(key.clone()).await.map_err(AuthError::Redis)?;
+            let stored: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
             match stored {
                 Some(ref s) if s == code => {
-                    self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
+                    self.redis.del(&key).await.map_err(AuthError::Redis)?;
                     Ok(true)
                 }
                 Some(_) => Ok(false),
@@ -363,7 +363,7 @@ impl AuthRepository {
                 OtpType::ResetPassword => RD_RESET_PASSWORD_OTP_PREFIX,
             };
             let key = format!("{}:{}", prefix, email);
-            self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
+            self.redis.del(&key).await.map_err(AuthError::Redis)?;
         } else {
             sqlx::query!(
                 r#"UPDATE otps SET used = true
@@ -414,14 +414,14 @@ impl AuthRepository {
     // Redis
     pub async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
         let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
-        let exists: Option<String> = self.rd.get(&key).await.map_err(AuthError::Redis)?;
+        let exists: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         Ok(exists.is_none())
     }
     pub async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError> {
         let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
-        let ttl = Expiration::EX(RD_RESEND_RATE_LIMIT_TTL_SECS);
-        self.rd
-            .set::<(), _, _>(key, "1", Some(ttl), None, false)
+        let value = "1".to_string();
+        self.redis
+            .set::<String>(&key, &value, Some(RD_RESEND_RATE_LIMIT_TTL_SECS))
             .await
             .map_err(AuthError::Redis)
     }
@@ -436,15 +436,18 @@ impl AuthRepository {
         fields.insert("csrf_token", "true");
         fields.insert("pkce_code_verifier", verifier);
 
-        let pipeline = self.rd.next().pipeline();
+        let pipeline = self.redis.pipeline();
+
         pipeline
             .hset::<(), _, _>(&key, fields)
             .await
             .map_err(AuthError::Redis)?;
+
         pipeline
             .expire::<(), _>(&key, RD_OAUTH_STATE_TTL_SECS, None)
             .await
             .map_err(AuthError::Redis)?;
+
         pipeline.all::<()>().await.map_err(AuthError::Redis)?;
 
         Ok(())
@@ -454,9 +457,9 @@ impl AuthRepository {
         let key = format!("{}:{}", RD_OAUTH_STATE_PREFIX, state);
 
         let data: HashMap<String, String> =
-            self.rd.hgetall(&key).await.map_err(AuthError::Redis)?;
+            self.redis.hgetall(&key).await.map_err(AuthError::Redis)?;
 
-        let _ = self.rd.del::<(), _>(&key).await;
+        let _ = self.redis.del(&key).await;
 
         let has_csrf = data.get("csrf_valid");
         let pkce_code_verifier = data.get("pkce_code_verifier");
@@ -477,17 +480,17 @@ impl AuthRepository {
         let (key, ttl) = match otp_type {
             OtpType::VerifyEmail => {
                 let key = format!("{}:{}", RD_VERIFY_EMAIL_OTP_PREFIX, email);
-                let ttl = Expiration::EX(RD_VERIFY_EMAIL_OTP_TTL_SECS);
+                let ttl = Some(RD_VERIFY_EMAIL_OTP_TTL_SECS);
                 (key, ttl)
             }
             OtpType::ResetPassword => {
                 let key = format!("{}:{}", RD_RESET_PASSWORD_OTP_PREFIX, email);
-                let ttl = Expiration::EX(RD_RESET_PASSWORD_OTP_TTL_SECS);
+                let ttl = Some(RD_RESET_PASSWORD_OTP_TTL_SECS);
                 (key, ttl)
             }
         };
-        self.rd
-            .set::<(), _, _>(key, otp, Some(ttl), None, false)
+        self.redis
+            .set::<String>(&key, &otp.to_string(), ttl)
             .await
             .map_err(AuthError::Redis)
     }
