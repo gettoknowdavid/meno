@@ -2,12 +2,11 @@ services:
   api:
     build:
       context: .
-      network: host
       args: [ ]   # no longer needed
     container_name: meno-api
     environment:
       - RUST_LOG=info
-      - DATABASE_URL=postgres://meno:password@postgres:5432/meno_dev   # runtime
+      - DATABASE_URL=postgres://meno:password@postgres:5432/meno_dev
     ports:
       - "8080:8080"
     networks:
