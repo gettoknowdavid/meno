@@ -1,5 +1,7 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::user::dto::{AvatarUploadUrlResponse, MeResponse, UpdateProfileRequest};
+use crate::modules::user::dto::{
+    AvatarUploadUrlResponse, MeResponse, PublicProfileResponse, UpdateProfileRequest,
+};
 use crate::modules::user::errors::UserError;
 use crate::modules::user::model::GeneralSettings;
 use crate::modules::user::repository::UserRepository;
@@ -82,7 +84,7 @@ impl UserService {
             (None, None)
         };
 
-        let user = self
+        let _ = self
             .repo
             .update_user(
                 user_id,
@@ -93,30 +95,7 @@ impl UserService {
             )
             .await?;
 
-        let settings = self
-            .repo
-            .find_user_settings(user_id)
-            .await?
-            .unwrap_or_else(|| GeneralSettings::new(user_id));
-
-        let providers = self.repo.find_user_providers(user_id).await?;
-
-        let response = MeResponse {
-            id: user.id,
-            full_name: user.full_name,
-            bio: user.bio,
-            email: user.email,
-            verified: user.verified,
-            avatar_id: user.avatar_id,
-            avatar_url: user.avatar_url,
-            role: user.role,
-            created_at: user.created_at,
-            deleted_at: user.deleted_at,
-            settings: settings.into(),
-            providers,
-        };
-
-        Ok(response)
+        self.get_me(user_id).await
     }
 
     pub async fn get_avatar_upload_url(
@@ -145,5 +124,40 @@ impl UserService {
             avatar_url,
             avatar_id,
         })
+    }
+
+    pub async fn get_user_by_id(
+        &self,
+        auth_user_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<PublicProfileResponse, UserError> {
+        if let Some(cached) = self.repo.get_cached_profile(user_id).await? {
+            return Ok(cached);
+        };
+
+        let user = self
+            .repo
+            .find_by_id(user_id)
+            .await?
+            .ok_or(UserError::NotFound)?;
+
+        let stats = self.repo.get_user_stats(user_id).await.unwrap_or_default();
+
+        let is_following = self.repo.is_following(user_id, auth_user_id).await?;
+
+        let response = PublicProfileResponse {
+            id: user.id,
+            full_name: user.full_name,
+            bio: user.bio,
+            avatar_url: user.avatar_url,
+            verified: user.verified,
+            is_following,
+            created_at: user.created_at,
+            stats,
+        };
+
+        let _ = self.repo.cache_profile(response.clone()).await?;
+
+        Ok(response)
     }
 }

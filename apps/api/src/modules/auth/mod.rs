@@ -8,3 +8,4 @@ pub mod services;
 mod validators;
 pub mod password;
 pub mod utils;
+pub mod constants;

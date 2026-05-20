@@ -1,10 +1,11 @@
 use crate::modules::user::dto;
+use crate::modules::user::dto::PublicProfileResponse;
 use crate::modules::user::errors::UserError;
 use crate::shared::middleware::auth::AuthUser;
 use crate::shared::middleware::json_rejection::MenoJson;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
-use axum::extract::{Extension, Query, State};
+use axum::extract::{Extension, Path, Query, State};
 use std::sync::Arc;
 use validator::Validate;
 
@@ -14,6 +15,15 @@ pub async fn get_me(
 ) -> Result<MenoResponse<dto::MeResponse>, UserError> {
     let me = app.user_service.get_me(auth_user.id).await?;
     Ok(MenoResponse::ok("User profile retrieved", me))
+}
+
+pub async fn get_user(
+    State(app): State<Arc<MenoState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<uuid::Uuid>,
+) -> Result<MenoResponse<PublicProfileResponse>, UserError> {
+    let user = app.user_service.get_user_by_id(auth_user.id, id).await?;
+    Ok(MenoResponse::ok("User profile retrieved", user))
 }
 
 pub async fn get_avatar_upload_url(

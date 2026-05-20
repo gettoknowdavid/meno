@@ -103,6 +103,15 @@ pub async fn rate_limit_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    let path = req.uri().path();
+    if path == "/metrics"
+        || path == "/health"
+        || path.ends_with("/health")
+        || path.contains("/prometheus")
+    {
+        return next.run(req).await;
+    }
+
     let config = state.config.default_rate_limit;
     let identifier = extract_identifier(&req);
     let key = format!("{}:{}", RATE_LIMIT_PREFIX, identifier);

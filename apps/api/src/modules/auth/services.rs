@@ -189,7 +189,20 @@ impl AuthService {
 
     pub async fn logout(&self, app: &MenoState, req: &LogoutRequest) -> Result<(), AuthError> {
         let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
+
         self.repo.revoke_refresh_token(claims.jti).await?;
+
+        if let Some(ref access_token) = req.access_token {
+            if let Ok(access_claims) = app.jwt.decode_access(access_token) {
+                let now = time::OffsetDateTime::now_utc().unix_timestamp() as u64;
+                let remaining_secs = access_claims.exp.saturating_sub(now) as i64;
+                if remaining_secs > 0 {
+                    self.repo
+                        .block_access_tokens(access_claims.sub, remaining_secs)
+                        .await?;
+                }
+            }
+        }
         Ok(())
     }
 

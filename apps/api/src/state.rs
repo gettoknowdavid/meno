@@ -2,7 +2,6 @@ use crate::config::MenoConfig;
 use crate::modules::auth::jwt_service::JwtService;
 use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
-use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use std::sync::Arc;
 
 use crate::modules::user::service::UserService;
@@ -15,7 +14,6 @@ use axum::middleware::from_fn;
 use axum::{
     Router,
     http::{StatusCode, header},
-    middleware::from_fn_with_state,
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -77,8 +75,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         redis,
     });
 
-    BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
-
     let status_code = StatusCode::REQUEST_TIMEOUT;
     let timeout = Duration::from_secs(30);
 
@@ -99,15 +95,15 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
 
+    BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
     Router::new()
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .layer(prometheus_layer)
-        .layer(TraceLayer::new_for_http())
         .merge(build_meno_routes(state.clone()))
-        .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
-        .layer(middleware_stack)
         .layer(from_fn(timing_middleware))
+        .layer(TraceLayer::new_for_http())
+        .layer(middleware_stack)
         .with_state(state)
 }

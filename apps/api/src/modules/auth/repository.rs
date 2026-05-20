@@ -1,3 +1,8 @@
+use crate::modules::auth::constants::{
+    BLOCKLIST_PREFIX, RD_OAUTH_STATE_PREFIX, RD_OAUTH_STATE_TTL_SECS, RD_RESEND_RATE_LIMIT_PREFIX,
+    RD_RESEND_RATE_LIMIT_TTL_SECS, RD_RESET_PASSWORD_OTP_PREFIX, RD_RESET_PASSWORD_OTP_TTL_SECS,
+    RD_VERIFY_EMAIL_OTP_PREFIX, RD_VERIFY_EMAIL_OTP_TTL_SECS,
+};
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt_service::hash_token;
 use crate::modules::auth::model::{AuthProvider, OtpType, RefreshToken, User, UserIdentity};
@@ -7,18 +12,6 @@ use fred::prelude::*;
 use std::collections::HashMap;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
-
-const RD_VERIFY_EMAIL_OTP_PREFIX: &str = "AUTH.OTP.VERIFY_EMAIL";
-const RD_VERIFY_EMAIL_OTP_TTL_SECS: i64 = 900;
-
-const RD_RESET_PASSWORD_OTP_PREFIX: &str = "AUTH.OTP.RESET_PASSWORD";
-const RD_RESET_PASSWORD_OTP_TTL_SECS: i64 = 900;
-
-const RD_RESEND_RATE_LIMIT_PREFIX: &str = "AUTH.OTP.RESEND_RATE_LIMIT";
-const RD_RESEND_RATE_LIMIT_TTL_SECS: i64 = 60;
-
-const RD_OAUTH_STATE_PREFIX: &str = "AUTH.OAUTH2";
-const RD_OAUTH_STATE_TTL_SECS: i64 = 300;
 
 #[derive(Clone)]
 pub struct AuthRepository {
@@ -277,6 +270,20 @@ impl AuthRepository {
             .execute(&self.db)
             .await
             .map_err(AuthError::Database)?;
+        Ok(())
+    }
+    pub async fn block_access_tokens(
+        &self,
+        jti: Uuid,
+        remaining_secs: i64,
+    ) -> Result<(), AuthError> {
+        let key = format!("{}:{}", BLOCKLIST_PREFIX, jti);
+        let value = "BLOCKED".to_string();
+        let ttl = Some(remaining_secs);
+        self.redis
+            .set::<String>(&key, &value, ttl)
+            .await
+            .map_err(AuthError::Redis)?;
         Ok(())
     }
     pub async fn store_otp(&self, email: &str, otp_type: OtpType) -> Result<String, AuthError> {

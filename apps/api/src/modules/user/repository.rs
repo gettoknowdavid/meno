@@ -1,11 +1,14 @@
 use crate::modules::auth::model::{AuthProvider, User};
 use crate::modules::user::dto::{MeResponse, PublicProfileResponse};
 use crate::modules::user::errors::UserError;
-use crate::modules::user::model::GeneralSettings;
+use crate::modules::user::model::{GeneralSettings, UserStats};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 use std::str::FromStr;
 use uuid::Uuid;
+
+const ME_PROFILE_CACHE_PREFIX: &str = "ME.PROFILE";
+const ME_PROFILE_TTL_SECS: i64 = 60;
 
 const USER_PROFILE_CACHE_PREFIX: &str = "USER.PROFILE";
 const USER_PROFILE_TTL_SECS: i64 = 60;
@@ -99,14 +102,54 @@ impl UserRepository {
         .await
         .map_err(UserError::Database)
     }
+    pub async fn get_user_stats(&self, user_id: Uuid) -> Result<UserStats, UserError> {
+        let row = sqlx::query!(
+            r#"SELECT COUNT(CASE WHEN subscription_id = $1 THEN 1 END) as followers,
+                      COUNT(CASE WHEN subscriber_id = $1 THEN 1 END) as following,
+                      (SELECT COUNT(*) FROM broadcasts WHERE creator_id = $1 AND deleted_at IS NULL) as broadcasts
+               FROM user_subscribers"#,
+            user_id
+        )
+        .fetch_one(&self.database)
+        .await
+        .map_err(UserError::Database)?;
+
+        Ok(UserStats {
+            broadcasts: row.broadcasts.unwrap_or(0),
+            followers: row.followers.unwrap_or(0),
+            following: row.following.unwrap_or(0),
+        })
+    }
+    pub async fn is_following(
+        &self,
+        subscription_id: Uuid,
+        subscriber_id: Uuid,
+    ) -> Result<bool, UserError> {
+        let exists = sqlx::query_scalar!(
+            r#"SELECT EXISTS(
+                SELECT 1 FROM user_subscribers
+                WHERE subscription_id = $1 AND subscriber_id = $2
+            )"#,
+            subscription_id,
+            subscriber_id
+        )
+        .fetch_one(&self.database)
+        .await
+        .map_err(UserError::Database)?;
+        Ok(exists.unwrap_or(false))
+    }
+
     // Redis
+    fn me_cache_key(&self, user_id: Uuid) -> String {
+        format!("{}:{}", ME_PROFILE_CACHE_PREFIX, user_id)
+    }
     fn profile_cache_key(&self, user_id: Uuid) -> String {
         format!("{}:{}", USER_PROFILE_CACHE_PREFIX, user_id)
     }
     pub async fn cache_me(&self, value: MeResponse) -> Result<(), UserError> {
-        let key = self.profile_cache_key(value.id);
+        let key = self.me_cache_key(value.id);
         self.redis
-            .set(&key, &value, Some(USER_PROFILE_TTL_SECS))
+            .set(&key, &value, Some(ME_PROFILE_TTL_SECS))
             .await
             .map_err(UserError::Redis)?;
         Ok(())
@@ -120,7 +163,7 @@ impl UserRepository {
         Ok(())
     }
     pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, UserError> {
-        let key = self.profile_cache_key(user_id);
+        let key = self.me_cache_key(user_id);
         self.redis
             .get::<MeResponse>(&key)
             .await

@@ -1,5 +1,5 @@
 use crate::modules::auth::model::{AuthProvider, UserRole};
-use crate::modules::user::model::Display;
+use crate::modules::user::model::{Display, UserStats};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, serde::rfc3339};
 use uuid::Uuid;
@@ -60,11 +60,10 @@ pub struct PublicProfileResponse {
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
     pub verified: bool,
-    pub follower_count: i64,
-    pub following_count: i64,
-
+    pub is_following: bool,
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
+    pub stats: UserStats,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

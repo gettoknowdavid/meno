@@ -70,3 +70,18 @@ impl Into<GeneralSettingsResponse> for GeneralSettings {
         }
     }
 }
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UserStats {
+    pub broadcasts: i64,
+    pub followers: i64,
+    pub following: i64,
+}
+impl Default for UserStats {
+    fn default() -> Self {
+        Self {
+            broadcasts: 0,
+            followers: 0,
+            following: 0,
+        }
+    }
+}

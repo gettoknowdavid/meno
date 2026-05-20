@@ -1,3 +1,4 @@
+use crate::modules::auth::constants::BLOCKLIST_PREFIX;
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AuthProvider, UserRole};
 use crate::state::MenoState;
@@ -30,6 +31,17 @@ pub async fn auth_middleware(
         .ok_or(AuthError::MissingToken)?;
 
     let claims = app.jwt.decode_access(token)?;
+
+    let blocklist_key = format!("{}:{}", BLOCKLIST_PREFIX, claims.jti);
+    let is_blocked = app
+        .redis
+        .get::<String>(&blocklist_key)
+        .await
+        .map_err(AuthError::Redis)?;
+
+    if is_blocked.is_some() {
+        return Err(AuthError::InvalidToken);
+    }
 
     if !claims.verified {
         return Err(AuthError::EmailNotVerified);

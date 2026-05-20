@@ -36,6 +36,7 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct LogoutRequest {
     pub refresh_token: String,
+    pub access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
