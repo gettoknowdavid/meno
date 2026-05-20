@@ -29,6 +29,11 @@ pub struct UserSearchParam {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+pub struct AvatarUploadUrlParams {
+    pub content_type: String,
+}
+
 // Response DTOS
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct MeResponse {
@@ -73,7 +78,7 @@ pub struct UserSearchResult {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct AvatarUploadResponse {
+pub struct AvatarUploadUrlResponse {
     pub avatar_id: String,
     pub avatar_url: String,
 }

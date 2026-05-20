@@ -18,6 +18,12 @@ pub enum UserError {
     #[error("Failed to upload image. Please, try again")]
     UploadFailed,
 
+    #[error("Avatar key not found in storage — upload the file first")]
+    AvatarNotUploaded,
+
+    #[error("Storage error: {0}")]
+    StorageError(String),
+
     #[error(transparent)]
     Database(#[from] sqlx::Error),
 
@@ -54,7 +60,15 @@ impl IntoResponse for UserError {
                     "An internal error occurred",
                 )
             }
-            UserError::Database(_) | UserError::Redis(_) | UserError::Internal(_) => {
+            UserError::AvatarNotUploaded => error_response(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "AVATAR_NOT_UPLOADED",
+                &self.to_string(),
+            ),
+            UserError::StorageError(_)
+            | UserError::Database(_)
+            | UserError::Redis(_)
+            | UserError::Internal(_) => {
                 tracing::error!("{:?}", self);
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,

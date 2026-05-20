@@ -3,6 +3,7 @@ use crate::modules::user::dto::{MeResponse, PublicProfileResponse};
 use crate::modules::user::errors::UserError;
 use crate::modules::user::model::GeneralSettings;
 use crate::shared::services::redis::RedisService;
+use crate::shared::services::storage::StorageService;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -13,12 +14,17 @@ const USER_PROFILE_TTL_SECS: i64 = 60;
 pub struct UserRepository {
     pub database: sqlx::PgPool,
     pub redis: RedisService,
+    pub storage: StorageService,
 }
 impl UserRepository {
-    pub fn new(database: sqlx::PgPool, redis: RedisService) -> Self {
-        Self { database, redis }
+    pub fn new(database: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
+        Self {
+            database,
+            redis,
+            storage,
+        }
     }
-    pub async fn find_user(&self, user_id: Uuid) -> Result<Option<User>, UserError> {
+    pub async fn find_by_id(&self, user_id: Uuid) -> Result<Option<User>, UserError> {
         sqlx::query_as!(
             User,
             r#"SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL"#,
@@ -58,7 +64,41 @@ impl UserRepository {
 
         Ok(providers)
     }
-
+    pub async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, UserError> {
+        sqlx::query_scalar!("SELECT avatar_id FROM users WHERE id = $1", user_id)
+            .fetch_optional(&self.database)
+            .await
+            .map_err(UserError::Database)
+            .map(|r| r.flatten())
+    }
+    pub async fn update_user(
+        &self,
+        user_id: Uuid,
+        full_name: Option<&str>,
+        bio: Option<&str>,
+        avatar_key: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<User, UserError> {
+        sqlx::query_as!(
+            User,
+            r#"UPDATE users SET
+                 full_name =  COALESCE($1, full_name),
+                 bio = COALESCE($2, bio),
+                 avatar_id = COALESCE($3, avatar_id),
+                 avatar_url = COALESCE($4, avatar_url),
+                 updated_at = NOW()
+                WHERE id = $5 AND deleted_at IS NULL
+                RETURNING *"#,
+            full_name,
+            bio,
+            avatar_key,
+            avatar_url,
+            user_id,
+        )
+        .fetch_one(&self.database)
+        .await
+        .map_err(UserError::Database)
+    }
     // Redis
     fn profile_cache_key(&self, user_id: Uuid) -> String {
         format!("{}:{}", USER_PROFILE_CACHE_PREFIX, user_id)
@@ -100,5 +140,36 @@ impl UserRepository {
         let key = self.profile_cache_key(user_id);
         self.redis.del(&key).await.map_err(UserError::Redis)?;
         Ok(())
+    }
+
+    // Storage
+    pub async fn update_avatar_url(
+        &self,
+        user_id: Uuid,
+        new_avatar_key: &str,
+    ) -> Result<(Option<String>, Option<String>), UserError> {
+        let exists = self
+            .storage
+            .object_exists(&new_avatar_key)
+            .await
+            .map_err(|e| UserError::StorageError(e.to_string()))?;
+
+        if !exists {
+            return Err(UserError::AvatarNotUploaded);
+        }
+
+        // Delete old avatar in background (fire and forget)
+        if let Ok(Some(old_key)) = self.find_avatar_key(user_id).await {
+            let storage = self.storage.clone();
+            let old_key = old_key.clone();
+            tokio::spawn(async move {
+                if let Err(e) = storage.delete(&old_key).await {
+                    tracing::warn!(error = %e, key = %old_key, "Failed to delete old avatar");
+                }
+            });
+        }
+
+        let public_url = self.storage.public_url_for(&new_avatar_key);
+        Ok((Some(new_avatar_key.to_string()), Some(public_url)))
     }
 }

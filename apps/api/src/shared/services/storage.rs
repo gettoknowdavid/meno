@@ -38,6 +38,7 @@ impl StorageService {
     pub async fn presigned_upload_url(&self, object_key: &str) -> Result<String> {
         let path = Path::from(object_key);
         let expiry = std::time::Duration::from_secs(600);
+
         let url = self.store.signed_url(Method::PUT, &path, expiry).await?;
         Ok(url.to_string())
     }

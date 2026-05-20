@@ -62,12 +62,14 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         .time_to_live(Duration::from_secs(60))
         .build();
 
+    let storage = StorageService::new(&config);
+
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
-        user_service: UserService::new(db.clone(), redis.clone()),
+        user_service: UserService::new(db.clone(), redis.clone(), storage.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
-        storage: StorageService::new(&config),
+        storage,
         jwt,
         local_rate_cache,
         config,
