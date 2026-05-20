@@ -10,6 +10,7 @@ use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
 use crate::shared::services::redis::RedisService;
+use crate::shared::services::storage::StorageService;
 use axum::middleware::from_fn;
 use axum::{
     Router,
@@ -36,6 +37,7 @@ pub struct MenoState {
     pub redis: RedisService,
     pub jwt: JwtService,
     pub google: GoogleAuthService,
+    pub storage: StorageService,
     pub local_rate_cache: Cache<String, u64>,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
@@ -65,6 +67,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         user_service: UserService::new(db.clone(), redis.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
+        storage: StorageService::new(&config),
         jwt,
         local_rate_cache,
         config,

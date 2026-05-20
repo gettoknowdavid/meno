@@ -8,11 +8,13 @@ use validator::Validate;
 // Requests DTOS
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateProfileRequest {
-    #[validate(length(min = 3, max = 100))]
+    #[validate(length(min = 3, max = 100, message = "Name must be 3-100 characters"))]
     pub full_name: Option<String>,
 
-    #[validate(length(max = 244, message = "Bio length exceeded (Max. 244)"))]
+    #[validate(length(max = 500, message = "Bio must be under 500 characters"))]
     pub bio: Option<String>,
+
+    pub avatar_key: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -60,7 +62,7 @@ pub struct PublicProfileResponse {
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct UserSearchResult {
     pub id: Uuid,
     pub full_name: String,
@@ -70,7 +72,7 @@ pub struct UserSearchResult {
     pub is_subscribed: bool,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct AvatarUploadResponse {
     pub avatar_id: String,
     pub avatar_url: String,
