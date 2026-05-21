@@ -5,8 +5,8 @@ use thiserror::Error;
 use validator::ValidationErrors;
 
 #[derive(Error, Debug)]
-pub enum UserError {
-    #[error("User not found")]
+pub enum ProfileError {
+    #[error("Profile not found")]
     NotFound,
 
     #[error("Avatar must be JPEG or PNG")]
@@ -36,23 +36,23 @@ pub enum UserError {
     #[error("Validation error")]
     ValidationError(#[from] ValidationErrors),
 }
-impl IntoResponse for UserError {
+impl IntoResponse for ProfileError {
     fn into_response(self) -> Response {
         match &self {
-            UserError::NotFound => {
+            ProfileError::NotFound => {
                 error_response(StatusCode::NOT_FOUND, "USER_NOT_FOUND", &self.to_string())
             }
-            UserError::InvalidFileType => error_response(
+            ProfileError::InvalidFileType => error_response(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "INVALID_FILE_TYPE",
                 &self.to_string(),
             ),
-            UserError::FileTooLarge => error_response(
+            ProfileError::FileTooLarge => error_response(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "FILE_TOO_LARGE",
                 &self.to_string(),
             ),
-            UserError::UploadFailed => {
+            ProfileError::UploadFailed => {
                 tracing::error!("{:?}", self);
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -60,15 +60,15 @@ impl IntoResponse for UserError {
                     "An internal error occurred",
                 )
             }
-            UserError::AvatarNotUploaded => error_response(
+            ProfileError::AvatarNotUploaded => error_response(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "AVATAR_NOT_UPLOADED",
                 &self.to_string(),
             ),
-            UserError::StorageError(_)
-            | UserError::Database(_)
-            | UserError::Redis(_)
-            | UserError::Internal(_) => {
+            ProfileError::StorageError(_)
+            | ProfileError::Database(_)
+            | ProfileError::Redis(_)
+            | ProfileError::Internal(_) => {
                 tracing::error!("{:?}", self);
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -76,7 +76,7 @@ impl IntoResponse for UserError {
                     "An internal error occurred",
                 )
             }
-            UserError::ValidationError(errs) => validation_error_response(errs.clone()),
+            ProfileError::ValidationError(errs) => validation_error_response(errs.clone()),
         }
     }
 }

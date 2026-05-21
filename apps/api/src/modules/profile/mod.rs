@@ -4,3 +4,4 @@ pub mod service;
 pub mod repository;
 pub mod model;
 pub mod errors;
+pub mod constants;

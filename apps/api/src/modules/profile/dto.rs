@@ -1,5 +1,5 @@
-use crate::modules::auth::model::{AuthProvider, UserRole};
-use crate::modules::user::model::{Display, UserStats};
+use crate::modules::auth::model::AuthProvider;
+use crate::modules::profile::model::Display;
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, serde::rfc3339};
 use uuid::Uuid;
@@ -18,9 +18,9 @@ pub struct UpdateProfileRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct UserSearchParam {
+pub struct ProfileSearchParam {
     #[validate(length(min = 3))]
-    pub query: String,
+    pub q: String,
 
     #[validate(range(min = 1))]
     pub page: Option<i64>,
@@ -46,10 +46,7 @@ pub struct MeResponse {
     pub avatar_url: Option<String>,
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
-    #[serde(with = "rfc3339::option")]
-    pub deleted_at: Option<OffsetDateTime>,
     pub providers: Vec<AuthProvider>,
-    pub role: UserRole,
     pub settings: GeneralSettingsResponse,
 }
 
@@ -59,21 +56,24 @@ pub struct PublicProfileResponse {
     pub full_name: String,
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
-    pub verified: bool,
     pub is_following: bool,
+    pub followers: i64,
+    pub following: i64,
+    pub broadcasts: i64,
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
-    pub stats: UserStats,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct UserSearchResult {
+pub struct ProfileSearchResult {
     pub id: Uuid,
     pub full_name: String,
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
-    pub verified: bool,
-    pub is_subscribed: bool,
+    pub is_following: bool,
+    pub followers: i64,
+    pub following: i64,
+    pub broadcasts: i64,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *",
+  "query": "SELECT id, full_name, bio, email, avatar_id, avatar_url,\n                      verified, followers, following, broadcasts, created_at\n               FROM users WHERE id = $1 AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -40,29 +40,28 @@
       },
       {
         "ordinal": 7,
-        "name": "role",
-        "type_info": "Text"
+        "name": "followers",
+        "type_info": "Int8"
       },
       {
         "ordinal": 8,
-        "name": "created_at",
-        "type_info": "Timestamptz"
+        "name": "following",
+        "type_info": "Int8"
       },
       {
         "ordinal": 9,
-        "name": "updated_at",
-        "type_info": "Timestamptz"
+        "name": "broadcasts",
+        "type_info": "Int8"
       },
       {
         "ordinal": 10,
-        "name": "deleted_at",
+        "name": "created_at",
         "type_info": "Timestamptz"
       }
     ],
     "parameters": {
       "Left": [
-        "Text",
-        "Text"
+        "Uuid"
       ]
     },
     "nullable": [
@@ -76,8 +75,8 @@
       false,
       false,
       false,
-      true
+      false
     ]
   },
-  "hash": "9bc707118463fb6192f926d1e359cf05c71746a9f55f6c980457f2b331b267b1"
+  "hash": "ac1de0106f685671ec6b32f0a0cc23efca5bac6c34a52abbb0f1a7188ebfe04f"
 }

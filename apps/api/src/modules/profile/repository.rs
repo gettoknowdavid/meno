@@ -1,25 +1,23 @@
-use crate::modules::auth::model::{AuthProvider, User};
-use crate::modules::user::dto::{MeResponse, PublicProfileResponse};
-use crate::modules::user::errors::UserError;
-use crate::modules::user::model::{GeneralSettings, UserStats};
+use crate::modules::auth::model::AuthProvider;
+use crate::modules::profile::constants::{
+    ME_PROFILE_CACHE_PREFIX, ME_PROFILE_TTL_SECS, USER_PROFILE_CACHE_PREFIX, USER_PROFILE_TTL_SECS,
+};
+use crate::modules::profile::dto::{MeResponse, ProfileSearchResult, PublicProfileResponse};
+use crate::modules::profile::errors::ProfileError;
+use crate::modules::profile::model::{GeneralSettings, Profile};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
+
 use std::str::FromStr;
 use uuid::Uuid;
 
-const ME_PROFILE_CACHE_PREFIX: &str = "ME.PROFILE";
-const ME_PROFILE_TTL_SECS: i64 = 60;
-
-const USER_PROFILE_CACHE_PREFIX: &str = "USER.PROFILE";
-const USER_PROFILE_TTL_SECS: i64 = 60;
-
 #[derive(Clone)]
-pub struct UserRepository {
+pub struct ProfileRepository {
     pub database: sqlx::PgPool,
     pub redis: RedisService,
     pub storage: StorageService,
 }
-impl UserRepository {
+impl ProfileRepository {
     pub fn new(database: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
         Self {
             database,
@@ -27,20 +25,22 @@ impl UserRepository {
             storage,
         }
     }
-    pub async fn find_by_id(&self, user_id: Uuid) -> Result<Option<User>, UserError> {
+    pub async fn find_by_id(&self, user_id: Uuid) -> Result<Option<Profile>, ProfileError> {
         sqlx::query_as!(
-            User,
-            r#"SELECT * FROM users WHERE id = $1 AND deleted_at IS NULL"#,
+            Profile,
+            r#"SELECT id, full_name, bio, email, avatar_id, avatar_url,
+                      verified, followers, following, broadcasts, created_at
+               FROM users WHERE id = $1 AND deleted_at IS NULL"#,
             user_id
         )
         .fetch_optional(&self.database)
         .await
-        .map_err(UserError::Database)
+        .map_err(ProfileError::Database)
     }
     pub async fn find_user_settings(
         &self,
         user_id: Uuid,
-    ) -> Result<Option<GeneralSettings>, UserError> {
+    ) -> Result<Option<GeneralSettings>, ProfileError> {
         sqlx::query_as!(
             GeneralSettings,
             r#"SELECT * FROM general_settings WHERE user_id = $1"#,
@@ -48,16 +48,16 @@ impl UserRepository {
         )
         .fetch_optional(&self.database)
         .await
-        .map_err(UserError::Database)
+        .map_err(ProfileError::Database)
     }
-    pub async fn find_user_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, UserError> {
+    pub async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, ProfileError> {
         let rows = sqlx::query!(
             "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
             user_id,
         )
         .fetch_all(&self.database)
         .await
-        .map_err(UserError::Database)?;
+        .map_err(ProfileError::Database)?;
 
         let providers = rows
             .iter()
@@ -67,23 +67,23 @@ impl UserRepository {
 
         Ok(providers)
     }
-    pub async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, UserError> {
+    pub async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, ProfileError> {
         sqlx::query_scalar!("SELECT avatar_id FROM users WHERE id = $1", user_id)
             .fetch_optional(&self.database)
             .await
-            .map_err(UserError::Database)
+            .map_err(ProfileError::Database)
             .map(|r| r.flatten())
     }
-    pub async fn update_user(
+    pub async fn update_profile(
         &self,
-        user_id: Uuid,
+        id: Uuid,
         full_name: Option<&str>,
         bio: Option<&str>,
         avatar_key: Option<&str>,
         avatar_url: Option<&str>,
-    ) -> Result<User, UserError> {
+    ) -> Result<Profile, ProfileError> {
         sqlx::query_as!(
-            User,
+            Profile,
             r#"UPDATE users SET
                  full_name =  COALESCE($1, full_name),
                  bio = COALESCE($2, bio),
@@ -91,40 +91,23 @@ impl UserRepository {
                  avatar_url = COALESCE($4, avatar_url),
                  updated_at = NOW()
                 WHERE id = $5 AND deleted_at IS NULL
-                RETURNING *"#,
+                RETURNING id, full_name, bio, email, avatar_id, avatar_url,
+                          verified, followers, following, broadcasts, created_at"#,
             full_name,
             bio,
             avatar_key,
             avatar_url,
-            user_id,
+            id,
         )
         .fetch_one(&self.database)
         .await
-        .map_err(UserError::Database)
-    }
-    pub async fn get_user_stats(&self, user_id: Uuid) -> Result<UserStats, UserError> {
-        let row = sqlx::query!(
-            r#"SELECT COUNT(CASE WHEN subscription_id = $1 THEN 1 END) as followers,
-                      COUNT(CASE WHEN subscriber_id = $1 THEN 1 END) as following,
-                      (SELECT COUNT(*) FROM broadcasts WHERE creator_id = $1 AND deleted_at IS NULL) as broadcasts
-               FROM user_subscribers"#,
-            user_id
-        )
-        .fetch_one(&self.database)
-        .await
-        .map_err(UserError::Database)?;
-
-        Ok(UserStats {
-            broadcasts: row.broadcasts.unwrap_or(0),
-            followers: row.followers.unwrap_or(0),
-            following: row.following.unwrap_or(0),
-        })
+        .map_err(ProfileError::Database)
     }
     pub async fn is_following(
         &self,
         subscription_id: Uuid,
         subscriber_id: Uuid,
-    ) -> Result<bool, UserError> {
+    ) -> Result<bool, ProfileError> {
         let exists = sqlx::query_scalar!(
             r#"SELECT EXISTS(
                 SELECT 1 FROM user_subscribers
@@ -135,8 +118,58 @@ impl UserRepository {
         )
         .fetch_one(&self.database)
         .await
-        .map_err(UserError::Database)?;
+        .map_err(ProfileError::Database)?;
         Ok(exists.unwrap_or(false))
+    }
+    pub async fn search_profiles(
+        &self,
+        query: &str,
+        limit: i64,
+        offset: i64,
+        current_user_id: Uuid,
+    ) -> Result<Vec<ProfileSearchResult>, ProfileError> {
+        let rows = sqlx::query!(
+            r#"SELECT u.id, u.full_name, u.bio, u.avatar_url, u.followers, u.following, u.broadcasts,
+               EXISTS(SELECT 1 FROM user_subscribers us WHERE us.subscriber_id = $1 AND us.subscription_id = u.id) AS is_following
+               FROM users u
+               WHERE u.deleted_at IS NULL
+               AND u.search_vector @@ websearch_to_tsquery('english', $2)
+               ORDER BY ts_rank(u.search_vector, websearch_to_tsquery('english', $2)) DESC, u.full_name
+               LIMIT $3 OFFSET $4"#,
+            current_user_id,
+            query,
+            limit,
+            offset
+        )
+            .fetch_all(&self.database)
+            .await
+            .map_err(ProfileError::Database)?;
+
+        let results = rows
+            .iter()
+            .map(|row| ProfileSearchResult {
+                id: row.id,
+                full_name: row.full_name.clone(),
+                bio: row.bio.clone(),
+                avatar_url: row.avatar_url.clone(),
+                is_following: row.is_following.unwrap_or(false),
+                followers: row.followers,
+                following: row.following,
+                broadcasts: row.broadcasts,
+            })
+            .collect();
+        Ok(results)
+    }
+    pub async fn count_search_profiles(&self, query: &str) -> Result<i64, ProfileError> {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) as "count!" FROM users
+               WHERE deleted_at IS NULL
+               AND search_vector @@ websearch_to_tsquery('english', $1)"#,
+            query
+        )
+        .fetch_one(&self.database)
+        .await
+        .map_err(ProfileError::Database)
     }
 
     // Redis
@@ -146,42 +179,42 @@ impl UserRepository {
     fn profile_cache_key(&self, user_id: Uuid) -> String {
         format!("{}:{}", USER_PROFILE_CACHE_PREFIX, user_id)
     }
-    pub async fn cache_me(&self, value: MeResponse) -> Result<(), UserError> {
+    pub async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError> {
         let key = self.me_cache_key(value.id);
         self.redis
             .set(&key, &value, Some(ME_PROFILE_TTL_SECS))
             .await
-            .map_err(UserError::Redis)?;
+            .map_err(ProfileError::Redis)?;
         Ok(())
     }
-    pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), UserError> {
+    pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError> {
         let key = self.profile_cache_key(value.id);
         self.redis
             .set(&key, &value, Some(USER_PROFILE_TTL_SECS))
             .await
-            .map_err(UserError::Redis)?;
+            .map_err(ProfileError::Redis)?;
         Ok(())
     }
-    pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, UserError> {
+    pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError> {
         let key = self.me_cache_key(user_id);
         self.redis
             .get::<MeResponse>(&key)
             .await
-            .map_err(UserError::Redis)
+            .map_err(ProfileError::Redis)
     }
     pub async fn get_cached_profile(
         &self,
         user_id: Uuid,
-    ) -> Result<Option<PublicProfileResponse>, UserError> {
+    ) -> Result<Option<PublicProfileResponse>, ProfileError> {
         let key = self.profile_cache_key(user_id);
         self.redis
             .get::<PublicProfileResponse>(&key)
             .await
-            .map_err(UserError::Redis)
+            .map_err(ProfileError::Redis)
     }
-    pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), UserError> {
+    pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
         let key = self.profile_cache_key(user_id);
-        self.redis.del(&key).await.map_err(UserError::Redis)?;
+        self.redis.del(&key).await.map_err(ProfileError::Redis)?;
         Ok(())
     }
 
@@ -190,15 +223,15 @@ impl UserRepository {
         &self,
         user_id: Uuid,
         new_avatar_key: &str,
-    ) -> Result<(Option<String>, Option<String>), UserError> {
+    ) -> Result<(Option<String>, Option<String>), ProfileError> {
         let exists = self
             .storage
             .object_exists(&new_avatar_key)
             .await
-            .map_err(|e| UserError::StorageError(e.to_string()))?;
+            .map_err(|e| ProfileError::StorageError(e.to_string()))?;
 
         if !exists {
-            return Err(UserError::AvatarNotUploaded);
+            return Err(ProfileError::AvatarNotUploaded);
         }
 
         // Delete old avatar in background (fire and forget)

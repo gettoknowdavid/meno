@@ -4,7 +4,7 @@ use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use std::sync::Arc;
 
-use crate::modules::user::service::UserService;
+use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
@@ -39,7 +39,7 @@ pub struct MenoState {
     pub local_rate_cache: Cache<String, u64>,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
-    pub user_service: UserService,
+    pub profile_service: ProfileService,
 }
 
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
@@ -64,7 +64,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
 
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
-        user_service: UserService::new(db.clone(), redis.clone(), storage.clone()),
+        profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         storage,

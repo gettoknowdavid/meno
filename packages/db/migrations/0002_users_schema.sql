@@ -9,13 +9,18 @@ CREATE TABLE public.users
     avatar_url TEXT,
     verified   BOOLEAN        NOT NULL DEFAULT FALSE,
     role       TEXT           NOT NULL DEFAULT 'user' CHECK ( role IN ('user', 'admin') ),
+    followers  BIGINT         NOT NULL DEFAULT 0,
+    following  BIGINT         NOT NULL DEFAULT 0,
+    broadcasts BIGINT         NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
     updated_at TIMESTAMPTZ(3) NOT NULL DEFAULT now(),
     deleted_at TIMESTAMPTZ(3)
 );
 
-CREATE INDEX idx_users_email ON users (email);
+CREATE INDEX idx_users_email ON users (email) WHERE deleted_at IS NULL;
 CREATE INDEX idx_users_deleted_at ON users (deleted_at) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_followers_count ON users (followers DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_broadcasts_count ON users (broadcasts DESC) WHERE deleted_at IS NULL;
 
 CREATE TABLE user_identities
 (

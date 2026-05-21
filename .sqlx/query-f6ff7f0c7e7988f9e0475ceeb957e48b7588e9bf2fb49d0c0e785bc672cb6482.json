@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT * FROM users WHERE id = $1",
+  "query": "INSERT INTO users (full_name, email)\n               VALUES ($1, $2)\n               RETURNING id, full_name, bio, email, avatar_id, avatar_url, verified, role,\n                   created_at, updated_at, deleted_at",
   "describe": {
     "columns": [
       {
@@ -61,7 +61,8 @@
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "Text",
+        "Text"
       ]
     },
     "nullable": [
@@ -78,5 +79,5 @@
       true
     ]
   },
-  "hash": "843923b9a0257cf80f1dff554e7dc8fdfc05f489328e8376513124dfb42996e3"
+  "hash": "f6ff7f0c7e7988f9e0475ceeb957e48b7588e9bf2fb49d0c0e785bc672cb6482"
 }

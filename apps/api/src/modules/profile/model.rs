@@ -1,15 +1,30 @@
-use crate::modules::auth::model::{AuthProvider, User};
-use crate::modules::user::dto::GeneralSettingsResponse;
+use crate::modules::profile::dto::GeneralSettingsResponse;
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use strum::{AsRefStr, EnumString};
+use time::OffsetDateTime;
 use uuid::Uuid;
 
-#[derive(Debug, Clone)]
-pub struct UserWithSettings {
-    pub user: User,
-    pub settings: GeneralSettings,
-    pub providers: Vec<AuthProvider>,
+#[derive(Debug, Clone, FromRow)]
+pub struct Profile {
+    pub id: Uuid,
+    pub full_name: String,
+    pub bio: Option<String>,
+    pub email: String,
+    pub avatar_id: Option<String>,
+    pub avatar_url: Option<String>,
+    pub verified: bool,
+    pub followers: i64,
+    pub following: i64,
+    pub broadcasts: i64,
+    pub created_at: OffsetDateTime,
 }
+// #[derive(Debug, Clone)]
+// pub struct ProfileWithSettings {
+//     pub user: Profile,
+//     pub settings: GeneralSettings,
+//     pub providers: Vec<AuthProvider>,
+// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, strum::Display, AsRefStr, EnumString)]
 #[serde(rename_all = "lowercase")]
@@ -67,21 +82,6 @@ impl Into<GeneralSettingsResponse> for GeneralSettings {
             display: self.display,
             language: self.language,
             notification_preferences: self.notification_preferences,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UserStats {
-    pub broadcasts: i64,
-    pub followers: i64,
-    pub following: i64,
-}
-impl Default for UserStats {
-    fn default() -> Self {
-        Self {
-            broadcasts: 0,
-            followers: 0,
-            following: 0,
         }
     }
 }

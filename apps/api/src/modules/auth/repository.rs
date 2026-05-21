@@ -15,14 +15,14 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AuthRepository {
-    db: sqlx::PgPool,
+    database: sqlx::PgPool,
     redis: RedisService,
     use_redis_otp: bool,
 }
 impl AuthRepository {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, env: &str) -> Self {
+    pub fn new(database: sqlx::PgPool, redis: RedisService, env: &str) -> Self {
         Self {
-            db,
+            database,
             redis,
             use_redis_otp: env != "dev" && env != "development",
         }
@@ -30,11 +30,14 @@ impl AuthRepository {
 
     // DB
     pub async fn create(&self, full_name: &str, email: &str) -> Result<User, AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         let user = sqlx::query_as!(
             User,
-            r#"INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *"#,
+            r#"INSERT INTO users (full_name, email)
+               VALUES ($1, $2)
+               RETURNING id, full_name, bio, email, avatar_id, avatar_url, verified, role,
+                   created_at, updated_at, deleted_at"#,
             full_name,
             email,
         )
@@ -60,11 +63,14 @@ impl AuthRepository {
         pwd_hash: Option<&str>,
         provider_type: &AuthProvider,
     ) -> Result<User, AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         let user = sqlx::query_as!(
             User,
-            r#"INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *"#,
+            r#"INSERT INTO users (full_name, email)
+               VALUES ($1, $2)
+               RETURNING id, full_name, bio, email, avatar_id, avatar_url, verified, role,
+                   created_at, updated_at, deleted_at"#,
             full_name,
             email,
         )
@@ -80,7 +86,7 @@ impl AuthRepository {
             email,
             pwd_hash,
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
 
@@ -112,7 +118,7 @@ impl AuthRepository {
             provider_user_id,
             password_hash,
         )
-        .fetch_one(&self.db)
+        .fetch_one(&self.database)
         .await
         .map_err(AuthError::Database)
     }
@@ -128,7 +134,7 @@ impl AuthRepository {
             provider_type.to_string(),
             provider_user_id,
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.database)
         .await
         .map_err(AuthError::Database)
     }
@@ -146,7 +152,7 @@ impl AuthRepository {
             provider_type.to_string(),
             provider_user_id,
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
@@ -157,35 +163,45 @@ impl AuthRepository {
             hash_pwd,
             user_id
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
     }
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, AuthError> {
-        sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", email)
-            .fetch_optional(&self.db)
-            .await
-            .map_err(AuthError::Database)
+        sqlx::query_as!(
+            User,
+            r#"SELECT id, full_name, bio, email, avatar_id, avatar_url, verified, role, created_at, updated_at, deleted_at
+               FROM users WHERE email = $1"#,
+            email,
+        )
+        .fetch_optional(&self.database)
+        .await
+        .map_err(AuthError::Database)
     }
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
-        sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
-            .fetch_optional(&self.db)
-            .await
-            .map_err(AuthError::Database)
+        sqlx::query_as!(
+            User,
+            r#"SELECT id, full_name, bio, email, avatar_id, avatar_url, verified, role, created_at, updated_at, deleted_at
+               FROM users WHERE id = $1"#,
+            id
+        )
+        .fetch_optional(&self.database)
+        .await
+        .map_err(AuthError::Database)
     }
     pub async fn user_exists(&self, email: &str) -> Result<bool, AuthError> {
         sqlx::query_scalar!(
             r#"SELECT EXISTS (SELECT 1 FROM users WHERE email = $1) AS "exists!""#,
             email
         )
-        .fetch_one(&self.db)
+        .fetch_one(&self.database)
         .await
         .map_err(AuthError::Database)
     }
     pub async fn set_verified(&self, email: &str) -> Result<(), AuthError> {
         sqlx::query!("UPDATE users SET verified = true WHERE email = $1", email)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
@@ -205,7 +221,7 @@ impl AuthRepository {
             hash_token(refresh_token),
             expires_at
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
@@ -221,7 +237,7 @@ impl AuthRepository {
             jti,
             user_id
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.database)
         .await
         .map_err(AuthError::Database)
     }
@@ -232,7 +248,7 @@ impl AuthRepository {
         new_jti: Uuid,
         new_token: &str,
     ) -> Result<(), AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         sqlx::query!(
             "DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2",
@@ -260,14 +276,14 @@ impl AuthRepository {
     }
     pub async fn revoke_refresh_token(&self, jti: Uuid) -> Result<(), AuthError> {
         sqlx::query!("DELETE FROM refresh_tokens WHERE id = $1", jti)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
     }
     pub async fn revoke_all_refresh_tokens(&self, user_id: Uuid) -> Result<(), AuthError> {
         sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
@@ -323,7 +339,7 @@ impl AuthRepository {
                 email,
                 otp_type_str,
             )
-            .fetch_optional(&self.db)
+            .fetch_optional(&self.database)
             .await
             .map_err(AuthError::Database)?;
             match row {
@@ -337,7 +353,7 @@ impl AuthRepository {
                         email,
                         otp_type_str,
                     )
-                    .execute(&self.db)
+                    .execute(&self.database)
                     .await
                     .map_err(AuthError::Database)?;
                     Ok(true)
@@ -360,7 +376,7 @@ impl AuthRepository {
                 email,
                 otp_type.to_string()
             )
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         }
@@ -383,7 +399,7 @@ impl AuthRepository {
                 SELECT COUNT(*) FROM deleted_rows;
                 "#
             )
-            .fetch_one(&self.db)
+            .fetch_one(&self.database)
             .await
             .map_err(AuthError::Database)?;
 
@@ -500,7 +516,7 @@ impl AuthRepository {
             otp_type.to_string(),
             expires_at,
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
