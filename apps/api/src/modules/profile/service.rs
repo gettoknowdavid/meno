@@ -67,7 +67,17 @@ impl ProfileService {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<AuthProvider>, ProfileError> {
-        self.repo.find_providers(user_id).await
+        if let Some(cached_providers) = self.repo.get_cached_providers(user_id).await? {
+            return Ok(cached_providers);
+        }
+
+        let providers = self.repo.find_providers(user_id).await?;
+
+        self.repo
+            .cache_providers(user_id, providers.clone())
+            .await?;
+
+        Ok(providers)
     }
 
     pub async fn update_me(
@@ -82,7 +92,7 @@ impl ProfileService {
         let _ = self.repo.invalidate_cached_profile(user_id).await?;
 
         let (new_avatar_key, new_avatar_url) = if let Some(ref avatar_key) = req.avatar_key {
-            self.repo.update_avatar_url(user_id, avatar_key).await?
+            self.update_avatar_url(user_id, avatar_key).await?
         } else {
             (None, None)
         };
@@ -153,7 +163,7 @@ impl ProfileService {
             avatar_url: user.avatar_url,
             is_following,
             broadcasts: user.broadcasts,
-            following: user.followers,
+            following: user.following,
             followers: user.followers,
             created_at: user.created_at,
         };
@@ -172,6 +182,12 @@ impl ProfileService {
         let page = params.page.unwrap_or(1);
         let limit = params.limit.unwrap_or(50);
 
+        let cache_key = self.repo.search_results_cache_key(&q, page, limit);
+
+        if let Some(cached_results) = self.repo.get_cached_search_results(&cache_key).await? {
+            return self.build_pagination(&q, limit, page, cached_results).await;
+        }
+
         let pagination = PaginationParams::new(page, limit);
 
         let results = self
@@ -179,19 +195,45 @@ impl ProfileService {
             .search_profiles(&q, limit, pagination.offset(), current_user_id)
             .await?;
 
-        let total = self.repo.count_search_profiles(&q).await?;
+        self.repo
+            .cache_search_results(&cache_key, results.clone())
+            .await?;
 
+        self.build_pagination(&q, limit, page, results).await
+    }
+    async fn build_pagination<T>(
+        &self,
+        q: &str,
+        limit: i64,
+        page: i64,
+        data: Vec<T>,
+    ) -> Result<PaginationResponse<T>, ProfileError> {
+        let total = self.repo.count_search_profiles(q).await?;
         let total_pages = if total == 0 {
             0
         } else {
             (total + limit - 1) / limit
         };
-
         Ok(PaginationResponse {
+            total_items: total,
             total_pages,
             current_page: page,
-            total_items: total,
-            data: results,
+            data,
         })
+    }
+
+    async fn update_avatar_url(
+        &self,
+        user_id: Uuid,
+        new_avatar_key: &str,
+    ) -> Result<(Option<String>, Option<String>), ProfileError> {
+        if !self.repo.object_exists(&new_avatar_key).await? {
+            return Err(ProfileError::AvatarNotUploaded);
+        }
+
+        self.repo.delete_avatar(user_id).await?;
+
+        let public_url = self.repo.get_avatar_url(&new_avatar_key);
+        Ok((Some(new_avatar_key.to_string()), Some(public_url)))
     }
 }

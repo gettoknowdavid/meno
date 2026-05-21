@@ -5,24 +5,26 @@ use crate::modules::auth::dto::{
     ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt_service::verify_token_hash;
+use crate::modules::auth::jwt::verify_token_hash;
 use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
 use crate::modules::auth::model::{AuthProvider, User};
 use crate::modules::auth::password::{hash_password, verify_password};
 use crate::modules::auth::repository::AuthRepository;
+use crate::modules::auth::utils::generate_otp;
 use crate::shared::integrations::google::GoogleUserInfo;
 use crate::shared::services::email::EmailService;
 use crate::shared::services::redis::RedisService;
 use crate::state::MenoState;
+use time::{Duration, OffsetDateTime};
 
 #[derive(Clone)]
 pub struct AuthService {
     repo: AuthRepository,
 }
 impl AuthService {
-    pub fn new(db: sqlx::PgPool, rd: RedisService, env: &str) -> Self {
+    pub fn new(database: sqlx::PgPool, redis: RedisService) -> Self {
         Self {
-            repo: AuthRepository::new(db, rd, env),
+            repo: AuthRepository::new(database, redis),
         }
     }
 
@@ -42,17 +44,15 @@ impl AuthService {
 
         let pwd_hash = self.spawn_hash_pwd(req.password.clone()).await?;
 
-        let user = self
-            .repo
-            .create_user_tx(
-                &req.full_name,
-                &req.email,
-                Some(&pwd_hash),
-                &AuthProvider::Email,
-            )
+        let user = self.repo.create_user_tx(&req.full_name, &req.email).await?;
+
+        self.repo
+            .create_identity(user.id, &AuthProvider::Email, &user.email, Some(&pwd_hash))
             .await?;
 
-        let otp = self.repo.store_otp(&user.email, VerifyEmail).await?;
+        let otp = generate_otp();
+        self.repo.store_otp(&user.email, &otp, &VerifyEmail).await?;
+
         let html = verification_email_html(&user.full_name, &otp);
         self.send_email(&app.config, req.email.clone(), html).await;
 
@@ -109,10 +109,10 @@ impl AuthService {
         self.repo
             .revoke_otp(&req.email, req.otp_type.clone())
             .await?;
-        let otp = self
-            .repo
-            .store_otp(&req.email, req.otp_type.clone())
-            .await?;
+
+        let otp = generate_otp();
+
+        self.repo.store_otp(&req.email, &otp, &req.otp_type).await?;
 
         let html = match &req.otp_type {
             VerifyEmail => verification_email_html(&user.full_name, &otp),
@@ -162,7 +162,10 @@ impl AuthService {
             Some(u) => u,
             None => return Ok(()),
         };
-        let otp = self.repo.store_otp(&req.email, ResetPassword).await?;
+        let otp = generate_otp();
+        self.repo
+            .store_otp(&req.email, &otp, &ResetPassword)
+            .await?;
         let html = reset_password_email_html(&user.full_name, &otp);
         self.send_email(&app.config, req.email.clone(), html).await;
         Ok(())
@@ -189,20 +192,25 @@ impl AuthService {
 
     pub async fn logout(&self, app: &MenoState, req: &LogoutRequest) -> Result<(), AuthError> {
         let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
-
         self.repo.revoke_refresh_token(claims.jti).await?;
 
         if let Some(ref access_token) = req.access_token {
             if let Ok(access_claims) = app.jwt.decode_access(access_token) {
-                let now = time::OffsetDateTime::now_utc().unix_timestamp() as u64;
-                let remaining_secs = access_claims.exp.saturating_sub(now) as i64;
+                let now = OffsetDateTime::now_utc().unix_timestamp();
+                let remaining_secs = access_claims.exp.saturating_sub(now);
                 if remaining_secs > 0 {
                     self.repo
-                        .block_access_tokens(access_claims.sub, remaining_secs)
+                        .block_access_token(access_claims.jti, remaining_secs)
                         .await?;
                 }
             }
         }
+
+        app.redis
+            .invalidate_all_user_keys(claims.sub)
+            .await
+            .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
+
         Ok(())
     }
 
@@ -228,7 +236,50 @@ impl AuthService {
             return Err(AuthError::InvalidToken);
         }
 
-        self.issue_tokens(app, &user).await
+        let providers = app
+            .profile_service
+            .find_user_providers(user.id)
+            .await
+            .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
+
+        let access_token = app.jwt.sign_access(
+            user.id,
+            &user.email,
+            &user.full_name,
+            user.verified,
+            providers.clone(),
+            user.role.clone(),
+        )?;
+
+        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+
+        let expires_at =
+            OffsetDateTime::now_utc() + Duration::minutes(app.config.refresh_token_expiration);
+
+        self.repo
+            .store_refresh_token(jti, user.id, &refresh_token, &expires_at)
+            .await?;
+
+        self.repo
+            .rotate_refresh_token(user.id, claims.jti, jti, &refresh_token)
+            .await?;
+
+        Ok(AuthResponse {
+            access_token,
+            refresh_token,
+            user: UserResponse {
+                id: user.id,
+                full_name: user.full_name.clone(),
+                bio: user.bio.clone(),
+                email: user.email.clone(),
+                verified: user.verified,
+                avatar_id: user.avatar_id.clone(),
+                avatar_url: user.avatar_url.clone(),
+                providers,
+                created_at: user.created_at,
+                deleted_at: user.deleted_at,
+            },
+        })
     }
 
     pub async fn google_authorize(&self, app: &MenoState) -> Result<GoogleUrlResponse, AuthError> {
@@ -316,7 +367,11 @@ impl AuthService {
             } else {
                 let user = self
                     .repo
-                    .create_user_tx(&userinfo.name, &userinfo.email, None, &AuthProvider::Google)
+                    .create_user_tx(&userinfo.name, &userinfo.email)
+                    .await?;
+
+                self.repo
+                    .create_identity(user.id, &AuthProvider::Google, &user.email, None)
                     .await?;
 
                 if userinfo.email_verified {
@@ -346,8 +401,12 @@ impl AuthService {
         )?;
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+
+        let expires_at =
+            OffsetDateTime::now_utc() + Duration::minutes(app.config.refresh_token_expiration);
+
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token)
+            .store_refresh_token(jti, user.id, &refresh_token, &expires_at)
             .await?;
 
         Ok(AuthResponse {

@@ -28,8 +28,8 @@ pub struct MenoConfig {
 
     pub jwt_secret: String,
     pub jwt_refresh_secret: String,
-    pub access_token_expiration: u64,
-    pub refresh_token_expiration: u64,
+    pub access_token_expiration: i64,
+    pub refresh_token_expiration: i64,
 
     pub redis_url: String,
 
@@ -81,11 +81,11 @@ impl MenoConfig {
                 .context("JWT_REFRESH_SECRET is missing")?,
             access_token_expiration: var("ACCESS_TOKEN_EXPIRATION")
                 .unwrap_or_else(|_| "900".to_string())
-                .parse::<u64>()
+                .parse::<i64>()
                 .context("ACCESS_TOKEN_EXPIRATION must be a valid number")?,
             refresh_token_expiration: var("REFRESH_TOKEN_EXPIRATION")
                 .unwrap_or_else(|_| "604800".to_string())
-                .parse::<u64>()
+                .parse::<i64>()
                 .context("REFRESH_TOKEN_EXPIRATION must be a valid number")?,
             redis_url: var("REDIS_URL").context("REDIS_URL is missing")?,
             default_rate_limit: RateLimitConfig::new(60, 60),

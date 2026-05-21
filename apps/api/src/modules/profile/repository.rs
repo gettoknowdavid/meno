@@ -1,13 +1,11 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::constants::{
-    ME_PROFILE_CACHE_PREFIX, ME_PROFILE_TTL_SECS, USER_PROFILE_CACHE_PREFIX, USER_PROFILE_TTL_SECS,
-};
 use crate::modules::profile::dto::{MeResponse, ProfileSearchResult, PublicProfileResponse};
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::{GeneralSettings, Profile};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 
+use crate::shared::constants::TTL_60_SECS;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -173,30 +171,22 @@ impl ProfileRepository {
     }
 
     // Redis
-    fn me_cache_key(&self, user_id: Uuid) -> String {
-        format!("{}:{}", ME_PROFILE_CACHE_PREFIX, user_id)
-    }
-    fn profile_cache_key(&self, user_id: Uuid) -> String {
-        format!("{}:{}", USER_PROFILE_CACHE_PREFIX, user_id)
-    }
     pub async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError> {
-        let key = self.me_cache_key(value.id);
+        let key = RedisService::profile_key(value.id);
         self.redis
-            .set(&key, &value, Some(ME_PROFILE_TTL_SECS))
+            .set(&key, &value, Some(TTL_60_SECS))
             .await
-            .map_err(ProfileError::Redis)?;
-        Ok(())
+            .map_err(ProfileError::Redis)
     }
     pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError> {
-        let key = self.profile_cache_key(value.id);
+        let key = RedisService::profile_key(value.id);
         self.redis
-            .set(&key, &value, Some(USER_PROFILE_TTL_SECS))
+            .set(&key, &value, Some(TTL_60_SECS))
             .await
-            .map_err(ProfileError::Redis)?;
-        Ok(())
+            .map_err(ProfileError::Redis)
     }
     pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError> {
-        let key = self.me_cache_key(user_id);
+        let key = RedisService::profile_key(user_id);
         self.redis
             .get::<MeResponse>(&key)
             .await
@@ -206,46 +196,85 @@ impl ProfileRepository {
         &self,
         user_id: Uuid,
     ) -> Result<Option<PublicProfileResponse>, ProfileError> {
-        let key = self.profile_cache_key(user_id);
+        let key = RedisService::profile_key(user_id);
         self.redis
             .get::<PublicProfileResponse>(&key)
             .await
             .map_err(ProfileError::Redis)
     }
     pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
-        let key = self.profile_cache_key(user_id);
-        self.redis.del(&key).await.map_err(ProfileError::Redis)?;
+        let key = RedisService::profile_key(user_id);
+        self.redis.del(&key).await.map_err(ProfileError::Redis)
+    }
+    pub async fn cache_providers(
+        &self,
+        user_id: Uuid,
+        providers: Vec<AuthProvider>,
+    ) -> Result<(), ProfileError> {
+        let key = RedisService::user_providers_key(user_id);
+        self.redis
+            .set(&key, &providers, Some(TTL_60_SECS))
+            .await
+            .map_err(ProfileError::Redis)
+    }
+    pub async fn get_cached_providers(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<Vec<AuthProvider>>, ProfileError> {
+        let key = RedisService::user_providers_key(user_id);
+        self.redis
+            .get::<Vec<AuthProvider>>(&key)
+            .await
+            .map_err(ProfileError::Redis)
+    }
+    pub fn search_results_cache_key(&self, query: &str, page: i64, limit: i64) -> String {
+        let built_key_suffix = format!("{}:{}:{}", query, page, limit);
+        RedisService::search_key(built_key_suffix)
+    }
+    pub async fn cache_search_results(
+        &self,
+        key: &str,
+        results: Vec<ProfileSearchResult>,
+    ) -> Result<(), ProfileError> {
+        self.redis
+            .set(&key, &results, Some(TTL_60_SECS))
+            .await
+            .map_err(ProfileError::Redis)?;
         Ok(())
+    }
+    pub async fn get_cached_search_results(
+        &self,
+        key: &str,
+    ) -> Result<Option<Vec<ProfileSearchResult>>, ProfileError> {
+        self.redis
+            .get::<Vec<ProfileSearchResult>>(&key)
+            .await
+            .map_err(ProfileError::Redis)
     }
 
     // Storage
-    pub async fn update_avatar_url(
-        &self,
-        user_id: Uuid,
-        new_avatar_key: &str,
-    ) -> Result<(Option<String>, Option<String>), ProfileError> {
-        let exists = self
-            .storage
-            .object_exists(&new_avatar_key)
+    pub async fn object_exists(&self, key: &str) -> Result<bool, ProfileError> {
+        self.storage
+            .object_exists(&key)
             .await
-            .map_err(|e| ProfileError::StorageError(e.to_string()))?;
-
-        if !exists {
-            return Err(ProfileError::AvatarNotUploaded);
+            .map_err(|e| ProfileError::StorageError(e.to_string()))
+    }
+    pub async fn delete_avatar(&self, user_id: Uuid) -> Result<(), ProfileError> {
+        match self.find_avatar_key(user_id).await? {
+            None => Ok(()),
+            Some(old_key) => {
+                let storage = self.storage.clone();
+                let old_key = old_key.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = storage.delete(&old_key).await {
+                        tracing::warn!(error = %e, key = %old_key, "Failed to delete old avatar");
+                    }
+                });
+                Ok(())
+            }
         }
-
-        // Delete old avatar in background (fire and forget)
-        if let Ok(Some(old_key)) = self.find_avatar_key(user_id).await {
-            let storage = self.storage.clone();
-            let old_key = old_key.clone();
-            tokio::spawn(async move {
-                if let Err(e) = storage.delete(&old_key).await {
-                    tracing::warn!(error = %e, key = %old_key, "Failed to delete old avatar");
-                }
-            });
-        }
-
-        let public_url = self.storage.public_url_for(&new_avatar_key);
-        Ok((Some(new_avatar_key.to_string()), Some(public_url)))
+    }
+    pub fn get_avatar_url(&self, key: &str) -> String {
+        self.storage.public_url_for(&key)
     }
 }

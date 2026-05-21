@@ -1,5 +1,0 @@
-pub const ME_PROFILE_CACHE_PREFIX: &str = "ME.PROFILE";
-pub const ME_PROFILE_TTL_SECS: i64 = 60;
-
-pub const USER_PROFILE_CACHE_PREFIX: &str = "USER.PROFILE";
-pub const USER_PROFILE_TTL_SECS: i64 = 60;

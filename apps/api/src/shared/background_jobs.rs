@@ -1,19 +1,19 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::repository::AuthRepository;
+use crate::shared::services::redis::RedisService;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::time::MissedTickBehavior;
 use tokio_util::sync::CancellationToken;
-use crate::shared::services::redis::RedisService;
 
 #[derive(Clone)]
 pub struct BackgroundJobs {
     auth_repo: AuthRepository,
 }
 impl BackgroundJobs {
-    pub fn new(db: PgPool, redis: RedisService, env: &str) -> Self {
-        let auth_repo = AuthRepository::new(db, redis, env);
+    pub fn new(database: PgPool, redis: RedisService) -> Self {
+        let auth_repo = AuthRepository::new(database, redis);
         Self { auth_repo }
     }
 

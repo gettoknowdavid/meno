@@ -1,11 +1,10 @@
 pub mod dto;
 pub mod errors;
-pub mod jwt_service;
-pub mod model;
-pub mod repository;
 pub mod handlers;
-pub mod services;
-mod validators;
+pub mod jwt;
+pub mod model;
 pub mod password;
+pub mod repository;
+pub mod services;
 pub mod utils;
-pub mod constants;
+mod validators;

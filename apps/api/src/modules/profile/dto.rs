@@ -1,5 +1,5 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::model::Display;
+use crate::modules::profile::model::{Display, GeneralSettings};
 use serde::{Deserialize, Serialize};
 use time::{OffsetDateTime, serde::rfc3339};
 use uuid::Uuid;
@@ -64,7 +64,7 @@ pub struct PublicProfileResponse {
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct ProfileSearchResult {
     pub id: Uuid,
     pub full_name: String,
@@ -90,4 +90,16 @@ pub struct GeneralSettingsResponse {
     pub display: Display,
     pub language: String,
     pub notification_preferences: serde_json::Value,
+}
+impl Into<GeneralSettingsResponse> for GeneralSettings {
+    fn into(self) -> GeneralSettingsResponse {
+        GeneralSettingsResponse {
+            push_notifications: self.push_notifications,
+            app_notifications: self.app_notifications,
+            email_notifications: self.email_notifications,
+            display: self.display,
+            language: self.language,
+            notification_preferences: self.notification_preferences,
+        }
+    }
 }

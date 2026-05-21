@@ -12,5 +12,5 @@ pub fn router(state: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoSta
         .route("/me/avatar-upload-url", get(handlers::get_avatar_upload_url))
         .route("/{id}", get(handlers::get_profile))
         .route("/", get(handlers::search_profiles))
-        .route_layer(from_fn_with_state(state.clone(), auth_middleware))
+        .layer(from_fn_with_state(state.clone(), auth_middleware))
 }

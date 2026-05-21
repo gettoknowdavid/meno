@@ -1,4 +1,3 @@
-use crate::modules::profile::dto::GeneralSettingsResponse;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
 use strum::{AsRefStr, EnumString};
@@ -19,12 +18,6 @@ pub struct Profile {
     pub broadcasts: i64,
     pub created_at: OffsetDateTime,
 }
-// #[derive(Debug, Clone)]
-// pub struct ProfileWithSettings {
-//     pub user: Profile,
-//     pub settings: GeneralSettings,
-//     pub providers: Vec<AuthProvider>,
-// }
 
 #[derive(Clone, Debug, Serialize, Deserialize, strum::Display, AsRefStr, EnumString)]
 #[serde(rename_all = "lowercase")]
@@ -70,18 +63,6 @@ impl GeneralSettings {
             notification_preferences: serde_json::json!({}),
             display: Display::System,
             language: "en".to_string(),
-        }
-    }
-}
-impl Into<GeneralSettingsResponse> for GeneralSettings {
-    fn into(self) -> GeneralSettingsResponse {
-        GeneralSettingsResponse {
-            push_notifications: self.push_notifications,
-            app_notifications: self.app_notifications,
-            email_notifications: self.email_notifications,
-            display: self.display,
-            language: self.language,
-            notification_preferences: self.notification_preferences,
         }
     }
 }

@@ -1,5 +1,5 @@
 use crate::config::MenoConfig;
-use crate::modules::auth::jwt_service::JwtService;
+use crate::modules::auth::jwt::Jwt;
 use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use std::sync::Arc;
@@ -32,7 +32,7 @@ pub struct MenoState {
     pub config: MenoConfig,
     pub db: PgPool,
     pub redis: RedisService,
-    pub jwt: JwtService,
+    pub jwt: Jwt,
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
@@ -43,7 +43,7 @@ pub struct MenoState {
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
-    let jwt = JwtService::new(
+    let jwt = Jwt::new(
         &config.jwt_secret,
         &config.jwt_refresh_secret,
         config.access_token_expiration,
@@ -51,12 +51,12 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     );
 
     let cancel_token = CancellationToken::new();
-    let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone(), &config.env));
+    let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
 
     let storage = StorageService::new(&config);
 
     let state = Arc::new(MenoState {
-        auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
+        auth_service: AuthService::new(db.clone(), redis.clone()),
         profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
