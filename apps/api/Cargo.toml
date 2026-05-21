@@ -37,4 +37,3 @@ tokio-util = "0.7.18"
 oauth2 = { version = "5.0.0", features = ["reqwest", "reqwest-blocking"] }
 reqwest = { version = "0.13.3", features = ["json", "blocking"] }
 object_store = { version = "0.13.2", features = ["aws"] }
-bytes = "1.11.1"
