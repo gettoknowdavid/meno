@@ -41,6 +41,16 @@ services:
       - redis_data:/data
     command: redis-server --appendonly yes
 
+  redis-insight:
+    image: redis/redisinsight:latest
+    container_name: meno-redis-insight
+    ports:
+      - "5599:5599"
+    networks:
+      - meno-network
+    depends_on:
+      - redis
+
   prometheus:
     image: prom/prometheus
     volumes:

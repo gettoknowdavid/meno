@@ -19,13 +19,13 @@ pub struct UpdateProfileRequest {
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct ProfileSearchParam {
-    #[validate(length(min = 3))]
+    #[validate(length(min = 3, message = "Keywords must be at least 3 characters"))]
     pub q: String,
 
-    #[validate(range(min = 1))]
+    #[validate(range(min = 1, message = "Minimum page number is 1"))]
     pub page: Option<i64>,
 
-    #[validate(range(min = 20, max = 50))]
+    #[validate(range(min = 20, max = 50, message = "Min: 20, Max: 50"))]
     pub limit: Option<i64>,
 }
 

@@ -17,7 +17,6 @@ use axum::{
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
-use moka::future::Cache;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -36,7 +35,6 @@ pub struct MenoState {
     pub jwt: JwtService,
     pub google: GoogleAuthService,
     pub storage: StorageService,
-    pub local_rate_cache: Cache<String, u64>,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
     pub profile_service: ProfileService,
@@ -55,11 +53,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     let cancel_token = CancellationToken::new();
     let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone(), &config.env));
 
-    let local_rate_cache = Cache::builder()
-        .max_capacity(100_000)
-        .time_to_live(Duration::from_secs(60))
-        .build();
-
     let storage = StorageService::new(&config);
 
     let state = Arc::new(MenoState {
@@ -69,7 +62,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         google: GoogleAuthService::new(&config),
         storage,
         jwt,
-        local_rate_cache,
         config,
         db,
         redis,
