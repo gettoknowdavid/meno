@@ -8,6 +8,7 @@ use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
+use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 use axum::middleware::from_fn;
@@ -17,6 +18,7 @@ use axum::{
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
+use livekit_api::services::room::RoomClient;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -36,6 +38,7 @@ pub struct MenoState {
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
+    pub livekit: LivekitService,
     pub auth_service: AuthService,
     pub profile_service: ProfileService,
 }
@@ -55,9 +58,16 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
 
     let storage = StorageService::new(&config);
 
+    let room = Arc::new(RoomClient::with_api_key(
+        &config.livekit_host,
+        &config.livekit_api_key,
+        &config.livekit_api_secret,
+    ));
+
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone()),
         profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
+        livekit: LivekitService::new(&config, room),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         storage,
@@ -105,7 +115,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     //     }))
     //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
     //     .layer(cors_layer);
-
 
     let middleware_stack = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())

@@ -38,3 +38,9 @@ pub const TTL_1800_SECS: i64 = 1800;
 
 /// Expiry time of 45 minutes
 pub const TTL_2700_SECS: i64 = 2700;
+
+/// Expiry time of 1 hour
+pub const TTL_3600_SECS: i64 = 3600;
+
+// ========== LIVEKIT CONSTANTS ==========
+pub const LIVEKIT_ACCESS_TOKEN_TTL: i64 = 21600;
