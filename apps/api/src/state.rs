@@ -1,23 +1,22 @@
 use crate::config::MenoConfig;
-use crate::modules::auth::jwt_service::JwtService;
+use crate::modules::auth::jwt::Jwt;
 use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
-use crate::shared::middleware::rate_limit::rate_limit_middleware;
 use std::sync::Arc;
 
+use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
+use crate::shared::services::redis::RedisService;
+use crate::shared::services::storage::StorageService;
 use axum::middleware::from_fn;
 use axum::{
     Router,
     http::{StatusCode, header},
-    middleware::from_fn_with_state,
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
-use fred::clients::Pool;
-use moka::future::Cache;
 use sqlx::PgPool;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
@@ -32,18 +31,19 @@ use tower_http::{
 pub struct MenoState {
     pub config: MenoConfig,
     pub db: PgPool,
-    pub redis: Pool,
-    pub jwt: JwtService,
+    pub redis: RedisService,
+    pub jwt: Jwt,
     pub google: GoogleAuthService,
-    pub local_rate_cache: Cache<String, u64>,
+    pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
     pub auth_service: AuthService,
+    pub profile_service: ProfileService,
 }
 
-pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Router {
+pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
 
-    let jwt = JwtService::new(
+    let jwt = Jwt::new(
         &config.jwt_secret,
         &config.jwt_refresh_secret,
         config.access_token_expiration,
@@ -51,25 +51,21 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
     );
 
     let cancel_token = CancellationToken::new();
-    let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone(), &config.env));
+    let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
 
-    let local_rate_cache = Cache::builder()
-        .max_capacity(100_000)
-        .time_to_live(Duration::from_secs(60))
-        .build();
+    let storage = StorageService::new(&config);
 
     let state = Arc::new(MenoState {
-        auth_service: AuthService::new(db.clone(), redis.clone(), &config.env),
+        auth_service: AuthService::new(db.clone(), redis.clone()),
+        profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
+        storage,
         jwt,
-        local_rate_cache,
         config,
         db,
         redis,
     });
-
-    BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
 
     let status_code = StatusCode::REQUEST_TIMEOUT;
     let timeout = Duration::from_secs(30);
@@ -91,15 +87,15 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: Pool) -> Ro
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
 
+    BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
     Router::new()
         .route("/metrics", get(|| async move { metric_handle.render() }))
         .layer(prometheus_layer)
-        .layer(TraceLayer::new_for_http())
         .merge(build_meno_routes(state.clone()))
-        .layer(from_fn_with_state(state.clone(), rate_limit_middleware))
-        .layer(middleware_stack)
         .layer(from_fn(timing_middleware))
+        .layer(TraceLayer::new_for_http())
+        .layer(middleware_stack)
         .with_state(state)
 }

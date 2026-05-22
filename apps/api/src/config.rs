@@ -28,8 +28,8 @@ pub struct MenoConfig {
 
     pub jwt_secret: String,
     pub jwt_refresh_secret: String,
-    pub access_token_expiration: u64,
-    pub refresh_token_expiration: u64,
+    pub access_token_expiration: i64,
+    pub refresh_token_expiration: i64,
 
     pub redis_url: String,
 
@@ -42,6 +42,13 @@ pub struct MenoConfig {
     pub smtp_user: String,
     pub smtp_password: String,
     pub smtp_from: String,
+
+    pub storage_endpoint: String,
+    pub storage_access_key: String,
+    pub storage_secret_key: String,
+    pub storage_bucket: String,
+    pub storage_region: String,
+    pub storage_public_url: String,
 }
 
 impl MenoConfig {
@@ -74,11 +81,11 @@ impl MenoConfig {
                 .context("JWT_REFRESH_SECRET is missing")?,
             access_token_expiration: var("ACCESS_TOKEN_EXPIRATION")
                 .unwrap_or_else(|_| "900".to_string())
-                .parse::<u64>()
+                .parse::<i64>()
                 .context("ACCESS_TOKEN_EXPIRATION must be a valid number")?,
             refresh_token_expiration: var("REFRESH_TOKEN_EXPIRATION")
                 .unwrap_or_else(|_| "604800".to_string())
-                .parse::<u64>()
+                .parse::<i64>()
                 .context("REFRESH_TOKEN_EXPIRATION must be a valid number")?,
             redis_url: var("REDIS_URL").context("REDIS_URL is missing")?,
             default_rate_limit: RateLimitConfig::new(60, 60),
@@ -94,6 +101,12 @@ impl MenoConfig {
             smtp_user: var("SMTP_USER").context("SMTP_USER is missing")?,
             smtp_password: var("SMTP_PASSWORD").context("SMTP_PASSWORD is missing")?,
             smtp_from: var("SMTP_FROM").context("SMTP_FROM is missing")?,
+            storage_endpoint: var("STORAGE_ENDPOINT").context("STORAGE_ENDPOINT is missing")?,
+            storage_access_key: var("STORAGE_ACCESS_KEY").context("STORAGE_ACCESS_KEY is missing")?,
+            storage_secret_key: var("STORAGE_SECRET_KEY").context("STORAGE_SECRET_KEY is missing")?,
+            storage_bucket: var("STORAGE_BUCKET").context("STORAGE_BUCKET is missing")?,
+            storage_region: var("STORAGE_REGION").context("STORAGE_REGION is missing")?,
+            storage_public_url: var("STORAGE_PUBLIC_URL").context("STORAGE_PUBLIC_URL is missing")?,
         })
     }
 }

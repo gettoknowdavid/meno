@@ -1,6 +1,7 @@
-use crate::shared::constants::{RATE_LIMIT_PREFIX, REDIS_ESCALATION_THRESHOLD};
+use crate::shared::constants::RATE_LIMIT_PREFIX;
 use crate::state::MenoState;
 
+use crate::shared::services::redis::RedisService;
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::{
@@ -11,7 +12,6 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use fred::prelude::*;
-use moka::future::Cache;
 use std::{sync::Arc, time::SystemTime};
 
 #[derive(Debug, Clone, Copy)]
@@ -49,25 +49,12 @@ static SCRIPT: &str = r#"
     else
         return {limit - estimated, current_count}
     end"#;
+
 async fn check_rate_limit(
-    local_cache: &Cache<String, u64>,
-    redis_pool: &Pool,
+    redis: &RedisService,
     base_key: &str,
     config: RateLimitConfig,
 ) -> Result<usize> {
-    let local_count = local_cache.get(base_key).await.unwrap_or(0);
-    let threshold = (config.limit as f64 * REDIS_ESCALATION_THRESHOLD) as u64;
-
-    if local_count < threshold {
-        // Fast path — increment local only, no Redis touch
-        local_cache
-            .insert(base_key.to_string(), local_count + 1)
-            .await;
-        return Ok(config.limit - local_count as usize);
-    }
-
-    // Slow path — local count is approaching limit, verify with Redis
-    // This is the accurate-distributed count across all instances
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)?
         .as_millis() as u64;
@@ -87,13 +74,7 @@ async fn check_rate_limit(
         config.limit,
     ];
 
-    let result: (usize, usize) = redis_pool.eval(SCRIPT, keys, args).await?;
-
-    // Sync local cache with accurate Redis count so fast path stays calibrated
-    local_cache
-        .insert(base_key.to_string(), result.1 as u64)
-        .await;
-
+    let result: (usize, usize) = redis.client().eval(SCRIPT, keys, args).await?;
     Ok(result.0)
 }
 
@@ -102,11 +83,13 @@ pub async fn rate_limit_middleware(
     req: Request<Body>,
     next: Next,
 ) -> Response {
+    // let config = maybe_custom.unwrap_or(state.config.default_rate_limit);
     let config = state.config.default_rate_limit;
+
     let identifier = extract_identifier(&req);
     let key = format!("{}:{}", RATE_LIMIT_PREFIX, identifier);
 
-    match check_rate_limit(&state.local_rate_cache, &state.redis, &key, config).await {
+    match check_rate_limit(&state.redis, &key, config).await {
         Ok(remaining) if remaining > 0 => {
             let mut response = next.run(req).await;
             response.headers_mut().insert(
@@ -127,7 +110,7 @@ pub async fn rate_limit_middleware(
                 ("X-RateLimit-Remaining", "0"),
                 ("Content-Type", "application/json"),
             ],
-            r#"{"statusCode":429,"code":"TOO_MANY_REQUESTS","message":"Too many requests","status":false}"#,
+            r#"{"data":null,"meta":null,"error":{"message":"Too many requests."}}"#,
         )
             .into_response(),
         Err(_) => next.run(req).await,
@@ -167,68 +150,3 @@ fn extract_identifier(req: &Request<Body>) -> String {
 
     "unknown".to_string()
 }
-
-// async fn check_rate_limit(pool: &Pool, base_key: &str, config: RateLimitConfig) -> Result<usize> {
-//     let now = SystemTime::now()
-//         .duration_since(SystemTime::UNIX_EPOCH)?
-//         .as_millis() as u64;
-//
-//     let window_ms = config.window_secs * 1000;
-//     let current_window = now / window_ms;
-//     let prev_window = current_window.saturating_sub(1);
-//
-//     let current_key = format!("{}:{}", base_key, current_window);
-//     let previous_key = format!("{}:{}", base_key, prev_window);
-//
-//     let keys = vec![&current_key, &previous_key];
-//     let args = vec![
-//         1usize,
-//         config.window_secs as usize,
-//         now as usize,
-//         config.limit,
-//     ];
-//
-//     let result: (usize, usize) = pool.eval(SCRIPT, keys, args).await?;
-//
-//     Ok(result.0)
-// }
-//
-// pub async fn rate_limit_middleware(
-//     State(state): State<Arc<MenoState>>,
-//     // Extension(maybe_custom): Extension<Option<RateLimitConfig>>,
-//     req: Request<Body>,
-//     next: Next,
-// ) -> Response {
-//     // let config = maybe_custom.unwrap_or(state.config.default_rate_limit);
-//     let config = state.config.default_rate_limit;
-//
-//     let identifier = extract_identifier(&req);
-//     let key = format!("{}:{}", RATE_LIMIT_PREFIX, identifier);
-//
-//     match check_rate_limit(&state.redis, &key, config).await {
-//         Ok(remaining) if remaining > 0 => {
-//             let mut response = next.run(req).await;
-//             response.headers_mut().insert(
-//                 "X-RateLimit-Remaining",
-//                 remaining.to_string().parse().unwrap(),
-//             );
-//             response.headers_mut().insert(
-//                 "X-RateLimit-Limit",
-//                 config.limit.to_string().parse().unwrap(),
-//             );
-//             response
-//         }
-//         Ok(_) => (
-//             StatusCode::TOO_MANY_REQUESTS,
-//             [
-//                 ("Retry-After", config.window_secs.to_string().as_str()),
-//                 ("X-RateLimit-Limit", config.limit.to_string().as_str()),
-//                 ("X-RateLimit-Remaining", "0"),
-//                 ("Content-Type", "application/json"),
-//             ],
-//             r#"{"data":null,"meta":null,"error":{"message":"Too many requests."}}"#,
-//         )
-//             .into_response(),
-//         Err(_) => next.run(req).await,
-//     }
-// }

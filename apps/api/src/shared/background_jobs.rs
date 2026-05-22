@@ -1,6 +1,6 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::repository::AuthRepository;
-use fred::prelude::Pool;
+use crate::shared::services::redis::RedisService;
 use sqlx::PgPool;
 use std::sync::Arc;
 use std::time::Duration;
@@ -12,8 +12,8 @@ pub struct BackgroundJobs {
     auth_repo: AuthRepository,
 }
 impl BackgroundJobs {
-    pub fn new(db: PgPool, redis: Pool, env: &str) -> Self {
-        let auth_repo = AuthRepository::new(db, redis, env);
+    pub fn new(database: PgPool, redis: RedisService) -> Self {
+        let auth_repo = AuthRepository::new(database, redis);
         Self { auth_repo }
     }
 

@@ -21,8 +21,8 @@ pub struct AccessClaims {
     pub verified: bool,
     pub providers: Vec<AuthProvider>,
     pub role: UserRole,
-    pub exp: u64,
-    pub iat: u64,
+    pub exp: i64,
+    pub iat: i64,
 }
 
 /// Payload embedded in every refresh token.
@@ -34,27 +34,27 @@ pub struct AccessClaims {
 pub struct RefreshClaims {
     pub sub: Uuid,
     pub jti: Uuid,
-    pub exp: u64,
-    pub iat: u64,
+    pub exp: i64,
+    pub iat: i64,
 }
 
 /// Owns the encoding/decoding keys, so secrets are only parsed once at startup,
 /// not on every request. Cheap to clone (keys are Arc-backed internally).
 #[derive(Clone)]
-pub struct JwtService {
+pub struct Jwt {
     access_encoding_key: EncodingKey,
     access_decoding_key: DecodingKey,
     refresh_encoding_key: EncodingKey,
     refresh_decoding_key: DecodingKey,
-    access_expires_in: u64,
-    refresh_expires_in: u64,
+    access_expires_in: i64,
+    refresh_expires_in: i64,
 }
-impl JwtService {
+impl Jwt {
     pub fn new(
         access_secret: &str,
         refresh_secret: &str,
-        access_expires_in: u64,
-        refresh_expires_in: u64,
+        access_expires_in: i64,
+        refresh_expires_in: i64,
     ) -> Self {
         assert!(!access_secret.is_empty(), "JWT_SECRET required");
         assert!(!refresh_secret.is_empty(), "JWT_REFRESH_SECRET required");
@@ -139,8 +139,8 @@ impl JwtService {
 }
 
 // Helpers
-fn now_unix() -> u64 {
-    time::OffsetDateTime::now_utc().unix_timestamp() as u64
+fn now_unix() -> i64 {
+    time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
 pub fn hash_token(token: &str) -> String {
@@ -160,8 +160,8 @@ mod tests {
     const TEST_FULL_NAME: &str = "John Doe";
     const TEST_EMAIL: &str = "johndoe@example.com";
 
-    fn setup() -> JwtService {
-        JwtService::new(
+    fn setup() -> Jwt {
+        Jwt::new(
             "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff",
             "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06",
             900,
@@ -216,7 +216,7 @@ mod tests {
 
     #[test]
     fn test_expired_access_token_returns_correct_error() {
-        let svc = JwtService::new(
+        let svc = Jwt::new(
             "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff",
             "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06",
             2,

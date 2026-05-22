@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *",
+  "query": "SELECT id, full_name, bio, email, avatar_id, avatar_url, verified, role, created_at, updated_at, deleted_at\n               FROM users WHERE email = $1",
   "describe": {
     "columns": [
       {
@@ -16,7 +16,7 @@
       {
         "ordinal": 2,
         "name": "bio",
-        "type_info": "Text"
+        "type_info": "Varchar"
       },
       {
         "ordinal": 3,
@@ -61,7 +61,6 @@
     ],
     "parameters": {
       "Left": [
-        "Text",
         "Text"
       ]
     },
@@ -79,5 +78,5 @@
       true
     ]
   },
-  "hash": "9bc707118463fb6192f926d1e359cf05c71746a9f55f6c980457f2b331b267b1"
+  "hash": "dc800ee5b0a0193e596933bf47e0d902afd309ec3b652012167f0a52343034b6"
 }

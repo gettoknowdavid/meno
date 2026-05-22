@@ -36,6 +36,7 @@ pub struct LoginRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct LogoutRequest {
     pub refresh_token: String,
+    pub access_token: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -104,13 +105,11 @@ pub struct UserResponse {
     pub verified: bool,
     pub avatar_id: Option<String>,
     pub avatar_url: Option<String>,
-    pub providers: Vec<AuthProvider>,
-
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
-
     #[serde(with = "rfc3339::option")]
     pub deleted_at: Option<OffsetDateTime>,
+    pub providers: Vec<AuthProvider>,
 }
 
 #[derive(Debug, Serialize)]

@@ -1,47 +1,33 @@
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt_service::hash_token;
+use crate::modules::auth::jwt::hash_token;
 use crate::modules::auth::model::{AuthProvider, OtpType, RefreshToken, User, UserIdentity};
-use crate::modules::auth::utils::generate_otp;
+use crate::shared::constants::{BLOCKLIST_PREFIX, TTL_60_SECS, TTL_300_SECS, TTL_900_SECS};
+use crate::shared::services::redis::RedisService;
 use fred::prelude::*;
 use std::collections::HashMap;
-use std::str::FromStr;
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
 
-const RD_VERIFY_EMAIL_OTP_PREFIX: &str = "AUTH.OTP.VERIFY_EMAIL";
-const RD_VERIFY_EMAIL_OTP_TTL_SECS: i64 = 900;
-
-const RD_RESET_PASSWORD_OTP_PREFIX: &str = "AUTH.OTP.RESET_PASSWORD";
-const RD_RESET_PASSWORD_OTP_TTL_SECS: i64 = 900;
-
-const RD_RESEND_RATE_LIMIT_PREFIX: &str = "AUTH.OTP.RESEND_RATE_LIMIT";
-const RD_RESEND_RATE_LIMIT_TTL_SECS: i64 = 60;
-
-const RD_OAUTH_STATE_PREFIX: &str = "AUTH.OAUTH2";
-const RD_OAUTH_STATE_TTL_SECS: i64 = 300;
-
 #[derive(Clone)]
 pub struct AuthRepository {
-    db: sqlx::PgPool,
-    rd: Pool,
-    use_redis_otp: bool,
+    database: sqlx::PgPool,
+    redis: RedisService,
 }
 impl AuthRepository {
-    pub fn new(db: sqlx::PgPool, rd: Pool, env: &str) -> Self {
-        Self {
-            db,
-            rd,
-            use_redis_otp: env != "dev" && env != "development",
-        }
+    pub fn new(database: sqlx::PgPool, redis: RedisService) -> Self {
+        Self { database, redis }
     }
 
     // DB
     pub async fn create(&self, full_name: &str, email: &str) -> Result<User, AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         let user = sqlx::query_as!(
             User,
-            r#"INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *"#,
+            r#"INSERT INTO users (full_name, email)
+               VALUES ($1, $2)
+               RETURNING id, full_name, bio, email, avatar_id, avatar_url, verified, role,
+                   created_at, updated_at, deleted_at"#,
             full_name,
             email,
         )
@@ -60,34 +46,19 @@ impl AuthRepository {
         tx.commit().await.map_err(AuthError::Database)?;
         Ok(user)
     }
-    pub async fn create_user_tx(
-        &self,
-        full_name: &str,
-        email: &str,
-        pwd_hash: Option<&str>,
-        provider_type: &AuthProvider,
-    ) -> Result<User, AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+    pub async fn create_user_tx(&self, full_name: &str, email: &str) -> Result<User, AuthError> {
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         let user = sqlx::query_as!(
             User,
-            r#"INSERT INTO users (full_name, email) VALUES ($1, $2) RETURNING *"#,
+            r#"INSERT INTO users (full_name, email)
+               VALUES ($1, $2)
+               RETURNING id, full_name, bio, email, avatar_id, avatar_url, verified, role,
+                   created_at, updated_at, deleted_at"#,
             full_name,
             email,
         )
         .fetch_one(&mut *tx)
-        .await
-        .map_err(AuthError::Database)?;
-
-        sqlx::query!(
-            r#"INSERT INTO user_identities (user_id, provider_type, provider_user_id, password_hash)
-               VALUES ($1, $2::text, $3, $4)"#,
-            user.id.clone(),
-            provider_type.to_string(),
-            email,
-            pwd_hash,
-        )
-        .execute(&self.db)
         .await
         .map_err(AuthError::Database)?;
 
@@ -119,7 +90,7 @@ impl AuthRepository {
             provider_user_id,
             password_hash,
         )
-        .fetch_one(&self.db)
+        .fetch_one(&self.database)
         .await
         .map_err(AuthError::Database)
     }
@@ -135,26 +106,9 @@ impl AuthRepository {
             provider_type.to_string(),
             provider_user_id,
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.database)
         .await
         .map_err(AuthError::Database)
-    }
-    pub async fn find_user_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, AuthError> {
-        let rows = sqlx::query!(
-            "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
-            user_id,
-        )
-        .fetch_all(&self.db)
-        .await
-        .map_err(AuthError::Database)?;
-
-        let providers = rows
-            .iter()
-            .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
-            .map(|s| AuthProvider::from(s))
-            .collect();
-
-        Ok(providers)
     }
     pub async fn link_provider(
         &self,
@@ -170,7 +124,7 @@ impl AuthRepository {
             provider_type.to_string(),
             provider_user_id,
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
@@ -181,20 +135,30 @@ impl AuthRepository {
             hash_pwd,
             user_id
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
     }
     pub async fn find_by_email(&self, email: &str) -> Result<Option<User>, AuthError> {
-        sqlx::query_as!(User, "SELECT * FROM users WHERE email = $1", email)
-            .fetch_optional(&self.db)
+        sqlx::query_as!(
+            User,
+            r#"SELECT id, full_name, bio, email, avatar_id, avatar_url, verified, role, created_at, updated_at, deleted_at
+               FROM users WHERE email = $1"#,
+            email,
+        )
+            .fetch_optional(&self.database)
             .await
             .map_err(AuthError::Database)
     }
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
-        sqlx::query_as!(User, "SELECT * FROM users WHERE id = $1", id)
-            .fetch_optional(&self.db)
+        sqlx::query_as!(
+            User,
+            r#"SELECT id, full_name, bio, email, avatar_id, avatar_url, verified, role, created_at, updated_at, deleted_at
+               FROM users WHERE id = $1"#,
+            id
+        )
+            .fetch_optional(&self.database)
             .await
             .map_err(AuthError::Database)
     }
@@ -203,13 +167,13 @@ impl AuthRepository {
             r#"SELECT EXISTS (SELECT 1 FROM users WHERE email = $1) AS "exists!""#,
             email
         )
-        .fetch_one(&self.db)
+        .fetch_one(&self.database)
         .await
         .map_err(AuthError::Database)
     }
     pub async fn set_verified(&self, email: &str) -> Result<(), AuthError> {
         sqlx::query!("UPDATE users SET verified = true WHERE email = $1", email)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
@@ -219,8 +183,9 @@ impl AuthRepository {
         jti: Uuid,
         user_id: Uuid,
         refresh_token: &str,
+        expires_at: &OffsetDateTime,
     ) -> Result<(), AuthError> {
-        let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
+        // let expires_at = OffsetDateTime::now_utc() + Duration::days(30);
         sqlx::query!(
             r#"INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at)
                VALUES ($1, $2, $3, $4)"#,
@@ -229,7 +194,7 @@ impl AuthRepository {
             hash_token(refresh_token),
             expires_at
         )
-        .execute(&self.db)
+        .execute(&self.database)
         .await
         .map_err(AuthError::Database)?;
         Ok(())
@@ -245,7 +210,7 @@ impl AuthRepository {
             jti,
             user_id
         )
-        .fetch_optional(&self.db)
+        .fetch_optional(&self.database)
         .await
         .map_err(AuthError::Database)
     }
@@ -256,7 +221,7 @@ impl AuthRepository {
         new_jti: Uuid,
         new_token: &str,
     ) -> Result<(), AuthError> {
-        let mut tx = self.db.begin().await.map_err(AuthError::Database)?;
+        let mut tx = self.database.begin().await.map_err(AuthError::Database)?;
 
         sqlx::query!(
             "DELETE FROM refresh_tokens WHERE id = $1 AND user_id = $2",
@@ -284,26 +249,43 @@ impl AuthRepository {
     }
     pub async fn revoke_refresh_token(&self, jti: Uuid) -> Result<(), AuthError> {
         sqlx::query!("DELETE FROM refresh_tokens WHERE id = $1", jti)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
     }
     pub async fn revoke_all_refresh_tokens(&self, user_id: Uuid) -> Result<(), AuthError> {
         sqlx::query!("DELETE FROM refresh_tokens WHERE user_id = $1", user_id)
-            .execute(&self.db)
+            .execute(&self.database)
             .await
             .map_err(AuthError::Database)?;
         Ok(())
     }
-    pub async fn store_otp(&self, email: &str, otp_type: OtpType) -> Result<String, AuthError> {
-        let otp = generate_otp();
-        if self.use_redis_otp {
-            self.store_otp_redis(&email, &otp, &otp_type).await?;
-        } else {
-            self.store_otp_db(&email, &otp, &otp_type).await?;
-        }
-        Ok(otp)
+    pub async fn block_access_token(
+        &self,
+        jti: Uuid,
+        remaining_secs: i64,
+    ) -> Result<(), AuthError> {
+        let key = format!("{}:{}", BLOCKLIST_PREFIX, jti);
+        let value = "BLOCKED".to_string();
+        let ttl = Some(remaining_secs);
+        self.redis
+            .set::<String>(&key, &value, ttl)
+            .await
+            .map_err(AuthError::Redis)?;
+        Ok(())
+    }
+    pub async fn store_otp(
+        &self,
+        email: &str,
+        otp: &str,
+        otp_type: &OtpType,
+    ) -> Result<(), AuthError> {
+        let key = RedisService::otp_key(&email, &otp_type.to_string());
+        self.redis
+            .set::<String>(&key, &otp.to_string(), Some(TTL_900_SECS))
+            .await
+            .map_err(AuthError::Redis)
     }
     pub async fn verify_otp(
         &self,
@@ -311,70 +293,20 @@ impl AuthRepository {
         code: &str,
         otp_type: &OtpType,
     ) -> Result<bool, AuthError> {
-        if self.use_redis_otp {
-            let prefix = match otp_type {
-                OtpType::VerifyEmail => RD_VERIFY_EMAIL_OTP_PREFIX,
-                OtpType::ResetPassword => RD_RESET_PASSWORD_OTP_PREFIX,
-            };
-            let key = format!("{}:{}", prefix, email);
-            let stored: Option<String> =
-                self.rd.get(key.clone()).await.map_err(AuthError::Redis)?;
-            match stored {
-                Some(ref s) if s == code => {
-                    self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
-                    Ok(true)
-                }
-                Some(_) => Ok(false),
-                None => Err(AuthError::InvalidOtp),
+        let key = RedisService::otp_key(&email, &otp_type.to_string());
+        let stored: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
+        match stored {
+            Some(ref s) if s == code => {
+                self.redis.del(&key).await.map_err(AuthError::Redis)?;
+                Ok(true)
             }
-        } else {
-            let otp_type_str = otp_type.to_string();
-            let row = sqlx::query!(
-                r#"SELECT code, expires_at, used FROM otps WHERE email = $1 AND type = $2"#,
-                email,
-                otp_type_str,
-            )
-            .fetch_optional(&self.db)
-            .await
-            .map_err(AuthError::Database)?;
-            match row {
-                None => Err(AuthError::InvalidOtp),
-                Some(r) => {
-                    if r.used || r.expires_at < OffsetDateTime::now_utc() || r.code != code {
-                        return Ok(false);
-                    }
-                    sqlx::query!(
-                        "UPDATE otps SET used = true WHERE email = $1 AND type = $2",
-                        email,
-                        otp_type_str,
-                    )
-                    .execute(&self.db)
-                    .await
-                    .map_err(AuthError::Database)?;
-                    Ok(true)
-                }
-            }
+            Some(_) => Ok(false),
+            None => Err(AuthError::InvalidOtp),
         }
     }
     pub async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError> {
-        if self.use_redis_otp {
-            let prefix = match otp_type {
-                OtpType::VerifyEmail => RD_VERIFY_EMAIL_OTP_PREFIX,
-                OtpType::ResetPassword => RD_RESET_PASSWORD_OTP_PREFIX,
-            };
-            let key = format!("{}:{}", prefix, email);
-            self.rd.del::<(), _>(key).await.map_err(AuthError::Redis)?;
-        } else {
-            sqlx::query!(
-                r#"UPDATE otps SET used = true
-                   WHERE email = $1 AND type = $2 AND expires_at <> now() AND used = false"#,
-                email,
-                otp_type.to_string()
-            )
-            .execute(&self.db)
-            .await
-            .map_err(AuthError::Database)?;
-        }
+        let key = RedisService::otp_key(&email, &otp_type.to_string());
+        self.redis.del(&key).await.map_err(AuthError::Redis)?;
         Ok(())
     }
     pub async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError> {
@@ -394,7 +326,7 @@ impl AuthRepository {
                 SELECT COUNT(*) FROM deleted_rows;
                 "#
             )
-            .fetch_one(&self.db)
+            .fetch_one(&self.database)
             .await
             .map_err(AuthError::Database)?;
 
@@ -410,18 +342,16 @@ impl AuthRepository {
         }
         Ok(total_deleted)
     }
-
-    // Redis
     pub async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
-        let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
-        let exists: Option<String> = self.rd.get(&key).await.map_err(AuthError::Redis)?;
+        let key = RedisService::rate_limit_key("OTP_RESEND", email);
+        let exists: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         Ok(exists.is_none())
     }
     pub async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError> {
-        let key = format!("{}:{}", RD_RESEND_RATE_LIMIT_PREFIX, email);
-        let ttl = Expiration::EX(RD_RESEND_RATE_LIMIT_TTL_SECS);
-        self.rd
-            .set::<(), _, _>(key, "1", Some(ttl), None, false)
+        let key = RedisService::rate_limit_key("OTP_RESEND", email);
+        let value = "1".to_string();
+        self.redis
+            .set::<String>(&key, &value, Some(TTL_60_SECS))
             .await
             .map_err(AuthError::Redis)
     }
@@ -430,87 +360,43 @@ impl AuthRepository {
         state: &String,
         verifier: &String,
     ) -> Result<(), AuthError> {
-        let key = format!("{}:{}", RD_OAUTH_STATE_PREFIX, state);
+        let key = RedisService::oauth2_key(&state);
 
         let mut fields = HashMap::new();
         fields.insert("csrf_token", "true");
         fields.insert("pkce_code_verifier", verifier);
 
-        let pipeline = self.rd.next().pipeline();
+        let pipeline = self.redis.pipeline();
+
         pipeline
             .hset::<(), _, _>(&key, fields)
             .await
             .map_err(AuthError::Redis)?;
+
         pipeline
-            .expire::<(), _>(&key, RD_OAUTH_STATE_TTL_SECS, None)
+            .expire::<(), _>(&key, TTL_300_SECS, None)
             .await
             .map_err(AuthError::Redis)?;
+
         pipeline.all::<()>().await.map_err(AuthError::Redis)?;
 
         Ok(())
     }
 
     pub async fn consumes_oauth_state(&self, state: &String) -> Result<String, AuthError> {
-        let key = format!("{}:{}", RD_OAUTH_STATE_PREFIX, state);
+        let key = RedisService::oauth2_key(&state);
 
         let data: HashMap<String, String> =
-            self.rd.hgetall(&key).await.map_err(AuthError::Redis)?;
+            self.redis.hgetall(&key).await.map_err(AuthError::Redis)?;
 
-        let _ = self.rd.del::<(), _>(&key).await;
+        let _ = self.redis.del(&key).await;
 
-        let has_csrf = data.get("csrf_valid");
+        let has_csrf = data.get("csrf_token");
         let pkce_code_verifier = data.get("pkce_code_verifier");
 
         match (has_csrf, pkce_code_verifier) {
             (Some(csrf), Some(verifier)) if csrf == "true" => Ok(verifier.clone()),
             _ => Err(AuthError::InvalidToken),
         }
-    }
-
-    // Helpers
-    async fn store_otp_redis(
-        &self,
-        email: &str,
-        otp: &str,
-        otp_type: &OtpType,
-    ) -> Result<(), AuthError> {
-        let (key, ttl) = match otp_type {
-            OtpType::VerifyEmail => {
-                let key = format!("{}:{}", RD_VERIFY_EMAIL_OTP_PREFIX, email);
-                let ttl = Expiration::EX(RD_VERIFY_EMAIL_OTP_TTL_SECS);
-                (key, ttl)
-            }
-            OtpType::ResetPassword => {
-                let key = format!("{}:{}", RD_RESET_PASSWORD_OTP_PREFIX, email);
-                let ttl = Expiration::EX(RD_RESET_PASSWORD_OTP_TTL_SECS);
-                (key, ttl)
-            }
-        };
-        self.rd
-            .set::<(), _, _>(key, otp, Some(ttl), None, false)
-            .await
-            .map_err(AuthError::Redis)
-    }
-    async fn store_otp_db(
-        &self,
-        email: &str,
-        otp: &str,
-        otp_type: &OtpType,
-    ) -> Result<(), AuthError> {
-        let expires_at = OffsetDateTime::now_utc() + Duration::minutes(15);
-        sqlx::query!(
-            r#"INSERT INTO otps (email, code, type, expires_at)
-               VALUES ($1, $2, $3::text, $4)
-               ON CONFLICT (email, type) DO UPDATE
-               SET code = EXCLUDED.code, expires_at = EXCLUDED.expires_at, used = false"#,
-            email,
-            otp,
-            otp_type.to_string(),
-            expires_at,
-        )
-        .execute(&self.db)
-        .await
-        .map_err(AuthError::Database)?;
-        Ok(())
     }
 }
