@@ -82,6 +82,31 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
             "X-User-Id".parse().unwrap(),
         ]));
 
+    // let x_request_id = HeaderName::from_static("x-request-id");
+    //
+    // let middleware_stack = ServiceBuilder::new()
+    //     .layer(SetRequestIdLayer::new(
+    //         x_request_id.clone(),
+    //         MakeRequestUuid,
+    //     ))
+    //     .layer(PropagateRequestIdLayer::new(x_request_id))
+    //     .layer(TraceLayer::new_for_http().make_span_with(|r: &Request<_>| {
+    //         let request_id = r
+    //             .headers()
+    //             .get("x-request-id")
+    //             .and_then(|v| v.to_str().ok())
+    //             .unwrap_or("unknown");
+    //         tracing::info_span!(
+    //             "http_request",
+    //             request_id = %request_id,
+    //             method = %r.method(),
+    //             uri = %r.uri(),
+    //         )
+    //     }))
+    //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
+    //     .layer(cors_layer);
+
+
     let middleware_stack = ServiceBuilder::new()
         .layer(TraceLayer::new_for_http())
         .layer(TimeoutLayer::with_status_code(status_code, timeout))

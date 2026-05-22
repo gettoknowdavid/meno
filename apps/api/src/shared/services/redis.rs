@@ -1,4 +1,4 @@
-use crate::shared::constants::{GLOBAL_CACHE_PREFIX, USER_CACHE_PREFIX};
+use crate::shared::constants::{BLOCKLIST_PREFIX, GLOBAL_CACHE_PREFIX, USER_CACHE_PREFIX};
 use fred::clients::Pipeline;
 use fred::prelude::*;
 use serde::{Serialize, de::DeserializeOwned};
@@ -68,6 +68,31 @@ impl RedisService {
     pub async fn exists(&self, key: &str) -> Result<bool, Error> {
         self.pool.exists::<bool, &str>(&key).await
     }
+    pub async fn incr_and_expire_if_first(
+        &self,
+        key: &str,
+        ttl_seconds: i64,
+    ) -> Result<u64, Error> {
+        let script = r#"
+            local key = KEYS[1]
+            local ttl = tonumber(ARGV[1])
+
+            local count = redis.call('INCR', key)
+
+            if count == 1 then
+                redis.call('EXPIRE', key, ttl)
+            end
+
+            return count
+        "#;
+
+        let count: u64 = self
+            .pool
+            .eval::<u64, _, _, _>(script, vec![key], vec![ttl_seconds])
+            .await?;
+
+        Ok(count)
+    }
 
     // Key Builders
     /// Global keys
@@ -93,6 +118,9 @@ impl RedisService {
     /// Google, Facebook, Apple
     pub fn oauth2_key(state: &str) -> String {
         format!("{}:OAUTH2:{}", GLOBAL_CACHE_PREFIX, state)
+    }
+    pub fn block_list_key(name: &str, identifier: Uuid) -> String {
+        format!("{}:{}:{}", BLOCKLIST_PREFIX, name, identifier)
     }
     /// All user-related cache keys should start with this prefix
     pub fn user_key_prefix(user_id: Uuid) -> String {

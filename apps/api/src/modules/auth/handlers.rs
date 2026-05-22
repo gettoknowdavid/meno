@@ -79,7 +79,7 @@ pub async fn reset_password(
     MenoJson(body): MenoJson<ResetPasswordRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth_service.reset_password(&body).await?;
+    app.auth_service.reset_password(&app, &body).await?;
     Ok(MenoResponse::no_content("Password reset successful"))
 }
 

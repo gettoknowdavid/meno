@@ -14,6 +14,8 @@ pub const USER_CACHE_PREFIX: &str = "USER";
 /// that does not require authentication
 pub const GLOBAL_CACHE_PREFIX: &str = "GLOBAL";
 
+pub const MAX_LOGIN_ATTEMPTS: u64 = 10;
+
 // ========== TTL CONSTANTS ==========
 
 /// Expiry time of 30 seconds
