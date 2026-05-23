@@ -36,7 +36,7 @@ pub struct AddCohostsRequest {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct BroadcastQuery {
+pub struct BroadcastParams {
     pub id: Option<Uuid>,
     pub creator_id: Option<Uuid>,
     pub exclude_creator_id: Option<Uuid>,
@@ -64,6 +64,17 @@ pub struct BroadcastQuery {
     pub limit: Option<i64>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ParticipantParams {
+    pub page: i64,
+
+    pub limit: i64,
+
+    /// If set to `true`, this handler will return only the participants
+    /// currently live in the broadcast
+    pub show_only_live: bool,
+}
+
 // ==================== RESPONSES ====================
 #[derive(Clone, Debug, Serialize)]
 pub struct BroadcastResponse {
@@ -89,7 +100,7 @@ pub struct ParticipantSummary {
 }
 
 #[derive(Clone, Debug, Serialize)]
-pub struct BroadcastSession {
+pub struct BroadcastSessionResponse {
     /// The full [BroadcastResponse] data transfer object
     pub broadcast: BroadcastResponse,
 
@@ -99,7 +110,7 @@ pub struct BroadcastSession {
 
 #[derive(Clone, Debug, Serialize)]
 /// Cohost-specific session (includes their specific token)
-pub struct CohostSession {
+pub struct CohostSessionResponse {
     /// The full [ParticipantSummary] data transfer object
     pub user: ParticipantSummary,
 
