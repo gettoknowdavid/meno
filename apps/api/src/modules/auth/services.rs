@@ -16,6 +16,7 @@ use crate::shared::services::email::EmailService;
 use crate::shared::services::redis::RedisService;
 use crate::state::MenoState;
 use time::OffsetDateTime;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -343,6 +344,10 @@ impl AuthService {
             .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
 
         self.upsert_google_user(app, &userinfo).await
+    }
+
+    pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
+        self.repo.find_by_id(id).await
     }
 
     // Helper functions

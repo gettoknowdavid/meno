@@ -141,6 +141,9 @@ impl RedisService {
     pub fn broadcasts_key(user_id: Uuid) -> String {
         format!("{}:BROADCASTS:{}", USER_CACHE_PREFIX, user_id)
     }
+    pub fn presence_key(user_id: Uuid) -> String {
+        format!("{}:PRESENCE:{}", USER_CACHE_PREFIX, user_id)
+    }
     pub fn user_session_data_key(user_id: Uuid) -> String {
         format!("{}:SESSION:{}", USER_CACHE_PREFIX, user_id)
     }

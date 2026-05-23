@@ -3,7 +3,9 @@ use crate::modules::broadcast::model::ParticipantRole;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
 use anyhow::Result;
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
+use livekit_api::services::ServiceError;
 use livekit_api::services::room::{CreateRoomOptions, RoomClient};
+use livekit_protocol::ParticipantInfo;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -74,7 +76,7 @@ impl LivekitService {
             .to_jwt()
     }
 
-    pub async fn create_room(&self, broadcast_id: Uuid) -> Result<()> {
+    pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
         let room_name = broadcast_id.to_string();
         let options = CreateRoomOptions {
             max_participants: 10000,
@@ -86,12 +88,24 @@ impl LivekitService {
         Ok(())
     }
 
-    pub async fn delete_room(&self, broadcast_id: Uuid) -> Result<()> {
+    pub async fn delete_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
         self.room.delete_room(&broadcast_id.to_string()).await?;
         Ok(())
     }
 
-    pub async fn remove_participant(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<()> {
+    pub async fn list_participants(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<Vec<ParticipantInfo>, ServiceError> {
+        let room_name = broadcast_id.to_string();
+        self.room.list_participants(&room_name).await
+    }
+
+    pub async fn remove_participant(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), ServiceError> {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         self.room.remove_participant(&room, &identifier).await?;
@@ -104,7 +118,7 @@ impl LivekitService {
         user_id: Uuid,
         track_sid: &str,
         muted: bool,
-    ) -> Result<()> {
+    ) -> Result<(), ServiceError> {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         self.room

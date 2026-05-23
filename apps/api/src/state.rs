@@ -11,6 +11,7 @@ use crate::shared::middleware::timing::timing_middleware;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
+use crate::shared::services::ws::hub::WsHub;
 use axum::middleware::from_fn;
 use axum::{
     Router,
@@ -38,6 +39,7 @@ pub struct MenoState {
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
+    pub ws: Arc<WsHub>,
     pub livekit: LivekitService,
     pub auth_service: AuthService,
     pub profile_service: ProfileService,
@@ -68,6 +70,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         auth_service: AuthService::new(db.clone(), redis.clone()),
         profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
         livekit: LivekitService::new(&config, room),
+        ws: Arc::new(WsHub::new()),
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         storage,
