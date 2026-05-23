@@ -261,7 +261,7 @@ impl AuthService {
         }
 
         let providers = app
-            .profile_service
+            .profile
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
@@ -413,7 +413,7 @@ impl AuthService {
     }
     async fn issue_tokens(&self, app: &MenoState, user: &User) -> Result<AuthResponse, AuthError> {
         let providers = app
-            .profile_service
+            .profile
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;

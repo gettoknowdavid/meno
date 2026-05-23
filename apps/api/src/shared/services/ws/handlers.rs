@@ -38,7 +38,7 @@ pub async fn ws_upgrade(
         .map_err(|_| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
     let user = state
-        .auth_service
+        .auth
         .find_user_by_id(claims.sub)
         .await
         .map_err(|_| error_response(StatusCode::BAD_REQUEST, "User not found"))?

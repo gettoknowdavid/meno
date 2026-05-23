@@ -42,9 +42,9 @@ pub struct MenoState {
     pub background_jobs: Arc<BackgroundJobs>,
     pub ws: WsHub,
     pub livekit: LivekitService,
-    pub auth_service: AuthService,
-    pub profile_service: ProfileService,
-    pub broadcast_service: BroadcastService,
+    pub auth: AuthService,
+    pub profile: ProfileService,
+    pub broadcast: BroadcastService,
 }
 
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
@@ -70,9 +70,9 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     ));
 
     let state = Arc::new(MenoState {
-        auth_service: AuthService::new(db.clone(), redis.clone()),
-        profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
-        broadcast_service: BroadcastService::new(db.clone(), redis.clone(), ws.clone(), storage.clone()),
+        auth: AuthService::new(db.clone(), redis.clone()),
+        profile: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
+        broadcast: BroadcastService::new(db.clone(), redis.clone(), ws.clone(), storage.clone()),
         livekit: LivekitService::new(&config, room),
         ws,
         background_jobs: background_jobs.clone(),
