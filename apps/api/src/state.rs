@@ -4,6 +4,7 @@ use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use std::sync::Arc;
 
+use crate::modules::broadcast::service::BroadcastService;
 use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
@@ -39,10 +40,11 @@ pub struct MenoState {
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
-    pub ws: Arc<WsHub>,
+    pub ws: WsHub,
     pub livekit: LivekitService,
     pub auth_service: AuthService,
     pub profile_service: ProfileService,
+    pub broadcast_service: BroadcastService,
 }
 
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
@@ -58,6 +60,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     let cancel_token = CancellationToken::new();
     let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
 
+    let ws = WsHub::new();
     let storage = StorageService::new(&config);
 
     let room = Arc::new(RoomClient::with_api_key(
@@ -69,8 +72,9 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     let state = Arc::new(MenoState {
         auth_service: AuthService::new(db.clone(), redis.clone()),
         profile_service: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
+        broadcast_service: BroadcastService::new(db.clone(), redis.clone(), ws.clone(), storage.clone()),
         livekit: LivekitService::new(&config, room),
-        ws: Arc::new(WsHub::new()),
+        ws,
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         storage,
