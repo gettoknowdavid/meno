@@ -1,6 +1,7 @@
-use crate::modules::broadcast::model::BroadcastStatus;
+use crate::modules::broadcast::model::{
+    BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
+};
 use serde::{Deserialize, Serialize};
-use strum::{AsRefStr, Display, EnumString};
 use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::Validate;
@@ -10,10 +11,19 @@ use validator::Validate;
 pub struct CreateBroadcastRequest {
     #[validate(length(min = 3, max = 100, message = "Title: min-3, max-100"))]
     pub title: String,
+
     #[validate(length(max = 244, message = "Description length exceeded (244 max)"))]
     pub description: String,
+
+    pub image_id: Option<String>,
     pub image_url: Option<String>,
+
     pub time_zone: Option<String>,
+
+    pub start_time: Option<OffsetDateTime>,
+
+    pub recording_enabled: Option<bool>,
+
     #[validate(length(max = 3, message = "You cannot add more than 3 cohosts"))]
     pub cohosts: Option<Vec<Uuid>>,
 }
@@ -22,17 +32,29 @@ pub struct CreateBroadcastRequest {
 pub struct UpdateBroadcastRequest {
     #[validate(length(min = 3, max = 100, message = "Title: min-3, max-100"))]
     pub title: Option<String>,
+
     #[validate(length(max = 244, message = "Description length exceeded (244 max)"))]
     pub description: Option<String>,
+
+    pub image_id: Option<String>,
     pub image_url: Option<String>,
+
     pub start_time: Option<OffsetDateTime>,
+
     pub time_zone: Option<String>,
+
+    pub recording_enabled: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct AddCohostsRequest {
     #[validate(length(min = 1, max = 3, message = "You cannot add more than 3 cohosts"))]
     pub cohosts: Vec<Uuid>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AcceptCohostInvitationRequest {
+    pub invitation_id: Uuid,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -78,16 +100,42 @@ pub struct ParticipantParams {
 // ==================== RESPONSES ====================
 #[derive(Clone, Debug, Serialize)]
 pub struct BroadcastResponse {
+    // Identity
     pub id: Uuid,
     pub title: String,
-    pub description: Option<String>,
-    pub status: BroadcastStatus,
+    pub description: String,
     pub time_zone: String,
     pub image_url: Option<String>,
-    pub total_participants: Option<i64>,
+    pub image_id: Option<String>,
+
+    // Timestamps
+    pub created_at: OffsetDateTime,
     pub start_time: Option<OffsetDateTime>,
     pub end_time: Option<OffsetDateTime>,
-    pub created_at: Option<OffsetDateTime>,
+    pub published_at: Option<OffsetDateTime>,
+    pub duration_seconds: Option<i64>,
+
+    // State signals (FE switches on these)
+    pub role: ParticipantRole,
+    pub status: BroadcastStatus,
+    pub broadcast_state: BroadcastState,
+    pub is_subscribed_to_creator: bool,
+    pub is_bookmarked: bool,
+
+    // Counts
+    pub live_participants_count: i64,
+    pub total_participants: i64,
+
+    // Recording
+    pub recording_enabled: bool,
+    pub recording_url: Option<String>,
+    pub end_reason: Option<EndReason>,
+
+    // Continue listening context
+    pub time_remaining_seconds: Option<i64>,
+    pub last_listened_at: Option<OffsetDateTime>,
+
+    // Relations (conditionally populated)
     pub creator: ParticipantSummary,
     pub cohosts: Option<Vec<ParticipantSummary>>,
 }
@@ -122,45 +170,32 @@ pub struct CohostSessionResponse {
 /// Payload data sent through websocket when a broadcast ends.
 pub struct BroadcastEndedPayload {
     pub broadcast_id: Uuid,
-    pub reason: BroadcastEndedReason,
+    pub reason: EndReason,
 }
 
 // ==================== ENUMS ====================
-#[derive(Clone, Debug, Copy, PartialEq, Serialize, Deserialize, Display, AsRefStr, EnumString)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-#[derive(sqlx::Type)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[derive(Debug, Serialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum BroadcastConnectionState {
+    Live,
+    Reconnecting,
+    Ended,
+}
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum BroadcastSortBy {
+    #[default]
     Title,
     StartTime,
     EndTime,
     TotalParticipants,
 }
 
-#[derive(Clone, Debug, Copy, PartialEq, Serialize, Deserialize, Display, AsRefStr, EnumString)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-#[derive(sqlx::Type)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
 pub enum BroadcastOrderBy {
     Asc,
+
+    #[default]
     Desc,
-}
-
-#[derive(Clone, Debug, Copy, PartialEq, Serialize, Deserialize, Display, AsRefStr, EnumString)]
-#[serde(rename_all = "lowercase")]
-#[strum(serialize_all = "lowercase")]
-#[derive(sqlx::Type)]
-#[sqlx(type_name = "text", rename_all = "lowercase")]
-pub enum BroadcastEndedReason {
-    /// The host ended broadcast normally
-    Normal,
-
-    /// The host was disconnected from the broadcast, either due to poor network or app crash
-    HostDisconnected,
-
-    /// The admin ended the broadcast or the grace-period was elapsed after the host
-    /// got disconnected
-    Abnormal,
 }

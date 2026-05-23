@@ -58,7 +58,7 @@ impl LivekitService {
                 room_admin: false,
                 ..Default::default()
             },
-            ParticipantRole::Listener => VideoGrants {
+            ParticipantRole::Participant => VideoGrants {
                 room: room_name.clone(),
                 room_join: true,
                 can_subscribe: true,

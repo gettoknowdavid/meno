@@ -1,22 +1,28 @@
 CREATE TABLE public.broadcasts
 (
-    id              UUID PRIMARY KEY      DEFAULT gen_random_uuid(),
-    title           TEXT         NOT NULL,
-    description     VARCHAR(244) NOT NULL,
-    image_url       TEXT,
-    image_id        TEXT,
-    broadcast_token TEXT,
-    status          TEXT         NOT NULL DEFAULT 'inactive' CHECK ( status IN ('inactive', 'active', 'ended') ),
+    id                UUID PRIMARY KEY      DEFAULT gen_random_uuid(),
+    title             TEXT         NOT NULL,
+    description       VARCHAR(244) NOT NULL,
+    image_url         TEXT,
+    image_id          TEXT,
+    broadcast_token   TEXT,
+    status            TEXT         NOT NULL DEFAULT 'inactive' CHECK ( status IN ('inactive', 'active', 'ended') ),
+    is_draft          BOOLEAN      NOT NULL DEFAULT FALSE,
+    start_time        TIMESTAMPTZ,
+    end_time          TIMESTAMPTZ,
+    time_zone         TEXT         NOT NULL DEFAULT 'Africa/Lagos',
 
-    start_time      TIMESTAMPTZ,
-    end_time        TIMESTAMPTZ,
-    time_zone       TEXT         NOT NULL DEFAULT 'Africa/Lagos',
+    creator_id        UUID         NOT NULL REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
 
-    creator_id      UUID         NOT NULL REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
+    recording_enabled BOOLEAN      NOT NULL DEFAULT false,
+    recording_key     TEXT,
+    recording_url     TEXT,
+    published_at      TIMESTAMPTZ,
+    end_reason        TEXT CHECK ( end_reason IN ('normal', 'host_disconnected', 'admin_forced', 'quota_exceeded') ),
 
-    created_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    updated_at      TIMESTAMPTZ  NOT NULL DEFAULT now(),
-    deleted_at      TIMESTAMPTZ
+    created_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    updated_at        TIMESTAMPTZ  NOT NULL DEFAULT now(),
+    deleted_at        TIMESTAMPTZ
 );
 
 CREATE INDEX idx_broadcasts_creator_id ON public.broadcasts (creator_id);

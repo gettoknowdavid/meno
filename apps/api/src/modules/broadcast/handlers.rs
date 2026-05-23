@@ -9,17 +9,21 @@ use axum::Extension;
 use axum::extract::{Path, Query, State};
 use std::sync::Arc;
 use uuid::Uuid;
+use validator::Validate;
 
 pub async fn create_broadcast(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     MenoJson(body): MenoJson<dto::CreateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    body.validate()?;
+    let creator_id = auth_user.id;
+    let broadcast = state.broadcast.create(&state, body, creator_id).await?;
+    Ok(MenoResponse::created("Broadcast created", broadcast))
 }
 
 pub async fn update_broadcast(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     MenoJson(body): MenoJson<dto::UpdateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
@@ -27,7 +31,7 @@ pub async fn update_broadcast(
 }
 
 pub async fn delete_broadcast(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<()>, BroadcastError> {
@@ -35,7 +39,7 @@ pub async fn delete_broadcast(
 }
 
 pub async fn go_live(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
@@ -43,7 +47,7 @@ pub async fn go_live(
 }
 
 pub async fn join_broadcast(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
@@ -51,7 +55,7 @@ pub async fn join_broadcast(
 }
 
 pub async fn add_cohost(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     MenoJson(body): MenoJson<dto::AddCohostsRequest>,
@@ -60,7 +64,7 @@ pub async fn add_cohost(
 }
 
 pub async fn remove_cohost(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path((id, cohost_id)): Path<(Uuid, Uuid)>,
 ) -> Result<MenoResponse<()>, BroadcastError> {
@@ -68,7 +72,7 @@ pub async fn remove_cohost(
 }
 
 pub async fn get_broadcasts(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Query(params): Query<dto::BroadcastParams>,
 ) -> Result<MenoResponse<PaginationResponse<dto::BroadcastResponse>>, BroadcastError> {
@@ -76,7 +80,7 @@ pub async fn get_broadcasts(
 }
 
 pub async fn get_broadcast(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
@@ -84,7 +88,7 @@ pub async fn get_broadcast(
 }
 
 pub async fn get_participants(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Query(params): Query<dto::ParticipantParams>,
@@ -93,7 +97,7 @@ pub async fn get_participants(
 }
 
 pub async fn refresh_token(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {

@@ -26,6 +26,21 @@ struct ClientMessage {
     data: serde_json::Value,
 }
 
+/// Heartbeat configuration to help with the Nigerian networks
+pub struct HeartbeatConfig {
+    /// Will default to 25 seconds
+    pub ping_interval_secs: u64,
+
+    /// Will default to 60 seconds
+    pub host_pong_timeout: u64,
+
+    /// Will default to 20 seconds
+    pub listener_pong_timeout: u64,
+
+    /// Will default to 2
+    pub max_missed_pings: u32,
+}
+
 // GET /ws?token=<access_jwt>
 pub async fn ws_upgrade(
     ws: WebSocketUpgrade,
@@ -66,7 +81,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     });
 
     // Heartbeat + Read loop
-    let mut heartbeat_missed = Arc::new(atomic::AtomicU32::new(0));
+    let heartbeat_missed = Arc::new(atomic::AtomicU32::new(0));
     let missed_clone = heartbeat_missed.clone();
 
     // Simple heartbeat task (25s ping)
