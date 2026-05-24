@@ -1,0 +1,16 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO broadcast_cohosts (broadcast_id, cohost_id, invited_by)\n               SELECT $1, unnest_id, $2\n               FROM UNNEST($3::uuid[]) AS unnest_id\n               ON CONFLICT (broadcast_id, cohost_id) DO NOTHING",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "UuidArray"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "e1472af9271150ff6172ea3b26b76a62af7b0c9ed7bf3192cf4179c2647e6bed"
+}

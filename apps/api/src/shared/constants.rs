@@ -13,6 +13,7 @@ pub const USER_CACHE_PREFIX: &str = "USER";
 /// Scoped Cache Prefix for all cached Global data
 /// that does not require authentication
 pub const GLOBAL_CACHE_PREFIX: &str = "GLOBAL";
+pub const BROADCAST_CACHE_PREFIX: &str = "BROADCAST";
 
 pub const MAX_LOGIN_ATTEMPTS: u64 = 10;
 

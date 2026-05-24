@@ -1,6 +1,6 @@
 use crate::config::MenoConfig;
-use crate::modules::broadcast::model::ParticipantRole;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
+use crate::shared::services::livekit::dto::LivekitRole;
 use anyhow::Result;
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
 use livekit_api::services::ServiceError;
@@ -35,14 +35,14 @@ impl LivekitService {
         user_id: Uuid,
         user_name: &str,
         broadcast_id: Uuid,
-        role: ParticipantRole,
+        role: LivekitRole,
     ) -> Result<String, AccessTokenError> {
         let room_name = broadcast_id.to_string();
 
         let identity = user_id.to_string();
 
         let grant = match role {
-            ParticipantRole::Host => VideoGrants {
+            LivekitRole::Host => VideoGrants {
                 room: room_name.clone(),
                 room_join: true,
                 can_subscribe: true,
@@ -50,7 +50,7 @@ impl LivekitService {
                 room_admin: true,
                 ..Default::default()
             },
-            ParticipantRole::Cohost => VideoGrants {
+            LivekitRole::Cohost => VideoGrants {
                 room: room_name.clone(),
                 room_join: true,
                 can_subscribe: true,
@@ -58,7 +58,7 @@ impl LivekitService {
                 room_admin: false,
                 ..Default::default()
             },
-            ParticipantRole::Participant => VideoGrants {
+            LivekitRole::Participant => VideoGrants {
                 room: room_name.clone(),
                 room_join: true,
                 can_subscribe: true,

@@ -92,7 +92,7 @@ pub async fn get_participants(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Query(params): Query<dto::ParticipantParams>,
-) -> Result<MenoResponse<PaginationResponse<dto::ParticipantSummary>>, BroadcastError> {
+) -> Result<MenoResponse<PaginationResponse<dto::UserSummary>>, BroadcastError> {
     Err(BroadcastError::AlreadyCohost)
 }
 

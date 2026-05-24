@@ -4,15 +4,16 @@ use crate::modules::auth::services::AuthService;
 use crate::routes::build_meno_routes;
 use std::sync::Arc;
 
+use crate::modules::broadcast::repository::BroadcastRepository;
 use crate::modules::broadcast::service::BroadcastService;
 use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
-use crate::shared::services::livekit::LivekitService;
+use crate::shared::services::livekit::service::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
-use crate::shared::services::ws::hub::WsHub;
+use crate::shared::services::ws::service::WsService;
 use axum::middleware::from_fn;
 use axum::{
     Router,
@@ -40,7 +41,7 @@ pub struct MenoState {
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub background_jobs: Arc<BackgroundJobs>,
-    pub ws: WsHub,
+    pub ws: WsService,
     pub livekit: LivekitService,
     pub auth: AuthService,
     pub profile: ProfileService,
@@ -60,20 +61,27 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     let cancel_token = CancellationToken::new();
     let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
 
-    let ws = WsHub::new();
+    let ws = WsService::new();
     let storage = StorageService::new(&config);
 
-    let room = Arc::new(RoomClient::with_api_key(
-        &config.livekit_host,
-        &config.livekit_api_key,
-        &config.livekit_api_secret,
-    ));
+    let livekit = LivekitService::new(
+        &config,
+        Arc::new(RoomClient::with_api_key(
+            &config.livekit_host,
+            &config.livekit_api_key,
+            &config.livekit_api_secret,
+        )),
+    );
+
+    let broadcast_repo = BroadcastRepository::new(db.clone());
+    let broadcast =
+        BroadcastService::new(broadcast_repo, livekit.clone(), redis.clone(), ws.clone());
 
     let state = Arc::new(MenoState {
         auth: AuthService::new(db.clone(), redis.clone()),
         profile: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
-        broadcast: BroadcastService::new(db.clone(), redis.clone(), ws.clone(), storage.clone()),
-        livekit: LivekitService::new(&config, room),
+        broadcast,
+        livekit,
         ws,
         background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),

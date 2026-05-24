@@ -204,7 +204,8 @@ impl ProfileRepository {
     }
     pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
         let key = RedisService::profile_key(user_id);
-        self.redis.del(&key).await.map_err(ProfileError::Redis)
+        let _ = self.redis.del(&key).await.map_err(ProfileError::Redis)?;
+        Ok(())
     }
     pub async fn cache_providers(
         &self,

@@ -1,3 +1,4 @@
+use crate::modules::broadcast::dto::MAX_COHOSTS;
 use crate::shared::errors::{error_response, validation_error_response};
 use axum::http::StatusCode;
 use serde::{Deserialize, Serialize};
@@ -38,8 +39,17 @@ pub enum BroadcastError {
     #[error("Only the creator or admin can end this broadcast")]
     CannotEnd,
 
-    #[error("Cohost limit reached. A broadcast supports 1 co-host")]
-    CohostLimitReached,
+    #[error("Cannot add yourself as a cohost")]
+    CannotAddSelfAsCohost,
+
+    #[error("Cohost limit exceeded. Maximum {0} cohosts allowed")]
+    CohostLimitExceeded(usize),
+
+    #[error("One or more users were not found")]
+    OneOrMoreUsersNotFound,
+
+    #[error("Cannot modify a broadcast that is currently live")]
+    CannotModifyLiveBroadcast,
 
     #[error("This invitation is not addressed to you")]
     InvitationNotYours,
@@ -47,6 +57,9 @@ pub enum BroadcastError {
     // 404 - NOT_FOUND
     #[error("Broadcast not found")]
     NotFound,
+
+    #[error("User not found")]
+    UserNotFound,
 
     #[error("Cohost invitation not found")]
     InvitationNotFound,
@@ -138,10 +151,20 @@ impl axum::response::IntoResponse for BroadcastError {
                 "CANNOT_END_BROADCAST",
                 &self.to_string(),
             ),
-            BroadcastError::CohostLimitReached => error_response(
+            BroadcastError::CannotAddSelfAsCohost => error_response(
+                StatusCode::FORBIDDEN,
+                "CANNOT_ADD_SELF_AS_COHOST",
+                &self.to_string(),
+            ),
+            BroadcastError::CannotModifyLiveBroadcast => error_response(
+                StatusCode::FORBIDDEN,
+                "CANNOT_MODIFY_LIVE_BROADCAST",
+                &self.to_string(),
+            ),
+            BroadcastError::CohostLimitExceeded(_) => error_response(
                 StatusCode::FORBIDDEN,
                 "COHOST_LIMIT_REACHED",
-                &self.to_string(),
+                &format!("Cohost limit exceeded. Max {} cohosts allowed", MAX_COHOSTS),
             ),
             BroadcastError::InvitationNotYours => error_response(
                 StatusCode::FORBIDDEN,
@@ -151,6 +174,14 @@ impl axum::response::IntoResponse for BroadcastError {
             BroadcastError::NotFound => error_response(
                 StatusCode::NOT_FOUND,
                 "BROADCAST_NOT_FOUND",
+                &self.to_string(),
+            ),
+            BroadcastError::UserNotFound => {
+                error_response(StatusCode::NOT_FOUND, "USER_NOT_FOUND", &self.to_string())
+            }
+            BroadcastError::OneOrMoreUsersNotFound => error_response(
+                StatusCode::NOT_FOUND,
+                "ONE_OR_MORE_USERS_NOT_FOUND",
                 &self.to_string(),
             ),
             BroadcastError::InvitationNotFound => error_response(

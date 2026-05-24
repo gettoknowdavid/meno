@@ -1,19 +1,28 @@
+use crate::modules::auth;
 use crate::modules::broadcast::model::{
-    BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
+    BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::Validate;
 
+/// Maximum number of cohosts per broadcast. Defined here so it can be referenced
+/// in both the validator attribute and the error message without duplication.
+pub const MAX_COHOSTS: usize = 3;
+
 // ==================== REQUESTS ====================
 #[derive(Debug, Deserialize, Validate)]
 pub struct CreateBroadcastRequest {
-    #[validate(length(min = 3, max = 100, message = "Title: min-3, max-100"))]
+    #[validate(length(
+        min = 3,
+        max = 100,
+        message = "Title must be between 3 and 100 characters"
+    ))]
     pub title: String,
 
-    #[validate(length(max = 244, message = "Description length exceeded (244 max)"))]
-    pub description: String,
+    #[validate(length(max = 244, message = "Description cannot exceed 244 characters"))]
+    pub description: Option<String>,
 
     pub image_id: Option<String>,
     pub image_url: Option<String>,
@@ -24,16 +33,19 @@ pub struct CreateBroadcastRequest {
 
     pub recording_enabled: Option<bool>,
 
-    #[validate(length(max = 3, message = "You cannot add more than 3 cohosts"))]
     pub cohosts: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct UpdateBroadcastRequest {
-    #[validate(length(min = 3, max = 100, message = "Title: min-3, max-100"))]
-    pub title: Option<String>,
+    #[validate(length(
+        min = 3,
+        max = 100,
+        message = "Title must be between 3 and 100 characters"
+    ))]
+    pub title: String,
 
-    #[validate(length(max = 244, message = "Description length exceeded (244 max)"))]
+    #[validate(length(max = 244, message = "Description cannot exceed 244 characters"))]
     pub description: Option<String>,
 
     pub image_id: Option<String>,
@@ -44,11 +56,12 @@ pub struct UpdateBroadcastRequest {
     pub time_zone: Option<String>,
 
     pub recording_enabled: Option<bool>,
+
+    pub cohosts: Option<Vec<Uuid>>,
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct AddCohostsRequest {
-    #[validate(length(min = 1, max = 3, message = "You cannot add more than 3 cohosts"))]
     pub cohosts: Vec<Uuid>,
 }
 
@@ -103,7 +116,7 @@ pub struct BroadcastResponse {
     // Identity
     pub id: Uuid,
     pub title: String,
-    pub description: String,
+    pub description: Option<String>,
     pub time_zone: String,
     pub image_url: Option<String>,
     pub image_id: Option<String>,
@@ -116,9 +129,9 @@ pub struct BroadcastResponse {
     pub duration_seconds: Option<i64>,
 
     // State signals (FE switches on these)
-    pub role: ParticipantRole,
     pub status: BroadcastStatus,
-    pub broadcast_state: BroadcastState,
+    pub state: BroadcastState,
+    pub participant_role: ParticipantRole,
     pub is_subscribed_to_creator: bool,
     pub is_bookmarked: bool,
 
@@ -129,41 +142,54 @@ pub struct BroadcastResponse {
     // Recording
     pub recording_enabled: bool,
     pub recording_url: Option<String>,
-    pub end_reason: Option<EndReason>,
+    pub end_reason: EndReason,
 
     // Continue listening context
     pub time_remaining_seconds: Option<i64>,
     pub last_listened_at: Option<OffsetDateTime>,
 
     // Relations (conditionally populated)
-    pub creator: ParticipantSummary,
-    pub cohosts: Option<Vec<ParticipantSummary>>,
+    pub creator: UserSummary,
+    pub cohosts: Vec<UserSummary>,
 }
 
-#[derive(Clone, Debug, Serialize)]
-pub struct ParticipantSummary {
-    pub id: Uuid,
-    pub full_name: String,
-    pub avatar_url: Option<String>,
-}
-
+/// Returned by go-live and join endpoints. The only place a LiveKit token
+/// is ever sent to the client.
 #[derive(Clone, Debug, Serialize)]
 pub struct BroadcastSessionResponse {
-    /// The full [BroadcastResponse] data transfer object
     pub broadcast: BroadcastResponse,
 
-    /// Livekit Token
+    /// Short-lived LiveKit JWT. TTL configured in constants (default 6 h).
     pub token: String,
 }
 
+/// Cohost-specific response after accepting an invitation while a broadcast
+/// is already live. Carries the token needed to join the LiveKit room.
 #[derive(Clone, Debug, Serialize)]
-/// Cohost-specific session (includes their specific token)
 pub struct CohostSessionResponse {
-    /// The full [ParticipantSummary] data transfer object
-    pub user: ParticipantSummary,
+    pub user: UserSummary,
 
-    /// Livekit Token
-    pub token: String,
+    /// `None` if the broadcast is not currently live (cohost added pre-broadcast).
+    pub token: Option<String>,
+}
+
+/// Compact user shape embedded inside broadcast responses.
+#[derive(Clone, Debug, Serialize)]
+pub struct UserSummary {
+    pub id: Uuid,
+    pub full_name: String,
+    pub avatar_id: Option<String>,
+    pub avatar_url: Option<String>,
+}
+impl From<auth::model::User> for UserSummary {
+    fn from(u: auth::model::User) -> Self {
+        UserSummary {
+            id: u.id,
+            full_name: u.full_name,
+            avatar_id: u.avatar_id,
+            avatar_url: u.avatar_url,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -174,13 +200,6 @@ pub struct BroadcastEndedPayload {
 }
 
 // ==================== ENUMS ====================
-#[derive(Debug, Serialize, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub enum BroadcastConnectionState {
-    Live,
-    Reconnecting,
-    Ended,
-}
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BroadcastSortBy {
@@ -198,4 +217,14 @@ pub enum BroadcastOrderBy {
 
     #[default]
     Desc,
+}
+
+// ==================== BUILDER ====================
+
+/// Context needed by `broadcast_to_response()` that is gathered by the service
+/// layer before calling the helper.
+pub struct ResponseContext {
+    pub creator: UserSummary,
+    pub cohosts: Vec<UserSummary>,
+    pub ctx: BroadcastContext,
 }

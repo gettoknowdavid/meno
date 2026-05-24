@@ -1,6 +1,6 @@
 use crate::modules::auth::model::User;
 use crate::shared::services::redis::RedisService;
-use crate::shared::services::ws::hub::WsPayload;
+use crate::shared::services::ws::service::WsPayload;
 use crate::state::MenoState;
 use axum::{
     Json,

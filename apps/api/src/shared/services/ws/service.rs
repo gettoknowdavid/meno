@@ -18,12 +18,12 @@ pub struct ConnectionSender {
 }
 
 #[derive(Clone)]
-pub struct WsHub {
+pub struct WsService {
     clients: DashMap<Uuid, Vec<ConnectionSender>>,
     conn_seq: Arc<AtomicUsize>,
 }
 
-impl WsHub {
+impl WsService {
     pub fn new() -> Self {
         Self {
             clients: DashMap::new(),

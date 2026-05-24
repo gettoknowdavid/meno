@@ -1,4 +1,6 @@
-use crate::shared::constants::{BLOCKLIST_PREFIX, GLOBAL_CACHE_PREFIX, USER_CACHE_PREFIX};
+use crate::shared::constants::{
+    BLOCKLIST_PREFIX, BROADCAST_CACHE_PREFIX, GLOBAL_CACHE_PREFIX, USER_CACHE_PREFIX,
+};
 use fred::clients::Pipeline;
 use fred::prelude::*;
 use serde::{Serialize, de::DeserializeOwned};
@@ -42,11 +44,9 @@ impl RedisService {
             .await?;
         Ok(())
     }
-    pub async fn del(&self, key: &str) -> Result<(), Error> {
-        self.pool.del::<(), _>(key).await?;
-        Ok(())
-    }
-    pub async fn hset<T: Serialize + Send + Sync>(
+    pub async fn del(&self, key: &str) -> Result<i64, Error> {
+        self.pool.del(key).await
+    }    pub async fn hset<T: Serialize + Send + Sync>(
         &self,
         key: &str,
         fields: HashMap<String, String>,
@@ -93,8 +93,27 @@ impl RedisService {
 
         Ok(count)
     }
+    pub async fn get_i64(&self, key: &str) -> Result<i64, Error> {
+        let val: Option<i64> = self.pool.get(key).await?;
+        Ok(val.unwrap_or(0))
+    }
+    pub async fn incr(&self, key: &str) -> Result<i64, Error> {
+        self.pool.incr(key).await
+    }
+    pub async fn decr(&self, key: &str) -> Result<i64, Error> {
+        self.pool.decr(key).await
+    }
+    pub async fn set_ex(&self, key: &str, value: &str, ttl_secs: u64) -> Result<(), Error> {
+        let ttl = Some(Expiration::EX(ttl_secs as i64));
+        self.pool
+            .set::<(), _, _>(key, value, ttl, None, false)
+            .await
+    }
+    pub async fn expire(&self, key: &str, ttl_secs: i64) -> Result<(), Error> {
+        self.pool.expire::<(), _>(key, ttl_secs, None).await
+    }
 
-    // Key Builders
+    // ==================== KEYS ====================
     /// Global keys
     /// Used for non-user-specific caching
     pub fn global_key(name: &str) -> String {
@@ -138,9 +157,7 @@ impl RedisService {
     pub fn following_key(user_id: Uuid) -> String {
         format!("{}:FOLLOWING:{}", USER_CACHE_PREFIX, user_id)
     }
-    pub fn broadcasts_key(user_id: Uuid) -> String {
-        format!("{}:BROADCASTS:{}", USER_CACHE_PREFIX, user_id)
-    }
+
     pub fn presence_key(user_id: Uuid) -> String {
         format!("{}:PRESENCE:{}", USER_CACHE_PREFIX, user_id)
     }
@@ -152,6 +169,32 @@ impl RedisService {
     }
     pub fn rate_limit_key(prefix: &str, identifier: &str) -> String {
         format!("RT:{}:{}", prefix, identifier)
+    }
+
+    // Broadcast-Scoped Keys
+    pub fn broadcasts_key(id: Uuid) -> String {
+        format!("{}:BROADCASTS:{}", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn live_count_key(id: Uuid) -> String {
+        format!("{}:{}:LIVE_COUNT", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn host_grace_key(id: Uuid) -> String {
+        format!("{}:{}:HOST_GRACE", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn host_grace_started_key(id: Uuid) -> String {
+        format!("{}:{}:HOST_GRACE_STARTED", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn host_disconnect_count_key(id: Uuid) -> String {
+        format!("{}:{}:DISCONNECT_COUNT", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn broadcast_start_time_key(id: Uuid) -> String {
+        // Used for quota deduction on end_broadcast()
+        format!("{}:{}:STARTED_AT", BROADCAST_CACHE_PREFIX, id)
+    }
+    pub fn reconnect_rate_key(user_id: Uuid) -> String {
+        // Rate-limits WS reconnect storms — user-scoped but NOT under USER_CACHE_PREFIX
+        // because it must NOT be cleared by invalidate_all_user_keys
+        format!("RECONNECT_RATE:{}", user_id)
     }
 
     /// Invalidates all user-specific keys in the redis cache
