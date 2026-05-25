@@ -43,7 +43,17 @@ pub async fn go_live(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    let session = state.broadcast.go_live(&state, id, auth_user.id).await?;
+    Ok(MenoResponse::created("Broadcast started", session))
+}
+
+pub async fn end_broadcast(
+    State(state): State<Arc<MenoState>>,
+    Extension(auth_user): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<MenoResponse<dto::EndBroadcastResponse>, BroadcastError> {
+    let response = state.broadcast.end_broadcast(id, auth_user.id).await?;
+    Ok(MenoResponse::created("Broadcast ended", response))
 }
 
 pub async fn join_broadcast(

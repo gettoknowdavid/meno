@@ -10,10 +10,10 @@ use crate::modules::profile::service::ProfileService;
 use crate::shared::background_jobs::BackgroundJobs;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
-use crate::shared::services::livekit::service::LivekitService;
+use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
-use crate::shared::services::ws::service::WsService;
+use crate::shared::services::ws::WsService;
 use axum::middleware::from_fn;
 use axum::{
     Router,

@@ -1,6 +1,8 @@
 use crate::modules::broadcast::dto::UserSummary;
 use crate::modules::broadcast::errors::BroadcastError;
-use crate::modules::broadcast::model::{Broadcast, BroadcastParticipant};
+use crate::modules::broadcast::model::{
+    Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
+};
 use sqlx::{Postgres, Transaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
@@ -15,6 +17,18 @@ pub struct CreateBroadcastInput<'a> {
     pub start_time: Option<OffsetDateTime>,
     pub recording_enabled: bool,
     pub creator_id: Uuid,
+}
+
+pub struct SetActiveInput {
+    pub broadcast_id: Uuid,
+    pub broadcast_token: String,
+}
+
+pub struct UpsertParticipantInput {
+    pub broadcast_id: Uuid,
+    pub participant_id: Uuid,
+    pub role: ParticipantRole,
+    pub joined_at: OffsetDateTime,
 }
 
 #[derive(Clone)]
@@ -48,6 +62,54 @@ impl BroadcastRepository {
             input.creator_id,
         )
         .fetch_one(&mut **tx)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Broadcast>, BroadcastError> {
+        sqlx::query_as!(
+            Broadcast,
+            r#"SELECT * FROM broadcasts WHERE id = $1 AND deleted_at IS NULL"#,
+            id,
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn find_by_id_or_error(&self, id: Uuid) -> Result<Broadcast, BroadcastError> {
+        self.find_by_id(id).await?.ok_or(BroadcastError::NotFound)
+    }
+
+    /// Find an active broadcast where the given user with `user_id` is the host (creator)
+    /// Returns the broadcast if found, otherwise None
+    /// An "active" broadcast has status = 'active' and is not deleted
+    pub async fn find_active_broadcast_hosted_by_id(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<Broadcast>, BroadcastError> {
+        sqlx::query_as!(
+            Broadcast,
+            r#"SELECT * FROM broadcasts
+               WHERE creator_id = $1 AND status = 'active' AND deleted_at IS NULL"#,
+            user_id
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    /// Check if a user is hosting ANY active broadcast (returns bool)
+    pub async fn is_active_host(&self, user_id: Uuid) -> Result<bool, BroadcastError> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                    SELECT 1
+                    FROM broadcasts
+                    WHERE creator_id = $1 AND status = 'active' AND deleted_at IS NULL
+            ) AS "exists!""#,
+            user_id
+        )
+        .fetch_one(&self.db)
         .await
         .map_err(BroadcastError::Database)
     }
@@ -113,6 +175,106 @@ impl BroadcastRepository {
         .map_err(BroadcastError::Database)
     }
 
+    /// Find an active participant (not left) by user ID across any broadcast
+    /// Returns the first active broadcast participant found for the user
+    pub async fn find_active_participant(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<BroadcastParticipant>, BroadcastError> {
+        sqlx::query_as!(
+            BroadcastParticipant,
+            r#"SELECT * FROM broadcast_participants
+               WHERE participant_id = $1 AND left_at IS NULL
+               LIMIT 1"#,
+            user_id
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn upsert_participant<'t>(
+        &self,
+        input: &UpsertParticipantInput,
+        tx: &mut Transaction<'t, Postgres>,
+    ) -> Result<(), BroadcastError> {
+        sqlx::query!(
+            r#"INSERT INTO broadcast_participants (broadcast_id, participant_id, role, joined_at)
+               VALUES ($1, $2, $3, $4)
+               ON CONFLICT (broadcast_id, participant_id)
+               DO UPDATE SET role = EXCLUDED.role, joined_at = EXCLUDED.joined_at"#,
+            input.broadcast_id,
+            input.participant_id,
+            input.role.to_string(),
+            input.joined_at,
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(())
+    }
+
+    pub async fn remove_participant(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<(), BroadcastError> {
+        sqlx::query!(
+            "DELETE FROM broadcast_participants WHERE broadcast_id = $1 and participant_id = $2",
+            broadcast_id,
+            user_id
+        )
+        .execute(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(())
+    }
+
+    pub async fn get_participant_ids(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<Vec<Uuid>, BroadcastError> {
+        sqlx::query_scalar!(
+            r#"SELECT participant_id FROM broadcast_participants
+               WHERE broadcast_id = $1 AND left_at IS NULL"#,
+            broadcast_id
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn get_participant_ids_and_clear(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<Vec<Uuid>, BroadcastError> {
+        sqlx::query_scalar!(
+            r#"WITH deleted_participants AS (
+                    UPDATE broadcast_participants
+                    SET left_at = NOW()
+                    WHERE broadcast_id = $1 AND left_at IS NULL
+                    RETURNING *
+               )
+               SELECT participant_id
+               FROM deleted_participants
+               ORDER BY joined_at"#,
+            broadcast_id
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn get_total_participants(&self, broadcast_id: Uuid) -> Result<i64, BroadcastError> {
+        sqlx::query_scalar!(
+            r#"SELECT COUNT(*) AS "count!" FROM broadcast_participants WHERE broadcast_id = $1"#,
+            broadcast_id
+        )
+        .fetch_one(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
     pub async fn find_user_summary(&self, id: Uuid) -> Result<Option<UserSummary>, BroadcastError> {
         sqlx::query_as!(
             UserSummary,
@@ -157,6 +319,78 @@ impl BroadcastRepository {
             broadcast_id,
         )
         .fetch_one(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn set_active<'t>(
+        &self,
+        input: &SetActiveInput,
+        tx: &mut Transaction<'t, Postgres>,
+    ) -> Result<Broadcast, BroadcastError> {
+        sqlx::query_as!(
+            Broadcast,
+            r#"UPDATE broadcasts
+               SET status = 'active', broadcast_token = $1, updated_at = NOW()
+               WHERE id = $2
+               RETURNING *"#,
+            input.broadcast_token,
+            input.broadcast_id,
+        )
+        .fetch_one(&mut **tx)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
+    pub async fn set_inactive(
+        &self,
+        broadcast_id: Uuid,
+        reason: &EndReason,
+    ) -> Result<(), BroadcastError> {
+        sqlx::query!(
+            r#"UPDATE broadcasts
+               SET status     = 'inactive',
+                   broadcast_token = NULL,
+                   end_time   = NOW(),
+                   end_reason = $2,
+                   updated_at = NOW()
+               WHERE id = $1"#,
+            broadcast_id,
+            reason.to_string(),
+        )
+        .execute(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(())
+    }
+
+    pub async fn get_subscriber_ids(
+        &self,
+        subscription_id: Uuid,
+    ) -> Result<Vec<Uuid>, BroadcastError> {
+        let rows = sqlx::query!(
+            r#"SELECT subscriber_id FROM user_subscribers WHERE subscription_id = $1"#,
+            subscription_id
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(rows.into_iter().map(|r| r.subscriber_id).collect())
+    }
+
+    pub async fn get_cohosts(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<Vec<UserSummary>, BroadcastError> {
+        sqlx::query_as!(
+            UserSummary,
+            r#"SELECT u.id, u.full_name, u.avatar_id, u.avatar_url
+               FROM broadcast_cohosts bc
+               JOIN users u ON u.id = bc.cohost_id
+               WHERE bc.broadcast_id = $1 AND bc.removed_at IS NULL AND deleted_at IS NUll"#,
+            broadcast_id,
+        )
+        .fetch_all(&self.db)
         .await
         .map_err(BroadcastError::Database)
     }

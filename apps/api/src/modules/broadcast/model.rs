@@ -1,8 +1,9 @@
 use serde::{Deserialize, Serialize};
 use sqlx::error::BoxDynError;
 use sqlx::{Database, Decode, Encode, FromRow, Postgres, Type};
+use std::fmt::Display;
+use strum::Display;
 use time::OffsetDateTime;
-use time::format_description::modifier::End;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, FromRow)]
@@ -173,7 +174,7 @@ impl From<String> for BroadcastStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Type, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Default, Display, Type, Serialize, Deserialize)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum ParticipantRole {
@@ -212,7 +213,7 @@ pub enum InvitationStatus {
     Declined,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Display)]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
     Normal,
@@ -234,6 +235,18 @@ impl From<String> for EndReason {
         }
     }
 }
+// impl Display for EndReason {
+//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+//         let str = match &self {
+//             EndReason::Normal => "normal".to_string(),
+//             EndReason::HostDisconnected => "host_disconnected".to_string(),
+//             EndReason::AdminForced => "admin_forced".to_string(),
+//             EndReason::QuotaExceeded => "quota_exceeded".to_string(),
+//             EndReason::None => "none".to_string(),
+//         };
+//         write!(f, "{}", str)
+//     }
+// }
 impl From<EndReason> for String {
     fn from(value: EndReason) -> Self {
         match value {

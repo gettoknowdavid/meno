@@ -198,6 +198,28 @@ pub struct BroadcastEndedPayload {
     pub broadcast_id: Uuid,
     pub reason: EndReason,
 }
+impl BroadcastEndedPayload {
+    pub fn normal_for(broadcast_id: Uuid) -> Self {
+        Self {
+            broadcast_id,
+            reason: EndReason::Normal,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct EndBroadcastResponse {
+    pub broadcast_id: Uuid,
+    pub broadcast_title: String,
+    pub broadcast_image_url: Option<String>,
+    pub creator_id: Uuid,
+    pub ended_reason: EndReason,
+    pub ended_at: OffsetDateTime,
+    pub duration_secs: i64,
+    pub total_participants: i64,
+    pub recording_enabled: bool,
+    pub recording_ready: bool,
+}
 
 // ==================== ENUMS ====================
 #[derive(Debug, Deserialize, Default)]
