@@ -6,6 +6,7 @@ use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 
 use crate::shared::constants::TTL_60_SECS;
+use crate::shared::services::redis::keys::RedisKey;
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -160,7 +161,7 @@ impl ProfileRepository {
     }
     pub async fn count_search_profiles(&self, query: &str) -> Result<i64, ProfileError> {
         sqlx::query_scalar!(
-            r#"SELECT COUNT(*) as "count!" FROM users
+            r#"SELECT COUNT(*) AS "count!" FROM users
                WHERE deleted_at IS NULL
                AND search_vector @@ websearch_to_tsquery('english', $1)"#,
             query
@@ -172,21 +173,21 @@ impl ProfileRepository {
 
     // Redis
     pub async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError> {
-        let key = RedisService::profile_key(value.id);
+        let key = RedisKey::profile(value.id);
         self.redis
             .set(&key, &value, Some(TTL_60_SECS))
             .await
             .map_err(ProfileError::Redis)
     }
     pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError> {
-        let key = RedisService::profile_key(value.id);
+        let key = RedisKey::profile(value.id);
         self.redis
             .set(&key, &value, Some(TTL_60_SECS))
             .await
             .map_err(ProfileError::Redis)
     }
     pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError> {
-        let key = RedisService::profile_key(user_id);
+        let key = RedisKey::profile(user_id);
         self.redis
             .get::<MeResponse>(&key)
             .await
@@ -196,14 +197,14 @@ impl ProfileRepository {
         &self,
         user_id: Uuid,
     ) -> Result<Option<PublicProfileResponse>, ProfileError> {
-        let key = RedisService::profile_key(user_id);
+        let key = RedisKey::profile(user_id);
         self.redis
             .get::<PublicProfileResponse>(&key)
             .await
             .map_err(ProfileError::Redis)
     }
     pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
-        let key = RedisService::profile_key(user_id);
+        let key = RedisKey::profile(user_id);
         let _ = self.redis.del(&key).await.map_err(ProfileError::Redis)?;
         Ok(())
     }
@@ -212,7 +213,7 @@ impl ProfileRepository {
         user_id: Uuid,
         providers: Vec<AuthProvider>,
     ) -> Result<(), ProfileError> {
-        let key = RedisService::user_providers_key(user_id);
+        let key = RedisKey::user_providers(user_id);
         self.redis
             .set(&key, &providers, Some(TTL_60_SECS))
             .await
@@ -222,19 +223,16 @@ impl ProfileRepository {
         &self,
         user_id: Uuid,
     ) -> Result<Option<Vec<AuthProvider>>, ProfileError> {
-        let key = RedisService::user_providers_key(user_id);
+        let key = RedisKey::user_providers(user_id);
         self.redis
             .get::<Vec<AuthProvider>>(&key)
             .await
             .map_err(ProfileError::Redis)
     }
-    pub fn search_results_cache_key(&self, query: &str, page: i64, limit: i64) -> String {
-        let built_key_suffix = format!("{}:{}:{}", query, page, limit);
-        RedisService::search_key(built_key_suffix)
-    }
+
     pub async fn cache_search_results(
         &self,
-        key: &str,
+        key: &RedisKey,
         results: Vec<ProfileSearchResult>,
     ) -> Result<(), ProfileError> {
         self.redis
@@ -245,7 +243,7 @@ impl ProfileRepository {
     }
     pub async fn get_cached_search_results(
         &self,
-        key: &str,
+        key: &RedisKey,
     ) -> Result<Option<Vec<ProfileSearchResult>>, ProfileError> {
         self.redis
             .get::<Vec<ProfileSearchResult>>(&key)

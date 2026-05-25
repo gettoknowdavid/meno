@@ -8,6 +8,7 @@ use crate::modules::profile::model::GeneralSettings;
 use crate::modules::profile::repository::ProfileRepository;
 use crate::shared::pagination::{PaginationParams, PaginationResponse};
 use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
 use crate::state::MenoState;
 use uuid::Uuid;
@@ -182,7 +183,7 @@ impl ProfileService {
         let page = params.page.unwrap_or(1);
         let limit = params.limit.unwrap_or(50);
 
-        let cache_key = self.repo.search_results_cache_key(&q, page, limit);
+        let cache_key = RedisKey::search_results(&q, page, limit);
 
         if let Some(cached_results) = self.repo.get_cached_search_results(&cache_key).await? {
             return self.build_pagination(&q, limit, page, cached_results).await;

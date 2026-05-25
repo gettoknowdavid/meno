@@ -45,3 +45,10 @@ pub const TTL_3600_SECS: i64 = 3600;
 
 // ========== LIVEKIT CONSTANTS ==========
 pub const LIVEKIT_ACCESS_TOKEN_TTL: i64 = 21600;
+
+// ========== WEB SOCKET CONSTANTS ==========
+/// Maximum number of messages to buffer per offline user
+pub const MESSAGE_BUFFER_SIZE: i64 = 50;
+
+/// TTL for message buffer in seconds (5 minutes)
+pub const MESSAGE_BUFFER_TTL_SECS: i64 = 300;

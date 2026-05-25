@@ -1,6 +1,6 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AuthProvider, UserRole};
-use crate::shared::constants::BLOCKLIST_PREFIX;
+use crate::shared::services::redis::keys::RedisKey;
 use crate::state::MenoState;
 use axum::{extract::Request, extract::State, middleware::Next, response::Response};
 use serde::Serialize;
@@ -32,7 +32,7 @@ pub async fn auth_middleware(
 
     let claims = app.jwt.decode_access(token)?;
 
-    let blocklist_key = format!("{}:{}", BLOCKLIST_PREFIX, claims.jti);
+    let blocklist_key = RedisKey::block_list("ACCESS_TOKEN", claims.jti);
     match app.redis.get::<String>(&blocklist_key).await {
         Ok(Some(_)) => return Err(AuthError::InvalidToken),
         Err(e) => return Err(AuthError::Redis(e)),

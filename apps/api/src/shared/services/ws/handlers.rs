@@ -1,6 +1,6 @@
 use crate::modules::auth::model::User;
 use crate::shared::constants::TTL_3600_SECS;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{ClientMessage, WsErrorCode, WsPayload, WsQuery};
 use crate::shared::services::ws::model::{HeartbeatConfig, WsEvent};
 use crate::state::MenoState;
@@ -97,7 +97,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     let missed_pongs = Arc::new(AtomicU32::new(0));
 
     // Set presence in Redis
-    let presence_key = RedisService::presence_key(user.id);
+    let presence_key = RedisKey::presence(user.id);
     let _ = state.redis.set_ex(&presence_key, "1", 120).await;
 
     // Heartbeat task (sends periodic pings)
@@ -147,7 +147,7 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
     };
     match msg.event {
         WsEvent::Heartbeat => {
-            let presence_key = RedisService::presence_key(user_id);
+            let presence_key = RedisKey::presence(user_id);
             let _ = state.redis.expire(&presence_key, 120).await;
             tracing::debug!("Heartbeat from user {}", user_id);
         }
@@ -173,7 +173,7 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
     // Host disconnect - start grace period
     if let Ok(Some(broadcast)) = state.broadcast.find_active_hosted_by(user_id).await {
         // Get disconnect count for tiered grace period
-        let count_key = RedisService::host_disconnect_count_key(broadcast.id);
+        let count_key = RedisKey::disconnect_count(broadcast.id);
         let disconnect_count: u64 = match state.redis.incr(&count_key).await {
             Ok(c) => c as u64,
             Err(_) => 1,
@@ -184,12 +184,12 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
         let grace_secs = config.get_grace_seconds(disconnect_count);
 
         // Set grace period key in Redis
-        let grace_key = RedisService::host_grace_key(broadcast.id);
+        let grace_key = RedisKey::host_grace(broadcast.id);
         let value = &grace_secs.to_string();
         let _ = state.redis.set_ex(&grace_key, value, grace_secs).await;
 
         // Store grace start time
-        let start_key = RedisService::host_grace_started_key(broadcast.id);
+        let start_key = RedisKey::grace_started(broadcast.id);
         let value = &chrono::Utc::now().timestamp().to_string();
         let _ = state.redis.set_ex(&start_key, value, grace_secs + 10).await;
 
@@ -207,12 +207,12 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
             tokio::time::sleep(time::Duration::from_secs(grace_secs)).await;
 
             // Check if grace key still exists (host didn't reconnect)
-            let grace_key = RedisService::host_grace_key(b_id);
+            let grace_key = RedisKey::host_grace(b_id);
             if state_clone.redis.exists(&grace_key).await.unwrap_or(false) {
                 let _ = state_clone.redis.del(&grace_key).await;
                 tracing::info!("Host grace expired for broadcast {}, ending", b_id);
 
-                // End the broadcast via HTTP endpoint (handles all cleanup)
+                // End the broadcast via HTTP endpoint (handles all cleanups)
                 let _ = state_clone.broadcast.end_broadcast(b_id, host_id).await;
             }
         });
@@ -229,7 +229,7 @@ async fn check_reconnect_rate(
     state: &MenoState,
     user_id: Uuid,
 ) -> Result<(), (StatusCode, Json<Value>)> {
-    let key = RedisService::reconnect_rate_key(user_id);
+    let key = RedisKey::reconnect_rate(user_id);
 
     let count: i64 = state.redis.incr(&key).await.map_err(|_| {
         error_response(StatusCode::INTERNAL_SERVER_ERROR, "Rate limit check failed")
@@ -250,7 +250,7 @@ async fn check_reconnect_rate(
     Ok(())
 }
 
-/// Start periodic ping task
+/// Start a periodic ping task
 ///
 /// Pings every 25s to keep NAT bindings alive on mobile networks
 fn start_heartbeat_task(

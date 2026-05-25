@@ -30,7 +30,7 @@ impl LivekitService {
         }
     }
 
-    pub fn create_token(
+    pub async fn create_token(
         &self,
         user_id: Uuid,
         user_name: &str,

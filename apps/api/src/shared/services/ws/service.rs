@@ -1,5 +1,6 @@
 use crate::shared::constants::{MESSAGE_BUFFER_SIZE, MESSAGE_BUFFER_TTL_SECS};
 use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::errors::WsErrorCode;
 use dashmap::DashMap;
@@ -17,7 +18,7 @@ pub struct ConnectionSender {
 /// WebSocket service managing user connections with offline message buffering
 ///
 /// Design decisions:
-/// - Uses DashMap for O(1) concurrent access to connection map
+/// - Uses DashMap for O(1) concurrent access to the connection map
 /// - Offline messages buffered in Redis (survives server restarts)
 /// - Ring buffer pattern (LPUSH + LTRIM) for bounded queue
 /// - Atomic sequence for connection IDs
@@ -66,7 +67,7 @@ impl WsService {
     }
 
     /// Send payload to a specific user (all their connections)
-    /// If user is offline, buffers the message in Redis
+    /// If the user is offline, buffers the message in Redis
     pub async fn send_to_user(&self, user_id: Uuid, payload: WsPayload) {
         // Check if user is online
         if let Some(senders) = self.clients.get(&user_id) {
@@ -97,9 +98,9 @@ impl WsService {
     }
 
     /// Buffer a message for an offline user in Redis
-    /// Uses ring buffer pattern: LPUSH + LTRIM to keep last N messages
+    /// Uses the ring buffer pattern: LPUSH + LTRIM to keep last N messages
     pub async fn buffer_message(&self, user_id: Uuid, payload: WsPayload) {
-        let key = RedisService::message_buffer_key(user_id);
+        let key = RedisKey::ws_buffer(user_id);
         let json = match serde_json::to_string(&payload) {
             Ok(j) => j,
             Err(e) => {
@@ -121,7 +122,7 @@ impl WsService {
     /// Drain and replay buffered messages for a user on reconnection
     /// Returns messages in chronological order (oldest first)
     pub async fn drain_message_buffer(&self, user_id: Uuid) -> Vec<WsPayload> {
-        let key = RedisService::message_buffer_key(user_id);
+        let key = RedisKey::ws_buffer(user_id).to_string();
 
         // Atomic GETDEL pattern: LRANGE then DEL
         let script = r#"
@@ -150,12 +151,12 @@ impl WsService {
             .collect()
     }
 
-    /// Get number of active connections for a user
+    /// Get the number of active connections for a user
     pub fn connection_count(&self, user_id: Uuid) -> usize {
         self.clients.get(&user_id).map(|v| v.len()).unwrap_or(0)
     }
 
-    /// Check if user has any active connection
+    /// Check if the user has any active connection
     pub fn is_online(&self, user_id: Uuid) -> bool {
         self.clients.contains_key(&user_id)
     }
@@ -182,7 +183,7 @@ impl WsService {
         }
     }
 
-    /// Get all currently online user IDs
+    /// Get all online user IDs
     pub fn get_online_users(&self) -> Vec<Uuid> {
         self.clients.iter().map(|v| *v.key()).collect()
     }

@@ -61,7 +61,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     let cancel_token = CancellationToken::new();
     let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
 
-    let ws = WsService::new();
+    let ws = WsService::new(redis.clone());
     let storage = StorageService::new(&config);
 
     let livekit = LivekitService::new(
