@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "INSERT INTO broadcasts (title, description, image_id, image_url, time_zone,\n                        start_time, recording_enabled, creator_id)\n               VALUES ($1, $2, $3, $4, $5, $6, $7, $8)\n               RETURNING *",
+  "query": "UPDATE broadcasts\n               SET status = 'active', broadcast_token = $1, start_time = $2, updated_at = NOW()\n               WHERE id = $3\n               RETURNING *",
   "describe": {
     "columns": [
       {
@@ -102,12 +102,7 @@
     "parameters": {
       "Left": [
         "Text",
-        "Varchar",
-        "Text",
-        "Text",
-        "Text",
         "Timestamptz",
-        "Bool",
         "Uuid"
       ]
     },
@@ -133,5 +128,5 @@
       false
     ]
   },
-  "hash": "f3ce0e22096022fa28caab7643f0a60be36ba73eeb1e6663c6c7b402184c7d97"
+  "hash": "a98d0d94bf563239d6dda184a27b4f69c7bc7dbd9161f34ec071b48d4097a850"
 }

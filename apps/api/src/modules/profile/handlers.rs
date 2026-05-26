@@ -2,7 +2,7 @@ use crate::modules::profile::dto;
 use crate::modules::profile::dto::PublicProfileResponse;
 use crate::modules::profile::errors::ProfileError;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::middleware::json_rejection::MenoJson;
+use crate::shared::middleware::extractors::MenoBody;
 use crate::shared::pagination::PaginationResponse;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
@@ -42,7 +42,7 @@ pub async fn get_avatar_upload_url(
 pub async fn update_me(
     State(app): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
-    MenoJson(body): MenoJson<dto::UpdateProfileRequest>,
+    MenoBody(body): MenoBody<dto::UpdateProfileRequest>,
 ) -> Result<MenoResponse<dto::MeResponse>, ProfileError> {
     body.validate()?;
     let me = app.profile.update_me(auth_user.id, &body).await?;

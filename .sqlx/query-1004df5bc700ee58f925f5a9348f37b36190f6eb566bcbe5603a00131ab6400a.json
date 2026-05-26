@@ -1,0 +1,17 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "INSERT INTO broadcast_participants (broadcast_id, participant_id, role, joined_at)\n               VALUES ($1, $2, $3::text, $4)\n               ON CONFLICT (broadcast_id, participant_id)\n               DO UPDATE SET role = EXCLUDED.role, joined_at = EXCLUDED.joined_at",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Timestamptz"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "1004df5bc700ee58f925f5a9348f37b36190f6eb566bcbe5603a00131ab6400a"
+}

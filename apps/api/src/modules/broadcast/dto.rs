@@ -3,6 +3,7 @@ use crate::modules::broadcast::model::{
     BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
 use serde::{Deserialize, Serialize};
+use time::serde::rfc3339;
 use time::OffsetDateTime;
 use uuid::Uuid;
 use validator::Validate;
@@ -117,14 +118,18 @@ pub struct BroadcastResponse {
     pub id: Uuid,
     pub title: String,
     pub description: Option<String>,
-    pub time_zone: String,
+    pub time_zone: Option<String>,
     pub image_url: Option<String>,
     pub image_id: Option<String>,
 
     // Timestamps
+    #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
+    #[serde(with = "rfc3339::option")]
     pub start_time: Option<OffsetDateTime>,
+    #[serde(with = "rfc3339::option")]
     pub end_time: Option<OffsetDateTime>,
+    #[serde(with = "rfc3339::option")]
     pub published_at: Option<OffsetDateTime>,
     pub duration_seconds: Option<i64>,
 
@@ -146,6 +151,7 @@ pub struct BroadcastResponse {
 
     // Continue listening context
     pub time_remaining_seconds: Option<i64>,
+    #[serde(with = "rfc3339::option")]
     pub last_listened_at: Option<OffsetDateTime>,
 
     // Relations (conditionally populated)
@@ -214,6 +220,7 @@ pub struct EndBroadcastResponse {
     pub broadcast_image_url: Option<String>,
     pub creator_id: Uuid,
     pub ended_reason: EndReason,
+    #[serde(with = "rfc3339")]
     pub ended_at: OffsetDateTime,
     pub duration_secs: i64,
     pub total_participants: i64,

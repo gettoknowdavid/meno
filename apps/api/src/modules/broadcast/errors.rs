@@ -1,8 +1,6 @@
 use crate::modules::broadcast::dto::MAX_COHOSTS;
 use crate::shared::errors::{error_response, validation_error_response};
 use axum::http::StatusCode;
-use serde::{Deserialize, Serialize};
-use uuid::Uuid;
 use validator::ValidationErrors;
 
 #[derive(thiserror::Error, Debug)]

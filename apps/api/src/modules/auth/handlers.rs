@@ -4,7 +4,7 @@ use crate::modules::auth::dto::{
     ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
-use crate::shared::middleware::json_rejection::MenoJson;
+use crate::shared::middleware::extractors::MenoBody;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
 use axum::extract::State;
@@ -13,7 +13,7 @@ use validator::Validate;
 
 pub async fn register(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<RegisterRequest>,
+    MenoBody(body): MenoBody<RegisterRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let user = app.auth.register(&app, &body).await?;
@@ -22,7 +22,7 @@ pub async fn register(
 
 pub async fn verify_email(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<VerifyEmailRequest>,
+    MenoBody(body): MenoBody<VerifyEmailRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let user = app.auth.verify_email(&app, &body).await?;
@@ -31,7 +31,7 @@ pub async fn verify_email(
 
 pub async fn resend_otp(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<ResendOtpRequest>,
+    MenoBody(body): MenoBody<ResendOtpRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
     app.auth.resend_otp(&app, &body).await?;
@@ -40,7 +40,7 @@ pub async fn resend_otp(
 
 pub async fn login(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<LoginRequest>,
+    MenoBody(body): MenoBody<LoginRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let user = app.auth.login(&app, &body).await?;
@@ -49,7 +49,7 @@ pub async fn login(
 
 pub async fn refresh(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<RefreshTokenRequest>,
+    MenoBody(body): MenoBody<RefreshTokenRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let user = app.auth.refresh(&app, &body).await?;
@@ -58,7 +58,7 @@ pub async fn refresh(
 
 pub async fn logout(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<LogoutRequest>,
+    MenoBody(body): MenoBody<LogoutRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
     app.auth.logout(&app, &body).await?;
@@ -67,7 +67,7 @@ pub async fn logout(
 
 pub async fn forgot_password(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<ForgotPasswordRequest>,
+    MenoBody(body): MenoBody<ForgotPasswordRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
     app.auth.forgot_password(&app, &body).await?;
@@ -76,7 +76,7 @@ pub async fn forgot_password(
 
 pub async fn reset_password(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<ResetPasswordRequest>,
+    MenoBody(body): MenoBody<ResetPasswordRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
     app.auth.reset_password(&app, &body).await?;
@@ -92,7 +92,7 @@ pub async fn google_auth_url(
 
 pub async fn google_web_callback(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<GoogleWebAuthRequest>,
+    MenoBody(body): MenoBody<GoogleWebAuthRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let response = app.auth.google_web_auth(&app, &body).await?;
@@ -101,7 +101,7 @@ pub async fn google_web_callback(
 
 pub async fn google_mobile_auth(
     State(app): State<Arc<MenoState>>,
-    MenoJson(body): MenoJson<GoogleMobileAuthRequest>,
+    MenoBody(body): MenoBody<GoogleMobileAuthRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let response = app.auth.google_mobile_auth(&app, &body).await?;

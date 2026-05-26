@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT COUNT(*) as \"count!\" FROM users\n               WHERE deleted_at IS NULL\n               AND search_vector @@ websearch_to_tsquery('english', $1)",
+  "query": "SELECT COUNT(*) AS \"count!\" FROM users\n               WHERE deleted_at IS NULL\n               AND search_vector @@ websearch_to_tsquery('english', $1)",
   "describe": {
     "columns": [
       {
@@ -18,5 +18,5 @@
       null
     ]
   },
-  "hash": "f527c0a1e57cdfb5f2cdf6fd6557fb7ee46a93200bd1d5bc3f0274d66dc87504"
+  "hash": "41a2ae409f55e554ae573a2cdc908cdb389d7c179977d238c8a0fc4b49919442"
 }

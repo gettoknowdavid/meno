@@ -33,6 +33,10 @@ pub async fn ws_upgrade(
         .decode_access(&query.token)
         .map_err(|_| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 
+    if !claims.verified {
+        return Err(error_response(StatusCode::FORBIDDEN, "EMAIL_NOT_VERIFIED"));
+    }
+
     // Check reconnect rate limit before upgrading
     if let Err(e) = check_reconnect_rate(&state, claims.sub).await {
         return Err(e);
@@ -61,6 +65,16 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
 
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
     let conn_id = state.ws.register(user.id, hub_tx);
+
+    let welcome = WsPayload::new(
+        WsEvent::Notification,
+        json!({
+            "title": "Connected",
+            "body": "Welcome to Meno Live Broadcast",
+            "type": "system"
+        }),
+    );
+    let _ = state.ws.send_to_user(user.id, welcome).await;
 
     // Drain any buffered messages from previous disconnects
     let buffered_messages = state.ws.drain_message_buffer(user.id).await;
@@ -137,6 +151,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
 }
 
 /// Handle incoming client messages
+/// Handle incoming client messages
 async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str) {
     let msg: ClientMessage = match serde_json::from_str(raw_text) {
         Ok(m) => m,
@@ -145,18 +160,38 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
             return;
         }
     };
+
     match msg.event {
         WsEvent::Heartbeat => {
+            // === SEND ACKNOWLEDGMENT BACK TO CLIENT ===
+            let ack_payload = WsPayload::new(
+                WsEvent::Heartbeat,
+                json!({
+                    "status": "ok",
+                    "timestamp": chrono::Utc::now().timestamp(),
+                    "userId": user_id
+                }),
+            );
+
+            let _ = state.ws.send_to_user(user_id, ack_payload).await;
+
+            // Refresh presence in Redis
             let presence_key = RedisKey::presence(user_id);
             let _ = state.redis.expire(&presence_key, 120).await;
-            tracing::debug!("Heartbeat from user {}", user_id);
+
+            tracing::debug!("Heartbeat received and acknowledged for user {}", user_id);
         }
+
         _ => {
             tracing::warn!("Client sent unsupported event: {:?}", msg.event);
-            let message = format!("Unsupported event: {}", msg.event);
             let _ = state
                 .ws
-                .send_error(user_id, Uuid::nil(), WsErrorCode::Unsupported, message)
+                .send_error(
+                    user_id,
+                    Uuid::nil(),
+                    WsErrorCode::Unsupported,
+                    format!("Unsupported event: {}", msg.event),
+                )
                 .await;
         }
     }
@@ -213,7 +248,10 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
                 tracing::info!("Host grace expired for broadcast {}, ending", b_id);
 
                 // End the broadcast via HTTP endpoint (handles all cleanups)
-                let _ = state_clone.broadcast.end_broadcast(b_id, host_id).await;
+                let _ = state_clone
+                    .broadcast
+                    .end_broadcast(&state_clone, b_id, host_id)
+                    .await;
             }
         });
     }

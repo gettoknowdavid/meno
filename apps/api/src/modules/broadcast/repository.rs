@@ -22,6 +22,7 @@ pub struct CreateBroadcastInput<'a> {
 pub struct SetActiveInput {
     pub broadcast_id: Uuid,
     pub broadcast_token: String,
+    pub start_time: OffsetDateTime,
 }
 
 pub struct UpsertParticipantInput {
@@ -200,7 +201,7 @@ impl BroadcastRepository {
     ) -> Result<(), BroadcastError> {
         sqlx::query!(
             r#"INSERT INTO broadcast_participants (broadcast_id, participant_id, role, joined_at)
-               VALUES ($1, $2, $3, $4)
+               VALUES ($1, $2, $3::text, $4)
                ON CONFLICT (broadcast_id, participant_id)
                DO UPDATE SET role = EXCLUDED.role, joined_at = EXCLUDED.joined_at"#,
             input.broadcast_id,
@@ -244,9 +245,10 @@ impl BroadcastRepository {
         .map_err(BroadcastError::Database)
     }
 
-    pub async fn get_participant_ids_and_clear(
+    pub async fn get_participant_ids_and_clear<'t>(
         &self,
         broadcast_id: Uuid,
+        tx: &mut Transaction<'t, Postgres>,
     ) -> Result<Vec<Uuid>, BroadcastError> {
         sqlx::query_scalar!(
             r#"WITH deleted_participants AS (
@@ -260,7 +262,7 @@ impl BroadcastRepository {
                ORDER BY joined_at"#,
             broadcast_id
         )
-        .fetch_all(&self.db)
+        .fetch_all(&mut **tx)
         .await
         .map_err(BroadcastError::Database)
     }
@@ -331,10 +333,11 @@ impl BroadcastRepository {
         sqlx::query_as!(
             Broadcast,
             r#"UPDATE broadcasts
-               SET status = 'active', broadcast_token = $1, updated_at = NOW()
-               WHERE id = $2
+               SET status = 'active', broadcast_token = $1, start_time = $2, updated_at = NOW()
+               WHERE id = $3
                RETURNING *"#,
             input.broadcast_token,
+            input.start_time,
             input.broadcast_id,
         )
         .fetch_one(&mut **tx)
@@ -342,23 +345,20 @@ impl BroadcastRepository {
         .map_err(BroadcastError::Database)
     }
 
-    pub async fn set_inactive(
+    pub async fn set_inactive<'t>(
         &self,
         broadcast_id: Uuid,
         reason: &EndReason,
+        tx: &mut Transaction<'t, Postgres>,
     ) -> Result<(), BroadcastError> {
         sqlx::query!(
             r#"UPDATE broadcasts
-               SET status     = 'inactive',
-                   broadcast_token = NULL,
-                   end_time   = NOW(),
-                   end_reason = $2,
-                   updated_at = NOW()
+               SET status = 'inactive', end_time   = NOW(), end_reason = $2, updated_at = NOW()
                WHERE id = $1"#,
             broadcast_id,
             reason.to_string(),
         )
-        .execute(&self.db)
+        .execute(&mut **tx)
         .await
         .map_err(BroadcastError::Database)?;
         Ok(())

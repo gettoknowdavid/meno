@@ -2,7 +2,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::error::BoxDynError;
 use sqlx::{Database, Decode, Encode, FromRow, Postgres, Type};
 use std::fmt::Display;
-use strum::Display;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -13,7 +12,7 @@ pub struct Broadcast {
     pub description: Option<String>,
     pub status: BroadcastStatus,
     pub creator_id: Uuid,
-    pub time_zone: String,
+    pub time_zone: Option<String>,
     pub image_url: Option<String>,
     pub image_id: Option<String>,
     pub broadcast_token: Option<String>,
@@ -174,9 +173,9 @@ impl From<String> for BroadcastStatus {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Display, Type, Serialize, Deserialize)]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
-#[serde(rename_all = "snake_case")]
+#[derive(Debug, Clone, PartialEq, Default, Type, Serialize, Deserialize)]
+#[sqlx(type_name = "text", rename_all = "lowercase")]
+#[serde(rename_all = "lowercase")]
 pub enum ParticipantRole {
     Host,
     Cohost,
@@ -204,6 +203,17 @@ impl From<ParticipantRole> for String {
         }
     }
 }
+impl Display for ParticipantRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            ParticipantRole::Host => "host".to_string(),
+            ParticipantRole::Cohost => "cohost".to_string(),
+            ParticipantRole::Participant => "participant".to_string(),
+            ParticipantRole::None => "none".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -212,8 +222,7 @@ pub enum InvitationStatus {
     Accepted,
     Declined,
 }
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default, Display)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
     Normal,
@@ -235,18 +244,18 @@ impl From<String> for EndReason {
         }
     }
 }
-// impl Display for EndReason {
-//     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-//         let str = match &self {
-//             EndReason::Normal => "normal".to_string(),
-//             EndReason::HostDisconnected => "host_disconnected".to_string(),
-//             EndReason::AdminForced => "admin_forced".to_string(),
-//             EndReason::QuotaExceeded => "quota_exceeded".to_string(),
-//             EndReason::None => "none".to_string(),
-//         };
-//         write!(f, "{}", str)
-//     }
-// }
+impl Display for EndReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match &self {
+            EndReason::Normal => "normal".to_string(),
+            EndReason::HostDisconnected => "host_disconnected".to_string(),
+            EndReason::AdminForced => "admin_forced".to_string(),
+            EndReason::QuotaExceeded => "quota_exceeded".to_string(),
+            EndReason::None => "none".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
 impl From<EndReason> for String {
     fn from(value: EndReason) -> Self {
         match value {

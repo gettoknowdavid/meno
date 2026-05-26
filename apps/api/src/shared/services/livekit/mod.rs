@@ -1,6 +1,7 @@
 pub mod dto;
 
 use crate::config::MenoConfig;
+use crate::modules::broadcast::dto::UserSummary;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
 use crate::shared::services::livekit::dto::LivekitRole;
 use anyhow::Result;
@@ -32,7 +33,7 @@ impl LivekitService {
         }
     }
 
-    pub async fn create_token(
+    pub async fn mint_token(
         &self,
         user_id: Uuid,
         user_name: &str,
@@ -76,6 +77,15 @@ impl LivekitService {
             .with_grants(grant)
             .with_ttl(Duration::from_secs(LIVEKIT_ACCESS_TOKEN_TTL as u64))
             .to_jwt()
+    }
+
+    pub async fn mint_host_token(
+        &self,
+        host: &UserSummary,
+        broadcast_id: Uuid,
+    ) -> Result<String, AccessTokenError> {
+        self.mint_token(host.id, &host.full_name, broadcast_id, LivekitRole::Host)
+            .await
     }
 
     pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {

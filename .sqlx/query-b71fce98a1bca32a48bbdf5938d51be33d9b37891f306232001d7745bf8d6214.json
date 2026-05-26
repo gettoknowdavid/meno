@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM broadcast_participants WHERE broadcast_id = $1 and participant_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b71fce98a1bca32a48bbdf5938d51be33d9b37891f306232001d7745bf8d6214"
+}

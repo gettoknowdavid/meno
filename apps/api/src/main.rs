@@ -7,6 +7,9 @@ use meno_api::state::build_app_router;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    let provider = &jsonwebtoken::crypto::aws_lc::DEFAULT_PROVIDER;
+    let _ = jsonwebtoken::crypto::CryptoProvider::install_default(provider);
+
     init_telemetry();
 
     let config = MenoConfig::from_env()?;

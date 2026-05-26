@@ -10,7 +10,7 @@ CREATE TABLE public.broadcasts
     is_draft          BOOLEAN      NOT NULL DEFAULT FALSE,
     start_time        TIMESTAMPTZ,
     end_time          TIMESTAMPTZ,
-    time_zone         TEXT         NOT NULL DEFAULT 'Africa/Lagos',
+    time_zone         TEXT                  DEFAULT 'Africa/Lagos',
 
     creator_id        UUID         NOT NULL REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
 
