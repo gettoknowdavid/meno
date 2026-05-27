@@ -3,7 +3,7 @@ use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
 };
-use sqlx::{Postgres, Transaction};
+use sqlx::{Postgres, QueryBuilder, Transaction};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -17,6 +17,17 @@ pub struct CreateBroadcastInput<'a> {
     pub start_time: Option<OffsetDateTime>,
     pub recording_enabled: bool,
     pub creator_id: Uuid,
+}
+
+pub struct UpdateBroadcastInput<'a> {
+    pub broadcast_id: Uuid,
+    pub title: Option<&'a str>,
+    pub description: Option<&'a str>,
+    pub image_id: Option<&'a str>,
+    pub image_url: Option<&'a str>,
+    pub time_zone: Option<&'a str>,
+    pub start_time: Option<OffsetDateTime>,
+    pub recording_enabled: Option<bool>,
 }
 
 pub struct SetActiveInput {
@@ -65,6 +76,52 @@ impl BroadcastRepository {
         .fetch_one(&mut **tx)
         .await
         .map_err(BroadcastError::Database)
+    }
+
+    pub async fn update<'t>(
+        &self,
+        updates: &UpdateBroadcastInput<'_>,
+        tx: &mut Transaction<'t, Postgres>,
+    ) -> Result<Broadcast, BroadcastError> {
+        let mut query = QueryBuilder::new("UPDATE broadcasts SET updated_at = NOW()");
+
+        if let Some(title) = updates.title {
+            query.push(", title = ").push_bind(title);
+        }
+
+        if let Some(description) = updates.description {
+            query.push(", description = ").push_bind(description);
+        }
+
+        if let Some(image_id) = updates.image_id {
+            query.push(", image_id = ").push_bind(image_id);
+        }
+
+        if let Some(image_url) = updates.image_url {
+            query.push(", image_url = ").push_bind(image_url);
+        }
+
+        if let Some(time_zone) = updates.time_zone {
+            query.push(", time_zone = ").push_bind(time_zone);
+        }
+
+        if let Some(start_time) = updates.start_time {
+            query.push(", start_time = ").push_bind(start_time);
+        }
+
+        if let Some(r_enabled) = updates.recording_enabled {
+            query.push(", recording_enabled = ").push_bind(r_enabled);
+        }
+
+        query.push(" WHERE id = ").push_bind(updates.broadcast_id);
+
+        query.push(" RETURNING *");
+
+        query
+            .build_query_as::<Broadcast>()
+            .fetch_one(&mut **tx)
+            .await
+            .map_err(BroadcastError::Database)
     }
 
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Broadcast>, BroadcastError> {

@@ -48,7 +48,7 @@ pub enum BroadcastError {
 
     #[error("Cannot modify a broadcast that is currently live")]
     CannotModifyLiveBroadcast,
-
+    
     #[error("This invitation is not addressed to you")]
     InvitationNotYours,
 

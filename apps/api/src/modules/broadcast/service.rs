@@ -1,6 +1,6 @@
 use crate::modules::broadcast::dto::{
     BroadcastResponse, BroadcastSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    MAX_COHOSTS, UserSummary,
+    MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -8,7 +8,8 @@ use crate::modules::broadcast::model::{
     ParticipantRole,
 };
 use crate::modules::broadcast::repository::{
-    BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpsertParticipantInput,
+    BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
+    UpsertParticipantInput,
 };
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
@@ -60,29 +61,7 @@ impl BroadcastService {
         }
 
         let cohost_ids = req.cohosts.clone().unwrap_or_default();
-        let cohosts = if cohost_ids.is_empty() {
-            vec![]
-        } else {
-            if cohost_ids.len() > 3 {
-                return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
-            }
-
-            if cohost_ids.contains(&creator_id) {
-                return Err(BroadcastError::CannotAddSelfAsCohost);
-            }
-
-            // Handle Deduplicate here
-            let mut deduped = cohost_ids.clone();
-            deduped.sort_unstable();
-            deduped.dedup();
-
-            let users = self.repo.find_users_batch(&deduped).await?;
-            if users.len() != deduped.len() {
-                return Err(BroadcastError::OneOrMoreUsersNotFound);
-            }
-
-            users
-        };
+        let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
 
         let mut tx = state.db.begin().await?;
 
@@ -126,6 +105,73 @@ impl BroadcastService {
             participant_id: Some(creator_id),
             participant_role: ParticipantRole::Host,
             is_subscribed_to_creator: false, // creator can't subscribe to themselves
+            is_bookmarked: false,
+            live_count: 0,
+            total_count: 0,
+            ..Default::default()
+        };
+
+        self.broadcast_to_response(broadcast, creator, cohosts, ctx)
+            .await
+    }
+
+    pub async fn update(
+        &self,
+        state: &MenoState,
+        req: UpdateBroadcastRequest,
+        broadcast_id: Uuid,
+        creator_id: Uuid,
+    ) -> Result<BroadcastResponse, BroadcastError> {
+        let (broadcast_result, creator_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(creator_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
+
+        if broadcast.creator_id != creator_id {
+            return Err(BroadcastError::NotCreator);
+        }
+
+        if broadcast.status == BroadcastStatus::Active {
+            return Err(BroadcastError::CannotModifyLiveBroadcast);
+        }
+
+        let cohost_ids = req.cohosts.clone().unwrap_or_default();
+        let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
+
+        let mut tx = state.db.begin().await?;
+
+        let broadcast = self
+            .repo
+            .update(
+                &UpdateBroadcastInput {
+                    title: req.title.as_deref(),
+                    description: req.description.as_deref(),
+                    image_id: req.image_id.as_deref(),
+                    image_url: req.image_url.as_deref(),
+                    time_zone: req.time_zone.as_deref(),
+                    start_time: req.start_time,
+                    recording_enabled: req.recording_enabled,
+                    broadcast_id,
+                },
+                &mut tx,
+            )
+            .await?;
+
+        if !cohost_ids.is_empty() {
+            self.repo
+                .add_cohosts(broadcast.id, &cohost_ids, creator_id, &mut tx)
+                .await?;
+        }
+
+        tx.commit().await?;
+
+        let ctx = BroadcastContext {
+            participant_id: Some(creator_id),
+            participant_role: ParticipantRole::Host,
+            is_subscribed_to_creator: false,
             is_bookmarked: false,
             live_count: 0,
             total_count: 0,
@@ -491,6 +537,36 @@ impl BroadcastService {
         {
             None => Ok(ParticipantRole::None),
             Some(p) => Ok(p.role),
+        }
+    }
+
+    async fn deduplicate_cohosts(
+        &self,
+        cohost_ids: &Vec<Uuid>,
+        creator_id: Uuid,
+    ) -> Result<Vec<UserSummary>, BroadcastError> {
+        if cohost_ids.is_empty() {
+            Ok(vec![])
+        } else {
+            if cohost_ids.len() > 3 {
+                return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
+            }
+
+            if cohost_ids.contains(&creator_id) {
+                return Err(BroadcastError::CannotAddSelfAsCohost);
+            }
+
+            // Handle Deduplicate here
+            let mut deduped = cohost_ids.clone();
+            deduped.sort_unstable();
+            deduped.dedup();
+
+            let users = self.repo.find_users_batch(&deduped).await?;
+            if users.len() != deduped.len() {
+                return Err(BroadcastError::OneOrMoreUsersNotFound);
+            }
+
+            Ok(users)
         }
     }
 }

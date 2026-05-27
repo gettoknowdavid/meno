@@ -26,7 +26,7 @@ pub async fn verify_email(
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
     let user = app.auth.verify_email(&app, &body).await?;
-    Ok(MenoResponse::ok("Account created successfully", user))
+    Ok(MenoResponse::ok("Account verified successfully", user))
 }
 
 pub async fn resend_otp(

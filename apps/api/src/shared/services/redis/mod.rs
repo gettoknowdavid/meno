@@ -42,7 +42,6 @@ impl Default for RedisConfig {
 #[derive(Clone)]
 pub struct RedisService {
     pool: Pool,
-    config: RedisConfig,
 }
 impl RedisService {
     pub async fn new(config: RedisConfig) -> anyhow::Result<Self> {
@@ -54,7 +53,7 @@ impl RedisService {
 
         pool.init().await?;
 
-        Ok(Self { pool, config })
+        Ok(Self { pool })
     }
 
     pub async fn get<T: DeserializeOwned>(&self, key: &RedisKey) -> Result<Option<T>, Error> {

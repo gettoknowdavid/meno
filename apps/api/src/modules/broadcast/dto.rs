@@ -3,8 +3,8 @@ use crate::modules::broadcast::model::{
     BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
 use serde::{Deserialize, Serialize};
-use time::serde::rfc3339;
 use time::OffsetDateTime;
+use time::serde::rfc3339;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -44,7 +44,7 @@ pub struct UpdateBroadcastRequest {
         max = 100,
         message = "Title must be between 3 and 100 characters"
     ))]
-    pub title: String,
+    pub title: Option<String>,
 
     #[validate(length(max = 244, message = "Description cannot exceed 244 characters"))]
     pub description: Option<String>,

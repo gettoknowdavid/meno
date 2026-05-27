@@ -17,17 +17,19 @@ pub async fn create_broadcast(
     MenoBody(body): MenoBody<dto::CreateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
     body.validate()?;
-    let creator_id = auth.id;
-    let broadcast = state.broadcast.create(&state, body, creator_id).await?;
+    let broadcast = state.broadcast.create(&state, body, auth.id).await?;
     Ok(MenoResponse::created("Broadcast created", broadcast))
 }
 
 pub async fn update_broadcast(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
     MenoBody(body): MenoBody<dto::UpdateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    body.validate()?;
+    let broadcast = state.broadcast.update(&state, body, id, auth.id).await?;
+    Ok(MenoResponse::created("Broadcast updated", broadcast))
 }
 
 pub async fn delete_broadcast(
