@@ -250,7 +250,7 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
                 // End the broadcast via HTTP endpoint (handles all cleanups)
                 let _ = state_clone
                     .broadcast
-                    .end_broadcast(&state_clone, b_id, host_id)
+                    .end(&state_clone, b_id, host_id)
                     .await;
             }
         });

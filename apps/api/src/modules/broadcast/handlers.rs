@@ -52,7 +52,7 @@ pub async fn go_live(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
-    let session = state.broadcast.go_live(&state, id, auth.id).await?;
+    let session = state.broadcast.start(&state, id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast started", session))
 }
 
@@ -61,7 +61,7 @@ pub async fn end_broadcast(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::EndBroadcastResponse>, BroadcastError> {
-    let response = state.broadcast.end_broadcast(&state, id, auth.id).await?;
+    let response = state.broadcast.end(&state, id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast ended", response))
 }
 

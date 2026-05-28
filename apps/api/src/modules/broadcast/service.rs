@@ -254,7 +254,7 @@ impl BroadcastService {
         Ok(())
     }
 
-    pub async fn go_live(
+    pub async fn start(
         &self,
         state: &MenoState,
         broadcast_id: Uuid,
@@ -372,7 +372,7 @@ impl BroadcastService {
         })
     }
 
-    pub async fn end_broadcast(
+    pub async fn end(
         &self,
         state: &MenoState,
         broadcast_id: Uuid,
