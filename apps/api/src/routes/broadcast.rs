@@ -14,5 +14,6 @@ pub fn router(state: Arc<MenoState>) -> Router<Arc<MenoState>> {
         .route("/{id}/start", put(h::go_live))
         .route("/{id}/end", delete(h::end_broadcast))
         .route("/{id}/join", post(h::join_broadcast))
+        .route("/{id}/leave", post(h::leave_broadcast))
         .route_layer(from_fn_with_state(state.clone(), auth_middleware))
 }

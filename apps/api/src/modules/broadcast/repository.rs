@@ -291,8 +291,8 @@ impl BroadcastRepository {
         tx: &mut Transaction<'t, Postgres>,
     ) -> Result<(), BroadcastError> {
         sqlx::query!(
-            r#"INSERT INTO broadcast_participants (broadcast_id, participant_id, role, joined_at)
-               VALUES ($1, $2, $3::text, $4)
+            r#"INSERT INTO broadcast_participants (broadcast_id, participant_id, role, joined_at, left_at)
+               VALUES ($1, $2, $3::text, $4, NULL)
                ON CONFLICT (broadcast_id, participant_id)
                DO UPDATE SET role = EXCLUDED.role, joined_at = EXCLUDED.joined_at"#,
             input.broadcast_id,

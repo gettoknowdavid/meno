@@ -1,6 +1,6 @@
 use crate::modules::broadcast::dto::{
     BroadcastResponse, BroadcastSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
+    LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -573,6 +573,63 @@ impl BroadcastService {
         Ok(BroadcastSessionResponse {
             broadcast: broadcast_response,
             token: broadcast_token,
+        })
+    }
+
+    pub async fn leave(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<LeaveBroadcastResponse, BroadcastError> {
+        let (broadcast_result, user_result, participant_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(user_id),
+            self.repo.find_participant(broadcast_id, user_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
+        let participant = participant_result?.ok_or(BroadcastError::NotParticipant)?;
+
+        if broadcast.status != BroadcastStatus::Active || participant.left_at.is_some() {
+            return Ok(LeaveBroadcastResponse {
+                success: true,
+                broadcast_id,
+                user_id,
+                left_at: participant.left_at.unwrap(),
+            });
+        }
+
+        self.repo.remove_participant(broadcast_id, user_id).await?;
+
+        let ws = self.ws.clone();
+        let redis = self.redis.clone();
+        let repo = self.repo.clone();
+        let user_clone = user.clone();
+
+        tokio::spawn(async move {
+            let count_key = RedisKey::live_count(broadcast_id);
+            let remaining_count = redis.decr(&count_key).await.unwrap_or(0).max(0);
+
+            if remaining_count == 0 {
+                let _ = redis.del(&count_key).await;
+            } else {
+                let _ = redis.set(&count_key, &remaining_count, None).await;
+            }
+
+            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_id).await {
+                let payload = WsPayload::participant_left(user_clone);
+                ws.send_to_users(&participant_ids, payload).await;
+            }
+        });
+
+        tracing::info!("User {} left broadcast {}", user_id, broadcast_id);
+
+        Ok(LeaveBroadcastResponse {
+            success: true,
+            broadcast_id,
+            user_id,
+            left_at: OffsetDateTime::now_utc(),
         })
     }
 

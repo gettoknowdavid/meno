@@ -77,6 +77,18 @@ pub async fn join_broadcast(
     Ok(MenoResponse::ok("Broadcast joined", response))
 }
 
+pub async fn leave_broadcast(
+    State(state): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<MenoResponse<dto::LeaveBroadcastResponse>, BroadcastError> {
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
+    let response = state.broadcast.leave(id, auth.id).await?;
+    Ok(MenoResponse::ok("Broadcast left", response))
+}
+
 pub async fn add_cohost(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,

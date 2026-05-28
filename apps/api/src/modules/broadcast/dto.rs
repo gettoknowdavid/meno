@@ -1,7 +1,5 @@
 use crate::modules::auth;
-use crate::modules::broadcast::model::{
-    BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
-};
+use crate::modules::broadcast::model::{BroadcastContext, BroadcastParticipant, BroadcastState, BroadcastStatus, EndReason, ParticipantRole};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::serde::rfc3339;
@@ -177,6 +175,14 @@ pub struct CohostSessionResponse {
 
     /// `None` if the broadcast is not currently live (cohost added pre-broadcast).
     pub token: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct LeaveBroadcastResponse {
+    pub success: bool,
+    pub broadcast_id: Uuid,
+    pub user_id: Uuid,
+    pub left_at: OffsetDateTime,
 }
 
 /// Compact user shape embedded inside broadcast responses.
