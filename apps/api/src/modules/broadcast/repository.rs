@@ -124,6 +124,22 @@ impl BroadcastRepository {
             .map_err(BroadcastError::Database)
     }
 
+    pub async fn delete(&self, broadcast_id: Uuid) -> Result<(), BroadcastError> {
+        let result = sqlx::query!(
+            "UPDATE broadcasts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+            broadcast_id,
+        )
+        .execute(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+
+        if result.rows_affected() == 0 {
+            tracing::warn!("No broadcast found to delete: {}", broadcast_id);
+        }
+
+        Ok(())
+    }
+
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Broadcast>, BroadcastError> {
         sqlx::query_as!(
             Broadcast,

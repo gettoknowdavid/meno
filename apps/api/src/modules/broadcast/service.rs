@@ -182,6 +182,77 @@ impl BroadcastService {
             .await
     }
 
+    pub async fn delete(&self, broadcast_id: Uuid, creator_id: Uuid) -> Result<(), BroadcastError> {
+        let (broadcast_result, creator_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(creator_id)
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
+
+        if broadcast.deleted_at.is_some() {
+            return Ok(());
+        }
+
+        if broadcast.status == BroadcastStatus::Active {
+            return Err(BroadcastError::CannotModifyLiveBroadcast);
+        }
+
+        if broadcast.creator_id != creator_id {
+            return Err(BroadcastError::NotCreator);
+        }
+
+        self.repo.delete(broadcast_id).await?;
+
+        let repo = self.repo.clone();
+        let redis = self.redis.clone();
+        let ws = self.ws.clone();
+        let broadcast_clone = broadcast.clone();
+        let creator_clone = creator.clone();
+        let is_scheduled = broadcast.can_be_scheduled();
+
+        tokio::spawn(async move {
+            let keys = vec![
+                RedisKey::live_count(broadcast_id),
+                RedisKey::host_grace(broadcast_id),
+                RedisKey::started_at(broadcast_id),
+            ];
+            for key in keys {
+                let _ = redis.del(&key).await;
+            }
+
+            if is_scheduled {
+                if let Ok(subscriber_ids) = repo.get_subscriber_ids(creator_clone.id).await {
+                    if !subscriber_ids.is_empty() {
+                        let payload = WsPayload::new(
+                            WsEvent::BroadcastDeleted,
+                            serde_json::json!({
+                                "broadcastId": broadcast_clone.id,
+                                "broadcastTitle": broadcast_clone.title,
+                                "message": format!(
+                                    "The broadcast scheduled for this {:?}, by {} has been cancelled.",
+                                    broadcast_clone.start_time,
+                                    creator_clone.full_name,
+                                ),
+                            }),
+                        );
+                        ws.send_to_users(&subscriber_ids, payload).await;
+                    }
+                }
+            }
+        });
+
+        tracing::info!(
+            "Broadcast deleted: id={}, title={}, deleted_by={}",
+            broadcast_id,
+            broadcast.title,
+            creator_id,
+        );
+
+        Ok(())
+    }
+
     pub async fn go_live(
         &self,
         state: &MenoState,

@@ -28,6 +28,9 @@ pub async fn update_broadcast(
     MenoBody(body): MenoBody<dto::UpdateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
     body.validate()?;
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
     let broadcast = state.broadcast.update(&state, body, id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast updated", broadcast))
 }
@@ -37,7 +40,11 @@ pub async fn delete_broadcast(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<()>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
+    state.broadcast.delete(id, auth.id).await?;
+    Ok(MenoResponse::no_content("Broadcast deleted successfully"))
 }
 
 pub async fn go_live(

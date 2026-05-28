@@ -30,6 +30,9 @@ pub enum BroadcastError {
     #[error("Cannot publish a broadcast that is still live")]
     BroadcastStillLive,
 
+    #[error("No or invalid broadcast ID")]
+    InvalidId,
+
     // 403 - FORBIDDEN
     #[error("Only the broadcast creator can perform this action")]
     NotCreator,
@@ -48,7 +51,7 @@ pub enum BroadcastError {
 
     #[error("Cannot modify a broadcast that is currently live")]
     CannotModifyLiveBroadcast,
-    
+
     #[error("This invitation is not addressed to you")]
     InvitationNotYours,
 
@@ -137,6 +140,11 @@ impl axum::response::IntoResponse for BroadcastError {
             BroadcastError::BroadcastStillLive => error_response(
                 StatusCode::BAD_REQUEST,
                 "BROADCAST_STILL_LIVE",
+                &self.to_string(),
+            ),
+            BroadcastError::InvalidId => error_response(
+                StatusCode::BAD_REQUEST,
+                "INVALID_BROADCAST_ID",
                 &self.to_string(),
             ),
             BroadcastError::NotCreator => error_response(
