@@ -88,6 +88,15 @@ impl LivekitService {
             .await
     }
 
+    pub async fn mint_cohost_token(
+        &self,
+        host: &UserSummary,
+        broadcast_id: Uuid,
+    ) -> Result<String, AccessTokenError> {
+        self.mint_token(host.id, &host.full_name, broadcast_id, LivekitRole::Cohost)
+            .await
+    }
+
     pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
         let room_name = broadcast_id.to_string();
         let options = CreateRoomOptions {

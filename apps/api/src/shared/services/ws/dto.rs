@@ -119,12 +119,13 @@ impl WsPayload {
         )
     }
 
-    pub fn new_cohost(broadcast_id: Uuid, livekit_token: Option<String>) -> Self {
+    /// Emitted to the participant to whom the cohost invite was sent
+    pub fn new_cohost(broadcast_id: Uuid, token: String) -> Self {
         Self::new(
             WsEvent::NewCohost,
             serde_json::json!({
                 "broadcastId": broadcast_id,
-                "livekitToken": livekit_token,
+                "token": token,
             }),
         )
     }

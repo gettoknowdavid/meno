@@ -1,5 +1,8 @@
 use crate::modules::auth;
-use crate::modules::broadcast::model::{BroadcastContext, BroadcastParticipant, BroadcastState, BroadcastStatus, EndReason, ParticipantRole};
+use crate::modules::broadcast::model::{
+    BroadcastContext, BroadcastParticipant, BroadcastState, BroadcastStatus, EndReason,
+    ParticipantRole,
+};
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use time::serde::rfc3339;
@@ -57,6 +60,11 @@ pub struct UpdateBroadcastRequest {
     pub recording_enabled: Option<bool>,
 
     pub cohosts: Option<Vec<Uuid>>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct AddCohostRequest {
+    pub cohost: Uuid,
 }
 
 #[derive(Debug, Deserialize, Validate)]
@@ -174,7 +182,7 @@ pub struct CohostSessionResponse {
     pub user: UserSummary,
 
     /// `None` if the broadcast is not currently live (cohost added pre-broadcast).
-    pub token: Option<String>,
+    pub token: String,
 }
 
 #[derive(Debug, Serialize)]

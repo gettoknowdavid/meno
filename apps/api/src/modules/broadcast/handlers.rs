@@ -93,9 +93,13 @@ pub async fn add_cohost(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-    MenoBody(body): MenoBody<dto::AddCohostsRequest>,
+    MenoBody(body): MenoBody<dto::AddCohostRequest>,
 ) -> Result<MenoResponse<dto::CohostSessionResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    let response = state
+        .broadcast
+        .add_cohost(&state, id, auth.id, body.cohost)
+        .await?;
+    Ok(MenoResponse::ok("Cohost added successfully", response))
 }
 
 pub async fn remove_cohost(

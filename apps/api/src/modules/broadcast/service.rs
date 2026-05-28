@@ -1,6 +1,7 @@
 use crate::modules::broadcast::dto::{
-    BroadcastResponse, BroadcastSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
+    AddCohostRequest, BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse,
+    CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS,
+    UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -502,7 +503,8 @@ impl BroadcastService {
         let broadcast_token = self
             .livekit
             .mint_token(user_id, &user.full_name, broadcast_id, livekit_role)
-            .await?;
+            .await
+            .map_err(BroadcastError::LiveKitAccess)?;
 
         let now = OffsetDateTime::now_utc();
 
@@ -630,6 +632,75 @@ impl BroadcastService {
             broadcast_id,
             user_id,
             left_at: OffsetDateTime::now_utc(),
+        })
+    }
+
+    pub async fn add_cohost(
+        &self,
+        state: &MenoState,
+        broadcast_id: Uuid,
+        requester_id: Uuid,
+        cohost_id: Uuid,
+    ) -> Result<CohostSessionResponse, BroadcastError> {
+        let (broadcast_result, cohost_user_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(cohost_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let cohost = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
+
+        if broadcast.status != BroadcastStatus::Active {
+            return Err(BroadcastError::NotLive);
+        }
+
+        if broadcast.creator_id != requester_id {
+            return Err(BroadcastError::NotCreator);
+        }
+
+        if broadcast.creator_id == cohost_id {
+            return Err(BroadcastError::CannotAddSelfAsCohost);
+        }
+
+        let broadcast_token = self
+            .livekit
+            .mint_cohost_token(&cohost, broadcast_id)
+            .await
+            .map_err(BroadcastError::LiveKitAccess)?;
+
+        let now = OffsetDateTime::now_utc();
+
+        let mut tx = state.db.begin().await?;
+
+        self.repo
+            .add_cohosts(broadcast_id, &[cohost_id], requester_id, &mut tx)
+            .await?;
+
+        self.repo
+            .upsert_participant(
+                &UpsertParticipantInput {
+                    broadcast_id,
+                    participant_id: cohost_id,
+                    role: &ParticipantRole::Cohost,
+                    joined_at: now,
+                },
+                &mut tx,
+            )
+            .await?;
+
+        tx.commit().await?;
+
+        let ws = self.ws.clone();
+        let token = broadcast_token.clone();
+
+        tokio::spawn(async move {
+            let payload = WsPayload::new_cohost(broadcast_id, token);
+            ws.send_to_user(cohost_id, payload).await;
+        });
+
+        Ok(CohostSessionResponse {
+            user: cohost,
+            token: broadcast_token,
         })
     }
 
