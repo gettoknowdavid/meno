@@ -37,6 +37,9 @@ pub enum BroadcastError {
     #[error("Only the broadcast creator can perform this action")]
     NotCreator,
 
+    #[error("You cannot join a broadcast you created")]
+    CreatorCannotJoin,
+
     #[error("Only the creator or admin can end this broadcast")]
     CannotEnd,
 
@@ -150,6 +153,11 @@ impl axum::response::IntoResponse for BroadcastError {
             BroadcastError::NotCreator => error_response(
                 StatusCode::FORBIDDEN,
                 "NOT_BROADCAST_CREATOR",
+                &self.to_string(),
+            ),
+            BroadcastError::CreatorCannotJoin => error_response(
+                StatusCode::FORBIDDEN,
+                "CREATOR_CANNOT_JOIN",
                 &self.to_string(),
             ),
             BroadcastError::CannotEnd => error_response(

@@ -12,6 +12,7 @@ use crate::modules::broadcast::repository::{
     UpsertParticipantInput,
 };
 use crate::shared::services::livekit::LivekitService;
+use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
@@ -303,7 +304,7 @@ impl BroadcastService {
         let part_input = UpsertParticipantInput {
             broadcast_id,
             participant_id: creator.id,
-            role: ParticipantRole::Host,
+            role: &ParticipantRole::Host,
             joined_at: now,
         };
         self.repo.upsert_participant(&part_input, &mut tx).await?;
@@ -462,6 +463,119 @@ impl BroadcastService {
         })
     }
 
+    pub async fn join(
+        &self,
+        state: &MenoState,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<BroadcastSessionResponse, BroadcastError> {
+        let (broadcast_result, user_result, is_cohost_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(user_id),
+            self.repo.is_cohost(broadcast_id, user_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
+        let is_cohost = is_cohost_result?;
+
+        if broadcast.status != BroadcastStatus::Active {
+            return Err(BroadcastError::NotLive);
+        }
+
+        if broadcast.creator_id == user_id {
+            return Err(BroadcastError::CreatorCannotJoin);
+        }
+
+        let role = if is_cohost {
+            ParticipantRole::Cohost
+        } else {
+            ParticipantRole::Participant
+        };
+
+        let livekit_role = match &role {
+            ParticipantRole::Cohost => LivekitRole::Cohost,
+            ParticipantRole::Participant => LivekitRole::Participant,
+            _ => LivekitRole::Participant,
+        };
+
+        let broadcast_token = self
+            .livekit
+            .mint_token(user_id, &user.full_name, broadcast_id, livekit_role)
+            .await?;
+
+        let now = OffsetDateTime::now_utc();
+
+        let mut tx = state.db.begin().await?;
+        self.repo
+            .upsert_participant(
+                &UpsertParticipantInput {
+                    broadcast_id,
+                    participant_id: user_id,
+                    role: &role,
+                    joined_at: now,
+                },
+                &mut tx,
+            )
+            .await?;
+        tx.commit().await?;
+
+        let repo = self.repo.clone();
+        let ws = self.ws.clone();
+        let redis = self.redis.clone();
+        let broadcast_clone = broadcast.clone();
+        let user_clone = user.clone();
+
+        tokio::spawn(async move {
+            let count_key = RedisKey::live_count(broadcast_clone.id);
+            let new_count = redis.incr(&count_key).await.unwrap_or(1);
+            let _ = redis.set(&count_key, &new_count, None).await;
+
+            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_clone.id).await {
+                if !participant_ids.is_empty() {
+                    let payload = WsPayload::participant_joined(user_clone);
+                    ws.send_to_users(&participant_ids, payload).await;
+
+                    let count_payload =
+                        WsPayload::number_of_live_participants(broadcast_clone.id, new_count);
+                    ws.send_to_users(&participant_ids, count_payload).await;
+                }
+            }
+        });
+
+        let (creator_result, cohosts_result, total_count_result) = tokio::join!(
+            self.repo.find_user_summary(broadcast.creator_id),
+            self.repo.get_cohosts(broadcast_id),
+            self.repo.get_total_participants(broadcast_id),
+        );
+
+        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
+        let cohosts = cohosts_result?;
+        let total_count = total_count_result?;
+
+        let live_count_key = RedisKey::live_count(broadcast_id);
+        let live_count = self.redis.get::<i64>(&live_count_key).await?.unwrap_or(1);
+
+        let ctx = self
+            .build_ctx(
+                &broadcast,
+                Some(user_id),
+                Some(role),
+                live_count,
+                total_count,
+            )
+            .await?;
+
+        let broadcast_response = self
+            .broadcast_to_response(broadcast, creator, cohosts, ctx)
+            .await?;
+
+        Ok(BroadcastSessionResponse {
+            broadcast: broadcast_response,
+            token: broadcast_token,
+        })
+    }
+
     /// Find active broadcast hosted by user
     /// Returns the broadcast if found, otherwise None
     pub async fn find_active_hosted_by(
@@ -556,25 +670,25 @@ impl BroadcastService {
 
     /// Gathers all viewer-specific signals for a broadcast in one batch.
     /// Runs the Redis + subscription + bookmark checks concurrently.
-    async fn build_context(
+    async fn build_ctx(
         &self,
         broadcast: &Broadcast,
         participant_id: Option<Uuid>,
+        participant_role: Option<ParticipantRole>,
         live_count: i64,
         total_count: i64,
     ) -> Result<BroadcastContext, BroadcastError> {
         let grace_key = RedisKey::host_grace(broadcast.id);
         let is_reconnecting = self.redis.exists(&grace_key).await.unwrap_or(false);
 
-        let (participant_role, is_subscribed, is_bookmarked) = match participant_id {
-            None => (ParticipantRole::None, false, false),
+        let (is_subscribed, is_bookmarked) = match participant_id {
+            None => (false, false),
             Some(pid) => {
-                let (role_res, is_sub_res, is_bm_res) = tokio::join!(
-                    self.get_participant_role(&broadcast, pid),
+                let (is_sub_res, is_bm_res) = tokio::join!(
                     self.repo.is_subscribed(pid, broadcast.creator_id),
                     self.repo.is_bookmarked(pid, broadcast.creator_id),
                 );
-                (role_res?, is_sub_res?, is_bm_res?)
+                (is_sub_res?, is_bm_res?)
             }
         };
 
@@ -583,7 +697,7 @@ impl BroadcastService {
             is_reconnecting,
             live_count,
             total_count,
-            participant_role,
+            participant_role: participant_role.unwrap_or(ParticipantRole::Participant),
             participant_is_in_room: false,
             is_subscribed_to_creator: is_subscribed,
             is_bookmarked,

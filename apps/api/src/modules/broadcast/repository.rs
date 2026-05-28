@@ -36,10 +36,10 @@ pub struct SetActiveInput {
     pub start_time: OffsetDateTime,
 }
 
-pub struct UpsertParticipantInput {
+pub struct UpsertParticipantInput<'a> {
     pub broadcast_id: Uuid,
     pub participant_id: Uuid,
-    pub role: ParticipantRole,
+    pub role: &'a ParticipantRole,
     pub joined_at: OffsetDateTime,
 }
 
@@ -215,6 +215,24 @@ impl BroadcastRepository {
         Ok(())
     }
 
+    pub async fn is_cohost(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<bool, BroadcastError> {
+        sqlx::query_scalar!(
+            r#"SELECT EXISTS (
+                    SELECT 1 FROM broadcast_cohosts
+                    WHERE broadcast_id = $1 AND cohost_id = $2
+            ) AS "exists!""#,
+            broadcast_id,
+            user_id
+        )
+        .fetch_one(&self.db)
+        .await
+        .map_err(BroadcastError::Database)
+    }
+
     pub async fn find_users_batch(&self, ids: &[Uuid]) -> Result<Vec<UserSummary>, BroadcastError> {
         if ids.is_empty() {
             return Ok(Vec::new());
@@ -269,7 +287,7 @@ impl BroadcastRepository {
 
     pub async fn upsert_participant<'t>(
         &self,
-        input: &UpsertParticipantInput,
+        input: &UpsertParticipantInput<'_>,
         tx: &mut Transaction<'t, Postgres>,
     ) -> Result<(), BroadcastError> {
         sqlx::query!(

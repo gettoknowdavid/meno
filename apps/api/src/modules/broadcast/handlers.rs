@@ -70,7 +70,11 @@ pub async fn join_broadcast(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
+    let response = state.broadcast.join(&state, id, auth.id).await?;
+    Ok(MenoResponse::ok("Broadcast joined", response))
 }
 
 pub async fn add_cohost(
