@@ -82,6 +82,11 @@ pub struct AcceptCohostInvitationRequest {
     pub invitation_id: Uuid,
 }
 
+#[derive(Debug, Deserialize, Validate)]
+pub struct BroadcastTokenRefreshRequest {
+    pub broadcast_id: Uuid,
+}
+
 #[derive(Debug, Default, Deserialize)]
 pub struct BroadcastParams {
     pub id: Option<Uuid>,
@@ -197,6 +202,13 @@ pub struct LeaveBroadcastResponse {
     pub broadcast_id: Uuid,
     pub user_id: Uuid,
     pub left_at: OffsetDateTime,
+}
+
+#[derive(Debug, Serialize)]
+pub struct BroadcastRefreshTokenResponse {
+    pub broadcast_id: Uuid,
+    pub token: String,
+    pub expires_at: OffsetDateTime,
 }
 
 /// Compact user shape embedded inside broadcast responses.
