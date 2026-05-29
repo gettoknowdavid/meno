@@ -8,7 +8,6 @@ use crate::state::MenoState;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use std::sync::Arc;
-use tokio::task::id;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -130,9 +129,14 @@ pub async fn get_broadcast(
 
 pub async fn get_broadcasts(
     State(state): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
     Query(params): Query<dto::BroadcastParams>,
-) -> Result<MenoResponse<PaginationResponse<dto::BroadcastResponse>>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+) -> Result<MenoResponse<PaginationResponse<dto::BroadcastListItem>>, BroadcastError> {
+    let page = state
+        .broadcast
+        .get_broadcasts(&params, Some(auth.id))
+        .await?;
+    Ok(MenoResponse::ok("Broadcasts retrieved", page))
 }
 
 pub async fn get_participants(

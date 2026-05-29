@@ -199,4 +199,26 @@ impl RedisService {
 
         Ok(total_deleted)
     }
+
+    pub async fn delete_by_pattern(&self, pattern: &str) -> Result<u64, Error> {
+        let mut cursor = "0".to_string();
+        let mut deleted = 0u64;
+        loop {
+            let (new_cursor, keys): (String, Vec<Key>) = self
+                .pool
+                .scan_page(cursor.clone(), pattern, Some(200), None)
+                .await?;
+            if !keys.is_empty() {
+                self.pool.unlink::<(), _>(keys.clone()).await?;
+                deleted += keys.len() as u64;
+            }
+            cursor = new_cursor;
+            deleted += keys.len() as u64;
+            if cursor == "0" {
+                break;
+            }
+            tokio::task::yield_now().await;
+        }
+        Ok(deleted)
+    }
 }

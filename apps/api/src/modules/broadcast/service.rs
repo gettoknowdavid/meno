@@ -1,6 +1,7 @@
 use crate::modules::broadcast::dto::{
-    BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest,
-    EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
+    BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastResponse,
+    BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
+    LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -11,7 +12,8 @@ use crate::modules::broadcast::repository::{
     BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
     UpsertParticipantInput,
 };
-use crate::shared::constants::TTL_60_SECS;
+use crate::shared::constants::{TTL_30_SECS, TTL_60_SECS};
+use crate::shared::pagination::PaginationResponse;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
@@ -872,6 +874,90 @@ impl BroadcastService {
         Ok(broadcast_response)
     }
 
+    #[tracing::instrument(
+        name = "broadcast_service.get_broadcasts",
+        skip(self, params, requester_id),
+        fields(
+            page        = ?params.page,
+            limit       = ?params.limit,
+            status      = ?params.status,
+            cache_hit   = tracing::field::Empty,
+            db_rows     = tracing::field::Empty,
+            total_count = tracing::field::Empty,
+        )
+    )]
+    pub async fn get_broadcasts(
+        &self,
+        params: &BroadcastParams,
+        requester_id: Option<Uuid>,
+    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        let span = tracing::Span::current();
+
+        let cache_key = BroadcastListCacheKey::build(params);
+
+        if let Some(ref key_str) = cache_key {
+            let key = RedisKey::new_raw(key_str);
+            match self
+                .redis
+                .get::<PaginationResponse<BroadcastListItem>>(&key)
+                .await
+            {
+                Ok(Some(page)) => {
+                    span.record("cache_hit", true);
+                    tracing::debug!(key = %key_str, "broadcast list cache hit");
+                    return Ok(page);
+                }
+                Ok(None) => {
+                    tracing::debug!(key = %key_str, "broadcast list cache miss");
+                }
+                Err(e) => {
+                    // Redis failure must never block the request — log and fall
+                    // through to the DB. This is the most important resilience
+                    // rule: cache is always best-effort.
+                    tracing::warn!(
+                        error = %e,
+                        key   = %key_str,
+                        "Redis get failed for broadcast list — falling back to DB"
+                    );
+                }
+            }
+        }
+
+        span.record("cache_hit", false);
+
+        let (rows_result, total_result) = tokio::join!(
+            self.repo.find_list(params, requester_id),
+            self.repo.count_list(params, requester_id),
+        );
+
+        let rows = rows_result?;
+        let total = total_result?;
+
+        span.record("db_rows", rows.len() as i64);
+        span.record("total_count", total);
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let page = params.page.unwrap_or(1).max(1);
+        let response = PaginationResponse::<BroadcastListItem>::build(limit, page, total, rows);
+
+        if let Some(key_str) = cache_key {
+            let redis = self.redis.clone();
+            let page_clone = response.clone();
+            tokio::spawn(async move {
+                let redis_key = RedisKey::new_raw(&key_str);
+                if let Err(e) = redis.set(&redis_key, &page_clone, Some(TTL_30_SECS)).await {
+                    tracing::warn!(
+                        error = %e,
+                        key   = %key_str,
+                        "Failed to write broadcast list to cache"
+                    );
+                }
+            });
+        }
+
+        Ok(response)
+    }
+
     /// Find active broadcast hosted by user
     /// Returns the broadcast if found, otherwise None
     pub async fn find_active_hosted_by(
@@ -907,6 +993,27 @@ impl BroadcastService {
     /// Useful for quick checks without fetching full broadcast data
     pub async fn is_active_host(&self, user_id: Uuid) -> Result<bool, BroadcastError> {
         self.repo.is_active_host(user_id).await
+    }
+
+    /// Invalidate ALL broadcast-list cache entries.
+    ///
+    /// Call this whenever the global list could have changed:
+    ///   - `go_live` (a new active broadcast appears)
+    ///   - `end_broadcast` (an active broadcast disappears)
+    ///   - `create` (a new draft / scheduled broadcast appears)
+    ///   - `delete` (a broadcast disappears)
+    pub fn invalidate_list_cache(&self) {
+        let redis = self.redis.clone();
+        tokio::spawn(async move {
+            if let Err(e) = redis.delete_by_pattern("bl:*").await {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to invalidate broadcast list cache"
+                );
+            } else {
+                tracing::debug!("Broadcast list cache invalidated");
+            }
+        });
     }
 
     // ==================== HELPERS ====================

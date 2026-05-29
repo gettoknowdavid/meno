@@ -1,4 +1,6 @@
-use crate::modules::broadcast::dto::UserSummary;
+use crate::modules::broadcast::dto::{
+    BroadcastListItem, BroadcastOrderBy, BroadcastParams, BroadcastSortBy, UserSummary,
+};
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
@@ -43,7 +45,7 @@ pub struct UpsertParticipantInput<'a> {
     pub joined_at: OffsetDateTime,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct BroadcastRepository {
     db: sqlx::PgPool,
 }
@@ -138,6 +140,241 @@ impl BroadcastRepository {
         }
 
         Ok(())
+    }
+
+    /// Fetch a page of broadcasts with creator info and total participant count
+    /// joined in a single SQL query.
+    ///
+    /// ## Why not `sqlx::query_as!` / `query!` macros here?
+    /// The dynamic WHERE clause built by `QueryBuilder` is incompatible with
+    /// compile-time query verification. We use `build_query_as` instead and
+    /// accept runtime type mapping via `FromRow`.
+    ///
+    /// ## Tracing
+    /// A span is opened here so slow queries surface in the trace tree with the
+    /// filter parameters attached. Bind parameters are not logged to avoid
+    /// leaking PII (keywords, user IDs) in structured logs.
+    #[tracing::instrument(
+        name = "broadcast_repo.find",
+        skip(self, params, requester_id),
+        fields(
+            page  = ?params.page,
+            limit = ?params.limit,
+            status = ?params.status,
+        )
+    )]
+    pub async fn find_list(
+        &self,
+        params: &BroadcastParams,
+        requester_id: Option<Uuid>,
+    ) -> Result<Vec<BroadcastListItem>, BroadcastError> {
+        let mut qb = QueryBuilder::<Postgres>::new(
+            r#"
+            SELECT
+                b.id,
+                b.title,
+                b.description,
+                b.time_zone,
+                b.image_url,
+                b.image_id,
+                b.status::text       AS status,
+                b.created_at,
+                b.start_time,
+                b.end_time,
+                b.creator_id,
+
+                (
+                    SELECT COUNT(*)
+                    FROM   broadcast_participants bp
+                    WHERE  bp.broadcast_id = b.id
+                ) AS total_participants,
+
+                COALESCE(u.full_name, 'Unknown')  AS creator_name,
+                u.avatar_url                       AS creator_avatar_url,
+                u.avatar_id                        AS creator_avatar_id
+
+            FROM  broadcasts b
+            LEFT  JOIN users u
+                  ON  u.id = b.creator_id
+                  AND u.deleted_at IS NULL
+
+            WHERE b.deleted_at IS NULL
+            "#,
+        );
+
+        Self::apply_list_filters(&mut qb, params, requester_id);
+
+        // Order By
+        //
+        // NULLS LAST on all columns — ensures rows without a start/end time
+        // sort predictably rather than floating to the top.
+        let order_dir = match params.order.as_ref().unwrap_or(&BroadcastOrderBy::Desc) {
+            BroadcastOrderBy::Asc => "ASC NULLS LAST",
+            BroadcastOrderBy::Desc => "DESC NULLS LAST",
+        };
+
+        let sort_col = match params
+            .sort_by
+            .as_ref()
+            .unwrap_or(&BroadcastSortBy::StartTime)
+        {
+            BroadcastSortBy::Title => "b.title",
+            BroadcastSortBy::StartTime => "b.start_time",
+            BroadcastSortBy::EndTime => "b.end_time",
+        };
+
+        qb.push(format!(" ORDER BY {} {}", sort_col, order_dir));
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let offset = ((params.page.unwrap_or(1).max(1)) - 1) * limit;
+
+        qb.push(" LIMIT ").push_bind(limit);
+        qb.push(" OFFSET ").push_bind(offset);
+
+        let rows = qb
+            .build_query_as::<BroadcastListItem>()
+            .fetch_all(&self.db)
+            .await
+            .map_err(BroadcastError::Database)?;
+
+        tracing::debug!(returned = rows.len(), "broadcast list query complete");
+
+        Ok(rows)
+    }
+
+    /// Run a COUNT(*) with the exact same WHERE clause as `find_list`.
+    /// Called in parallel with `find_list` from the service layer.
+    ///
+    /// Uses `COUNT(DISTINCT b.id)` for correctness even if future JOINs
+    /// cause fan-out.
+    #[tracing::instrument(
+        name = "broadcast_repo.count_list",
+        skip(params, requester_id),
+        fields(status = ?params.status)
+    )]
+    pub async fn count_list(
+        &self,
+        params: &BroadcastParams,
+        requester_id: Option<Uuid>,
+    ) -> Result<i64, BroadcastError> {
+        let mut qb = QueryBuilder::<Postgres>::new(
+            r#"SELECT COUNT(DISTINCT b.id)
+                   FROM broadcasts b
+                   LEFT JOIN users u
+                        ON u.id = b.creator_id
+                        AND u.deleted_at IS NULL
+                   WHERE b.deleted_at IS NULL"#,
+        );
+
+        Self::apply_list_filters(&mut qb, params, requester_id);
+
+        let total: i64 = qb
+            .build_query_scalar()
+            .fetch_one(&self.db)
+            .await
+            .map_err(BroadcastError::Database)?;
+
+        Ok(total)
+    }
+
+    /// Appends WHERE clauses to `qb` based on `params`.
+    ///
+    /// Extracted as a static method, so `find_list` and `count_list` share
+    /// identical filter logic — they can never drift out of sync.
+    ///
+    /// ## Why static?
+    /// A `&self` receiver would imply DB access; making it static signals that
+    /// it only mutates the query builder.
+    fn apply_list_filters(
+        qb: &mut QueryBuilder<Postgres>,
+        params: &BroadcastParams,
+        requester_id: Option<Uuid>,
+    ) {
+        // Broadcast ID
+        if let Some(id) = params.id {
+            qb.push(" AND b.id = ").push_bind(id);
+        }
+
+        // Creator filters
+        if let Some(cid) = params.creator_id {
+            qb.push(" AND b.creator_id = ").push_bind(cid);
+        }
+        if let Some(xcid) = params.exclude_creator_id {
+            qb.push(" AND b.creator_id <> ").push_bind(xcid);
+        }
+
+        // Status
+        if let Some(ref s) = params.status {
+            // Cast to text to match the `status::text` alias in SELECT
+            qb.push(" AND b.status = ").push_bind(s.clone());
+        }
+
+        // Keywords
+        if let Some(ref kw) = params.keywords {
+            qb.push(
+                r#" AND to_tsvector('english', b.title || ' ' || COALESCE(b.description, ''))
+                 @@ plainto_tsquery('english', "#,
+            )
+            .push_bind(kw.clone())
+            .push(")");
+        }
+
+        // Subscriptions
+        if params.only_subscriptions == Some(true) {
+            if let Some(vid) = requester_id {
+                qb.push(
+                    r#" AND b.creator_id IN
+                     (SELECT subscription_id FROM user_subscribers
+                      WHERE subscriber_id = "#,
+                )
+                .push_bind(vid)
+                .push(")");
+            }
+        }
+
+        // Start-time range filters
+        if let Some(v) = params.start_time_gt {
+            qb.push(" AND b.start_time > ").push_bind(v);
+        }
+        if let Some(v) = params.start_time_gte {
+            qb.push(" AND b.start_time >= ").push_bind(v);
+        }
+        if let Some(v) = params.start_time_lt {
+            qb.push(" AND b.start_time < ").push_bind(v);
+        }
+        if let Some(v) = params.start_time_lte {
+            qb.push(" AND b.start_time <= ").push_bind(v);
+        }
+
+        // End-time range filters
+        if let Some(v) = params.end_time_gt {
+            qb.push(" AND b.end_time > ").push_bind(v);
+        }
+        if let Some(v) = params.end_time_gte {
+            qb.push(" AND b.end_time >= ").push_bind(v);
+        }
+        if let Some(v) = params.end_time_lt {
+            qb.push(" AND b.end_time < ").push_bind(v);
+        }
+        if let Some(v) = params.end_time_lte {
+            qb.push(" AND b.end_time <= ").push_bind(v);
+        }
+
+        // Existence checks
+        if let Some(exists) = params.start_time_exists {
+            qb.push(if exists {
+                " AND b.start_time IS NOT NULL"
+            } else {
+                " AND b.start_time IS NULL"
+            });
+        }
+        if let Some(exists) = params.end_time_exists {
+            qb.push(if exists {
+                " AND b.end_time IS NOT NULL"
+            } else {
+                " AND b.end_time IS NULL"
+            });
+        }
     }
 
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Broadcast>, BroadcastError> {
@@ -300,9 +537,9 @@ impl BroadcastRepository {
             input.role.to_string(),
             input.joined_at,
         )
-        .execute(&mut **tx)
-        .await
-        .map_err(BroadcastError::Database)?;
+            .execute(&mut **tx)
+            .await
+            .map_err(BroadcastError::Database)?;
         Ok(())
     }
 

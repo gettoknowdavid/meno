@@ -11,6 +11,10 @@ impl RedisKey {
         Self(key)
     }
 
+    pub fn new_raw(s: &str) -> Self {
+        Self(s.to_owned())
+    }
+
     // ========== BROADCAST KEYS ==========
 
     /// Current live participant count

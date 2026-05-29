@@ -9,6 +9,7 @@ use std::sync::Arc;
 pub fn router(state: Arc<MenoState>) -> Router<Arc<MenoState>> {
     Router::new()
         .route("/", post(h::create_broadcast))
+        .route("/", get(h::get_broadcasts))
         .route("/{id}", get(h::get_broadcast))
         .route("/{id}", patch(h::update_broadcast))
         .route("/{id}", delete(h::delete_broadcast))
