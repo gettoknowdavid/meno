@@ -285,7 +285,7 @@ impl BroadcastRepository {
         .map_err(BroadcastError::Database)
     }
 
-    pub async fn upsert_participant<'t>(
+    pub async fn upsert_participant_tx<'t>(
         &self,
         input: &UpsertParticipantInput<'_>,
         tx: &mut Transaction<'t, Postgres>,
@@ -317,6 +317,23 @@ impl BroadcastRepository {
             user_id
         )
         .execute(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(())
+    }
+
+    pub async fn remove_participant_tx<'t>(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        tx: &mut Transaction<'t, Postgres>,
+    ) -> Result<(), BroadcastError> {
+        sqlx::query!(
+            "DELETE FROM broadcast_participants WHERE broadcast_id = $1 and participant_id = $2",
+            broadcast_id,
+            user_id
+        )
+        .execute(&mut **tx)
         .await
         .map_err(BroadcastError::Database)?;
         Ok(())
@@ -467,6 +484,23 @@ impl BroadcastRepository {
         .await
         .map_err(BroadcastError::Database)?;
         Ok(rows.into_iter().map(|r| r.subscriber_id).collect())
+    }
+
+    pub async fn remove_cohost_tx<'t>(
+        &self,
+        broadcast_id: Uuid,
+        cohost_id: Uuid,
+        tx: &mut Transaction<'t, Postgres>,
+    ) -> Result<(), BroadcastError> {
+        sqlx::query!(
+            "DELETE FROM broadcast_cohosts WHERE cohost_id = $1 AND broadcast_id = $2",
+            cohost_id,
+            broadcast_id,
+        )
+        .execute(&mut **tx)
+        .await
+        .map_err(BroadcastError::Database)?;
+        Ok(())
     }
 
     pub async fn get_cohosts(

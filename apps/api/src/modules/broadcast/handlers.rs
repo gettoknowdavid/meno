@@ -1,7 +1,7 @@
 use crate::modules::broadcast::dto;
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::middleware::extractors::MenoBody;
+use crate::shared::middleware::extractors::{MenoBody, MenoJson};
 use crate::shared::pagination::PaginationResponse;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
@@ -106,7 +106,21 @@ pub async fn remove_cohost(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,
     Path((id, cohost_id)): Path<(Uuid, Uuid)>,
+    MenoJson(body): MenoJson<dto::RemoveCohostRequest>,
 ) -> Result<MenoResponse<()>, BroadcastError> {
+    let remove_from_room = body.remove_from_room.unwrap_or(false);
+    state
+        .broadcast
+        .remove_cohost(&state, id, cohost_id, auth.id, remove_from_room)
+        .await?;
+    Ok(MenoResponse::no_content("Cohost removed successfully"))
+}
+
+pub async fn get_broadcast(
+    State(state): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
     Err(BroadcastError::AlreadyCohost)
 }
 
@@ -115,14 +129,6 @@ pub async fn get_broadcasts(
     Extension(auth): Extension<AuthUser>,
     Query(params): Query<dto::BroadcastParams>,
 ) -> Result<MenoResponse<PaginationResponse<dto::BroadcastResponse>>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
-}
-
-pub async fn get_broadcast(
-    State(state): State<Arc<MenoState>>,
-    Extension(auth): Extension<AuthUser>,
-    Path(id): Path<Uuid>,
-) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
     Err(BroadcastError::AlreadyCohost)
 }
 

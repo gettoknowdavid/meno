@@ -67,6 +67,11 @@ pub struct AddCohostRequest {
     pub cohost: Uuid,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct RemoveCohostRequest {
+    pub remove_from_room: Option<bool>,
+}
+
 #[derive(Debug, Deserialize, Validate)]
 pub struct AddCohostsRequest {
     pub cohosts: Vec<Uuid>,

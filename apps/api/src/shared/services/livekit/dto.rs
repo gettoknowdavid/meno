@@ -1,5 +1,7 @@
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::ParticipantRole;
+use std::fmt;
+use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LivekitRole {
@@ -7,7 +9,16 @@ pub enum LivekitRole {
     Cohost,
     Participant,
 }
-
+impl Display for LivekitRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            LivekitRole::Host => "host".to_string(),
+            LivekitRole::Cohost => "cohost".to_string(),
+            LivekitRole::Participant => "participant".to_string(),
+        };
+        write!(f, "{}", str)
+    }
+}
 impl TryFrom<ParticipantRole> for LivekitRole {
     type Error = BroadcastError;
     fn try_from(role: ParticipantRole) -> Result<Self, Self::Error> {

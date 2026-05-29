@@ -7,8 +7,8 @@ use crate::shared::services::livekit::dto::LivekitRole;
 use anyhow::Result;
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
 use livekit_api::services::ServiceError;
-use livekit_api::services::room::{CreateRoomOptions, RoomClient};
-use livekit_protocol::ParticipantInfo;
+use livekit_api::services::room::{CreateRoomOptions, RoomClient, UpdateParticipantOptions};
+use livekit_protocol::{ParticipantInfo, ParticipantPermission};
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
@@ -97,6 +97,20 @@ impl LivekitService {
             .await
     }
 
+    pub async fn mint_participant_token(
+        &self,
+        host: &UserSummary,
+        broadcast_id: Uuid,
+    ) -> Result<String, AccessTokenError> {
+        self.mint_token(
+            host.id,
+            &host.full_name,
+            broadcast_id,
+            LivekitRole::Participant,
+        )
+        .await
+    }
+
     pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
         let room_name = broadcast_id.to_string();
         let options = CreateRoomOptions {
@@ -130,6 +144,29 @@ impl LivekitService {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         self.room.remove_participant(&room, &identifier).await?;
+        Ok(())
+    }
+
+    pub async fn update_permission(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        can_publish: bool,
+    ) -> Result<(), ServiceError> {
+        let room = broadcast_id.to_string();
+        let identifier = user_id.to_string();
+        let options = UpdateParticipantOptions {
+            permission: Some(ParticipantPermission {
+                can_subscribe: true,
+                can_publish: false,
+                can_publish_data: can_publish,
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        self.room
+            .update_participant(&room, &identifier, options)
+            .await?;
         Ok(())
     }
 

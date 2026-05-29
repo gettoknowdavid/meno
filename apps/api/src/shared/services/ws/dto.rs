@@ -120,7 +120,7 @@ impl WsPayload {
     }
 
     /// Emitted to the participant to whom the cohost invite was sent
-    pub fn new_cohost(broadcast_id: Uuid, token: String) -> Self {
+    pub fn cohost_invitation(broadcast_id: Uuid, token: String) -> Self {
         Self::new(
             WsEvent::NewCohost,
             serde_json::json!({
@@ -128,6 +128,20 @@ impl WsPayload {
                 "token": token,
             }),
         )
+    }
+
+    pub fn cohost_demotion(broadcast_id: Uuid, token: String) -> Self {
+        Self::new(
+            WsEvent::CohostDemotion,
+            serde_json::json!({
+                "broadcastId": broadcast_id,
+                "token": token,
+            }),
+        )
+    }
+
+    pub fn removed_cohost(cohost: impl Serialize) -> Self {
+        Self::new(WsEvent::RemovedCohost, cohost)
     }
 
     pub fn recording_ready(broadcast_id: Uuid) -> Self {

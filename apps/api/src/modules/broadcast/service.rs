@@ -308,7 +308,9 @@ impl BroadcastService {
             role: &ParticipantRole::Host,
             joined_at: now,
         };
-        self.repo.upsert_participant(&part_input, &mut tx).await?;
+        self.repo
+            .upsert_participant_tx(&part_input, &mut tx)
+            .await?;
 
         // Commit everything using a transaction
         tx.commit().await?;
@@ -510,7 +512,7 @@ impl BroadcastService {
 
         let mut tx = state.db.begin().await?;
         self.repo
-            .upsert_participant(
+            .upsert_participant_tx(
                 &UpsertParticipantInput {
                     broadcast_id,
                     participant_id: user_id,
@@ -642,13 +644,20 @@ impl BroadcastService {
         requester_id: Uuid,
         cohost_id: Uuid,
     ) -> Result<CohostSessionResponse, BroadcastError> {
-        let (broadcast_result, cohost_user_result) = tokio::join!(
+        let (broadcast_result, cohost_user_result, cohosts_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
             self.repo.find_user_summary(cohost_id),
+            self.repo.get_cohosts(broadcast_id),
         );
 
         let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
         let cohost = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
+
+        if let Ok(cohosts) = cohosts_result {
+            if cohosts.len() == MAX_COHOSTS {
+                return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
+            }
+        }
 
         if broadcast.status != BroadcastStatus::Active {
             return Err(BroadcastError::NotLive);
@@ -677,7 +686,7 @@ impl BroadcastService {
             .await?;
 
         self.repo
-            .upsert_participant(
+            .upsert_participant_tx(
                 &UpsertParticipantInput {
                     broadcast_id,
                     participant_id: cohost_id,
@@ -694,7 +703,7 @@ impl BroadcastService {
         let token = broadcast_token.clone();
 
         tokio::spawn(async move {
-            let payload = WsPayload::new_cohost(broadcast_id, token);
+            let payload = WsPayload::cohost_invitation(broadcast_id, token);
             ws.send_to_user(cohost_id, payload).await;
         });
 
@@ -702,6 +711,111 @@ impl BroadcastService {
             user: cohost,
             token: broadcast_token,
         })
+    }
+
+    pub async fn remove_cohost(
+        &self,
+        state: &MenoState,
+        broadcast_id: Uuid,
+        cohost_id: Uuid,
+        requester_id: Uuid,
+        remove_from_room: bool,
+    ) -> Result<(), BroadcastError> {
+        let (broadcast_result, cohost_user_result, is_cohost_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_user_summary(cohost_id),
+            self.repo.is_cohost(broadcast_id, cohost_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let cohost_user = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
+        let is_cohost = is_cohost_result?;
+
+        if broadcast.status != BroadcastStatus::Active {
+            return Err(BroadcastError::NotLive);
+        }
+
+        if broadcast.creator_id != requester_id {
+            return Err(BroadcastError::NotCreator);
+        }
+
+        if !is_cohost {
+            return Ok(());
+        }
+
+        let mut tx = state.db.begin().await?;
+
+        self.repo
+            .remove_cohost_tx(broadcast_id, cohost_id, &mut tx)
+            .await?;
+
+        let new_role = if remove_from_room {
+            self.repo
+                .remove_participant_tx(broadcast_id, cohost_id, &mut tx)
+                .await?;
+            ParticipantRole::None
+        } else {
+            ParticipantRole::Participant
+        };
+
+        if !remove_from_room {
+            self.repo
+                .upsert_participant_tx(
+                    &UpsertParticipantInput {
+                        broadcast_id,
+                        participant_id: cohost_id,
+                        role: &new_role,
+                        joined_at: OffsetDateTime::now_utc(),
+                    },
+                    &mut tx,
+                )
+                .await?;
+        }
+
+        tx.commit().await?;
+
+        if remove_from_room {
+            // Remove from room completely
+            let _ = self
+                .livekit
+                .remove_participant(broadcast_id, cohost_id)
+                .await;
+        } else {
+            // Update LiveKit permissions (revokes publish capability)
+            // On Cloud: This automatically invalidates the old token
+            // On Self-hosted: Permissions change, but token remains valid
+            let _ = self
+                .livekit
+                .update_permission(broadcast_id, cohost_id, false)
+                .await;
+
+            // Mint new participant token (lower permissions)
+            let new_token = self
+                .livekit
+                .mint_participant_token(&cohost_user, broadcast_id)
+                .await
+                .map_err(BroadcastError::LiveKitAccess)?;
+
+            // Send token via WebSocket
+            // Client will use this to either:
+            //   a) Reconnect if disconnected (Cloud), or
+            //   b) Refresh their token (Self-hosted)
+            let payload = WsPayload::cohost_demotion(broadcast_id, new_token);
+            self.ws.send_to_user(cohost_id, payload).await;
+        }
+
+        let ws = self.ws.clone();
+        let repo = self.repo.clone();
+        let cohost_clone = cohost_user.clone();
+
+        tokio::spawn(async move {
+            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_id).await {
+                let payload = WsPayload::removed_cohost(cohost_clone);
+                ws.send_to_users(&participant_ids, payload).await;
+            }
+        });
+
+        Ok(())
     }
 
     /// Find active broadcast hosted by user
