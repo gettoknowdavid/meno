@@ -3,14 +3,14 @@ pub mod dto;
 use crate::config::MenoConfig;
 use crate::modules::broadcast::dto::UserSummary;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
-use crate::shared::services::livekit::dto::LivekitRole;
-use anyhow::Result;
+use crate::shared::services::livekit::dto::{LivekitParticipantInfo, LivekitRole};
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
 use livekit_api::services::ServiceError;
 use livekit_api::services::room::{CreateRoomOptions, RoomClient, UpdateParticipantOptions};
-use livekit_protocol::{ParticipantInfo, ParticipantPermission};
+use livekit_protocol::ParticipantPermission;
 use std::sync::Arc;
 use std::time::Duration;
+use time::OffsetDateTime;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -131,9 +131,20 @@ impl LivekitService {
     pub async fn list_participants(
         &self,
         broadcast_id: Uuid,
-    ) -> Result<Vec<ParticipantInfo>, ServiceError> {
+    ) -> Result<Vec<LivekitParticipantInfo>, ServiceError> {
         let room_name = broadcast_id.to_string();
-        self.room.list_participants(&room_name).await
+        let participants = self.room.list_participants(&room_name).await?;
+        let mut result = Vec::with_capacity(participants.len());
+        for participant in participants {
+            if let Ok(id) = Uuid::parse_str(&participant.identity) {
+                result.push(LivekitParticipantInfo {
+                    id,
+                    joined_at: OffsetDateTime::from_unix_timestamp(participant.joined_at)
+                        .unwrap_or(OffsetDateTime::now_utc()),
+                })
+            }
+        }
+        Ok(result)
     }
 
     pub async fn remove_participant(

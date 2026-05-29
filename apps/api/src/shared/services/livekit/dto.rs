@@ -29,3 +29,10 @@ impl TryFrom<ParticipantRole> for LivekitRole {
         }
     }
 }
+
+/// Simple struct for live participant data from LiveKit
+#[derive(Debug, Clone)]
+pub struct LivekitParticipantInfo {
+    pub id: uuid::Uuid,
+    pub joined_at: time::OffsetDateTime,
+}

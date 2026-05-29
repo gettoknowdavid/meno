@@ -24,6 +24,7 @@ use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
 use crate::state::MenoState;
 use serde_json::to_value;
+use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -1020,6 +1021,104 @@ impl BroadcastService {
         }
 
         Ok(response)
+    }
+
+    pub async fn get_live_participants(
+        &self,
+        params: &ParticipantParams,
+        broadcast_id: Uuid,
+    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
+        let broadcast = self
+            .repo
+            .find_by_id(broadcast_id)
+            .await?
+            .ok_or(BroadcastError::NotFound)?;
+
+        if !broadcast.is_active() {
+            return Err(BroadcastError::NotLive);
+        }
+
+        let livekit_participants = self
+            .livekit
+            .list_participants(broadcast_id)
+            .await
+            .map_err(BroadcastError::LiveKit)?;
+
+        let page = params.limit.unwrap_or(1).max(1);
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+
+        if livekit_participants.is_empty() {
+            return Ok(PaginationResponse::empty(limit.clone(), page.clone()));
+        }
+
+        let user_ids: Vec<Uuid> = livekit_participants.iter().map(|p| p.id).collect();
+        let user_details = self.repo.find_users_batch(&user_ids).await?;
+        let user_map: HashMap<Uuid, UserSummary> =
+            user_details.into_iter().map(|u| (u.id, u)).collect();
+
+        // Get roles from broadcast_participants table
+        let mut enriched: Vec<ParticipantListItem> = Vec::with_capacity(livekit_participants.len());
+        for lp in livekit_participants {
+            let user = user_map.get(&lp.id);
+            let role = self.get_participant_role(&broadcast, lp.id).await?;
+            enriched.push(ParticipantListItem {
+                id: lp.id,
+                full_name: user
+                    .map(|u| u.full_name.clone())
+                    .unwrap_or_else(|| "Unknown".to_string()),
+                avatar_id: user.and_then(|u| u.avatar_id.clone()),
+                avatar_url: user.and_then(|u| u.avatar_url.clone()),
+                role,
+                joined_at: lp.joined_at,
+            });
+        }
+
+        // Apply search filter (keywords)
+        let mut filtered = enriched;
+        if let Some(ref kw) = params.keywords {
+            let kw_lower = kw.to_lowercase();
+            filtered.retain(|p| p.full_name.to_lowercase().contains(&kw_lower));
+        }
+
+        // Apply role filter
+        if let Some(ref role_filter) = params.role {
+            filtered.retain(|p| p.role == *role_filter);
+        }
+
+        // Sort by role priority (Host → Cohost → Participant)
+        filtered.sort_by(|a, b| {
+            let rank_a = match a.role {
+                ParticipantRole::Host => 0,
+                ParticipantRole::Cohost => 1,
+                ParticipantRole::Participant => 2,
+                ParticipantRole::None => 3,
+            };
+            let rank_b = match b.role {
+                ParticipantRole::Host => 0,
+                ParticipantRole::Cohost => 1,
+                ParticipantRole::Participant => 2,
+                ParticipantRole::None => 3,
+            };
+            rank_a.cmp(&rank_b)
+        });
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let page = params.page.unwrap_or(1).max(1);
+        let offset = ((page - 1) * limit) as usize;
+        let total = filtered.len() as i64;
+
+        let paginated_items = filtered
+            .into_iter()
+            .skip(offset)
+            .take(limit as usize)
+            .collect();
+
+        Ok(PaginationResponse::build(
+            limit,
+            page,
+            total,
+            paginated_items,
+        ))
     }
 
     /// Find active broadcast hosted by user

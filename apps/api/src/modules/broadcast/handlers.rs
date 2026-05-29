@@ -148,6 +148,15 @@ pub async fn get_participants(
     Ok(MenoResponse::ok("Participants retrieved", page))
 }
 
+pub async fn get_live_participants(
+    State(state): State<Arc<MenoState>>,
+    Path(id): Path<Uuid>,
+    Query(params): Query<dto::ParticipantParams>,
+) -> Result<MenoResponse<PaginationResponse<dto::ParticipantListItem>>, BroadcastError> {
+    let page = state.broadcast.get_live_participants(&params, id).await?;
+    Ok(MenoResponse::ok("Live participants retrieved", page))
+}
+
 pub async fn refresh_token(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,

@@ -7,7 +7,6 @@ use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
 };
 use sqlx::{Postgres, QueryBuilder, Transaction};
-use std::cmp::max;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -153,7 +152,7 @@ impl BroadcastRepository {
     /// accept runtime type mapping via `FromRow`.
     ///
     /// ## Tracing
-    /// A span is opened here so slow queries surface in the trace tree with the
+    /// A span is opened here, so slow queries surface in the trace tree with the
     /// filter parameters attached. Bind parameters are not logged to avoid
     /// leaking PII (keywords, user IDs) in structured logs.
     #[tracing::instrument(

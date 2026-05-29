@@ -35,4 +35,7 @@ impl<T> PaginationResponse<T> {
             data,
         }
     }
+    pub fn empty(limit: i64, page: i64) -> Self {
+        Self::build(limit, page, 0, Vec::<T>::new())
+    }
 }
