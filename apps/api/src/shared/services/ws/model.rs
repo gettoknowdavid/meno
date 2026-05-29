@@ -27,14 +27,12 @@ pub enum WsEvent {
     CohostDeclined,
     /// When a cohost is returned back to being a participant
     CohostDemotion,
-    
 
     /// A new cohost has been added
     NewCohost,
 
     /// When a cohost is removed from the broadcast entirely
     RemovedCohost,
-
 
     RecordingReady,
     RecordingPublished,
