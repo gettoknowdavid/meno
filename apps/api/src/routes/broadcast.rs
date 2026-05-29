@@ -3,12 +3,13 @@ use crate::shared::middleware::auth::auth_middleware;
 use crate::state::MenoState;
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{delete, patch, post, put};
+use axum::routing::{delete, get, patch, post, put};
 use std::sync::Arc;
 
 pub fn router(state: Arc<MenoState>) -> Router<Arc<MenoState>> {
     Router::new()
         .route("/", post(h::create_broadcast))
+        .route("/{id}", get(h::get_broadcast))
         .route("/{id}", patch(h::update_broadcast))
         .route("/{id}", delete(h::delete_broadcast))
         .route("/{id}/start", put(h::go_live))

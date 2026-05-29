@@ -55,6 +55,11 @@ impl RedisKey {
         Self::new(format!("recording:{}", broadcast_id))
     }
 
+    /// Stores a recently viewed/retrieved broadcast
+    pub fn broadcast(broadcast_id: Uuid) -> Self {
+        Self::new(format!("b:{}", broadcast_id))
+    }
+
     // ========== USER KEYS ==========
 
     /// User presence (online status)

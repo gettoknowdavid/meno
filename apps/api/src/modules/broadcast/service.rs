@@ -1,7 +1,6 @@
 use crate::modules::broadcast::dto::{
-    AddCohostRequest, BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse,
-    CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS,
-    UpdateBroadcastRequest, UserSummary,
+    BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest,
+    EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -12,6 +11,7 @@ use crate::modules::broadcast::repository::{
     BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
     UpsertParticipantInput,
 };
+use crate::shared::constants::TTL_60_SECS;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
@@ -816,6 +816,60 @@ impl BroadcastService {
         });
 
         Ok(())
+    }
+
+    pub async fn get_broadcast(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<BroadcastResponse, BroadcastError> {
+        let key = RedisKey::broadcast(broadcast_id);
+
+        if let Ok(Some(cached_response)) = self.redis.get::<BroadcastResponse>(&key).await {
+            return Ok(cached_response);
+        }
+
+        let broadcast = self
+            .repo
+            .find_by_id(broadcast_id)
+            .await?
+            .ok_or(BroadcastError::NotFound)?;
+
+        let (creator_result, cohosts_result, total_participants_result) = tokio::join!(
+            self.repo.find_user_summary(broadcast.creator_id),
+            self.repo.get_cohosts(broadcast_id),
+            self.repo.get_total_participants(broadcast_id),
+        );
+
+        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
+        let cohosts = cohosts_result?;
+        let total_count = total_participants_result?;
+
+        let live_count = if broadcast.is_active() {
+            let key = RedisKey::live_count(broadcast_id);
+            self.redis.get::<i64>(&key).await?.unwrap_or(1)
+        } else {
+            0
+        };
+
+        let ctx = self
+            .build_ctx(&broadcast, None, None, live_count, total_count)
+            .await?;
+
+        let broadcast_response = self
+            .broadcast_to_response(broadcast, creator, cohosts, ctx)
+            .await?;
+
+        let key_clone = key.clone();
+        let redis = self.redis.clone();
+        let response_clone = broadcast_response.clone();
+
+        tokio::spawn(async move {
+            let _ = redis
+                .set(&key_clone, &response_clone, Some(TTL_60_SECS))
+                .await;
+        });
+
+        Ok(broadcast_response)
     }
 
     /// Find active broadcast hosted by user

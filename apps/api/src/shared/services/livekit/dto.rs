@@ -1,6 +1,5 @@
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::ParticipantRole;
-use std::fmt;
 use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]

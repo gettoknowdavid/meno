@@ -8,6 +8,7 @@ use crate::state::MenoState;
 use axum::Extension;
 use axum::extract::{Path, Query, State};
 use std::sync::Arc;
+use tokio::task::id;
 use uuid::Uuid;
 use validator::Validate;
 
@@ -118,15 +119,17 @@ pub async fn remove_cohost(
 
 pub async fn get_broadcast(
     State(state): State<Arc<MenoState>>,
-    Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
+    let response = state.broadcast.get_broadcast(id).await?;
+    Ok(MenoResponse::ok("Broadcast retrieved", response))
 }
 
 pub async fn get_broadcasts(
     State(state): State<Arc<MenoState>>,
-    Extension(auth): Extension<AuthUser>,
     Query(params): Query<dto::BroadcastParams>,
 ) -> Result<MenoResponse<PaginationResponse<dto::BroadcastResponse>>, BroadcastError> {
     Err(BroadcastError::AlreadyCohost)

@@ -1,7 +1,6 @@
 use crate::modules::auth;
 use crate::modules::broadcast::model::{
-    BroadcastContext, BroadcastParticipant, BroadcastState, BroadcastStatus, EndReason,
-    ParticipantRole,
+    BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -123,7 +122,7 @@ pub struct ParticipantParams {
 }
 
 // ==================== RESPONSES ====================
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastResponse {
     // Identity
     pub id: Uuid,
@@ -199,7 +198,7 @@ pub struct LeaveBroadcastResponse {
 }
 
 /// Compact user shape embedded inside broadcast responses.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct UserSummary {
     pub id: Uuid,
     pub full_name: String,

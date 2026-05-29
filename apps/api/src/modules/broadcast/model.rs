@@ -51,6 +51,9 @@ impl Broadcast {
             }
         }
     }
+    pub fn is_active(&self) -> bool {
+        self.status == BroadcastStatus::Active
+    }
 }
 
 /// A broadcast row joined with its creator + cohosts in one query.
