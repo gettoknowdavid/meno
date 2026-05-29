@@ -1,11 +1,13 @@
 use crate::modules::broadcast::dto::{
-    BroadcastListItem, BroadcastOrderBy, BroadcastParams, BroadcastSortBy, UserSummary,
+    BroadcastListItem, BroadcastParams, BroadcastSortBy, OrderBy, ParticipantListItem,
+    ParticipantParams, ParticipantSortBy, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
 };
 use sqlx::{Postgres, QueryBuilder, Transaction};
+use std::cmp::max;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -163,7 +165,7 @@ impl BroadcastRepository {
             status = ?params.status,
         )
     )]
-    pub async fn find_list(
+    pub async fn find_broadcasts(
         &self,
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
@@ -202,15 +204,15 @@ impl BroadcastRepository {
             "#,
         );
 
-        Self::apply_list_filters(&mut qb, params, requester_id);
+        Self::apply_broadcast_filters(&mut qb, params, requester_id);
 
         // Order By
         //
         // NULLS LAST on all columns — ensures rows without a start/end time
         // sort predictably rather than floating to the top.
-        let order_dir = match params.order.as_ref().unwrap_or(&BroadcastOrderBy::Desc) {
-            BroadcastOrderBy::Asc => "ASC NULLS LAST",
-            BroadcastOrderBy::Desc => "DESC NULLS LAST",
+        let order_dir = match params.order_by.as_ref().unwrap_or(&OrderBy::Desc) {
+            OrderBy::Asc => "ASC NULLS LAST",
+            OrderBy::Desc => "DESC NULLS LAST",
         };
 
         let sort_col = match params
@@ -248,11 +250,11 @@ impl BroadcastRepository {
     /// Uses `COUNT(DISTINCT b.id)` for correctness even if future JOINs
     /// cause fan-out.
     #[tracing::instrument(
-        name = "broadcast_repo.count_list",
+        name = "broadcast_repo.count_broadcasts",
         skip(params, requester_id),
         fields(status = ?params.status)
     )]
-    pub async fn count_list(
+    pub async fn count_broadcasts(
         &self,
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
@@ -266,7 +268,7 @@ impl BroadcastRepository {
                    WHERE b.deleted_at IS NULL"#,
         );
 
-        Self::apply_list_filters(&mut qb, params, requester_id);
+        Self::apply_broadcast_filters(&mut qb, params, requester_id);
 
         let total: i64 = qb
             .build_query_scalar()
@@ -279,13 +281,13 @@ impl BroadcastRepository {
 
     /// Appends WHERE clauses to `qb` based on `params`.
     ///
-    /// Extracted as a static method, so `find_list` and `count_list` share
+    /// Extracted as a static method, so `find_list` and `count_broadcasts` share
     /// identical filter logic — they can never drift out of sync.
     ///
     /// ## Why static?
     /// A `&self` receiver would imply DB access; making it static signals that
     /// it only mutates the query builder.
-    fn apply_list_filters(
+    fn apply_broadcast_filters(
         qb: &mut QueryBuilder<Postgres>,
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
@@ -374,6 +376,99 @@ impl BroadcastRepository {
             } else {
                 " AND b.end_time IS NULL"
             });
+        }
+    }
+
+    pub async fn find_participants(
+        &self,
+        broadcast_id: Uuid,
+        params: &ParticipantParams,
+    ) -> Result<Vec<ParticipantListItem>, BroadcastError> {
+        let mut qb = QueryBuilder::new(
+            r#"
+            SELECT
+                u.id,
+                u.full_name,
+                u.avatar_id,
+                u.avatar_url,
+                bp.role::text AS role,
+                bp.joined_at
+            FROM broadcast_participants bp
+            INNER JOIN users u ON u.id = bp.participant_id AND u.deleted_at IS NULL
+            WHERE bp.broadcast_id =
+            "#,
+        );
+
+        qb.push_bind(broadcast_id);
+        Self::apply_participant_filters(&mut qb, params);
+
+        let order_dir = match params.order_by.as_ref().unwrap_or(&OrderBy::Desc) {
+            OrderBy::Asc => "ASC NULLS LAST",
+            OrderBy::Desc => "DESC NULLS LAST",
+        };
+
+        let sort_col = match params.sort_by.as_ref().unwrap_or(&ParticipantSortBy::Role) {
+            ParticipantSortBy::Role => "bp.role",
+            ParticipantSortBy::JoinedAt => "bp.joined_at",
+            ParticipantSortBy::Name => "u.full_name",
+        };
+
+        qb.push(format!(" ORDER BY {} {}", sort_col, order_dir));
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let offset = ((params.page.unwrap_or(1).max(1) - 1) * limit).max(0);
+
+        qb.push(" LIMIT ").push_bind(limit);
+        qb.push(" OFFSET ").push_bind(offset);
+
+        let rows = qb
+            .build_query_as::<ParticipantListItem>()
+            .fetch_all(&self.db)
+            .await
+            .map_err(BroadcastError::Database)?;
+
+        Ok(rows)
+    }
+
+    pub async fn count_participants(
+        &self,
+        broadcast_id: Uuid,
+        params: &ParticipantParams,
+    ) -> Result<i64, BroadcastError> {
+        let mut qb = QueryBuilder::<Postgres>::new(
+            r#"
+            SELECT COUNT(DISTINCT bp.participant_id)
+            FROM broadcast_participants bp
+            INNER JOIN users u ON u.id = bp.participant_id AND u.deleted_at IS NULL
+            WHERE bp.broadcast_id =
+            "#,
+        );
+
+        qb.push_bind(broadcast_id);
+        Self::apply_participant_filters(&mut qb, &params);
+
+        let total: i64 = qb
+            .build_query_scalar()
+            .fetch_one(&self.db)
+            .await
+            .map_err(BroadcastError::Database)?;
+
+        Ok(total)
+    }
+
+    fn apply_participant_filters(qb: &mut QueryBuilder<Postgres>, params: &ParticipantParams) {
+        // Role
+        if let Some(ref r) = params.role {
+            qb.push(" AND bp.role = ").push_bind(r.clone());
+        }
+
+        // Keywords
+        if let Some(ref kw) = params.keywords {
+            if !kw.is_empty() {
+                qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
+                    .push_bind(kw.clone())
+                    .push(")");
+            }
         }
     }
 

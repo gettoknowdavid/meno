@@ -141,11 +141,11 @@ pub async fn get_broadcasts(
 
 pub async fn get_participants(
     State(state): State<Arc<MenoState>>,
-    Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     Query(params): Query<dto::ParticipantParams>,
-) -> Result<MenoResponse<PaginationResponse<dto::UserSummary>>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+) -> Result<MenoResponse<PaginationResponse<dto::ParticipantListItem>>, BroadcastError> {
+    let page = state.broadcast.get_participants(&params, id).await?;
+    Ok(MenoResponse::ok("Participants retrieved", page))
 }
 
 pub async fn refresh_token(

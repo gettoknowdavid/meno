@@ -1,7 +1,8 @@
 use crate::modules::broadcast::dto::{
     BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastResponse,
     BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    LeaveBroadcastResponse, MAX_COHOSTS, UpdateBroadcastRequest, UserSummary,
+    LeaveBroadcastResponse, MAX_COHOSTS, ParticipantListCacheKey, ParticipantListItem,
+    ParticipantParams, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -926,8 +927,8 @@ impl BroadcastService {
         span.record("cache_hit", false);
 
         let (rows_result, total_result) = tokio::join!(
-            self.repo.find_list(params, requester_id),
-            self.repo.count_list(params, requester_id),
+            self.repo.find_broadcasts(params, requester_id),
+            self.repo.count_broadcasts(params, requester_id),
         );
 
         let rows = rows_result?;
@@ -938,7 +939,7 @@ impl BroadcastService {
 
         let limit = params.limit.unwrap_or(20).clamp(1, 100);
         let page = params.page.unwrap_or(1).max(1);
-        let response = PaginationResponse::<BroadcastListItem>::build(limit, page, total, rows);
+        let response = PaginationResponse::build(limit, page, total, rows);
 
         if let Some(key_str) = cache_key {
             let redis = self.redis.clone();
@@ -952,6 +953,69 @@ impl BroadcastService {
                         "Failed to write broadcast list to cache"
                     );
                 }
+            });
+        }
+
+        Ok(response)
+    }
+
+    pub async fn get_participants(
+        &self,
+        params: &ParticipantParams,
+        broadcast_id: Uuid,
+    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
+        let span = tracing::Span::current();
+
+        let cache_key = ParticipantListCacheKey::build(broadcast_id, &params);
+        if let Some(ref key_str) = cache_key {
+            let key = RedisKey::new_raw(&key_str);
+            match self
+                .redis
+                .get::<PaginationResponse<ParticipantListItem>>(&key)
+                .await
+            {
+                Ok(Some(page)) => {
+                    span.record("cache_hit", true);
+                    tracing::debug!(key = %key_str, "broadcast list cache hit");
+                    return Ok(page);
+                }
+                Ok(None) => {
+                    tracing::debug!(key = %key_str, "participant list cache miss");
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        error = %e,
+                        key   = %key_str,
+                        "Redis get failed for participant list — falling back to DB"
+                    );
+                }
+            }
+        }
+
+        span.record("cache_hit", false);
+
+        let (rows_result, total_result) = tokio::join!(
+            self.repo.find_participants(broadcast_id, params),
+            self.repo.count_participants(broadcast_id, params),
+        );
+
+        let rows = rows_result?;
+        let total = total_result?;
+
+        span.record("db_rows", rows.len() as i64);
+        span.record("total_count", total);
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let page = params.page.unwrap_or(1).max(1);
+        let response = PaginationResponse::build(limit, page, total, rows);
+
+        // Cache the result (shorter TTL for participant lists - 15 seconds)
+        if let Some(key_str) = cache_key {
+            let redis = self.redis.clone();
+            let response_clone = response.clone();
+            tokio::spawn(async move {
+                let key = RedisKey::new_raw(&key_str);
+                let _ = redis.set(&key, &response_clone, Some(TTL_30_SECS)).await;
             });
         }
 

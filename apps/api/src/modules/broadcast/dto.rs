@@ -105,7 +105,7 @@ pub struct BroadcastParams {
     pub end_time_exists: Option<bool>,
 
     pub sort_by: Option<BroadcastSortBy>,
-    pub order: Option<BroadcastOrderBy>,
+    pub order_by: Option<OrderBy>,
 
     pub page: Option<i64>,
     pub limit: Option<i64>,
@@ -113,13 +113,14 @@ pub struct BroadcastParams {
 
 #[derive(Debug, Default, Deserialize)]
 pub struct ParticipantParams {
-    pub page: i64,
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
 
-    pub limit: i64,
+    pub keywords: Option<String>,
+    pub role: Option<ParticipantRole>,
 
-    /// If set to `true`, this handler will return only the participants
-    /// currently live in the broadcast
-    pub show_only_live: bool,
+    pub sort_by: Option<ParticipantSortBy>,
+    pub order_by: Option<OrderBy>,
 }
 
 // ==================== RESPONSES ====================
@@ -273,6 +274,17 @@ pub struct BroadcastListItem {
     pub creator_avatar_id: Option<String>,
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
+pub struct ParticipantListItem {
+    pub id: Uuid,
+    pub full_name: String,
+    pub avatar_id: Option<String>,
+    pub avatar_url: Option<String>,
+    pub role: ParticipantRole,
+    #[serde(with = "rfc3339")]
+    pub joined_at: OffsetDateTime,
+}
+
 // ==================== ENUMS ====================
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
@@ -285,9 +297,17 @@ pub enum BroadcastSortBy {
 
 #[derive(Debug, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
-pub enum BroadcastOrderBy {
-    Asc,
+pub enum ParticipantSortBy {
+    #[default]
+    Role,
+    JoinedAt,
+    Name,
+}
 
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum OrderBy {
+    Asc,
     #[default]
     Desc,
 }
@@ -383,8 +403,8 @@ impl BroadcastListCacheKey {
             None | Some(BroadcastSortBy::StartTime) => {} // default, omit
             Some(ref s) => parts.push(format!("sb={:?}", s)),
         }
-        match params.order {
-            None | Some(BroadcastOrderBy::Desc) => {} // default, omit
+        match params.order_by {
+            None | Some(OrderBy::Desc) => {} // default, omit
             Some(ref o) => parts.push(format!("ob={:?}", o)),
         }
 
@@ -401,5 +421,42 @@ impl BroadcastListCacheKey {
         };
 
         Some(key)
+    }
+}
+
+pub struct ParticipantListCacheKey;
+impl ParticipantListCacheKey {
+    pub fn build(broadcast_id: Uuid, params: &ParticipantParams) -> Option<String> {
+        let mut parts = vec![format!("pid:{}", broadcast_id)];
+
+        if let Some(ref kw) = params.keywords {
+            // Hash the keyword to keep key short and avoid special-char issues.
+            use std::collections::hash_map::DefaultHasher;
+            use std::hash::{Hash, Hasher};
+            let mut h = DefaultHasher::new();
+            kw.hash(&mut h);
+            parts.push(format!("kw={:x}", h.finish()));
+        }
+
+        if let Some(ref r) = params.role {
+            parts.push(format!("s={:?}", r));
+        }
+
+        match params.sort_by {
+            None | Some(ParticipantSortBy::Role) => {} // default, omit
+            Some(ref s) => parts.push(format!("sb={:?}", s)),
+        }
+
+        match params.order_by {
+            None | Some(OrderBy::Desc) => {} // default, omit
+            Some(ref o) => parts.push(format!("ob={:?}", o)),
+        }
+
+        let page = params.page.unwrap_or(1).max(1);
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        parts.push(format!("pg={}", page));
+        parts.push(format!("lm={}", limit));
+
+        Some(format!("pl:{}", parts.join(":")))
     }
 }
