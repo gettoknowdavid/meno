@@ -161,6 +161,10 @@ pub async fn refresh_token(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
-) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
-    Err(BroadcastError::AlreadyCohost)
+) -> Result<MenoResponse<dto::BroadcastRefreshTokenResponse>, BroadcastError> {
+    if id.is_nil() {
+        return Err(BroadcastError::InvalidId);
+    }
+    let response = state.broadcast.refresh_token(id, auth.id).await?;
+    Ok(MenoResponse::ok("Token refreshed", response))
 }

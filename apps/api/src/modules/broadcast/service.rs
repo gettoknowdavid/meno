@@ -1,8 +1,8 @@
 use crate::modules::broadcast::dto::{
-    BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastResponse,
-    BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    LeaveBroadcastResponse, MAX_COHOSTS, ParticipantListCacheKey, ParticipantListItem,
-    ParticipantParams, UpdateBroadcastRequest, UserSummary,
+    BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastRefreshTokenResponse,
+    BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest,
+    EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS, ParticipantListCacheKey,
+    ParticipantListItem, ParticipantParams, UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -1066,6 +1066,76 @@ impl BroadcastService {
         );
 
         Ok(PaginationResponse::build(limit, page, total, items))
+    }
+
+    #[tracing::instrument(
+        name = "broadcast_service.refresh_token",
+        skip(self),
+        fields(broadcast_id = %broadcast_id, user_id = %user_id)
+    )]
+    pub async fn refresh_token(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+    ) -> Result<BroadcastRefreshTokenResponse, BroadcastError> {
+        let (broadcast_result, participant_result, user_result) = tokio::join!(
+            self.repo.find_by_id(broadcast_id),
+            self.repo.find_participant(broadcast_id, user_id),
+            self.repo.find_user_summary(user_id),
+        );
+
+        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
+        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
+
+        if !broadcast.is_active() {
+            return Err(BroadcastError::NotLive);
+        }
+
+        // Determine the participant's CURRENT role from DB (never trust the client)
+        let role = if broadcast.creator_id == user_id {
+            ParticipantRole::Host
+        } else {
+            match participant_result? {
+                None => return Err(BroadcastError::NotParticipant),
+                Some(p) if p.left_at.is_some() => return Err(BroadcastError::NotParticipant),
+                Some(p) => p.role,
+            }
+        };
+
+        let livekit_role =
+            LivekitRole::try_from(role.clone()).map_err(|_| BroadcastError::NotParticipant)?;
+
+        // Mint a fresh token with the current (possibly downgraded) role
+        let token = self
+            .livekit
+            .mint_token_with_attributes(
+                user_id,
+                &user.full_name,
+                broadcast_id,
+                livekit_role,
+                HashMap::from([
+                    ("meno_role".to_string(), role.to_string()),
+                    ("meno_broadcast_id".to_string(), broadcast_id.to_string()),
+                ]),
+            )
+            .await
+            .map_err(BroadcastError::LiveKitAccess)?;
+
+        // Token TTL is 6 hours from now
+        let expires_at = OffsetDateTime::now_utc() + time::Duration::hours(6);
+
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            user_id = %user_id,
+            role = %role,
+            "LiveKit token refreshed"
+        );
+
+        Ok(BroadcastRefreshTokenResponse {
+            broadcast_id,
+            token,
+            expires_at,
+        })
     }
 
     /// Find active broadcast hosted by user
