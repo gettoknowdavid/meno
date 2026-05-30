@@ -8,6 +8,7 @@ use std::collections::HashMap;
 use std::time::Duration;
 use uuid::Uuid;
 
+pub mod coalescing;
 pub mod keys;
 
 /// Configuration for Redis connection

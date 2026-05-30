@@ -1,7 +1,7 @@
 use crate::modules::broadcast::dto;
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::middleware::extractors::{MenoBody, MenoJson};
+use crate::shared::middleware::extractors::{MenoBody, MenoJson, MenoQuery};
 use crate::shared::pagination::PaginationResponse;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
@@ -130,7 +130,7 @@ pub async fn get_broadcast(
 pub async fn get_broadcasts(
     State(state): State<Arc<MenoState>>,
     Extension(auth): Extension<AuthUser>,
-    Query(params): Query<dto::BroadcastParams>,
+    MenoQuery(params): MenoQuery<dto::BroadcastParams>,
 ) -> Result<MenoResponse<PaginationResponse<dto::BroadcastListItem>>, BroadcastError> {
     let page = state
         .broadcast

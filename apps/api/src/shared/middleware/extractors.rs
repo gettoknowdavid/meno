@@ -1,13 +1,16 @@
 use crate::shared::errors::error_response;
 use crate::state::MenoState;
-use axum::Json;
-use axum::extract::rejection::JsonRejection;
-use axum::extract::{FromRequest, Multipart, Request};
-use axum::http::StatusCode;
-use axum::response::Response;
+use axum::{
+    Json,
+    extract::Query as AxumQuery,
+    extract::rejection::JsonRejection,
+    extract::{FromRequest, Multipart, Request},
+    http::StatusCode,
+    http::request::Parts,
+    response::{IntoResponse, Response},
+};
 use serde::de::DeserializeOwned;
-use std::collections::HashMap;
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
 // ========== EXTRACTORS ==========
 
@@ -368,4 +371,47 @@ fn json_rejection_to_response(rejection: JsonRejection) -> Response {
     };
 
     error_response(status, code.as_str(), message.as_str())
+}
+
+// ========== CUSTOM MEN QUERY REJECTION ==========
+/// Drop-in replacement for axum's `Query<T>` that converts deserialisation
+/// errors into the standard `MenoResponse` error JSON instead of a raw 422.
+pub struct MenoQuery<T>(pub T);
+
+impl<T, S> axum::extract::FromRequestParts<S> for MenoQuery<T>
+where
+    T: DeserializeOwned,
+    S: Send + Sync,
+{
+    type Rejection = MenoQueryRejection;
+
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        AxumQuery::<T>::from_request_parts(parts, state)
+            .await
+            .map(|q| MenoQuery(q.0))
+            .map_err(|e| MenoQueryRejection(e.to_string()))
+    }
+}
+
+pub struct MenoQueryRejection(String);
+
+impl IntoResponse for MenoQueryRejection {
+    fn into_response(self) -> Response {
+        // Extract the useful part of the serde message
+        let msg = self
+            .0
+            .trim_start_matches("Failed to deserialize query string: ")
+            .to_string();
+
+        (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({
+                "statusCode": 400,
+                "code":    "INVALID_QUERY_PARAMS",
+                "message": msg,
+                "error":   "Bad Request",
+            })),
+        )
+            .into_response()
+    }
 }

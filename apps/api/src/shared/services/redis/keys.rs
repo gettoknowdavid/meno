@@ -138,6 +138,12 @@ impl RedisKey {
     pub fn block_list(prefix: &str, id: Uuid) -> Self {
         Self::new(format!("block-list:{}:{}", prefix, id))
     }
+
+    /// The key under which the mutex lock is stored.
+    /// TTL matches the time we expect the DB query to take (1–2 s).
+    pub fn lock(cache_key: &str) -> Self {
+        RedisKey::new_raw(&format!("lock:{}", cache_key))
+    }
 }
 impl std::fmt::Display for RedisKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

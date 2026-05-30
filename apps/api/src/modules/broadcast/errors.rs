@@ -1,5 +1,6 @@
 use crate::modules::broadcast::dto::MAX_COHOSTS;
 use crate::shared::errors::{error_response, validation_error_response};
+use crate::shared::services::redis::coalescing::CacheError;
 use axum::http::StatusCode;
 use validator::ValidationErrors;
 
@@ -84,6 +85,9 @@ pub enum BroadcastError {
     LiveKitUnavailable,
 
     // 500 INTERNAL
+    #[error("Cache error: {0}")]
+    Cache(#[from] CacheError),
+
     #[error(transparent)]
     LiveKitAccess(#[from] livekit_api::access_token::AccessTokenError),
 
@@ -226,6 +230,7 @@ impl axum::response::IntoResponse for BroadcastError {
             BroadcastError::LiveKitAccess(_)
             | BroadcastError::LiveKit(_)
             | BroadcastError::Redis(_)
+            | BroadcastError::Cache(_)
             | BroadcastError::Database(_)
             | BroadcastError::Internal(_) => {
                 tracing::error!("{:?}", self);

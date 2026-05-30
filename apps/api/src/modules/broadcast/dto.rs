@@ -1,11 +1,12 @@
 use crate::modules::auth;
 use crate::modules::broadcast::model::{
-    BroadcastContext, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
+    BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, de};
 use sqlx::FromRow;
-use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use time::serde::rfc3339;
+use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
 use uuid::Uuid;
 use validator::Validate;
 
@@ -85,47 +86,6 @@ pub struct AcceptCohostInvitationRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct BroadcastTokenRefreshRequest {
     pub broadcast_id: Uuid,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct BroadcastParams {
-    pub id: Option<Uuid>,
-    pub creator_id: Option<Uuid>,
-    pub exclude_creator_id: Option<Uuid>,
-    pub status: Option<BroadcastStatus>,
-    pub keywords: Option<String>,
-    pub only_subscriptions: Option<bool>,
-
-    pub start_time_gt: Option<OffsetDateTime>,
-    pub start_time_lt: Option<OffsetDateTime>,
-    pub start_time_gte: Option<OffsetDateTime>,
-    pub start_time_lte: Option<OffsetDateTime>,
-
-    pub end_time_gt: Option<OffsetDateTime>,
-    pub end_time_lt: Option<OffsetDateTime>,
-    pub end_time_gte: Option<OffsetDateTime>,
-    pub end_time_lte: Option<OffsetDateTime>,
-
-    pub start_time_exists: Option<bool>,
-    pub end_time_exists: Option<bool>,
-
-    pub sort_by: Option<BroadcastSortBy>,
-    pub order_by: Option<OrderBy>,
-
-    pub page: Option<i64>,
-    pub limit: Option<i64>,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct ParticipantParams {
-    pub page: Option<i64>,
-    pub limit: Option<i64>,
-
-    pub keywords: Option<String>,
-    pub role: Option<ParticipantRole>,
-
-    pub sort_by: Option<ParticipantSortBy>,
-    pub order_by: Option<OrderBy>,
 }
 
 // ==================== RESPONSES ====================
@@ -324,16 +284,71 @@ pub enum OrderBy {
     Desc,
 }
 
-// ==================== BUILDER ====================
+// ==================== PARAMS ====================
+#[derive(Debug, Default, Deserialize)]
+pub struct BroadcastParams {
+    pub id: Option<Uuid>,
+    pub creator_id: Option<Uuid>,
+    pub exclude_creator_id: Option<Uuid>,
+    pub status: Option<BroadcastStatus>,
+    pub keywords: Option<String>,
+    pub only_subscriptions: Option<bool>,
 
-/// Context needed by `broadcast_to_response()` that is gathered by the service
-/// layer before calling the helper.
-pub struct ResponseContext {
-    pub creator: UserSummary,
-    pub cohosts: Vec<UserSummary>,
-    pub ctx: BroadcastContext,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub start_time_gt: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub start_time_lt: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub start_time_gte: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub start_time_lte: Option<OffsetDateTime>,
+
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub end_time_gt: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub end_time_lt: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub end_time_gte: Option<OffsetDateTime>,
+    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
+    pub end_time_lte: Option<OffsetDateTime>,
+
+    pub start_time_exists: Option<bool>,
+    pub end_time_exists: Option<bool>,
+
+    #[serde(default, deserialize_with = "deserialize_sort_by")]
+    pub sort_by: Option<BroadcastSortBy>,
+
+    #[serde(default, deserialize_with = "deserialize_order_by")]
+    pub order_by: Option<OrderBy>,
+
+    /// The current page number. Min 1
+    pub page: Option<i64>,
+
+    /// Results per page. Min 1, max 100. Defaults to 20.
+    pub limit: Option<i64>,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct ParticipantParams {
+    /// The current page number. Min 1
+    pub page: Option<i64>,
+
+    /// Results per page. Min 1, max 100. Defaults to 20.
+    pub limit: Option<i64>,
+
+    pub keywords: Option<String>,
+
+    #[serde(default, deserialize_with = "deserialize_participant_role")]
+    pub role: Option<ParticipantRole>,
+
+    #[serde(default, deserialize_with = "deserialize_sort_by_participant")]
+    pub sort_by: Option<ParticipantSortBy>,
+
+    #[serde(default, deserialize_with = "deserialize_order_by")]
+    pub order_by: Option<OrderBy>,
+}
+
+// ==================== PARAM CACHE KEYS ====================
 /// Generates a compact, deterministic Redis key from `BroadcastParams`.
 ///
 /// Design goals:
@@ -470,5 +485,148 @@ impl ParticipantListCacheKey {
         parts.push(format!("lm={}", limit));
 
         Some(format!("pl:{}", parts.join(":")))
+    }
+}
+
+// ==================== DESERIALIZERS ====================
+/// Flexible timestamp deserializer that accepts:
+///   - Full RFC 3339: "2026-05-26T21:55:37Z"
+///   - Full RFC 3339 with offset: "2026-05-26T21:55:37+01:00"
+///   - Date only: "2026-05-26"  (treated as midnight UTC)
+///   - Unix timestamp (i64): 1716768000
+pub fn deserialize_flexible_datetime<'de, D>(de: D) -> Result<Option<OffsetDateTime>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct FlexibleVisitor;
+
+    impl<'de> de::Visitor<'de> for FlexibleVisitor {
+        type Value = Option<OffsetDateTime>;
+
+        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+            f.write_str("a date string (YYYY-MM-DD), RFC 3339 datetime, or Unix timestamp")
+        }
+
+        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
+            OffsetDateTime::from_unix_timestamp(v)
+                .map(Some)
+                .map_err(|_| E::custom(format!("Unix timestamp {} is out of range", v)))
+        }
+
+        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
+            self.visit_i64(v as i64)
+        }
+
+        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
+            // Try RFC 3339 first (most common)
+            if let Ok(dt) = OffsetDateTime::parse(v, &Rfc3339) {
+                return Ok(Some(dt));
+            }
+
+            // Try date-only (YYYY-MM-DD) → midnight UTC
+            if let Ok(date) = Date::parse(
+                v,
+                &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+            ) {
+                let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
+                return Ok(Some(dt));
+            }
+
+            // Try common ISO 8601 without timezone: "2026-05-26T21:55:37"
+            if let Ok(pdt) = PrimitiveDateTime::parse(
+                v,
+                &time::format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]")
+                    .unwrap(),
+            ) {
+                return Ok(Some(pdt.assume_utc()));
+            }
+
+            Err(E::custom(format!(
+                "invalid datetime '{}': expected YYYY-MM-DD, RFC 3339, or Unix timestamp",
+                v
+            )))
+        }
+
+        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+
+        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
+            Ok(None)
+        }
+    }
+
+    de.deserialize_any(FlexibleVisitor)
+}
+
+/// Case-insensitive deserializer for BroadcastSortBy.
+/// Accepts "title", "TITLE", "Title", "start_time", "StartTime", etc.
+/// Returns a structured BroadcastError rather than a raw serde string.
+fn deserialize_sort_by<'de, D>(de: D) -> Result<Option<BroadcastSortBy>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = Option::<String>::deserialize(de)?;
+    match s.as_deref().map(str::to_lowercase).as_deref() {
+        None | Some("") => Ok(None),
+        Some("title") => Ok(Some(BroadcastSortBy::Title)),
+        Some("start_time") => Ok(Some(BroadcastSortBy::StartTime)),
+        Some("end_time") => Ok(Some(BroadcastSortBy::EndTime)),
+        Some(other) => Err(de::Error::custom(format!(
+            "unknown sort_by '{}': expected one of title, start_time, end_time",
+            other
+        ))),
+    }
+}
+
+/// Order by deserializer
+fn deserialize_order_by<'de, D>(de: D) -> Result<Option<OrderBy>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = Option::<String>::deserialize(de)?;
+    match s.as_deref().map(str::to_lowercase).as_deref() {
+        None | Some("") => Ok(None),
+        Some("asc") => Ok(Some(OrderBy::Asc)),
+        Some("desc") => Ok(Some(OrderBy::Desc)),
+        Some(other) => Err(de::Error::custom(format!(
+            "unknown order_by '{}': expected 'asc' or 'desc'",
+            other
+        ))),
+    }
+}
+
+/// ParticipantRole deserializer — same pattern
+fn deserialize_participant_role<'de, D>(de: D) -> Result<Option<ParticipantRole>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = Option::<String>::deserialize(de)?;
+    match s.as_deref().map(str::to_lowercase).as_deref() {
+        None | Some("") => Ok(None),
+        Some("host") => Ok(Some(ParticipantRole::Host)),
+        Some("cohost") => Ok(Some(ParticipantRole::Cohost)),
+        Some("participant") => Ok(Some(ParticipantRole::Participant)),
+        Some(other) => Err(de::Error::custom(format!(
+            "unknown role '{}': expected host, cohost, or participant",
+            other
+        ))),
+    }
+}
+
+fn deserialize_sort_by_participant<'de, D>(de: D) -> Result<Option<ParticipantSortBy>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let s = Option::<String>::deserialize(de)?;
+    match s.as_deref().map(str::to_lowercase).as_deref() {
+        None | Some("") => Ok(None),
+        Some("role") => Ok(Some(ParticipantSortBy::Role)),
+        Some("joined_at") => Ok(Some(ParticipantSortBy::JoinedAt)),
+        Some("name") => Ok(Some(ParticipantSortBy::Name)),
+        Some(other) => Err(de::Error::custom(format!(
+            "unknown sort_by '{}': expected role, joined_at, or name",
+            other
+        ))),
     }
 }

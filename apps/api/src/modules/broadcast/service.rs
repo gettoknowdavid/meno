@@ -18,6 +18,7 @@ use crate::shared::pagination::PaginationResponse;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::coalescing::{CoalescingConfig, coalesce_cache};
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
@@ -893,69 +894,55 @@ impl BroadcastService {
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
     ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        let span = tracing::Span::current();
+        let start = std::time::Instant::now();
 
         let cache_key = BroadcastListCacheKey::build(params);
-
-        if let Some(ref key_str) = cache_key {
-            let key = RedisKey::new_raw(key_str);
-            match self
-                .redis
-                .get::<PaginationResponse<BroadcastListItem>>(&key)
-                .await
-            {
-                Ok(Some(page)) => {
-                    span.record("cache_hit", true);
-                    tracing::debug!(key = %key_str, "broadcast list cache hit");
-                    return Ok(page);
-                }
-                Ok(None) => {
-                    tracing::debug!(key = %key_str, "broadcast list cache miss");
-                }
-                Err(e) => {
-                    // Redis failure must never block the request — log and fall
-                    // through to the DB. This is the most important resilience
-                    // rule: cache is always best-effort.
-                    tracing::warn!(
-                        error = %e,
-                        key   = %key_str,
-                        "Redis get failed for broadcast list — falling back to DB"
-                    );
-                }
-            }
+        let should_use_coalescing = cache_key.is_some();
+        if !should_use_coalescing {
+            // Personalized query - go directly to DB without caching
+            tracing::debug!("Personalized query (only_subscriptions=true) — skipping cache");
+            return self.get_broadcasts_from_db(params, requester_id).await;
         }
 
-        span.record("cache_hit", false);
+        let cache_key_str = cache_key.unwrap();
+        let count_cache_key = format!("{}_count", cache_key_str);
 
-        let (rows_result, total_result) = tokio::join!(
-            self.repo.find_broadcasts(params, requester_id),
-            self.repo.count_broadcasts(params, requester_id),
-        );
+        // Use coalescing cache to prevent thundering herd
+        let response = coalesce_cache(
+            &self.redis,
+            &count_cache_key,
+            TTL_30_SECS,
+            || async { self.get_broadcasts_from_db(params, requester_id).await },
+            CoalescingConfig::default(),
+        )
+        .await?;
 
-        let rows = rows_result?;
-        let total = total_result?;
-
-        span.record("db_rows", rows.len() as i64);
-        span.record("total_count", total);
-
+        // Start building the response
         let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let page = params.page.unwrap_or(1).max(1);
-        let response = PaginationResponse::build(limit, page, total, rows);
 
-        if let Some(key_str) = cache_key {
-            let redis = self.redis.clone();
-            let page_clone = response.clone();
-            tokio::spawn(async move {
-                let redis_key = RedisKey::new_raw(&key_str);
-                if let Err(e) = redis.set(&redis_key, &page_clone, Some(TTL_30_SECS)).await {
-                    tracing::warn!(
-                        error = %e,
-                        key   = %key_str,
-                        "Failed to write broadcast list to cache"
-                    );
-                }
-            });
-        }
+        // Store count separately for future optimizations (fire-and-forget)
+        let total = response.total_items;
+        let redis = self.redis.clone();
+        tokio::spawn(async move {
+            let count_key = RedisKey::new_raw(&count_cache_key);
+            if let Err(e) = redis.set(&count_key, &total, Some(120)).await {
+                tracing::warn!(
+                    error = %e,
+                    key = %count_cache_key,
+                    "Failed to cache count"
+                );
+            }
+        });
+
+        let elapsed = start.elapsed();
+        tracing::debug!(
+            page = response.current_page,
+            limit = limit,
+            returned = response.data.len(),
+            total = response.total_items,
+            elapsed_ms = elapsed.as_millis(),
+            "broadcast list query complete"
+        );
 
         Ok(response)
     }
@@ -1319,5 +1306,25 @@ impl BroadcastService {
 
             Ok(users)
         }
+    }
+
+    /// Actual database fetch (extracted for use in coalesce_cache)
+    async fn get_broadcasts_from_db(
+        &self,
+        params: &BroadcastParams,
+        requester_id: Option<Uuid>,
+    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        let (rows_result, total_result) = tokio::join!(
+            self.repo.find_broadcasts(params, requester_id),
+            self.repo.count_broadcasts(params, requester_id),
+        );
+
+        let rows = rows_result?;
+        let total = total_result?;
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let page = params.page.unwrap_or(1).max(1);
+
+        Ok(PaginationResponse::build(limit, page, total, rows))
     }
 }
