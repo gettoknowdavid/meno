@@ -608,7 +608,6 @@ impl BroadcastService {
         tokio::spawn(async move {
             let count_key = RedisKey::live_count(broadcast_clone.id);
             let new_count = redis.incr(&count_key).await.unwrap_or(1);
-            let _ = redis.set(&count_key, &new_count, None).await;
 
             if let Ok(participant_ids) = repo.get_participant_ids(broadcast_clone.id).await {
                 if !participant_ids.is_empty() {
@@ -677,12 +676,13 @@ impl BroadcastService {
         let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
         let participant = participant_result?.ok_or(BroadcastError::NotParticipant)?;
 
-        if broadcast.status != BroadcastStatus::Active || participant.left_at.is_some() {
+        if broadcast.is_not_active() || participant.left_at.is_some() {
+            let left_at = participant.left_at.unwrap_or_else(OffsetDateTime::now_utc);
             return Ok(LeaveBroadcastResponse {
                 success: true,
                 broadcast_id,
                 user_id,
-                left_at: participant.left_at.unwrap(),
+                left_at,
             });
         }
 
@@ -699,12 +699,9 @@ impl BroadcastService {
 
         tokio::spawn(async move {
             let count_key = RedisKey::live_count(broadcast_id);
-            let remaining_count = redis.decr(&count_key).await.unwrap_or(0).max(0);
-
-            if remaining_count == 0 {
+            let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
+            if remaining == 0 {
                 let _ = redis.del(&count_key).await;
-            } else {
-                let _ = redis.set(&count_key, &remaining_count, None).await;
             }
 
             if let Ok(participant_ids) = repo.get_participant_ids(broadcast_id).await {
@@ -712,8 +709,6 @@ impl BroadcastService {
                 ws.send_to_users(&participant_ids, payload).await;
             }
         });
-
-        tracing::info!("User {} left broadcast {}", user_id, broadcast_id);
 
         tracing::info!(
             broadcast_id = %broadcast_id,
@@ -892,6 +887,22 @@ impl BroadcastService {
                 .livekit
                 .remove_participant(broadcast_id, cohost_id)
                 .await;
+
+            // Decrement live count (cohost was a live participant)
+            let redis = self.redis.clone();
+            let ws = self.ws.clone();
+            let repo = self.repo.clone();
+
+            tokio::spawn(async move {
+                let count_key = RedisKey::live_count(broadcast_id);
+                let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
+
+                // Notify remaining participants of updated count
+                if let Ok(ids) = repo.get_participant_ids(broadcast_id).await {
+                    let payload = WsPayload::number_of_live_participants(broadcast_id, remaining);
+                    ws.send_to_users(&ids, payload).await;
+                }
+            });
         } else {
             // Update LiveKit permissions (revokes publish capability)
             // On Cloud: This automatically invalidates the old token
@@ -994,6 +1005,8 @@ impl BroadcastService {
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
     ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        // Need to prevent caching if broadcast is live, i.e. status == 'active'
+
         let start = std::time::Instant::now();
 
         let cache_key = BroadcastListCacheKey::build(params);

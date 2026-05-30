@@ -204,22 +204,34 @@ impl RedisService {
     pub async fn delete_by_pattern(&self, pattern: &str) -> Result<u64, Error> {
         let mut cursor = "0".to_string();
         let mut deleted = 0u64;
+
         loop {
             let (new_cursor, keys): (String, Vec<Key>) = self
                 .pool
                 .scan_page(cursor.clone(), pattern, Some(200), None)
                 .await?;
+
             if !keys.is_empty() {
+                // `unlink` is async-delete (non-blocking on Redis server side)
                 self.pool.unlink::<(), _>(keys.clone()).await?;
                 deleted += keys.len() as u64;
             }
+            // ↑ The second `deleted += keys.len()` at the bottom is removed
+
             cursor = new_cursor;
-            deleted += keys.len() as u64;
             if cursor == "0" {
                 break;
             }
+
+            // Yield to allow other Tokio tasks to run between scan pages.
+            // Important when the keyspace is large (millions of keys).
             tokio::task::yield_now().await;
         }
+
+        if deleted > 0 {
+            tracing::debug!(deleted, pattern, "cache keys evicted");
+        }
+
         Ok(deleted)
     }
 }
