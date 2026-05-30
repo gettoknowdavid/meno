@@ -18,7 +18,7 @@ pub fn router(state: Arc<MenoState>) -> Router<Arc<MenoState>> {
         .route("/{id}/join", post(h::join_broadcast))
         .route("/{id}/leave", post(h::leave_broadcast))
         .route("/{id}/cohosts", post(h::add_cohost))
-        .route("/{id}/cohosts/{user_id}", delete(h::add_cohost))
+        .route("/{id}/cohosts/{user_id}", delete(h::remove_cohost))
         .route("/{id}/participants", get(h::get_participants))
         .route("/{id}/live-participants", get(h::get_live_participants))
         .route("/{id}/token", post(h::refresh_token))

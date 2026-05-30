@@ -161,6 +161,7 @@ pub struct LeaveBroadcastResponse {
     pub success: bool,
     pub broadcast_id: Uuid,
     pub user_id: Uuid,
+    #[serde(with = "rfc3339")]
     pub left_at: OffsetDateTime,
 }
 
@@ -168,6 +169,7 @@ pub struct LeaveBroadcastResponse {
 pub struct BroadcastRefreshTokenResponse {
     pub broadcast_id: Uuid,
     pub token: String,
+    #[serde(with = "rfc3339")]
     pub expires_at: OffsetDateTime,
 }
 

@@ -542,10 +542,11 @@ impl BroadcastService {
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
         let span = tracing::Span::current();
 
-        let (broadcast_result, user_result, is_cohost_result) = tokio::join!(
+        let (broadcast_result, user_result, is_cohost_result, is_participant_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
             self.repo.find_user_summary(user_id),
             self.repo.is_cohost(broadcast_id, user_id),
+            self.repo.find_active_participant(user_id)
         );
 
         let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
@@ -558,6 +559,14 @@ impl BroadcastService {
 
         if broadcast.creator_id == user_id {
             return Err(BroadcastError::CreatorCannotJoin);
+        }
+
+        if let Some(participant) = is_participant_result? {
+            if participant.broadcast_id == broadcast_id {
+                return Err(BroadcastError::AlreadyParticipant);
+            }
+
+            return Err(BroadcastError::AlreadyAParticipant);
         }
 
         let role = if is_cohost {

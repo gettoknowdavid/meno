@@ -16,6 +16,12 @@ pub enum BroadcastError {
     #[error("You are not a participant in this broadcast")]
     NotParticipant,
 
+    #[error("You are already a participant in this broadcast")]
+    AlreadyParticipant,
+
+    #[error("Already in a broadcast. You must leave current broadcast before joining another")]
+    AlreadyAParticipant,
+
     #[error("A join request is already in progress")]
     JoinInProgress,
 
@@ -112,6 +118,16 @@ impl axum::response::IntoResponse for BroadcastError {
             BroadcastError::NotLive => error_response(
                 StatusCode::BAD_REQUEST,
                 "BROADCAST_NOT_LIVE",
+                &self.to_string(),
+            ),
+            BroadcastError::AlreadyParticipant => error_response(
+                StatusCode::BAD_REQUEST,
+                "ALREADY_PARTICIPANT",
+                &self.to_string(),
+            ),
+            BroadcastError::AlreadyAParticipant => error_response(
+                StatusCode::BAD_REQUEST,
+                "ALREADY_A_PARTICIPANT",
                 &self.to_string(),
             ),
             BroadcastError::AlreadyLive => error_response(
