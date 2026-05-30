@@ -60,11 +60,21 @@ pub async fn ws_upgrade(
 /// - Message draining on reconnect
 /// - Clean disconnect handling
 async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
+    let span = tracing::info_span!(
+        "ws_connection",
+        user_id = %user.id,
+        conn_id = tracing::field::Empty,
+    );
+    let _enter = span.enter();
+
     let (ws_sender, mut ws_receiver) = socket.split();
     let ws_sender = Arc::new(Mutex::new(ws_sender));
 
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
     let conn_id = state.ws.register(user.id, hub_tx);
+
+    span.record("conn_id", conn_id);
+    tracing::info!(user_id = %user.id, conn_id = conn_id, "WebSocket connected");
 
     // Handle host reconnection here
     handle_reconnect(&state, user.id).await;
@@ -139,6 +149,12 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
 
     // Handle disconnection cleanup
     if is_disconnected {
+        tracing::info!(
+            user_id = %user.id,
+            conn_id = conn_id,
+            is_host = is_host,
+            "WebSocket disconnected"
+        );
         handle_disconnect(&state, user.id, is_host).await;
     }
 }
@@ -172,11 +188,16 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
             let presence_key = RedisKey::presence(user_id);
             let _ = state.redis.expire(&presence_key, 120).await;
 
-            tracing::debug!("Heartbeat received and acknowledged for user {}", user_id);
+            tracing::debug!(user_id = %user_id, "heartbeat received");
         }
 
         _ => {
-            tracing::warn!("Client sent unsupported event: {:?}", msg.event);
+            tracing::warn!(
+                user_id  = %user_id,
+                event    = %msg.event,
+                "unsupported WebSocket event from client"
+            );
+
             let _ = state
                 .ws
                 .send_error(

@@ -791,7 +791,7 @@ impl BroadcastRepository {
         reason: &EndReason,
         tx: &mut Transaction<'t, Postgres>,
     ) -> Result<(), BroadcastError> {
-        sqlx::query!(
+        let results = sqlx::query!(
             r#"UPDATE broadcasts
                SET status = 'inactive', end_time   = NOW(), end_reason = $2, updated_at = NOW()
                WHERE id = $1"#,
@@ -801,6 +801,14 @@ impl BroadcastRepository {
         .execute(&mut **tx)
         .await
         .map_err(BroadcastError::Database)?;
+
+        if results.rows_affected() == 0 {
+            tracing::warn!(
+                broadcast_id = %broadcast_id,
+                "set_inactive affected 0 rows — broadcast may not exist or already inactive"
+            );
+        }
+
         Ok(())
     }
 

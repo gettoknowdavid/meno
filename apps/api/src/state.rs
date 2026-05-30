@@ -14,16 +14,11 @@ use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 use crate::shared::services::ws::WsService;
-use axum::http::{HeaderName, Request};
-use tower_http::{
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
-};
-use axum::middleware::from_fn;
-use axum::response::Response;
 use axum::{
     Router,
+    http::{HeaderName, Request},
     http::{StatusCode, header},
+    middleware::from_fn,
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
@@ -32,13 +27,12 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
-use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
-use tower_http::trace::{DefaultOnRequest, HttpMakeClassifier};
 use tower_http::{
     cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
     timeout::TimeoutLayer,
+    trace::TraceLayer,
 };
-use tracing::Span;
 
 #[derive(Clone)]
 pub struct MenoState {

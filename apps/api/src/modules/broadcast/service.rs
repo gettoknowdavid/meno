@@ -262,12 +262,24 @@ impl BroadcastService {
         Ok(())
     }
 
+    #[tracing::instrument(
+        name = "broadcast.start",
+        skip(self, state),
+        fields(
+            broadcast_id = %broadcast_id,
+            creator_id   = %user_id,
+            room_created = tracing::field::Empty,
+            token_minted = tracing::field::Empty,
+        )
+    )]
     pub async fn start(
         &self,
         state: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
+        let span = tracing::Span::current();
+
         // Fetch broadcast and user summary concurrently
         let (broadcast_result, creator_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
@@ -294,7 +306,12 @@ impl BroadcastService {
         );
 
         room_result.map_err(BroadcastError::LiveKit)?;
+        span.record("room_created", true);
+        tracing::debug!(broadcast_id = %broadcast_id, "LiveKit room created");
+
         let broadcast_token = broadcast_token_result.map_err(BroadcastError::LiveKitAccess)?;
+        span.record("token_minted", true);
+        tracing::debug!(broadcast_id = %broadcast_id, "HOST token minted");
 
         let now = OffsetDateTime::now_utc();
         let mut tx = state.db.begin().await?;
@@ -380,18 +397,36 @@ impl BroadcastService {
             .build_response(broadcast, creator, cohosts, ctx)
             .await?;
 
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            creator_id   = %user_id,
+            "broadcast went live"
+        );
+
         Ok(BroadcastSessionResponse {
             broadcast: broadcast_response,
             token: broadcast_token,
         })
     }
 
+    #[tracing::instrument(
+        name = "broadcast.end",
+        skip(self, state),
+        fields(
+            broadcast_id = %broadcast_id,
+            requester_id = %user_id,
+            total_participants = tracing::field::Empty,
+            duration_secs = tracing::field::Empty,
+        )
+    )]
     pub async fn end(
         &self,
         state: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<EndBroadcastResponse, BroadcastError> {
+        let span = tracing::Span::current();
+
         // Find the broadcast using the `broadcast_id`, return the appropriate error if not found
         let broadcast = self.repo.find_by_id_or_error(broadcast_id).await?;
 
@@ -466,6 +501,15 @@ impl BroadcastService {
             false
         };
 
+        span.record("total_participants", participant_ids.len() as i64);
+        span.record("duration_secs", duration_secs);
+        tracing::info!(
+            broadcast_id  = %broadcast_id,
+            duration_secs = duration_secs,
+            participants  = participant_ids.len(),
+            "broadcast ended"
+        );
+
         // Return the ended broadcast response
         Ok(EndBroadcastResponse {
             broadcast_id,
@@ -481,12 +525,23 @@ impl BroadcastService {
         })
     }
 
+    #[tracing::instrument(
+        name = "broadcast.join",
+        skip(self, state),
+        fields(
+            broadcast_id = %broadcast_id,
+            user_id = %user_id,
+            role = tracing::field::Empty,
+        )
+    )]
     pub async fn join(
         &self,
         state: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
+        let span = tracing::Span::current();
+
         let (broadcast_result, user_result, is_cohost_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
             self.repo.find_user_summary(user_id),
@@ -510,6 +565,7 @@ impl BroadcastService {
         } else {
             ParticipantRole::Participant
         };
+        span.record("role", role.clone().to_string().as_str());
 
         let livekit_role = match &role {
             ParticipantRole::Cohost => LivekitRole::Cohost,
@@ -583,7 +639,7 @@ impl BroadcastService {
             .build_ctx(
                 &broadcast,
                 Some(user_id),
-                Some(role),
+                Some(role.clone()),
                 live_count,
                 total_count,
             )
@@ -592,6 +648,13 @@ impl BroadcastService {
         let broadcast_response = self
             .build_response(broadcast, creator, cohosts, ctx)
             .await?;
+
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            user_id      = %user_id,
+            role         = %role,
+            "user joined broadcast"
+        );
 
         Ok(BroadcastSessionResponse {
             broadcast: broadcast_response,
@@ -652,6 +715,12 @@ impl BroadcastService {
 
         tracing::info!("User {} left broadcast {}", user_id, broadcast_id);
 
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            user_id      = %user_id,
+            "user left broadcast"
+        );
+
         Ok(LeaveBroadcastResponse {
             success: true,
             broadcast_id,
@@ -660,6 +729,11 @@ impl BroadcastService {
         })
     }
 
+    #[tracing::instrument(
+        name = "broadcast.add_cohost",
+        skip(self, state),
+        fields(broadcast_id = %broadcast_id, requester = %requester_id, cohost = %cohost_id)
+    )]
     pub async fn add_cohost(
         &self,
         state: &MenoState,
@@ -730,12 +804,27 @@ impl BroadcastService {
             ws.send_to_user(cohost_id, payload).await;
         });
 
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            cohost_id    = %cohost_id,
+            "cohost added"
+        );
+
         Ok(CohostSessionResponse {
             user: cohost,
             token: broadcast_token,
         })
     }
 
+    #[tracing::instrument(
+        name = "broadcast.remove_cohost",
+        skip(self, state),
+        fields(
+            broadcast_id    = %broadcast_id,
+            cohost_id       = %cohost_id,
+            remove_from_room = remove_from_room,
+        )
+    )]
     pub async fn remove_cohost(
         &self,
         state: &MenoState,
@@ -837,6 +926,13 @@ impl BroadcastService {
                 ws.send_to_users(&participant_ids, payload).await;
             }
         });
+
+        tracing::info!(
+            broadcast_id     = %broadcast_id,
+            cohost_id        = %cohost_id,
+            remove_from_room = remove_from_room,
+            "cohost removed"
+        );
 
         Ok(())
     }

@@ -227,13 +227,54 @@ impl axum::response::IntoResponse for BroadcastError {
                 "BROADCAST_SERVICE_UNAVAILABLE",
                 &self.to_string(),
             ),
-            BroadcastError::LiveKitAccess(_)
-            | BroadcastError::LiveKit(_)
-            | BroadcastError::Redis(_)
-            | BroadcastError::Cache(_)
-            | BroadcastError::Database(_)
-            | BroadcastError::Internal(_) => {
-                tracing::error!("{:?}", self);
+            BroadcastError::Database(e) => {
+                tracing::error!(
+                    error.kind = "database",
+                    // Don't log the full SQL error in prod (may contain data)
+                    // Use error chain for correlation
+                    error.message = %e,
+                    "database error in broadcast handler"
+                );
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            BroadcastError::Redis(e) => {
+                tracing::error!(error.kind = "redis", error.message = %e, "redis error in broadcast handler");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            BroadcastError::Cache(e) => {
+                tracing::error!(error.kind = "cache", error.message = %e, "cache error in broadcast handler");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            BroadcastError::LiveKit(e) => {
+                tracing::error!(error.kind = "livekit_service", error.message = %e, "LiveKit service error");
+                error_response(
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "BROADCAST_SERVICE_UNAVAILABLE",
+                    "Media service unavailable",
+                )
+            }
+            BroadcastError::LiveKitAccess(e) => {
+                tracing::error!(error.kind = "livekit_token", error.message = %e, "LiveKit token error");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            BroadcastError::Internal(e) => {
+                tracing::error!(error.kind = "internal", error.message = %e, "unhandled internal error");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",
