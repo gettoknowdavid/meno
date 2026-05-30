@@ -41,35 +41,9 @@ impl LivekitService {
         role: LivekitRole,
     ) -> Result<String, AccessTokenError> {
         let room_name = broadcast_id.to_string();
-
         let identity = user_id.to_string();
 
-        let grant = match role {
-            LivekitRole::Host => VideoGrants {
-                room: room_name.clone(),
-                room_join: true,
-                can_subscribe: true,
-                can_publish: true,
-                room_admin: true,
-                ..Default::default()
-            },
-            LivekitRole::Cohost => VideoGrants {
-                room: room_name.clone(),
-                room_join: true,
-                can_subscribe: true,
-                can_publish: true,
-                room_admin: false,
-                ..Default::default()
-            },
-            LivekitRole::Participant => VideoGrants {
-                room: room_name.clone(),
-                room_join: true,
-                can_subscribe: true,
-                can_publish: false,
-                room_admin: false,
-                ..Default::default()
-            },
-        };
+        let grant = Self::get_grant(role, room_name.clone());
 
         AccessToken::with_api_key(&self.api_key, &self.api_secret)
             .with_identity(&identity)
@@ -109,6 +83,31 @@ impl LivekitService {
             LivekitRole::Participant,
         )
         .await
+    }
+
+    /// Like mint_token but also embeds participant_attributes into the JWT.
+    /// These attributes are visible to LiveKit agents, egress, and other
+    /// participants via the SDK.
+    pub async fn mint_token_with_attributes(
+        &self,
+        user_id: Uuid,
+        user_name: &str,
+        broadcast_id: Uuid,
+        role: LivekitRole,
+        attributes: std::collections::HashMap<String, String>,
+    ) -> Result<String, AccessTokenError> {
+        let room_name = broadcast_id.to_string();
+        let identity = user_id.to_string();
+
+        let grant = Self::get_grant(role, room_name.clone());
+
+        AccessToken::with_api_key(&self.api_key, &self.api_secret)
+            .with_identity(&identity)
+            .with_name(user_name)
+            .with_grants(grant)
+            .with_attributes(attributes)
+            .with_ttl(Duration::from_secs(LIVEKIT_ACCESS_TOKEN_TTL as u64))
+            .to_jwt()
     }
 
     pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
@@ -194,5 +193,34 @@ impl LivekitService {
             .mute_published_track(&room, &identifier, track_sid, muted)
             .await?;
         Ok(())
+    }
+
+    fn get_grant(role: LivekitRole, room_name: String) -> VideoGrants {
+        match role {
+            LivekitRole::Host => VideoGrants {
+                room: room_name,
+                room_join: true,
+                can_subscribe: true,
+                can_publish: true,
+                room_admin: true,
+                ..Default::default()
+            },
+            LivekitRole::Cohost => VideoGrants {
+                room: room_name,
+                room_join: true,
+                can_subscribe: true,
+                can_publish: true,
+                room_admin: false,
+                ..Default::default()
+            },
+            LivekitRole::Participant => VideoGrants {
+                room: room_name,
+                room_join: true,
+                can_subscribe: true,
+                can_publish: false,
+                room_admin: false,
+                ..Default::default()
+            },
+        }
     }
 }
