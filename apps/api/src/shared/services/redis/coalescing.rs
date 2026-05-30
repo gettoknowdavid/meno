@@ -6,27 +6,6 @@ use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{debug, warn};
 
-/// Configuration for cache coalescing
-#[derive(Clone)]
-pub struct CoalescingConfig {
-    /// Lock TTL in seconds (prevents lock from being held forever)
-    pub lock_ttl_secs: u64,
-    /// Maximum number of retry attempts
-    pub max_retries: u32,
-    /// Delay between retry attempts in milliseconds
-    pub retry_delay_ms: u64,
-}
-
-impl Default for CoalescingConfig {
-    fn default() -> Self {
-        Self {
-            lock_ttl_secs: LOCK_TTL_SECS,
-            max_retries: LOCK_MAX_RETRIES,
-            retry_delay_ms: LOCK_RETRY_MS,
-        }
-    }
-}
-
 /// Generic cache coalescing function that prevents thundering herd.
 ///
 /// # How it works:
@@ -48,7 +27,6 @@ impl Default for CoalescingConfig {
 ///     || async {
 ///         fetch_from_database().await
 ///     },
-///     CoalescingConfig::default(),
 /// ).await?;
 /// ```
 pub async fn coalesce_cache<T, E, Fut>(
@@ -56,7 +34,6 @@ pub async fn coalesce_cache<T, E, Fut>(
     cache_key: &str,
     ttl_secs: i64,
     fetcher: impl Fn() -> Fut,
-    config: CoalescingConfig,
 ) -> Result<T, E>
 where
     T: serde::Serialize + serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
@@ -74,7 +51,7 @@ where
     debug!(cache_key = %cache_key, "cache miss, attempting to acquire lock");
 
     // Step 2: Try to acquire lock (set if not exists)
-    let acquired_lock = try_acquire_lock(redis, cache_key, config.lock_ttl_secs).await;
+    let acquired_lock = try_acquire_lock(redis, cache_key, LOCK_TTL_SECS).await;
 
     if acquired_lock {
         // Step 3a: Winner - fetch from source
@@ -107,8 +84,8 @@ where
         // Step 3b: Loser - wait for winner to populate cache
         debug!(cache_key = %cache_key, "lock not acquired, waiting for cache to be populated");
 
-        for attempt in 1..=config.max_retries {
-            sleep(Duration::from_millis(config.retry_delay_ms)).await;
+        for attempt in 1..=LOCK_MAX_RETRIES {
+            sleep(Duration::from_millis(LOCK_RETRY_MS)).await;
 
             if let Ok(Some(cached)) = redis.get::<T>(&key).await {
                 debug!(
@@ -122,7 +99,7 @@ where
             debug!(
                 cache_key = %cache_key,
                 attempt = attempt,
-                max_retries = config.max_retries,
+                max_retries = LOCK_MAX_RETRIES,
                 "cache not yet populated, waiting..."
             );
         }

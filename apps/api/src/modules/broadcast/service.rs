@@ -18,7 +18,7 @@ use crate::shared::pagination::PaginationResponse;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
-use crate::shared::services::redis::coalescing::{CoalescingConfig, coalesce_cache};
+use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
@@ -118,8 +118,7 @@ impl BroadcastService {
             ..Default::default()
         };
 
-        self.broadcast_to_response(broadcast, creator, cohosts, ctx)
-            .await
+        self.build_response(broadcast, creator, cohosts, ctx).await
     }
 
     pub async fn update(
@@ -185,8 +184,7 @@ impl BroadcastService {
             ..Default::default()
         };
 
-        self.broadcast_to_response(broadcast, creator, cohosts, ctx)
-            .await
+        self.build_response(broadcast, creator, cohosts, ctx).await
     }
 
     pub async fn delete(&self, broadcast_id: Uuid, creator_id: Uuid) -> Result<(), BroadcastError> {
@@ -340,7 +338,7 @@ impl BroadcastService {
             let online_users = ws.get_online_users();
             if !online_users.is_empty() {
                 if let Ok(response) = svc
-                    .broadcast_to_response(
+                    .build_response(
                         broadcast_clone,
                         creator_clone,
                         vec![],
@@ -371,7 +369,7 @@ impl BroadcastService {
             ..Default::default()
         };
         let broadcast_response = self
-            .broadcast_to_response(broadcast, creator, cohosts, ctx)
+            .build_response(broadcast, creator, cohosts, ctx)
             .await?;
 
         Ok(BroadcastSessionResponse {
@@ -576,7 +574,7 @@ impl BroadcastService {
             .await?;
 
         let broadcast_response = self
-            .broadcast_to_response(broadcast, creator, cohosts, ctx)
+            .build_response(broadcast, creator, cohosts, ctx)
             .await?;
 
         Ok(BroadcastSessionResponse {
@@ -828,53 +826,39 @@ impl BroadcastService {
         broadcast_id: Uuid,
     ) -> Result<BroadcastResponse, BroadcastError> {
         let key = RedisKey::broadcast(broadcast_id);
+        let response = coalesce_cache(&self.redis, &key.as_ref(), TTL_60_SECS, || async {
+            let broadcast = self
+                .repo
+                .find_by_id(broadcast_id)
+                .await?
+                .ok_or(BroadcastError::NotFound)?;
 
-        if let Ok(Some(cached_response)) = self.redis.get::<BroadcastResponse>(&key).await {
-            return Ok(cached_response);
-        }
+            let (creator_result, cohosts_result, total_participants_result) = tokio::join!(
+                self.repo.find_user_summary(broadcast.creator_id),
+                self.repo.get_cohosts(broadcast_id),
+                self.repo.get_total_participants(broadcast_id),
+            );
 
-        let broadcast = self
-            .repo
-            .find_by_id(broadcast_id)
-            .await?
-            .ok_or(BroadcastError::NotFound)?;
+            let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
+            let cohosts = cohosts_result?;
+            let total_count = total_participants_result?;
 
-        let (creator_result, cohosts_result, total_participants_result) = tokio::join!(
-            self.repo.find_user_summary(broadcast.creator_id),
-            self.repo.get_cohosts(broadcast_id),
-            self.repo.get_total_participants(broadcast_id),
-        );
+            let live_count = if broadcast.is_active() {
+                let key = RedisKey::live_count(broadcast_id);
+                self.redis.get::<i64>(&key).await?.unwrap_or(1)
+            } else {
+                0
+            };
 
-        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-        let cohosts = cohosts_result?;
-        let total_count = total_participants_result?;
+            let ctx = self
+                .build_ctx(&broadcast, None, None, live_count, total_count)
+                .await?;
 
-        let live_count = if broadcast.is_active() {
-            let key = RedisKey::live_count(broadcast_id);
-            self.redis.get::<i64>(&key).await?.unwrap_or(1)
-        } else {
-            0
-        };
+            self.build_response(broadcast, creator, cohosts, ctx).await
+        })
+        .await?;
 
-        let ctx = self
-            .build_ctx(&broadcast, None, None, live_count, total_count)
-            .await?;
-
-        let broadcast_response = self
-            .broadcast_to_response(broadcast, creator, cohosts, ctx)
-            .await?;
-
-        let key_clone = key.clone();
-        let redis = self.redis.clone();
-        let response_clone = broadcast_response.clone();
-
-        tokio::spawn(async move {
-            let _ = redis
-                .set(&key_clone, &response_clone, Some(TTL_60_SECS))
-                .await;
-        });
-
-        Ok(broadcast_response)
+        Ok(response)
     }
 
     #[tracing::instrument(
@@ -908,13 +892,9 @@ impl BroadcastService {
         let count_cache_key = format!("{}_count", cache_key_str);
 
         // Use coalescing cache to prevent thundering herd
-        let response = coalesce_cache(
-            &self.redis,
-            &count_cache_key,
-            TTL_30_SECS,
-            || async { self.get_broadcasts_from_db(params, requester_id).await },
-            CoalescingConfig::default(),
-        )
+        let response = coalesce_cache(&self.redis, &count_cache_key, TTL_30_SECS, || async {
+            self.get_broadcasts_from_db(params, requester_id).await
+        })
         .await?;
 
         // Start building the response
@@ -1167,7 +1147,7 @@ impl BroadcastService {
     }
 
     // ==================== HELPERS ====================
-    async fn broadcast_to_response(
+    async fn build_response(
         &self,
         broadcast: Broadcast,
         creator: UserSummary,
