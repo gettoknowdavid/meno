@@ -1,13 +1,11 @@
 use crate::config::MenoConfig;
+use crate::jobs::{JobQueue, monitor};
 use crate::modules::auth::jwt::Jwt;
 use crate::modules::auth::services::AuthService;
-use crate::routes::build_meno_routes;
-use std::sync::Arc;
-
 use crate::modules::broadcast::repository::BroadcastRepository;
 use crate::modules::broadcast::service::BroadcastService;
 use crate::modules::profile::service::ProfileService;
-use crate::shared::background_jobs::BackgroundJobs;
+use crate::routes::build_meno_routes;
 use crate::shared::integrations::google::GoogleAuthService;
 use crate::shared::middleware::timing::timing_middleware;
 use crate::shared::services::livekit::LivekitService;
@@ -24,6 +22,7 @@ use axum::{
 use axum_prometheus::PrometheusMetricLayer;
 use livekit_api::services::room::RoomClient;
 use sqlx::PgPool;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
@@ -42,12 +41,12 @@ pub struct MenoState {
     pub jwt: Jwt,
     pub google: GoogleAuthService,
     pub storage: StorageService,
-    pub background_jobs: Arc<BackgroundJobs>,
     pub ws: WsService,
     pub livekit: LivekitService,
     pub auth: AuthService,
     pub profile: ProfileService,
     pub broadcast: BroadcastService,
+    pub jobs: JobQueue,
 }
 
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
@@ -60,11 +59,11 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         config.refresh_token_expiration,
     );
 
-    let cancel_token = CancellationToken::new();
-    let background_jobs = Arc::new(BackgroundJobs::new(db.clone(), redis.clone()));
-
     let ws = WsService::new(redis.clone());
+
     let storage = StorageService::new(&config);
+
+    let jobs = JobQueue::new(&db);
 
     let livekit = LivekitService::new(
         &config,
@@ -75,9 +74,12 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         )),
     );
 
-    let broadcast_repo = BroadcastRepository::new(db.clone());
-    let broadcast =
-        BroadcastService::new(broadcast_repo, livekit.clone(), redis.clone(), ws.clone());
+    let broadcast = BroadcastService::new(
+        BroadcastRepository::new(db.clone()),
+        livekit.clone(),
+        redis.clone(),
+        ws.clone(),
+    );
 
     let state = Arc::new(MenoState {
         auth: AuthService::new(db.clone(), redis.clone()),
@@ -85,14 +87,25 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         broadcast,
         livekit,
         ws,
-        background_jobs: background_jobs.clone(),
         google: GoogleAuthService::new(&config),
         storage,
         jwt,
+        jobs,
         config,
-        db,
+        db: db.clone(),
         redis,
     });
+
+    let monitor_pool = db.clone();
+    let monitor_state = Arc::clone(&state);
+    tokio::spawn(async move {
+        if let Err(e) = monitor::run_monitor(monitor_pool.clone(), monitor_state).await {
+            tracing::error!(error = %e, "Apalis monitor exited with error");
+        }
+    });
+
+    let cleanup_pool = db.clone();
+    tokio::spawn(monitor::schedule_cleanup_job(cleanup_pool));
 
     let status_code = StatusCode::REQUEST_TIMEOUT;
     let timeout = Duration::from_secs(30);
@@ -138,7 +151,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
     //     .layer(cors_layer);
 
-    BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
     Router::new()
