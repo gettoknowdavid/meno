@@ -1,0 +1,22 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                    SELECT 1\n                    FROM broadcasts\n                    WHERE creator_id = $1 AND status = 'active' AND deleted_at IS NULL\n            ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "db5a27657d04905ba3375e2f5ca5aca3a6402e3817f509747df034294db9344d"
+}

@@ -1,0 +1,132 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE broadcasts\n               SET status = 'active', broadcast_token = $1, start_time = $2, updated_at = NOW()\n               WHERE id = $3\n               RETURNING *",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "title",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "description",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
+        "name": "image_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 4,
+        "name": "image_id",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 5,
+        "name": "status",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 6,
+        "name": "start_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 7,
+        "name": "end_time",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 8,
+        "name": "time_zone",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 9,
+        "name": "creator_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 10,
+        "name": "created_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 11,
+        "name": "updated_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 12,
+        "name": "deleted_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 13,
+        "name": "broadcast_token",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 14,
+        "name": "recording_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 15,
+        "name": "recording_key",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 16,
+        "name": "recording_url",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 17,
+        "name": "published_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 18,
+        "name": "end_reason",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Text",
+        "Timestamptz",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      true,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false,
+      false,
+      false,
+      true,
+      true,
+      false,
+      true,
+      true,
+      true,
+      false
+    ]
+  },
+  "hash": "a98d0d94bf563239d6dda184a27b4f69c7bc7dbd9161f34ec071b48d4097a850"
+}

@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT * FROM broadcast_participants\n               WHERE participant_id = $1 AND left_at IS NULL\n               LIMIT 1",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "broadcast_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "participant_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 2,
+        "name": "role",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 3,
+        "name": "joined_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 4,
+        "name": "left_at",
+        "type_info": "Timestamptz"
+      },
+      {
+        "ordinal": 5,
+        "name": "last_listen_position_seconds",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "last_listened_at",
+        "type_info": "Timestamptz"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      true,
+      false,
+      true
+    ]
+  },
+  "hash": "697edeae42c84ed01fadf2d24c7562b1a9b22ab2f38738f2dd19703866d996d4"
+}

@@ -15,7 +15,8 @@ use crate::shared::integrations::google::GoogleUserInfo;
 use crate::shared::services::email::EmailService;
 use crate::shared::services::redis::RedisService;
 use crate::state::MenoState;
-use time::{Duration, OffsetDateTime};
+use time::OffsetDateTime;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AuthService {
@@ -129,11 +130,17 @@ impl AuthService {
         app: &MenoState,
         req: &LoginRequest,
     ) -> Result<AuthResponse, AuthError> {
+        // Adds tracing spans for security auditing.
+        let span = tracing::info_span!("auth.login", email = %req.email);
+        let _guard = span.enter();
+
         let identity = self
             .repo
             .find_identity(&AuthProvider::Email, &req.email)
             .await?
             .ok_or(AuthError::InvalidCredentials)?;
+
+        self.repo.check_login_rate_limit(&req.email).await?;
 
         let password_hash = identity
             .password_hash
@@ -141,6 +148,7 @@ impl AuthService {
             .ok_or(AuthError::InvalidCredentials)?;
 
         if !verify_password(&req.password, password_hash) {
+            tracing::warn!(email = %req.email, "login.invalid_credentials");
             return Err(AuthError::InvalidCredentials);
         }
 
@@ -149,6 +157,9 @@ impl AuthService {
             .find_by_id(identity.user_id)
             .await?
             .ok_or(AuthError::UserNotFound)?;
+
+        let _ = self.repo.clear_login_rate_limit(&req.email).await;
+        tracing::info!(user_id = %user.id, "login.success");
 
         self.issue_tokens(app, &user).await
     }
@@ -171,7 +182,11 @@ impl AuthService {
         Ok(())
     }
 
-    pub async fn reset_password(&self, req: &ResetPasswordRequest) -> Result<(), AuthError> {
+    pub async fn reset_password(
+        &self,
+        app: &MenoState,
+        req: &ResetPasswordRequest,
+    ) -> Result<(), AuthError> {
         let user = match self.repo.find_by_email(&req.email).await? {
             Some(value) => value,
             None => return Ok(()),
@@ -187,6 +202,9 @@ impl AuthService {
         self.repo.update_password(user.id, pwd_hash).await?;
         self.repo.revoke_otp(&user.email, ResetPassword).await?;
         self.repo.revoke_all_refresh_tokens(user.id).await?;
+        self.repo
+            .block_all_user_access_tokens(user.id, app.config.access_token_expiration)
+            .await?;
         Ok(())
     }
 
@@ -236,8 +254,14 @@ impl AuthService {
             return Err(AuthError::InvalidToken);
         }
 
+        // Check DB-level expiry for extra security
+        if stored.expires_at < OffsetDateTime::now_utc() {
+            self.repo.revoke_refresh_token(claims.jti).await?;
+            return Err(AuthError::RefreshTokenExpired);
+        }
+
         let providers = app
-            .profile_service
+            .profile
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
@@ -251,22 +275,21 @@ impl AuthService {
             user.role.clone(),
         )?;
 
-        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
-
-        let expires_at =
-            OffsetDateTime::now_utc() + Duration::minutes(app.config.refresh_token_expiration);
+        let (new_refresh_token, new_jti) = app.jwt.sign_refresh(user.id)?;
 
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token, &expires_at)
-            .await?;
-
-        self.repo
-            .rotate_refresh_token(user.id, claims.jti, jti, &refresh_token)
+            .rotate_refresh_token(
+                user.id,
+                claims.jti,
+                new_jti,
+                &new_refresh_token,
+                app.config.refresh_token_expiration,
+            )
             .await?;
 
         Ok(AuthResponse {
             access_token,
-            refresh_token,
+            refresh_token: new_refresh_token,
             user: UserResponse {
                 id: user.id,
                 full_name: user.full_name.clone(),
@@ -321,6 +344,10 @@ impl AuthService {
             .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
 
         self.upsert_google_user(app, &userinfo).await
+    }
+
+    pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
+        self.repo.find_by_id(id).await
     }
 
     // Helper functions
@@ -386,7 +413,7 @@ impl AuthService {
     }
     async fn issue_tokens(&self, app: &MenoState, user: &User) -> Result<AuthResponse, AuthError> {
         let providers = app
-            .profile_service
+            .profile
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
@@ -402,11 +429,13 @@ impl AuthService {
 
         let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
 
-        let expires_at =
-            OffsetDateTime::now_utc() + Duration::minutes(app.config.refresh_token_expiration);
-
         self.repo
-            .store_refresh_token(jti, user.id, &refresh_token, &expires_at)
+            .store_refresh_token(
+                jti,
+                user.id,
+                &refresh_token,
+                app.config.refresh_token_expiration,
+            )
             .await?;
 
         Ok(AuthResponse {

@@ -4,9 +4,10 @@ use std::env::var;
 
 #[derive(Clone)]
 pub struct MenoConfig {
-    // pub livekit_api_key: String,
-    // pub livekit_api_secret: String,
-    //
+    pub livekit_api_key: String,
+    pub livekit_api_secret: String,
+    pub livekit_host: String,
+
     // pub aws_region: String,
     // pub aws_access_key_id: String,
     // pub aws_secret_access_key: String,
@@ -55,8 +56,10 @@ impl MenoConfig {
     pub fn from_env() -> Result<MenoConfig> {
         dotenvy::dotenv().ok();
         Ok(MenoConfig {
-            // livekit_api_key: var("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is missing")?,
-            // livekit_api_secret: var("LIVEKIT_API_SECRET").context("LIVEKIT_API_SECRET is missing")?,
+            livekit_api_key: var("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is missing")?,
+            livekit_api_secret: var("LIVEKIT_API_SECRET")
+                .context("LIVEKIT_API_SECRET is missing")?,
+            livekit_host: var("LIVEKIT_HOST").context("LIVEKIT_HOST is missing")?,
             // aws_region: var("AWS_REGION").context("AWS_REGION is missing")?,
             // aws_access_key_id: var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID is missing")?,
             // aws_secret_access_key: var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY is missing")?,
@@ -102,11 +105,14 @@ impl MenoConfig {
             smtp_password: var("SMTP_PASSWORD").context("SMTP_PASSWORD is missing")?,
             smtp_from: var("SMTP_FROM").context("SMTP_FROM is missing")?,
             storage_endpoint: var("STORAGE_ENDPOINT").context("STORAGE_ENDPOINT is missing")?,
-            storage_access_key: var("STORAGE_ACCESS_KEY").context("STORAGE_ACCESS_KEY is missing")?,
-            storage_secret_key: var("STORAGE_SECRET_KEY").context("STORAGE_SECRET_KEY is missing")?,
+            storage_access_key: var("STORAGE_ACCESS_KEY")
+                .context("STORAGE_ACCESS_KEY is missing")?,
+            storage_secret_key: var("STORAGE_SECRET_KEY")
+                .context("STORAGE_SECRET_KEY is missing")?,
             storage_bucket: var("STORAGE_BUCKET").context("STORAGE_BUCKET is missing")?,
             storage_region: var("STORAGE_REGION").context("STORAGE_REGION is missing")?,
-            storage_public_url: var("STORAGE_PUBLIC_URL").context("STORAGE_PUBLIC_URL is missing")?,
+            storage_public_url: var("STORAGE_PUBLIC_URL")
+                .context("STORAGE_PUBLIC_URL is missing")?,
         })
     }
 }

@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE broadcasts\n               SET status = 'inactive', end_time   = NOW(), end_reason = $2, updated_at = NOW()\n               WHERE id = $1",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "169dada29f7fd3b526d6c8078d3a09ffcb621c79f832694de148dc5ae9384307"
+}
