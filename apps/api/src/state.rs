@@ -14,7 +14,13 @@ use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::storage::StorageService;
 use crate::shared::services::ws::WsService;
+use axum::http::{HeaderName, Request};
+use tower_http::{
+    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
+    trace::{DefaultMakeSpan, DefaultOnResponse, TraceLayer},
+};
 use axum::middleware::from_fn;
+use axum::response::Response;
 use axum::{
     Router,
     http::{StatusCode, header},
@@ -26,11 +32,13 @@ use sqlx::PgPool;
 use std::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tower::ServiceBuilder;
+use tower_http::classify::{ServerErrorsAsFailures, SharedClassifier};
+use tower_http::trace::{DefaultOnRequest, HttpMakeClassifier};
 use tower_http::{
     cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
     timeout::TimeoutLayer,
-    trace::TraceLayer,
 };
+use tracing::Span;
 
 #[derive(Clone)]
 pub struct MenoState {
@@ -107,34 +115,34 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
             "X-User-Id".parse().unwrap(),
         ]));
 
-    // let x_request_id = HeaderName::from_static("x-request-id");
-    //
-    // let middleware_stack = ServiceBuilder::new()
-    //     .layer(SetRequestIdLayer::new(
-    //         x_request_id.clone(),
-    //         MakeRequestUuid,
-    //     ))
-    //     .layer(PropagateRequestIdLayer::new(x_request_id))
-    //     .layer(TraceLayer::new_for_http().make_span_with(|r: &Request<_>| {
-    //         let request_id = r
-    //             .headers()
-    //             .get("x-request-id")
-    //             .and_then(|v| v.to_str().ok())
-    //             .unwrap_or("unknown");
-    //         tracing::info_span!(
-    //             "http_request",
-    //             request_id = %request_id,
-    //             method = %r.method(),
-    //             uri = %r.uri(),
-    //         )
-    //     }))
-    //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
-    //     .layer(cors_layer);
+    let x_request_id = HeaderName::from_static("x-request-id");
 
     let middleware_stack = ServiceBuilder::new()
-        .layer(TraceLayer::new_for_http())
+        .layer(SetRequestIdLayer::new(
+            x_request_id.clone(),
+            MakeRequestUuid,
+        ))
+        .layer(PropagateRequestIdLayer::new(x_request_id))
+        .layer(TraceLayer::new_for_http().make_span_with(|r: &Request<_>| {
+            let request_id = r
+                .headers()
+                .get("x-request-id")
+                .and_then(|v| v.to_str().ok())
+                .unwrap_or("unknown");
+            tracing::info_span!(
+                "http_request",
+                request_id = %request_id,
+                method = %r.method(),
+                uri = %r.uri(),
+            )
+        }))
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
+
+    // let middleware_stack = ServiceBuilder::new()
+    //     .layer(TraceLayer::new_for_http())
+    //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
+    //     .layer(cors_layer);
 
     BackgroundJobs::start(background_jobs.clone(), cancel_token.clone());
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();

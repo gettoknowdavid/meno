@@ -43,6 +43,9 @@ pub async fn auth_middleware(
         return Err(AuthError::EmailNotVerified);
     }
 
+    // Record the authenticated user in the parent HTTP span
+    tracing::Span::current().record("user_id", claims.sub.to_string().as_str());
+
     req.extensions_mut().insert(AuthUser {
         id: claims.sub,
         jti: claims.jti,
