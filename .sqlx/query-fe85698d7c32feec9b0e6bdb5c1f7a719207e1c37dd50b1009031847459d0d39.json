@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE broadcasts SET deleted_at = NOW() WHERE id = $1 AND deleted_at IS NULL",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "fe85698d7c32feec9b0e6bdb5c1f7a719207e1c37dd50b1009031847459d0d39"
+}

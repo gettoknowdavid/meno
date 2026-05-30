@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM broadcast_cohosts WHERE cohost_id = $1 AND broadcast_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0261326b7f50548f3cd45f7eb789254602899e79eea22ac0f21838ebfcf83382"
+}

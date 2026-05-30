@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT EXISTS (\n                    SELECT 1 FROM broadcast_cohosts\n                    WHERE broadcast_id = $1 AND cohost_id = $2\n            ) AS \"exists!\"",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "exists!",
+        "type_info": "Bool"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      null
+    ]
+  },
+  "hash": "0910e91638a28685c76b05da0f8cfe7879b5bb799e5382e299c5944c208585e9"
+}
