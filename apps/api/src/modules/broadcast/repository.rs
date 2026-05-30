@@ -7,6 +7,7 @@ use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
 };
 use sqlx::{Postgres, QueryBuilder, Transaction};
+use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -849,5 +850,26 @@ impl BroadcastRepository {
         .fetch_all(&self.db)
         .await
         .map_err(BroadcastError::Database)
+    }
+
+    /// Fetch all current participant roles for a broadcast in one query.
+    pub async fn get_participant_roles_batch(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<HashMap<Uuid, ParticipantRole>, BroadcastError> {
+        let rows = sqlx::query!(
+            r#"SELECT participant_id, role
+               FROM broadcast_participants
+               WHERE broadcast_id = $1 AND left_at IS NULL"#,
+            broadcast_id
+        )
+        .fetch_all(&self.db)
+        .await
+        .map_err(BroadcastError::Database)?;
+
+        Ok(rows
+            .into_iter()
+            .map(|r| (r.participant_id, ParticipantRole::from(r.role)))
+            .collect())
     }
 }

@@ -963,6 +963,11 @@ impl BroadcastService {
         Ok(response)
     }
 
+    #[tracing::instrument(
+        name = "broadcast_service.get_live_participants",
+        skip(self, params),
+        fields(broadcast_id = %broadcast_id)
+    )]
     pub async fn get_live_participants(
         &self,
         params: &ParticipantParams,
@@ -978,87 +983,89 @@ impl BroadcastService {
             return Err(BroadcastError::NotLive);
         }
 
-        let livekit_participants = self
-            .livekit
-            .list_participants(broadcast_id)
-            .await
-            .map_err(BroadcastError::LiveKit)?;
+        let (lk_result, roles_result) = tokio::join!(
+            self.livekit.list_participants(broadcast_id),
+            self.repo.get_participant_roles_batch(broadcast_id)
+        );
 
-        let page = params.limit.unwrap_or(1).max(1);
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let lk_participants = lk_result.map_err(BroadcastError::LiveKit)?;
+        let role_map = roles_result?;
 
-        if livekit_participants.is_empty() {
-            return Ok(PaginationResponse::empty(limit.clone(), page.clone()));
+        if lk_participants.is_empty() {
+            let limit = params.limit.unwrap_or(20).clamp(1, 50);
+            let page = params.page.unwrap_or(1).max(1);
+            return Ok(PaginationResponse::empty(limit, page));
         }
 
-        let user_ids: Vec<Uuid> = livekit_participants.iter().map(|p| p.id).collect();
-        let user_details = self.repo.find_users_batch(&user_ids).await?;
-        let user_map: HashMap<Uuid, UserSummary> =
-            user_details.into_iter().map(|u| (u.id, u)).collect();
+        let user_ids: Vec<Uuid> = lk_participants.iter().map(|p| p.id).collect();
+        let users = self.repo.find_users_batch(&user_ids).await?;
+        let user_map: HashMap<Uuid, UserSummary> = users.into_iter().map(|u| (u.id, u)).collect();
 
         // Get roles from broadcast_participants table
-        let mut enriched: Vec<ParticipantListItem> = Vec::with_capacity(livekit_participants.len());
-        for lp in livekit_participants {
-            let user = user_map.get(&lp.id);
-            let role = self.get_participant_role(&broadcast, lp.id).await?;
-            enriched.push(ParticipantListItem {
-                id: lp.id,
-                full_name: user
-                    .map(|u| u.full_name.clone())
-                    .unwrap_or_else(|| "Unknown".to_string()),
-                avatar_id: user.and_then(|u| u.avatar_id.clone()),
-                avatar_url: user.and_then(|u| u.avatar_url.clone()),
-                role,
-                joined_at: lp.joined_at,
-            });
-        }
+        let mut enriched: Vec<ParticipantListItem> = lk_participants
+            .into_iter()
+            .map(|lp| {
+                let user = user_map.get(&lp.id);
+
+                // Role from DB map; fall back to None if somehow missing
+                let role = role_map.get(&lp.id).cloned().unwrap_or_else(|| {
+                    if broadcast.creator_id == lp.id {
+                        ParticipantRole::Host
+                    } else {
+                        ParticipantRole::Participant
+                    }
+                });
+
+                ParticipantListItem {
+                    id: lp.id,
+                    full_name: user
+                        .map(|u| u.full_name.clone())
+                        .unwrap_or_else(|| "Unknown".to_string()),
+                    avatar_id: user.and_then(|u| u.avatar_id.clone()),
+                    avatar_url: user.and_then(|u| u.avatar_url.clone()),
+                    role,
+                    joined_at: lp.joined_at,
+                }
+            })
+            .collect();
 
         // Apply search filter (keywords)
-        let mut filtered = enriched;
         if let Some(ref kw) = params.keywords {
             let kw_lower = kw.to_lowercase();
-            filtered.retain(|p| p.full_name.to_lowercase().contains(&kw_lower));
+            enriched.retain(|p| p.full_name.to_lowercase().contains(&kw_lower));
         }
 
-        // Apply role filter
         if let Some(ref role_filter) = params.role {
-            filtered.retain(|p| p.role == *role_filter);
+            enriched.retain(|p| &p.role == role_filter);
         }
 
-        // Sort by role priority (Host → Cohost → Participant)
-        filtered.sort_by(|a, b| {
-            let rank_a = match a.role {
-                ParticipantRole::Host => 0,
-                ParticipantRole::Cohost => 1,
-                ParticipantRole::Participant => 2,
-                ParticipantRole::None => 3,
-            };
-            let rank_b = match b.role {
-                ParticipantRole::Host => 0,
-                ParticipantRole::Cohost => 1,
-                ParticipantRole::Participant => 2,
-                ParticipantRole::None => 3,
-            };
-            rank_a.cmp(&rank_b)
+        // Sort: Host → Cohost → Participant
+        enriched.sort_by_key(|p| match p.role {
+            ParticipantRole::Host => 0u8,
+            ParticipantRole::Cohost => 1,
+            ParticipantRole::Participant => 2,
+            ParticipantRole::None => 3,
         });
 
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let limit = params.limit.unwrap_or(20).clamp(1, 50);
         let page = params.page.unwrap_or(1).max(1);
         let offset = ((page - 1) * limit) as usize;
-        let total = filtered.len() as i64;
+        let total = enriched.len() as i64;
 
-        let paginated_items = filtered
+        let items = enriched
             .into_iter()
             .skip(offset)
             .take(limit as usize)
             .collect();
 
-        Ok(PaginationResponse::build(
-            limit,
-            page,
-            total,
-            paginated_items,
-        ))
+        tracing::debug!(
+            broadcast_id = %broadcast_id,
+            total_live = total,
+            returned = limit,
+            "live participant list resolved"
+        );
+
+        Ok(PaginationResponse::build(limit, page, total, items))
     }
 
     /// Find active broadcast hosted by user
@@ -1227,25 +1234,6 @@ impl BroadcastService {
             time_remaining_seconds: None,
             last_listened_at: None,
         })
-    }
-
-    async fn get_participant_role(
-        &self,
-        broadcast: &Broadcast,
-        participant_id: Uuid,
-    ) -> Result<ParticipantRole, BroadcastError> {
-        if broadcast.creator_id == participant_id {
-            return Ok(ParticipantRole::Host);
-        }
-
-        match self
-            .repo
-            .find_participant(broadcast.id, participant_id)
-            .await?
-        {
-            None => Ok(ParticipantRole::None),
-            Some(p) => Ok(p.role),
-        }
     }
 
     async fn deduplicate_cohosts(
