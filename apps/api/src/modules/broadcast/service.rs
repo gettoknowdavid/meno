@@ -174,6 +174,10 @@ impl BroadcastService {
 
         tx.commit().await?;
 
+        // Cache Invalidation
+        self.invalidate_list_caches();
+        self.invalidate_broadcast_cache(broadcast_id);
+
         let ctx = BroadcastContext {
             participant_id: Some(creator_id),
             participant_role: ParticipantRole::Host,
@@ -318,6 +322,10 @@ impl BroadcastService {
         // Commit everything using a transaction
         tx.commit().await?;
 
+        // Cache Invalidation
+        self.invalidate_list_caches();
+        self.invalidate_broadcast_cache(broadcast_id);
+
         let redis = self.redis.clone();
         let ws = self.ws.clone();
         let broadcast_clone = broadcast.clone();
@@ -421,6 +429,10 @@ impl BroadcastService {
             .await?;
 
         tx.commit().await?;
+
+        // Cache Invalidation
+        self.invalidate_list_caches();
+        self.invalidate_broadcast_cache(broadcast_id);
 
         let livekit = self.livekit.clone();
         let redis = self.redis.clone();
@@ -527,6 +539,10 @@ impl BroadcastService {
             .await?;
         tx.commit().await?;
 
+        // Cache Invalidation
+        self.invalidate_list_caches();
+        self.invalidate_broadcast_cache(broadcast_id);
+
         let repo = self.repo.clone();
         let ws = self.ws.clone();
         let redis = self.redis.clone();
@@ -608,6 +624,10 @@ impl BroadcastService {
         }
 
         self.repo.remove_participant(broadcast_id, user_id).await?;
+
+        // Cache Invalidation
+        self.invalidate_list_caches();
+        self.invalidate_broadcast_cache(broadcast_id);
 
         let ws = self.ws.clone();
         let redis = self.redis.clone();
@@ -932,60 +952,13 @@ impl BroadcastService {
         params: &ParticipantParams,
         broadcast_id: Uuid,
     ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
-        let span = tracing::Span::current();
+        let cache_key =
+            ParticipantListCacheKey::build(broadcast_id, &params).unwrap_or("".to_string());
 
-        let cache_key = ParticipantListCacheKey::build(broadcast_id, &params);
-        if let Some(ref key_str) = cache_key {
-            let key = RedisKey::new_raw(&key_str);
-            match self
-                .redis
-                .get::<PaginationResponse<ParticipantListItem>>(&key)
-                .await
-            {
-                Ok(Some(page)) => {
-                    span.record("cache_hit", true);
-                    tracing::debug!(key = %key_str, "broadcast list cache hit");
-                    return Ok(page);
-                }
-                Ok(None) => {
-                    tracing::debug!(key = %key_str, "participant list cache miss");
-                }
-                Err(e) => {
-                    tracing::warn!(
-                        error = %e,
-                        key   = %key_str,
-                        "Redis get failed for participant list — falling back to DB"
-                    );
-                }
-            }
-        }
-
-        span.record("cache_hit", false);
-
-        let (rows_result, total_result) = tokio::join!(
-            self.repo.find_participants(broadcast_id, params),
-            self.repo.count_participants(broadcast_id, params),
-        );
-
-        let rows = rows_result?;
-        let total = total_result?;
-
-        span.record("db_rows", rows.len() as i64);
-        span.record("total_count", total);
-
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let page = params.page.unwrap_or(1).max(1);
-        let response = PaginationResponse::build(limit, page, total, rows);
-
-        // Cache the result (shorter TTL for participant lists - 15 seconds)
-        if let Some(key_str) = cache_key {
-            let redis = self.redis.clone();
-            let response_clone = response.clone();
-            tokio::spawn(async move {
-                let key = RedisKey::new_raw(&key_str);
-                let _ = redis.set(&key, &response_clone, Some(TTL_30_SECS)).await;
-            });
-        }
+        let response = coalesce_cache(&self.redis, &cache_key, TTL_30_SECS, || async {
+            self.get_participants_from_db(broadcast_id, params).await
+        })
+        .await?;
 
         Ok(response)
     }
@@ -1132,7 +1105,7 @@ impl BroadcastService {
     ///   - `end_broadcast` (an active broadcast disappears)
     ///   - `create` (a new draft / scheduled broadcast appears)
     ///   - `delete` (a broadcast disappears)
-    pub fn invalidate_list_cache(&self) {
+    fn invalidate_list_caches(&self) {
         let redis = self.redis.clone();
         tokio::spawn(async move {
             if let Err(e) = redis.delete_by_pattern("bl:*").await {
@@ -1143,6 +1116,23 @@ impl BroadcastService {
             } else {
                 tracing::debug!("Broadcast list cache invalidated");
             }
+
+            if let Err(e) = redis.delete_by_pattern("pl:*").await {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to invalidate participant list cache"
+                );
+            } else {
+                tracing::debug!("Participant list cache invalidated");
+            }
+        });
+    }
+
+    fn invalidate_broadcast_cache(&self, broadcast_id: Uuid) {
+        let redis = self.redis.clone();
+        tokio::spawn(async move {
+            let key = RedisKey::broadcast(broadcast_id);
+            let _ = redis.del(&key).await;
         });
     }
 
@@ -1297,6 +1287,25 @@ impl BroadcastService {
         let (rows_result, total_result) = tokio::join!(
             self.repo.find_broadcasts(params, requester_id),
             self.repo.count_broadcasts(params, requester_id),
+        );
+
+        let rows = rows_result?;
+        let total = total_result?;
+
+        let limit = params.limit.unwrap_or(20).clamp(1, 100);
+        let page = params.page.unwrap_or(1).max(1);
+
+        Ok(PaginationResponse::build(limit, page, total, rows))
+    }
+
+    async fn get_participants_from_db(
+        &self,
+        broadcast_id: Uuid,
+        params: &ParticipantParams,
+    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
+        let (rows_result, total_result) = tokio::join!(
+            self.repo.find_participants(broadcast_id, params),
+            self.repo.count_participants(broadcast_id, params),
         );
 
         let rows = rows_result?;
