@@ -66,15 +66,8 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
     let conn_id = state.ws.register(user.id, hub_tx);
 
-    let welcome = WsPayload::new(
-        WsEvent::Notification,
-        json!({
-            "title": "Connected",
-            "body": "Welcome to Meno Live Broadcast",
-            "type": "system"
-        }),
-    );
-    let _ = state.ws.send_to_user(user.id, welcome).await;
+    // Handle host reconnection here
+    handle_reconnect(&state, user.id).await;
 
     // Drain any buffered messages from previous disconnects
     let buffered_messages = state.ws.drain_message_buffer(user.id).await;
@@ -198,6 +191,11 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
 }
 
 /// Handle disconnection - may trigger host grace period
+#[tracing::instrument(
+    name = "ws.handle_disconnect",
+    skip(state),
+    fields(user_id = %user_id, is_host = %is_host)
+)]
 async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
     if !is_host {
         // Regular listener disconnect - handled by participant leave HTTP endpoint
@@ -248,12 +246,98 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
                 tracing::info!("Host grace expired for broadcast {}, ending", b_id);
 
                 // End the broadcast via HTTP endpoint (handles all cleanups)
-                let _ = state_clone
-                    .broadcast
-                    .end(&state_clone, b_id, host_id)
-                    .await;
+                let _ = state_clone.broadcast.end(&state_clone, b_id, host_id).await;
             }
         });
+    }
+}
+
+/// Called whenever a user connects (or reconnects) to the WebSocket.
+/// If they are a host with an active grace period, clears it and notifies
+/// all room participants that the host is back.
+///
+/// This is the server-side counterpart to the client's reconnect logic.
+#[tracing::instrument(
+    name = "ws.handle_reconnect",
+    skip(state),
+    fields(user_id = %user_id)
+)]
+pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
+    // Find an active broadcast hosted by this user
+    // If the user is not the host of the broadcast, nothing happens
+    let broadcast = match state.broadcast.find_active_hosted_by(user_id).await {
+        Ok(Some(b)) => b,
+        Ok(None) => return,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                user_id = %user_id,
+                "Failed to check active hosted broadcast on reconnect"
+            );
+            return;
+        }
+    };
+
+    let grace_key = RedisKey::host_grace(broadcast.id);
+
+    // Check if we were in a grace period
+    let was_in_grace = match state.redis.exists(&grace_key).await {
+        Ok(exists) => exists,
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                broadcast_id = %broadcast.id,
+                "Failed to check grace key on host reconnect"
+            );
+            false
+        }
+    };
+
+    if !was_in_grace {
+        // Host connected fresh (first join), not a reconnect
+        return;
+    }
+
+    // Clear the grace key atomically
+    let deleted = match state.redis.del(&grace_key).await {
+        Ok(n) => n,
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                broadcast_id = %broadcast.id,
+                "Failed to clear grace key on host reconnect"
+            );
+            return;
+        }
+    };
+
+    if deleted == 0 {
+        // In the case of a race condition, where another task cleared the key, do nothing
+        tracing::debug!(
+            broadcast_id = %broadcast.id,
+            "Grace key already cleared by another handler"
+        );
+        return;
+    }
+
+    tracing::info!(
+        broadcast_id = %broadcast.id,
+        user_id = %user_id,
+        "Host reconnected within grace period — broadcast continues"
+    );
+
+    // Notify all current participants
+    if let Ok(participant_ids) = state.broadcast.get_participants_ids(broadcast.id).await {
+        if !participant_ids.is_empty() {
+            let payload = WsPayload::host_reconnected(broadcast.id);
+            state.ws.send_to_users(&participant_ids, payload).await;
+
+            tracing::debug!(
+                broadcast_id = %broadcast.id,
+                notified = participant_ids.len(),
+                "Sent hostReconnected to room"
+            );
+        }
     }
 }
 
