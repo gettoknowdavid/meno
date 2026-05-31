@@ -43,5 +43,5 @@ chrono = "0.4.44"
 livekit-protocol = "0.7.7"
 futures-util = "0.3.32"
 apalis = { version = "1.0.0-rc.9", features = ["limit", "prometheus"] }
-apalis-postgres = "1.0.0-rc.8"
+apalis-postgres = { version = "1.0.0-rc.8", features = ["time"] }
 log = "0.4.29"

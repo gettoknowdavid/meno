@@ -1,17 +1,20 @@
-use crate::config::MenoConfig;
-use crate::jobs::{JobQueue, monitor};
-use crate::modules::auth::jwt::Jwt;
-use crate::modules::auth::services::AuthService;
-use crate::modules::broadcast::repository::BroadcastRepository;
-use crate::modules::broadcast::service::BroadcastService;
-use crate::modules::profile::service::ProfileService;
-use crate::routes::build_meno_routes;
-use crate::shared::integrations::google::GoogleAuthService;
-use crate::shared::middleware::timing::timing_middleware;
-use crate::shared::services::livekit::LivekitService;
-use crate::shared::services::redis::RedisService;
-use crate::shared::services::storage::StorageService;
-use crate::shared::services::ws::WsService;
+use crate::{
+    config::MenoConfig,
+    jobs::{JobQueue, monitor},
+    modules::auth::jwt::Jwt,
+    modules::auth::services::AuthService,
+    modules::broadcast::repository::BroadcastRepository,
+    modules::broadcast::service::BroadcastService,
+    modules::profile::service::ProfileService,
+    routes::build_meno_routes,
+    shared::integrations::google::GoogleAuthService,
+    shared::middleware::timing::timing_middleware,
+    shared::services::livekit::LivekitService,
+    shared::services::redis::RedisService,
+    shared::services::storage::StorageService,
+    shared::services::ws::WsService,
+};
+
 use axum::{
     Router,
     http::{HeaderName, Request},
@@ -20,11 +23,13 @@ use axum::{
     routing::get,
 };
 use axum_prometheus::PrometheusMetricLayer;
+use lettre::{
+    AsyncSmtpTransport, Tokio1Executor, transport::smtp::authentication::Credentials,
+    transport::smtp::client::Tls,
+};
 use livekit_api::services::room::RoomClient;
 use sqlx::PgPool;
-use std::sync::Arc;
-use std::time::Duration;
-use tokio_util::sync::CancellationToken;
+use std::{sync::Arc, time::Duration};
 use tower::ServiceBuilder;
 use tower_http::{
     cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
@@ -39,6 +44,7 @@ pub struct MenoState {
     pub db: PgPool,
     pub redis: RedisService,
     pub jwt: Jwt,
+    pub smtp_transport: AsyncSmtpTransport<Tokio1Executor>,
     pub google: GoogleAuthService,
     pub storage: StorageService,
     pub ws: WsService,
@@ -51,6 +57,14 @@ pub struct MenoState {
 
 pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
+
+    let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
+    let smtp_transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+        .unwrap()
+        .port(config.smtp_port)
+        .credentials(creds)
+        .tls(Tls::None)
+        .build();
 
     let jwt = Jwt::new(
         &config.jwt_secret,
@@ -89,6 +103,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         ws,
         google: GoogleAuthService::new(&config),
         storage,
+        smtp_transport,
         jwt,
         jobs,
         config,
@@ -97,9 +112,8 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
     });
 
     let monitor_pool = db.clone();
-    let monitor_state = Arc::clone(&state);
     tokio::spawn(async move {
-        if let Err(e) = monitor::run_monitor(monitor_pool.clone(), monitor_state).await {
+        if let Err(e) = monitor::run_monitor(monitor_pool.clone()).await {
             tracing::error!(error = %e, "Apalis monitor exited with error");
         }
     });

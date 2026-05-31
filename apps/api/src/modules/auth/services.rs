@@ -1,22 +1,21 @@
-use crate::config::MenoConfig;
-use crate::jobs::*;
-use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
-    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
+use crate::jobs::email_job::{SendEmailJob, reset_pwd_email_html, verify_email_html};
+use crate::{
+    modules::auth::dto::{
+        AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
+        GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
+        ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
+    },
+    modules::auth::errors::AuthError,
+    modules::auth::jwt::verify_token_hash,
+    modules::auth::model::OtpType::{ResetPassword, VerifyEmail},
+    modules::auth::model::{AuthProvider, OtpType, User},
+    modules::auth::password::{hash_password, verify_password},
+    modules::auth::repository::AuthRepository,
+    modules::auth::utils::generate_otp,
+    shared::integrations::google::GoogleUserInfo,
+    shared::services::redis::RedisService,
+    state::MenoState,
 };
-use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt::verify_token_hash;
-use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
-use crate::modules::auth::model::{AuthProvider, User};
-use crate::modules::auth::password::{hash_password, verify_password};
-use crate::modules::auth::repository::AuthRepository;
-use crate::modules::auth::utils::generate_otp;
-use crate::shared::integrations::google::GoogleUserInfo;
-use crate::shared::services::email::EmailService;
-use crate::shared::services::redis::RedisService;
-use crate::state::MenoState;
-use log::error;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -56,14 +55,14 @@ impl AuthService {
         let otp = generate_otp();
         self.repo.store_otp(&user.email, &otp, &VerifyEmail).await?;
 
-        app.jobs
-            .push_verify_email(email_jobs::SendVerificationEmailJob {
-                to: req.email.clone(),
-                full_name: user.full_name.clone(),
-                otp: otp.clone(),
-            })
-            .await
-            .unwrap_or_else(|e| tracing::warn!(error:%e, "Failed to queue verification email"));
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &VerifyEmail,
+        )
+        .await;
 
         self.issue_tokens(app, &user).await
     }
@@ -123,12 +122,15 @@ impl AuthService {
 
         self.repo.store_otp(&req.email, &otp, &req.otp_type).await?;
 
-        let html = match &req.otp_type {
-            VerifyEmail => verification_email_html(&user.full_name, &otp),
-            ResetPassword => reset_password_email_html(&user.full_name, &otp),
-        };
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &req.otp_type,
+        )
+        .await;
 
-        self.send_email(&app.config, req.email.clone(), html).await;
         self.repo.set_resend_cooldown(&req.email).await?;
         Ok(())
     }
@@ -188,14 +190,14 @@ impl AuthService {
             .store_otp(&req.email, &otp, &ResetPassword)
             .await?;
 
-        app.jobs
-            .push_reset_email(email_jobs::SendResetPasswordEmailJob {
-                to: req.email.clone(),
-                full_name: user.full_name.clone(),
-                otp: otp.clone(),
-            })
-            .await
-            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue reset email"));
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &ResetPassword,
+        )
+        .await;
 
         Ok(())
     }
@@ -369,6 +371,24 @@ impl AuthService {
     }
 
     // Helper functions
+    async fn push_email(
+        &self,
+        app: &MenoState,
+        to: String,
+        name: String,
+        otp: String,
+        otp_type: &OtpType,
+    ) {
+        let (subject, html) = match otp_type {
+            VerifyEmail => verify_email_html(&name, &otp),
+            ResetPassword => reset_pwd_email_html(&name, &otp),
+        };
+
+        app.jobs
+            .push_email(SendEmailJob { to, subject, html })
+            .await
+            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue email"))
+    }
     async fn spawn_hash_pwd(&self, password: String) -> Result<String, AuthError> {
         tokio::task::spawn_blocking({
             let password = password.clone();

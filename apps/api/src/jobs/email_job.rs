@@ -1,50 +1,74 @@
-use crate::shared::services::email::EmailService;
 use crate::state::MenoState;
 use apalis::prelude::{BoxDynError, Data};
-use serde::{Deserialize, Serialize};
+use lettre::AsyncTransport;
 use std::sync::Arc;
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SendVerificationEmailJob {
-    pub to: String,
-    pub full_name: String,
-    pub otp: String,
+#[derive(Clone)]
+pub struct Email {
+    pub transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
+    pub from: String,
+}
+impl Email {
+    pub fn new(state: &MenoState) -> Self {
+        Self {
+            transport: state.smtp_transport.clone(),
+            from: state.config.smtp_from.clone(),
+        }
+    }
+
+    pub async fn send(&self, to: &str, subject: &str, html: &str) -> anyhow::Result<()> {
+        let email = lettre::Message::builder()
+            .from(self.from.parse()?)
+            .to(to.parse()?)
+            .subject(subject)
+            .header(lettre::message::header::ContentType::TEXT_HTML)
+            .body(html.to_string())?;
+        self.transport.send(email).await?;
+        Ok(())
+    }
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct SendResetPasswordEmailJob {
+#[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
+pub struct SendEmailJob {
     pub to: String,
-    pub full_name: String,
-    pub otp: String,
+    pub subject: String,
+    pub html: String,
 }
 
-pub async fn handle_send_verification_email(
-    job: SendVerificationEmailJob,
-    state: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
-    let email_service = EmailService::new(&state.config);
-    let subject = "Verify your Meno account";
-    let html = verification_email_html(&job.full_name, &job.otp);
-    email_service.send(&job.to, subject, html).await?;
+pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Result<(), BoxDynError> {
+    let email = Email::new(&state);
+    email.send(&job.to, &job.subject, &job.html).await?;
     tracing::info!(to = %job.to, "Verification email sent");
     Ok(())
 }
-
-pub async fn handle_send_reset_password_email(
-    job: SendResetPasswordEmailJob,
-    state: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
-    let email_service = EmailService::new(&state.config);
-    let subject = "Reset your Meno password";
-    let html = reset_password_email_html(&job.full_name, &job.otp);
-    email_service.send(&job.to, subject, html).await?;
-    tracing::info!(to = %job.to, "Password reset email sent");
-    Ok(())
-}
+// pub async fn handle_send_verification_email(
+//     job: SendVerificationEmailJob,
+//     state: Data<Arc<MenoState>>,
+// ) -> Result<(), BoxDynError> {
+//     let email_service = EmailService::new(&state);
+//     let subject = "Verify your Meno account";
+//     let html = verification_email_html(&job.name, &job.otp);
+//     email_service.send(&job.to, subject, html).await?;
+//     tracing::info!(to = %job.to, "Verification email sent");
+//     Ok(())
+// }
+//
+// pub async fn handle_send_reset_password_email(
+//     job: SendResetPasswordEmailJob,
+//     state: Data<Arc<MenoState>>,
+// ) -> Result<(), BoxDynError> {
+//     let email_service = EmailService::new(&state.config);
+//     let subject = "Reset your Meno password";
+//     let html = reset_password_email_html(&job.name, &job.otp);
+//     email_service.send(&job.to, subject, html).await?;
+//     tracing::info!(to = %job.to, "Password reset email sent");
+//     Ok(())
+// }
 
 // HTML
-fn verification_email_html(full_name: &str, otp: &str) -> String {
-    format!(
+/// Returns a Tuple (subject, html)
+pub fn verify_email_html(full_name: &str, otp: &str) -> (String, String) {
+    let html = format!(
         r#"
             <!DOCTYPE html>
             <html>
@@ -62,10 +86,13 @@ fn verification_email_html(full_name: &str, otp: &str) -> String {
             "#,
         full_name = full_name,
         otp = otp
-    )
+    );
+    ("Verify your Meno account".to_string(), html)
 }
-fn reset_password_email_html(full_name: &str, otp: &str) -> String {
-    format!(
+
+/// Returns a Tuple (subject, html)
+pub fn reset_pwd_email_html(full_name: &str, otp: &str) -> (String, String) {
+    let html = format!(
         r#"
         <!DOCTYPE html>
             <html>
@@ -96,5 +123,6 @@ fn reset_password_email_html(full_name: &str, otp: &str) -> String {
             "#,
         full_name = full_name,
         otp = otp
-    )
+    );
+    ("Reset your password".to_string(), html)
 }
