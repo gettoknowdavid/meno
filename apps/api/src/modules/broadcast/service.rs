@@ -757,6 +757,10 @@ impl BroadcastService {
         requester_id: Uuid,
         cohost_id: Uuid,
     ) -> Result<CohostSessionResponse, BroadcastError> {
+        if self.repo.is_cohost(broadcast_id, cohost_id).await? {
+            return Err(BroadcastError::AlreadyCohost);
+        }
+
         let (broadcast_result, cohost_user_result, cohosts_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
             self.repo.find_user_summary(cohost_id),
@@ -1026,7 +1030,7 @@ impl BroadcastService {
         params: &BroadcastParams,
         requester_id: Option<Uuid>,
     ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        // Need to prevent caching if broadcast is live, i.e. status == 'active'
+        // Need to prevent caching if a broadcast is live, i.e., status == 'active'
 
         let start = std::time::Instant::now();
 

@@ -31,14 +31,14 @@ impl RedisKey {
         Self::new(format!("b:{}:grace", broadcast_id))
     }
 
-    /// When grace period started (Unix timestamp)
+    /// When `grace period` started (Unix timestamp)
     /// TTL: Grace period + 10s
     /// Type: i64
     pub fn grace_started(broadcast_id: Uuid) -> Self {
         Self::new(format!("b:{}:grace_start", broadcast_id))
     }
 
-    /// Number of disconnects in current session
+    /// Number of disconnects in a current session
     /// TTL: 1 hour
     /// Type: i64
     pub fn disconnect_count(broadcast_id: Uuid) -> Self {
@@ -106,7 +106,7 @@ impl RedisKey {
 
     /// Reconnect rate limiting
     /// TTL: 60 seconds
-    /// Type: i64 (count in window)
+    /// Type: i64 (count in the current window)
     pub fn reconnect_rate(user_id: Uuid) -> Self {
         Self::new(format!("rate:reconnect:{}", user_id))
     }
@@ -142,7 +142,13 @@ impl RedisKey {
     /// The key under which the mutex lock is stored.
     /// TTL matches the time we expect the DB query to take (1–2 s).
     pub fn lock(cache_key: &str) -> Self {
-        RedisKey::new_raw(&format!("lock:{}", cache_key))
+        Self::new_raw(&format!("lock:{}", cache_key))
+    }
+
+    /// Idempotency key for safe retries from the client.
+    /// TTL: 24 hours — covers any realistic retry window.
+    pub fn idempotency(key: Uuid) -> Self {
+        Self::new(format!("idem:{}", key))
     }
 }
 impl std::fmt::Display for RedisKey {
