@@ -64,3 +64,5 @@ pub const MESSAGE_BUFFER_SIZE: i64 = 50;
 
 /// TTL for message buffer in seconds (5 minutes)
 pub const MESSAGE_BUFFER_TTL_SECS: i64 = 300;
+
+pub const MAX_WS_CONNECTIONS_PER_USER: usize = 5;

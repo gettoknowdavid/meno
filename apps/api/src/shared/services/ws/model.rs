@@ -10,6 +10,7 @@ pub enum WsEvent {
 
     NewBroadcast,
     EndedBroadcast,
+    ScheduledBroadcast,
     BroadcastDeleted,
     BroadcastError,
 
@@ -47,6 +48,7 @@ impl FromStr for WsEvent {
             "heartbeat" => Ok(WsEvent::Heartbeat),
             "newBroadcast" => Ok(WsEvent::NewBroadcast),
             "endedBroadcast" => Ok(WsEvent::EndedBroadcast),
+            "scheduledBroadcast" => Ok(WsEvent::ScheduledBroadcast),
             "broadcastDeleted" => Ok(WsEvent::BroadcastDeleted),
             "broadcastError" => Ok(WsEvent::BroadcastError),
             "hostDisconnected" => Ok(WsEvent::HostDisconnected),
@@ -73,6 +75,7 @@ impl fmt::Display for WsEvent {
             WsEvent::Heartbeat => "heartbeat",
             WsEvent::NewBroadcast => "newBroadcast",
             WsEvent::EndedBroadcast => "endedBroadcast",
+            WsEvent::ScheduledBroadcast => "scheduledBroadcast",
             WsEvent::BroadcastDeleted => "broadcastDeleted",
             WsEvent::BroadcastError => "broadcastError",
             WsEvent::HostDisconnected => "hostDisconnected",

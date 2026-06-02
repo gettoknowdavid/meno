@@ -1,3 +1,4 @@
+use crate::jobs::notification_jobs::BroadcastStartedFanOutJob;
 use crate::modules::broadcast::dto::{
     BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastRefreshTokenResponse,
     BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest,
@@ -342,6 +343,17 @@ impl BroadcastService {
         // Cache Invalidation
         self.invalidate_list_caches();
         self.invalidate_broadcast_cache(broadcast_id);
+
+        state
+            .jobs
+            .push_broadcast_started_fanout(BroadcastStartedFanOutJob {
+                broadcast_id,
+                creator_id: broadcast.creator_id,
+                title: broadcast.title.clone(),
+                image_url: broadcast.image_url.clone(),
+            })
+            .await
+            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue broadcast fanout"));
 
         let redis = self.redis.clone();
         let ws = self.ws.clone();

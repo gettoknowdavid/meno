@@ -1,4 +1,4 @@
-use crate::jobs::email_job::{SendEmailJob, reset_pwd_email_html, verify_email_html};
+use crate::jobs::email_jobs::{SendEmailJob, reset_pwd_email_html, verify_email_html};
 use crate::{
     modules::auth::dto::{
         AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,

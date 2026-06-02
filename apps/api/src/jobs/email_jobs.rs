@@ -41,29 +41,6 @@ pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Resul
     tracing::info!(to = %job.to, "Verification email sent");
     Ok(())
 }
-// pub async fn handle_send_verification_email(
-//     job: SendVerificationEmailJob,
-//     state: Data<Arc<MenoState>>,
-// ) -> Result<(), BoxDynError> {
-//     let email_service = EmailService::new(&state);
-//     let subject = "Verify your Meno account";
-//     let html = verification_email_html(&job.name, &job.otp);
-//     email_service.send(&job.to, subject, html).await?;
-//     tracing::info!(to = %job.to, "Verification email sent");
-//     Ok(())
-// }
-//
-// pub async fn handle_send_reset_password_email(
-//     job: SendResetPasswordEmailJob,
-//     state: Data<Arc<MenoState>>,
-// ) -> Result<(), BoxDynError> {
-//     let email_service = EmailService::new(&state.config);
-//     let subject = "Reset your Meno password";
-//     let html = reset_password_email_html(&job.name, &job.otp);
-//     email_service.send(&job.to, subject, html).await?;
-//     tracing::info!(to = %job.to, "Password reset email sent");
-//     Ok(())
-// }
 
 // HTML
 /// Returns a Tuple (subject, html)

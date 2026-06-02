@@ -1,4 +1,6 @@
-use crate::shared::constants::{MESSAGE_BUFFER_SIZE, MESSAGE_BUFFER_TTL_SECS};
+use crate::shared::constants::{
+    MAX_WS_CONNECTIONS_PER_USER, MESSAGE_BUFFER_SIZE, MESSAGE_BUFFER_TTL_SECS,
+};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{WsErrorCode, WsPayload};
@@ -45,16 +47,21 @@ impl WsService {
 
     /// Register a new connection for a user
     /// Returns the connection ID for later unregistration
-    pub fn register(&self, user_id: Uuid, sender: mpsc::Sender<Arc<WsPayload>>) -> usize {
+    pub fn register(&self, user_id: Uuid, sender: mpsc::Sender<Arc<WsPayload>>) -> Option<usize> {
+        let mut entry = self.clients.entry(user_id).or_insert_with(Vec::new);
+
+        if entry.len() >= MAX_WS_CONNECTIONS_PER_USER {
+            tracing::warn!(
+                user_id = %user_id,
+                connections = entry.len(),
+                "WS connection limit reached, rejecting"
+            );
+            return None;
+        }
+
         let conn_id = self.conn_seq.fetch_add(1, Ordering::Relaxed);
-        let conn_sender = ConnectionSender { conn_id, sender };
-
-        self.clients
-            .entry(user_id)
-            .or_insert_with(Vec::new)
-            .push(conn_sender);
-
-        conn_id
+        entry.push(ConnectionSender { conn_id, sender });
+        Some(conn_id)
     }
 
     /// Unregister a specific connection

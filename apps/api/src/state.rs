@@ -14,7 +14,6 @@ use crate::{
     shared::services::storage::StorageService,
     shared::services::ws::WsService,
 };
-
 use axum::{
     Router,
     http::{HeaderName, Request},
@@ -111,6 +110,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         redis,
     });
 
+    // Start workers in a background task
     let monitor_pool = db.clone();
     tokio::spawn(async move {
         if let Err(e) = monitor::run_monitor(monitor_pool.clone()).await {
@@ -118,6 +118,7 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         }
     });
 
+    // Schedule cleanup job hourly
     let cleanup_pool = db.clone();
     tokio::spawn(monitor::schedule_cleanup_job(cleanup_pool));
 
@@ -159,11 +160,6 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         }))
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
-
-    // let middleware_stack = ServiceBuilder::new()
-    //     .layer(TraceLayer::new_for_http())
-    //     .layer(TimeoutLayer::with_status_code(status_code, timeout))
-    //     .layer(cors_layer);
 
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
 
