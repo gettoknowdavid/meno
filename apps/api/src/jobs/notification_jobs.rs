@@ -36,7 +36,7 @@ pub async fn broadcast_started_fanout(
 ) -> Result<(), BoxDynError> {
     let repo = BroadcastRepository::new(state.db.clone());
     let ids = repo.get_subscriber_ids(job.creator_id).await?;
-    if !ids.is_empty() {
+    if ids.is_empty() {
         return Ok(());
     }
 
