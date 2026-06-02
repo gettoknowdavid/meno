@@ -1,5 +1,7 @@
+use crate::jobs::broadcast_jobs::EndBroadcastJob;
 use crate::modules::auth::model::User;
-use crate::shared::constants::TTL_3600_SECS;
+use crate::modules::broadcast::model::EndReason;
+use crate::shared::constants::{MAX_WS_CONNECTIONS_PER_USER, TTL_3600_SECS};
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{ClientMessage, WsErrorCode, WsPayload, WsQuery};
 use crate::shared::services::ws::model::{HeartbeatConfig, WsEvent};
@@ -49,6 +51,14 @@ pub async fn ws_upgrade(
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Error"))?
         .ok_or(error_response(StatusCode::BAD_REQUEST, "User not found"))?;
 
+    if state.ws.connection_count(user.id) >= MAX_WS_CONNECTIONS_PER_USER {
+        tracing::warn!(user_id = %user.id, "Connection limit reached before upgrade");
+        return Err(error_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            "Too many active connections for this user",
+        ));
+    }
+
     Ok(ws.on_upgrade(move |socket| handle_socket(socket, user, state)))
 }
 
@@ -71,7 +81,13 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     let ws_sender = Arc::new(Mutex::new(ws_sender));
 
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
-    let conn_id = state.ws.register(user.id, hub_tx);
+    let conn_id = match state.ws.register(user.id, hub_tx) {
+        Some(id) => id,
+        None => {
+            tracing::warn!(user_id = %user.id, "Race condition on connection limit");
+            return;
+        }
+    };
 
     span.record("conn_id", conn_id);
     tracing::info!(user_id = %user.id, conn_id = conn_id, "WebSocket connected");
@@ -252,24 +268,15 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
             state.ws.send_to_users(&participant_ids, payload).await;
         }
 
-        // Spawn grace period watcher
-        let state_clone = state.clone();
-        let b_id = broadcast.id;
-        let host_id = user_id;
-
-        tokio::spawn(async move {
-            tokio::time::sleep(time::Duration::from_secs(grace_secs)).await;
-
-            // Check if grace key still exists (host didn't reconnect)
-            let grace_key = RedisKey::host_grace(b_id);
-            if state_clone.redis.exists(&grace_key).await.unwrap_or(false) {
-                let _ = state_clone.redis.del(&grace_key).await;
-                tracing::info!("Host grace expired for broadcast {}, ending", b_id);
-
-                // End the broadcast via HTTP endpoint (handles all cleanups)
-                let _ = state_clone.broadcast.end(&state_clone, b_id, host_id).await;
-            }
-        });
+        state
+            .jobs
+            .push_broadcast_end(EndBroadcastJob {
+                broadcast_id: broadcast.id,
+                host_id: user_id,
+                reason: EndReason::HostDisconnected.to_string(),
+            })
+            .await
+            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue broadcast end job"));
     }
 }
 

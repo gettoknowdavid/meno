@@ -1,20 +1,21 @@
-use crate::config::MenoConfig;
-use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
-    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
+use crate::jobs::email_jobs::{SendEmailJob, reset_pwd_email_html, verify_email_html};
+use crate::{
+    modules::auth::dto::{
+        AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
+        GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
+        ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
+    },
+    modules::auth::errors::AuthError,
+    modules::auth::jwt::verify_token_hash,
+    modules::auth::model::OtpType::{ResetPassword, VerifyEmail},
+    modules::auth::model::{AuthProvider, OtpType, User},
+    modules::auth::password::{hash_password, verify_password},
+    modules::auth::repository::AuthRepository,
+    modules::auth::utils::generate_otp,
+    shared::integrations::google::GoogleUserInfo,
+    shared::services::redis::RedisService,
+    state::MenoState,
 };
-use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt::verify_token_hash;
-use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
-use crate::modules::auth::model::{AuthProvider, User};
-use crate::modules::auth::password::{hash_password, verify_password};
-use crate::modules::auth::repository::AuthRepository;
-use crate::modules::auth::utils::generate_otp;
-use crate::shared::integrations::google::GoogleUserInfo;
-use crate::shared::services::email::EmailService;
-use crate::shared::services::redis::RedisService;
-use crate::state::MenoState;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -54,8 +55,14 @@ impl AuthService {
         let otp = generate_otp();
         self.repo.store_otp(&user.email, &otp, &VerifyEmail).await?;
 
-        let html = verification_email_html(&user.full_name, &otp);
-        self.send_email(&app.config, req.email.clone(), html).await;
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &VerifyEmail,
+        )
+        .await;
 
         self.issue_tokens(app, &user).await
     }
@@ -115,12 +122,15 @@ impl AuthService {
 
         self.repo.store_otp(&req.email, &otp, &req.otp_type).await?;
 
-        let html = match &req.otp_type {
-            VerifyEmail => verification_email_html(&user.full_name, &otp),
-            ResetPassword => reset_password_email_html(&user.full_name, &otp),
-        };
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &req.otp_type,
+        )
+        .await;
 
-        self.send_email(&app.config, req.email.clone(), html).await;
         self.repo.set_resend_cooldown(&req.email).await?;
         Ok(())
     }
@@ -173,12 +183,22 @@ impl AuthService {
             Some(u) => u,
             None => return Ok(()),
         };
+
         let otp = generate_otp();
+
         self.repo
             .store_otp(&req.email, &otp, &ResetPassword)
             .await?;
-        let html = reset_password_email_html(&user.full_name, &otp);
-        self.send_email(&app.config, req.email.clone(), html).await;
+
+        self.push_email(
+            &app,
+            req.email.clone(),
+            user.full_name.clone(),
+            otp.clone(),
+            &ResetPassword,
+        )
+        .await;
+
         Ok(())
     }
 
@@ -351,14 +371,23 @@ impl AuthService {
     }
 
     // Helper functions
-    async fn send_email(&self, config: &MenoConfig, to: String, html: String) -> () {
-        let service = EmailService::new(&config);
-        tokio::spawn(async move {
-            if let Err(e) = service.send(&to, "Verify your Meno account", html).await {
-                tracing::warn!(error = %e, "Failed to send verification email");
-                tracing::info!(email = %to, "Verification email resent");
-            }
-        });
+    async fn push_email(
+        &self,
+        app: &MenoState,
+        to: String,
+        name: String,
+        otp: String,
+        otp_type: &OtpType,
+    ) {
+        let (subject, html) = match otp_type {
+            VerifyEmail => verify_email_html(&name, &otp),
+            ResetPassword => reset_pwd_email_html(&name, &otp),
+        };
+
+        app.jobs
+            .push_email(SendEmailJob { to, subject, html })
+            .await
+            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue email"))
     }
     async fn spawn_hash_pwd(&self, password: String) -> Result<String, AuthError> {
         tokio::task::spawn_blocking({
@@ -455,60 +484,4 @@ impl AuthService {
             },
         })
     }
-}
-
-fn verification_email_html(full_name: &str, otp: &str) -> String {
-    format!(
-        r#"
-            <!DOCTYPE html>
-            <html>
-            <body style="margin:0;padding:0;background:#0f0f1a;font-family:sans-serif;">
-              <div style="max-width:480px;margin:40px auto;background:#1a1a2e;border-radius:16px;padding:40px;text-align:center;">
-                <h1 style="color:#ffffff;font-size:24px;margin-bottom:8px;">Verify your email</h1>
-                <p style="color:#a0a0b8;margin-bottom:32px;">Hi {full_name}, enter this code in the app to verify your account.</p>
-                <div style="background:#2a2a3e;border-radius:12px;padding:24px;margin-bottom:32px;">
-                  <span style="color:#7c3aed;font-size:48px;font-weight:700;letter-spacing:12px;">{otp}</span>
-                </div>
-                <p style="color:#606080;font-size:14px;">This code expires in 15 minutes.<br/>If you didn't create a Meno account, ignore this email.</p>
-              </div>
-            </body>
-            </html>
-            "#,
-        full_name = full_name,
-        otp = otp
-    )
-}
-fn reset_password_email_html(full_name: &str, otp: &str) -> String {
-    format!(
-        r#"
-        <!DOCTYPE html>
-            <html>
-            <body style="margin:0;padding:0;background:#0f0f1a;font-family:sans-serif;">
-              <div style="max-width:480px;margin:40px auto;background:#1a1a2e;border-radius:16px;padding:40px;text-align:center;">
-                <h1 style="color:#ffffff;font-size:24px;margin-bottom:8px;">Reset your password</h1>
-
-                <p style="color:#a0a0b8;margin-bottom:32px;">
-                    Hi {full_name},<br>
-                    You requested to reset your Meno account password.
-                </p>
-
-                <div style="background:#2a2a3e;border-radius:12px;padding:24px;margin-bottom:32px;">
-                  <span style="color:#7c3aed;font-size:48px;font-weight:700;letter-spacing:12px;">{otp}</span>
-                </div>
-
-                <p style="color:#606080;font-size:14px;">
-                    This code expires in 15 minutes.<br>
-                    If you didn't request a password reset, please ignore this email.
-                </p>
-
-                <p style="color:#606080;font-size:13px;margin-top:32px;">
-                    For security reasons, never share this code with anyone.
-                </p>
-              </div>
-            </body>
-            </html>
-            "#,
-        full_name = full_name,
-        otp = otp
-    )
 }
