@@ -306,7 +306,7 @@ impl BroadcastService {
             self.livekit.mint_host_token(&creator, broadcast_id),
         );
 
-        room_result.map_err(BroadcastError::LiveKit)?;
+        room_result?;
         span.record("room_created", true);
         tracing::debug!(broadcast_id = %broadcast_id, "LiveKit room created");
 
@@ -1122,7 +1122,7 @@ impl BroadcastService {
             self.repo.get_participant_roles_batch(broadcast_id)
         );
 
-        let lk_participants = lk_result.map_err(BroadcastError::LiveKit)?;
+        let lk_participants = lk_result?;
         let role_map = roles_result?;
 
         if lk_participants.is_empty() {

@@ -1,4 +1,3 @@
-use crate::modules::broadcast::model::EndReason;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::state::MenoState;
 use apalis::prelude::*;

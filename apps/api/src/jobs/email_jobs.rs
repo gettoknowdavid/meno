@@ -1,32 +1,7 @@
+use crate::shared::email::EmailService;
 use crate::state::MenoState;
 use apalis::prelude::{BoxDynError, Data};
-use lettre::AsyncTransport;
 use std::sync::Arc;
-
-#[derive(Clone)]
-pub struct Email {
-    pub transport: lettre::AsyncSmtpTransport<lettre::Tokio1Executor>,
-    pub from: String,
-}
-impl Email {
-    pub fn new(state: &MenoState) -> Self {
-        Self {
-            transport: state.smtp_transport.clone(),
-            from: state.config.smtp_from.clone(),
-        }
-    }
-
-    pub async fn send(&self, to: &str, subject: &str, html: &str) -> anyhow::Result<()> {
-        let email = lettre::Message::builder()
-            .from(self.from.parse()?)
-            .to(to.parse()?)
-            .subject(subject)
-            .header(lettre::message::header::ContentType::TEXT_HTML)
-            .body(html.to_string())?;
-        self.transport.send(email).await?;
-        Ok(())
-    }
-}
 
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct SendEmailJob {
@@ -36,7 +11,9 @@ pub struct SendEmailJob {
 }
 
 pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Result<(), BoxDynError> {
-    let email = Email::new(&state);
+    let transport = state.smtp_transport.clone();
+    let from = state.config.smtp_from.clone();
+    let email = EmailService::new(transport, from);
     email.send(&job.to, &job.subject, &job.html).await?;
     tracing::info!(to = %job.to, "Verification email sent");
     Ok(())
