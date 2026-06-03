@@ -1,6 +1,8 @@
+pub mod cache;
 pub mod dto;
 pub mod errors;
 pub mod handlers;
 pub mod model;
 pub mod repository;
 pub mod service;
+pub mod storage;

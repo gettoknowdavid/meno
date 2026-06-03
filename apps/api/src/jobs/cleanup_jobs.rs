@@ -13,7 +13,7 @@ pub async fn cleanup_expired_tokens(
     _job: CleanupExpiredTokensJob,
     state: Data<Arc<MenoState>>,
 ) -> Result<(), BoxDynError> {
-    let repo = AuthRepository::new(state.db.clone(), state.redis.clone());
+    let repo = AuthRepository::new(state.db.clone());
     let deleted = repo.cleanup_expired_refresh_tokens().await?;
     if deleted > 0 {
         tracing::info!(deleted, "Cleaned up expired refresh tokens");

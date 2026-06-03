@@ -1,4 +1,5 @@
 use crate::modules::auth::model::AuthProvider;
+use crate::modules::profile::cache::ProfileCache;
 use crate::modules::profile::dto::{
     AvatarUploadUrlResponse, MeResponse, ProfileSearchParam, ProfileSearchResult,
     PublicProfileResponse, UpdateProfileRequest,
@@ -6,6 +7,7 @@ use crate::modules::profile::dto::{
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::GeneralSettings;
 use crate::modules::profile::repository::ProfileRepository;
+use crate::modules::profile::storage::ProfileStorage;
 use crate::shared::pagination::{PaginationParams, PaginationResponse};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
@@ -16,20 +18,20 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct ProfileService {
     pub repo: ProfileRepository,
+    pub cache: ProfileCache,
+    pub storage: ProfileStorage,
 }
 impl ProfileService {
-    pub fn new(database: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
         Self {
-            repo: ProfileRepository {
-                database,
-                redis,
-                storage,
-            },
+            repo: ProfileRepository::new(db),
+            cache: ProfileCache::new(redis),
+            storage: ProfileStorage::new(storage),
         }
     }
 
     pub async fn get_me(&self, user_id: Uuid) -> Result<MeResponse, ProfileError> {
-        if let Some(cached) = self.repo.get_cached_me(user_id).await? {
+        if let Some(cached) = self.cache.get_cached_me(user_id).await? {
             return Ok(cached);
         }
 
@@ -60,7 +62,7 @@ impl ProfileService {
             providers,
         };
 
-        self.repo.cache_me(response.clone()).await?;
+        self.cache.cache_me(response.clone()).await?;
         Ok(response)
     }
 
@@ -68,13 +70,13 @@ impl ProfileService {
         &self,
         user_id: Uuid,
     ) -> Result<Vec<AuthProvider>, ProfileError> {
-        if let Some(cached_providers) = self.repo.get_cached_providers(user_id).await? {
+        if let Some(cached_providers) = self.cache.get_cached_providers(user_id).await? {
             return Ok(cached_providers);
         }
 
         let providers = self.repo.find_providers(user_id).await?;
 
-        self.repo
+        self.cache
             .cache_providers(user_id, providers.clone())
             .await?;
 
@@ -90,7 +92,7 @@ impl ProfileService {
             return self.get_me(user_id).await;
         }
 
-        let _ = self.repo.invalidate_cached_profile(user_id).await?;
+        let _ = self.cache.invalidate_cached_profile(user_id).await?;
 
         let (new_avatar_key, new_avatar_url) = if let Some(ref avatar_key) = req.avatar_key {
             self.update_avatar_url(user_id, avatar_key).await?
@@ -145,7 +147,7 @@ impl ProfileService {
         auth_user_id: Uuid,
         user_id: Uuid,
     ) -> Result<PublicProfileResponse, ProfileError> {
-        if let Some(cached) = self.repo.get_cached_profile(user_id).await? {
+        if let Some(cached) = self.cache.get_cached_profile(user_id).await? {
             return Ok(cached);
         };
 
@@ -169,7 +171,7 @@ impl ProfileService {
             created_at: user.created_at,
         };
 
-        let _ = self.repo.cache_profile(response.clone()).await?;
+        let _ = self.cache.cache_profile(response.clone()).await?;
 
         Ok(response)
     }
@@ -185,7 +187,7 @@ impl ProfileService {
 
         let cache_key = RedisKey::search_results(&q, page, limit);
 
-        if let Some(cached_results) = self.repo.get_cached_search_results(&cache_key).await? {
+        if let Some(cached_results) = self.cache.get_cached_search_results(&cache_key).await? {
             return self.build_pagination(&q, limit, page, cached_results).await;
         }
 
@@ -196,7 +198,7 @@ impl ProfileService {
             .search_profiles(&q, limit, pagination.offset(), current_user_id)
             .await?;
 
-        self.repo
+        self.cache
             .cache_search_results(&cache_key, results.clone())
             .await?;
 
@@ -228,13 +230,29 @@ impl ProfileService {
         user_id: Uuid,
         new_avatar_key: &str,
     ) -> Result<(Option<String>, Option<String>), ProfileError> {
-        if !self.repo.object_exists(&new_avatar_key).await? {
+        if !self.storage.object_exists(&new_avatar_key).await? {
             return Err(ProfileError::AvatarNotUploaded);
         }
 
-        self.repo.delete_avatar(user_id).await?;
+        self.delete_avatar(user_id).await?;
 
-        let public_url = self.repo.get_avatar_url(&new_avatar_key);
+        let public_url = self.storage.get_avatar_url(&new_avatar_key);
         Ok((Some(new_avatar_key.to_string()), Some(public_url)))
+    }
+
+    async fn delete_avatar(&self, user_id: Uuid) -> Result<(), ProfileError> {
+        match self.repo.find_avatar_key(user_id).await? {
+            None => Ok(()),
+            Some(old_key) => {
+                let storage = self.storage.clone();
+                let old_key = old_key.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = storage.delete_avatar(&old_key).await {
+                        tracing::warn!(error = %e, key = %old_key, "Failed to delete old avatar");
+                    }
+                });
+                Ok(())
+            }
+        }
     }
 }

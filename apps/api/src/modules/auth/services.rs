@@ -1,4 +1,5 @@
 use crate::jobs::email_jobs::{SendEmailJob, reset_pwd_email_html, verify_email_html};
+use crate::modules::auth::cache::AuthCache;
 use crate::{
     modules::auth::dto::{
         AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
@@ -22,14 +23,15 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct AuthService {
     repo: AuthRepository,
+    cache: AuthCache,
 }
 impl AuthService {
-    pub fn new(database: sqlx::PgPool, redis: RedisService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: RedisService) -> Self {
         Self {
-            repo: AuthRepository::new(database, redis),
+            repo: AuthRepository::new(db),
+            cache: AuthCache::new(redis),
         }
     }
-
     pub async fn register(
         &self,
         app: &MenoState,
@@ -53,7 +55,9 @@ impl AuthService {
             .await?;
 
         let otp = generate_otp();
-        self.repo.store_otp(&user.email, &otp, &VerifyEmail).await?;
+        self.cache
+            .store_otp(&user.email, &otp, &VerifyEmail)
+            .await?;
 
         self.push_email(
             &app,
@@ -83,7 +87,7 @@ impl AuthService {
         }
 
         if !self
-            .repo
+            .cache
             .verify_otp(&req.email, &req.code, &VerifyEmail)
             .await?
         {
@@ -110,17 +114,19 @@ impl AuthService {
             _ => {}
         };
 
-        if !self.repo.can_resend_otp(&req.email).await? {
+        if !self.cache.can_resend_otp(&req.email).await? {
             return Err(AuthError::TooManyRequests);
         }
 
-        self.repo
+        self.cache
             .revoke_otp(&req.email, req.otp_type.clone())
             .await?;
 
         let otp = generate_otp();
 
-        self.repo.store_otp(&req.email, &otp, &req.otp_type).await?;
+        self.cache
+            .store_otp(&req.email, &otp, &req.otp_type)
+            .await?;
 
         self.push_email(
             &app,
@@ -131,7 +137,7 @@ impl AuthService {
         )
         .await;
 
-        self.repo.set_resend_cooldown(&req.email).await?;
+        self.cache.set_resend_cooldown(&req.email).await?;
         Ok(())
     }
 
@@ -150,7 +156,7 @@ impl AuthService {
             .await?
             .ok_or(AuthError::InvalidCredentials)?;
 
-        self.repo.check_login_rate_limit(&req.email).await?;
+        self.cache.check_login_rate_limit(&req.email).await?;
 
         let password_hash = identity
             .password_hash
@@ -168,7 +174,7 @@ impl AuthService {
             .await?
             .ok_or(AuthError::UserNotFound)?;
 
-        let _ = self.repo.clear_login_rate_limit(&req.email).await;
+        let _ = self.cache.clear_login_rate_limit(&req.email).await;
         tracing::info!(user_id = %user.id, "login.success");
 
         self.issue_tokens(app, &user).await
@@ -186,7 +192,7 @@ impl AuthService {
 
         let otp = generate_otp();
 
-        self.repo
+        self.cache
             .store_otp(&req.email, &otp, &ResetPassword)
             .await?;
 
@@ -212,7 +218,7 @@ impl AuthService {
             None => return Ok(()),
         };
         if !self
-            .repo
+            .cache
             .verify_otp(&user.email, &req.code, &ResetPassword)
             .await?
         {
@@ -220,9 +226,9 @@ impl AuthService {
         }
         let pwd_hash = self.spawn_hash_pwd(req.new_password.clone()).await?;
         self.repo.update_password(user.id, pwd_hash).await?;
-        self.repo.revoke_otp(&user.email, ResetPassword).await?;
+        self.cache.revoke_otp(&user.email, ResetPassword).await?;
         self.repo.revoke_all_refresh_tokens(user.id).await?;
-        self.repo
+        self.cache
             .block_all_user_access_tokens(user.id, app.config.access_token_expiration)
             .await?;
         Ok(())
@@ -237,7 +243,7 @@ impl AuthService {
                 let now = OffsetDateTime::now_utc().unix_timestamp();
                 let remaining_secs = access_claims.exp.saturating_sub(now);
                 if remaining_secs > 0 {
-                    self.repo
+                    self.cache
                         .block_access_token(access_claims.jti, remaining_secs)
                         .await?;
                 }
@@ -327,7 +333,7 @@ impl AuthService {
 
     pub async fn google_authorize(&self, app: &MenoState) -> Result<GoogleUrlResponse, AuthError> {
         let (url, csrf_token, pkce_code_verifier) = app.google.authorize_url();
-        self.repo
+        self.cache
             .store_oauth_state(csrf_token.secret(), pkce_code_verifier.secret())
             .await?;
         Ok(GoogleUrlResponse {
@@ -340,7 +346,7 @@ impl AuthService {
         app: &MenoState,
         req: &GoogleWebAuthRequest,
     ) -> Result<AuthResponse, AuthError> {
-        let raw_verifier = self.repo.consumes_oauth_state(&req.state).await?;
+        let raw_verifier = self.cache.consumes_oauth_state(&req.state).await?;
         let pkce_code_verifier = oauth2::PkceCodeVerifier::new(raw_verifier);
 
         let userinfo = app
