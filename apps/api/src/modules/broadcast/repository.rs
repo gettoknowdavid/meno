@@ -251,8 +251,7 @@ impl BroadcastRepository {
     /// cause fan-out.
     #[tracing::instrument(
         name = "broadcast_repo.count_broadcasts",
-        skip(params, requester_id),
-        fields(status = ?params.status)
+        skip(self, params, requester_id)
     )]
     pub async fn count_broadcasts(
         &self,

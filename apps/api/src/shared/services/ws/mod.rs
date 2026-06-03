@@ -4,9 +4,11 @@ use crate::shared::constants::{
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{WsErrorCode, WsPayload};
+use crate::shared::services::ws::model::WsEvent;
 use dashmap::DashMap;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
@@ -196,5 +198,18 @@ impl WsService {
     /// Get all online user IDs
     pub fn get_online_users(&self) -> Vec<Uuid> {
         self.clients.iter().map(|v| *v.key()).collect()
+    }
+
+    pub async fn close_all_connections(&self) {
+        // Send a close frame to all connected clients before shutting down.
+        // This lets Flutter/Next.js trigger their reconnection logic cleanly.
+        let close_payload = WsPayload::new(
+            WsEvent::BroadcastError,
+            serde_json::json!({ "code": "SERVER_SHUTDOWN", "recoverable": true }),
+        );
+        self.broadcast_all(close_payload).await;
+
+        // Give clients 2 seconds to acknowledge before hard close
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

@@ -150,6 +150,13 @@ impl WsPayload {
             serde_json::json!({ "broadcastId": broadcast_id }),
         )
     }
+
+    pub fn home_invalidated() -> Self {
+        Self::new(
+            WsEvent::HomeInvalidated,
+            serde_json::json!({ "timestamp": OffsetDateTime::now_utc() }),
+        )
+    }
 }
 
 /// Client message received from WebSocket

@@ -1,10 +1,10 @@
 use meno_api::{
-    shared::signals::shutdown_signal,
-    shared::services::redis::{RedisConfig, RedisService},
-    database::create_postgres_pool,
     config::MenoConfig,
+    database::create_postgres_pool,
+    shared::services::redis::{RedisConfig, RedisService},
+    shared::signals::shutdown_signal,
     shared::telemetry::init_telemetry,
-    state::build_meno_router
+    state::build_meno_router,
 };
 use tokio::net::TcpListener;
 

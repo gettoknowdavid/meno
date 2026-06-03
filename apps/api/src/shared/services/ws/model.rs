@@ -26,7 +26,7 @@ pub enum WsEvent {
     CohostInvitation,
     CohostAccepted,
     CohostDeclined,
-    /// When a cohost is returned back to being a participant
+    /// When a cohost is returned to being a participant
     CohostDemotion,
 
     /// A new cohost has been added
@@ -39,6 +39,11 @@ pub enum WsEvent {
     RecordingPublished,
 
     Notification,
+
+    /// This event is emitted when a broadcast goes live, ends, or is deleted.
+    /// It is a lightweight way to notify the FE of a change in the broadcast list, so it can
+    /// refetch the `Now Live`, `Recently Live` and `Live For You` sections of the home page.
+    HomeInvalidated,
 }
 impl FromStr for WsEvent {
     type Err = String;
@@ -65,6 +70,7 @@ impl FromStr for WsEvent {
             "recordingReady" => Ok(WsEvent::RecordingReady),
             "recordingPublished" => Ok(WsEvent::RecordingPublished),
             "notification" => Ok(WsEvent::Notification),
+            "homeInvalidated" => Ok(WsEvent::HomeInvalidated),
             _ => Err(format!("Unknown WebSocket event: {}", s)),
         }
     }
@@ -93,6 +99,7 @@ impl fmt::Display for WsEvent {
             WsEvent::RecordingReady => "recordingReady",
             WsEvent::RecordingPublished => "recordingPublished",
             WsEvent::Notification => "notification",
+            WsEvent::HomeInvalidated => "homeInvalidated",
         };
         write!(f, "{}", s)
     }

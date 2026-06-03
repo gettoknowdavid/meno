@@ -19,7 +19,7 @@ pub fn router(state: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoSta
         .route("/{id}", patch(h::update_broadcast))
         .route("/{id}", delete(h::delete_broadcast))
         .route("/{id}/start", put(h::go_live))
-        .route("/{id}/end", delete(h::end_broadcast))
+        .route("/{id}/end", post(h::end_broadcast))
         .route("/{id}/join", post(h::join_broadcast))
         .route("/{id}/leave", post(h::leave_broadcast))
         .route("/{id}/cohosts", post(h::add_cohost))

@@ -1,9 +1,10 @@
 use crate::jobs::notification_jobs::BroadcastStartedFanOutJob;
 use crate::modules::broadcast::dto::{
     BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastRefreshTokenResponse,
-    BroadcastResponse, BroadcastSessionResponse, CohostSessionResponse, CreateBroadcastRequest,
-    EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS, ParticipantListCacheKey,
-    ParticipantListItem, ParticipantParams, UpdateBroadcastRequest, UserSummary,
+    BroadcastResponse, BroadcastSessionResponse, BroadcastSortBy, CohostSessionResponse,
+    CreateBroadcastRequest, EndBroadcastResponse, HomeSectionParams, LeaveBroadcastResponse,
+    MAX_COHOSTS, OrderBy, ParticipantListCacheKey, ParticipantListItem, ParticipantParams,
+    UpdateBroadcastRequest, UserSummary,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -14,7 +15,7 @@ use crate::modules::broadcast::repository::{
     BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
     UpsertParticipantInput,
 };
-use crate::shared::constants::{TTL_30_SECS, TTL_60_SECS};
+use crate::shared::constants::{TTL_15_SECS, TTL_30_SECS, TTL_60_SECS};
 use crate::shared::pagination::PaginationResponse;
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
@@ -394,6 +395,9 @@ impl BroadcastService {
                     ws.send_to_users(&online_users, payload).await;
                 }
             }
+
+            // Notify the FE of changes on the home page
+            ws.broadcast_all(WsPayload::home_invalidated()).await;
         });
 
         // Generate the broadcast response struct
@@ -1081,6 +1085,78 @@ impl BroadcastService {
         Ok(response)
     }
 
+    /// Now live — all active broadcasts, sorted by live participant count desc.
+    /// Cached for 15 seconds: fast-changing but expensive to compute.
+    pub async fn get_now_live(
+        &self,
+        params: &HomeSectionParams,
+    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        let page = params.page.unwrap_or(1);
+        let limit = params.limit.unwrap_or(20);
+        let cache_key = format!("home:now_live:p{}:l{}", page, limit);
+
+        coalesce_cache(&self.redis, &cache_key, TTL_15_SECS, || async {
+            let filter = BroadcastParams {
+                status: Some(BroadcastStatus::Active),
+                sort_by: Some(BroadcastSortBy::StartTime),
+                order_by: Some(OrderBy::Desc),
+                page: params.page,
+                limit: params.limit,
+                ..Default::default()
+            };
+            self.get_broadcasts_from_db(&filter, None).await
+        })
+        .await
+    }
+
+    /// Live for you — active broadcasts from creators the user follows.
+    /// NOT cached (personalized per user).
+    pub async fn get_live_for_you(
+        &self,
+        user_id: Uuid,
+        params: &HomeSectionParams,
+    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        let filter = BroadcastParams {
+            status: Some(BroadcastStatus::Active),
+            only_subscriptions: Some(true),
+            sort_by: Some(BroadcastSortBy::StartTime),
+            order_by: Some(OrderBy::Desc),
+            page: params.page,
+            limit: params.limit,
+            ..Default::default()
+        };
+        self.get_broadcasts_from_db(&filter, Some(user_id)).await
+    }
+
+    /// Recently live — ended in the last 24 hours, sorted by end_time desc.
+    /// Cached for 5 minutes: content changes infrequently.
+    pub async fn get_recently_live(
+        &self,
+        params: &HomeSectionParams,
+    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
+        let page = params.page.unwrap_or(1);
+        let limit = params.limit.unwrap_or(20);
+        let cache_key = format!("home:recently_live:p{}:l{}", page, limit);
+
+        coalesce_cache(&self.redis, &cache_key, 300, || async {
+            let now = OffsetDateTime::now_utc();
+            let yesterday = now - time::Duration::hours(24);
+            let filter = BroadcastParams {
+                status: Some(BroadcastStatus::Inactive),
+                end_time_exists: Some(true),
+                end_time_gte: Some(yesterday),
+                end_time_lte: Some(now),
+                sort_by: Some(BroadcastSortBy::EndTime),
+                order_by: Some(OrderBy::Desc),
+                page: params.page,
+                limit: params.limit,
+                ..Default::default()
+            };
+            self.get_broadcasts_from_db(&filter, None).await
+        })
+        .await
+    }
+
     pub async fn get_participants(
         &self,
         params: &ParticipantParams,
@@ -1319,6 +1395,24 @@ impl BroadcastService {
     fn invalidate_list_caches(&self) {
         let redis = self.redis.clone();
         tokio::spawn(async move {
+            if let Err(e) = redis.delete_by_pattern("home:now_live:*").await {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to invalidate `Now Live` list cache"
+                );
+            } else {
+                tracing::debug!("`Now Live` list cache invalidated");
+            }
+
+            if let Err(e) = redis.delete_by_pattern("home:recently_live:*").await {
+                tracing::warn!(
+                    error = %e,
+                    "Failed to invalidate `Recently Live` list cache"
+                );
+            } else {
+                tracing::debug!("`Recently Live` list cache invalidated");
+            }
+
             if let Err(e) = redis.delete_by_pattern("bl:*").await {
                 tracing::warn!(
                     error = %e,

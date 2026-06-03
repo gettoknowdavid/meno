@@ -19,6 +19,9 @@ pub const MAX_LOGIN_ATTEMPTS: u64 = 10;
 
 // ========== TTL CONSTANTS ==========
 
+/// Expiry time of 15 seconds
+pub const TTL_15_SECS: i64 = 15;
+
 /// Expiry time of 30 seconds
 pub const TTL_30_SECS: i64 = 30;
 
