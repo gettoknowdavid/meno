@@ -1,13 +1,12 @@
+use crate::modules::auth::state::AuthState;
+use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::profile::state::ProfileState;
+use crate::routes::health;
+use crate::shared::services::ws;
 use crate::{
     config::MenoConfig,
     jobs::{JobQueue, monitor},
-    modules::auth::jwt::Jwt,
-    modules::auth::services::AuthService,
-    modules::broadcast::repository::BroadcastRepository,
-    modules::broadcast::service::BroadcastService,
-    modules::profile::service::ProfileService,
     routes::build_meno_routes,
-    shared::integrations::google::GoogleAuthService,
     shared::middleware::timing::timing_middleware,
     shared::services::livekit::LivekitService,
     shared::services::redis::RedisService,
@@ -39,93 +38,73 @@ use tower_http::{
 
 #[derive(Clone)]
 pub struct MenoState {
-    pub config: MenoConfig,
+    pub config: Arc<MenoConfig>,
     pub db: PgPool,
     pub redis: RedisService,
-    pub jwt: Jwt,
-    pub smtp_transport: AsyncSmtpTransport<Tokio1Executor>,
-    pub google: GoogleAuthService,
-    pub storage: StorageService,
-    pub ws: WsService,
+    pub auth: AuthState,
+    pub profile: ProfileState,
+    pub broadcast: BroadcastState,
     pub livekit: LivekitService,
-    pub auth: AuthService,
-    pub profile: ProfileService,
-    pub broadcast: BroadcastService,
+    pub ws: WsService,
     pub jobs: JobQueue,
+    pub smtp: AsyncSmtpTransport<Tokio1Executor>,
 }
 
-pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
-    let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
-
-    let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
-    let smtp_transport = AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-        .unwrap()
-        .port(config.smtp_port)
-        .credentials(creds)
-        .tls(Tls::None)
-        .build();
-
-    let jwt = Jwt::new(
-        &config.jwt_secret,
-        &config.jwt_refresh_secret,
-        config.access_token_expiration,
-        config.refresh_token_expiration,
-    );
+pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
+    let config = Arc::new(config);
 
     let ws = WsService::new(redis.clone());
-
     let storage = StorageService::new(&config);
-
     let jobs = JobQueue::new(&db);
+    let livekit = build_livekit_service(&config);
+    let smtp = build_smtp_transport(&config);
 
-    let livekit = LivekitService::new(
-        &config,
+    let auth = AuthState::new(db.clone(), redis.clone(), &config);
+    let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
+    let broadcast = BroadcastState::new(db.clone(), redis.clone(), livekit.clone(), ws.clone());
+
+    let state = Arc::new(MenoState {
+        config,
+        db: db.clone(),
+        redis,
+        auth,
+        profile,
+        broadcast,
+        livekit,
+        ws,
+        jobs,
+        smtp,
+    });
+
+    start_background_workers(&db);
+
+    build_middleware_stack(state)
+}
+
+fn build_livekit_service(config: &MenoConfig) -> LivekitService {
+    LivekitService::new(
+        config,
         Arc::new(RoomClient::with_api_key(
             &config.livekit_host,
             &config.livekit_api_key,
             &config.livekit_api_secret,
         )),
-    );
+    )
+}
 
-    let broadcast = BroadcastService::new(
-        BroadcastRepository::new(db.clone()),
-        livekit.clone(),
-        redis.clone(),
-        ws.clone(),
-    );
+fn build_smtp_transport(config: &MenoConfig) -> AsyncSmtpTransport<Tokio1Executor> {
+    let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
+    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
+        .unwrap()
+        .port(config.smtp_port)
+        .credentials(creds)
+        .tls(Tls::None)
+        .build()
+}
 
-    let state = Arc::new(MenoState {
-        auth: AuthService::new(db.clone(), redis.clone()),
-        profile: ProfileService::new(db.clone(), redis.clone(), storage.clone()),
-        broadcast,
-        livekit,
-        ws,
-        google: GoogleAuthService::new(&config),
-        storage,
-        smtp_transport,
-        jwt,
-        jobs,
-        config,
-        db: db.clone(),
-        redis,
-    });
-
-    // Start workers in a background task
-    let monitor_pool = db.clone();
-    tokio::spawn(async move {
-        if let Err(e) = monitor::run_monitor(monitor_pool.clone()).await {
-            tracing::error!(error = %e, "Apalis monitor exited with error");
-        }
-    });
-
-    // Schedule cleanup job hourly
-    let cleanup_pool = db.clone();
-    tokio::spawn(monitor::schedule_cleanup_job(cleanup_pool));
-
-    let status_code = StatusCode::REQUEST_TIMEOUT;
-    let timeout = Duration::from_secs(30);
-
-    let cors_layer = CorsLayer::new()
+fn build_cors(config: &MenoConfig) -> CorsLayer {
+    let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
+    CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))
         .allow_methods(Any)
         .allow_headers(AllowHeaders::list([
@@ -135,16 +114,20 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
             header::ORIGIN,
             "X-Requested-With".parse().unwrap(),
             "X-User-Id".parse().unwrap(),
-        ]));
+        ]))
+}
 
-    let x_request_id = HeaderName::from_static("x-request-id");
+fn build_middleware_stack(state: Arc<MenoState>) -> Router {
+    let cors_layer = build_cors(&state.config);
+    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
+
+    let x_req_id = HeaderName::from_static("x-request-id");
+    let status_code = StatusCode::REQUEST_TIMEOUT;
+    let timeout = Duration::from_secs(30);
 
     let middleware_stack = ServiceBuilder::new()
-        .layer(SetRequestIdLayer::new(
-            x_request_id.clone(),
-            MakeRequestUuid,
-        ))
-        .layer(PropagateRequestIdLayer::new(x_request_id))
+        .layer(SetRequestIdLayer::new(x_req_id.clone(), MakeRequestUuid))
+        .layer(PropagateRequestIdLayer::new(x_req_id))
         .layer(TraceLayer::new_for_http().make_span_with(|r: &Request<_>| {
             let request_id = r
                 .headers()
@@ -161,14 +144,28 @@ pub async fn build_app_router(config: MenoConfig, db: PgPool, redis: RedisServic
         .layer(TimeoutLayer::with_status_code(status_code, timeout))
         .layer(cors_layer);
 
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-
     Router::new()
-        .route("/metrics", get(|| async move { metric_handle.render() }))
+        .route(
+            "/metrics",
+            get(move || async move { metric_handle.render() }),
+        )
+        .route("/health", get(health::health_handler))
+        .route("/ws", get(ws::handlers::ws_upgrade))
         .layer(prometheus_layer)
         .merge(build_meno_routes(state.clone()))
         .layer(from_fn(timing_middleware))
-        .layer(TraceLayer::new_for_http())
         .layer(middleware_stack)
         .with_state(state)
+}
+
+fn start_background_workers(db: &PgPool) {
+    let monitor_pool = db.clone();
+    tokio::spawn(async move {
+        if let Err(e) = monitor::run_monitor(monitor_pool).await {
+            tracing::error!(error = %e, "Apalis monitor exited");
+        }
+    });
+
+    let cleanup_pool = db.clone();
+    tokio::spawn(monitor::schedule_cleanup_job(cleanup_pool));
 }

@@ -35,6 +35,7 @@ pub async fn end_broadcast(
 
     state
         .broadcast
+        .service
         .end(&state, job.broadcast_id, job.host_id)
         .await?;
 

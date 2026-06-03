@@ -12,7 +12,6 @@ use crate::shared::pagination::{PaginationParams, PaginationResponse};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
-use crate::state::MenoState;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -116,7 +115,6 @@ impl ProfileService {
 
     pub async fn get_avatar_upload_url(
         &self,
-        app: &MenoState,
         user_id: Uuid,
         content_type: &str,
     ) -> Result<AvatarUploadUrlResponse, ProfileError> {
@@ -129,12 +127,7 @@ impl ProfileService {
 
         let file_id = Uuid::new_v4();
         let avatar_id = format!("avatars/{}/{}.{}", user_id, file_id, extension);
-
-        let avatar_url = app
-            .storage
-            .presigned_upload_url(&avatar_id)
-            .await
-            .map_err(|e| ProfileError::StorageError(e.to_string()))?;
+        let avatar_url = self.storage.get_avatar_upload_url(&avatar_id).await?;
 
         Ok(AvatarUploadUrlResponse {
             avatar_url,

@@ -235,11 +235,11 @@ impl AuthService {
     }
 
     pub async fn logout(&self, app: &MenoState, req: &LogoutRequest) -> Result<(), AuthError> {
-        let claims = &app.jwt.decode_refresh(&req.refresh_token)?;
+        let claims = &app.auth.jwt.decode_refresh(&req.refresh_token)?;
         self.repo.revoke_refresh_token(claims.jti).await?;
 
         if let Some(ref access_token) = req.access_token {
-            if let Ok(access_claims) = app.jwt.decode_access(access_token) {
+            if let Ok(access_claims) = app.auth.jwt.decode_access(access_token) {
                 let now = OffsetDateTime::now_utc().unix_timestamp();
                 let remaining_secs = access_claims.exp.saturating_sub(now);
                 if remaining_secs > 0 {
@@ -263,7 +263,7 @@ impl AuthService {
         app: &MenoState,
         req: &RefreshTokenRequest,
     ) -> Result<AuthResponse, AuthError> {
-        let claims = app.jwt.decode_refresh(&req.refresh_token)?;
+        let claims = app.auth.jwt.decode_refresh(&req.refresh_token)?;
 
         let user = match self.repo.find_by_id(claims.sub).await? {
             None => return Err(AuthError::UserNotFound),
@@ -288,11 +288,12 @@ impl AuthService {
 
         let providers = app
             .profile
+            .service
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
 
-        let access_token = app.jwt.sign_access(
+        let access_token = app.auth.jwt.sign_access(
             user.id,
             &user.email,
             &user.full_name,
@@ -301,7 +302,7 @@ impl AuthService {
             user.role.clone(),
         )?;
 
-        let (new_refresh_token, new_jti) = app.jwt.sign_refresh(user.id)?;
+        let (new_refresh_token, new_jti) = app.auth.jwt.sign_refresh(user.id)?;
 
         self.repo
             .rotate_refresh_token(
@@ -332,7 +333,7 @@ impl AuthService {
     }
 
     pub async fn google_authorize(&self, app: &MenoState) -> Result<GoogleUrlResponse, AuthError> {
-        let (url, csrf_token, pkce_code_verifier) = app.google.authorize_url();
+        let (url, csrf_token, pkce_code_verifier) = app.auth.google.authorize_url();
         self.cache
             .store_oauth_state(csrf_token.secret(), pkce_code_verifier.secret())
             .await?;
@@ -350,6 +351,7 @@ impl AuthService {
         let pkce_code_verifier = oauth2::PkceCodeVerifier::new(raw_verifier);
 
         let userinfo = app
+            .auth
             .google
             .exchange_code(req.code.clone(), pkce_code_verifier)
             .await
@@ -364,6 +366,7 @@ impl AuthService {
         req: &GoogleMobileAuthRequest,
     ) -> Result<AuthResponse, AuthError> {
         let userinfo = app
+            .auth
             .google
             .verify_id_token(&req.id_token)
             .await
@@ -449,11 +452,12 @@ impl AuthService {
     async fn issue_tokens(&self, app: &MenoState, user: &User) -> Result<AuthResponse, AuthError> {
         let providers = app
             .profile
+            .service
             .find_user_providers(user.id)
             .await
             .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
 
-        let access_token = app.jwt.sign_access(
+        let access_token = app.auth.jwt.sign_access(
             user.id,
             &user.email,
             &user.full_name,
@@ -462,7 +466,7 @@ impl AuthService {
             user.role.clone(),
         )?;
 
-        let (refresh_token, jti) = app.jwt.sign_refresh(user.id)?;
+        let (refresh_token, jti) = app.auth.jwt.sign_refresh(user.id)?;
 
         self.repo
             .store_refresh_token(

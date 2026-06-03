@@ -11,7 +11,7 @@ pub struct SendEmailJob {
 }
 
 pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Result<(), BoxDynError> {
-    let transport = state.smtp_transport.clone();
+    let transport = state.smtp.clone();
     let from = state.config.smtp_from.clone();
     let email = EmailService::new(transport, from);
     email.send(&job.to, &job.subject, &job.html).await?;
