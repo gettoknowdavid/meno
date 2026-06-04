@@ -76,7 +76,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
         smtp,
     });
 
-    start_background_workers(&db);
+    start_background_workers(&db, Arc::clone(&state));
 
     build_middleware_stack(state)
 }
@@ -158,10 +158,11 @@ fn build_middleware_stack(state: Arc<MenoState>) -> Router {
         .with_state(state)
 }
 
-fn start_background_workers(db: &PgPool) {
+fn start_background_workers(db: &PgPool, state: Arc<MenoState>) {
     let monitor_pool = db.clone();
+    let monitor_state = Arc::clone(&state);
     tokio::spawn(async move {
-        if let Err(e) = monitor::run_monitor(monitor_pool).await {
+        if let Err(e) = monitor::run_monitor(monitor_pool, monitor_state).await {
             tracing::error!(error = %e, "Apalis monitor exited");
         }
     });
