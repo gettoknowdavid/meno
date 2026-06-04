@@ -16,7 +16,7 @@ pub async fn register(
     MenoBody(body): MenoBody<RegisterRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let user = app.auth.register(&app, &body).await?;
+    let user = app.auth.service.register(&app, &body).await?;
     Ok(MenoResponse::created("Account created successfully", user))
 }
 
@@ -25,7 +25,7 @@ pub async fn verify_email(
     MenoBody(body): MenoBody<VerifyEmailRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let user = app.auth.verify_email(&app, &body).await?;
+    let user = app.auth.service.verify_email(&app, &body).await?;
     Ok(MenoResponse::ok("Account verified successfully", user))
 }
 
@@ -34,7 +34,7 @@ pub async fn resend_otp(
     MenoBody(body): MenoBody<ResendOtpRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth.resend_otp(&app, &body).await?;
+    app.auth.service.resend_otp(&app, &body).await?;
     Ok(MenoResponse::no_content("Verification email resent"))
 }
 
@@ -43,7 +43,7 @@ pub async fn login(
     MenoBody(body): MenoBody<LoginRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let user = app.auth.login(&app, &body).await?;
+    let user = app.auth.service.login(&app, &body).await?;
     Ok(MenoResponse::ok("Login successful", user))
 }
 
@@ -52,7 +52,7 @@ pub async fn refresh(
     MenoBody(body): MenoBody<RefreshTokenRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let user = app.auth.refresh(&app, &body).await?;
+    let user = app.auth.service.refresh(&app, &body).await?;
     Ok(MenoResponse::ok("Token refreshed successfully", user))
 }
 
@@ -61,7 +61,7 @@ pub async fn logout(
     MenoBody(body): MenoBody<LogoutRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth.logout(&app, &body).await?;
+    app.auth.service.logout(&app, &body).await?;
     Ok(MenoResponse::no_content("Logout successful"))
 }
 
@@ -70,7 +70,7 @@ pub async fn forgot_password(
     MenoBody(body): MenoBody<ForgotPasswordRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth.forgot_password(&app, &body).await?;
+    app.auth.service.forgot_password(&app, &body).await?;
     Ok(MenoResponse::no_content("Password reset email sent"))
 }
 
@@ -79,14 +79,14 @@ pub async fn reset_password(
     MenoBody(body): MenoBody<ResetPasswordRequest>,
 ) -> Result<MenoResponse<()>, AuthError> {
     body.validate()?;
-    app.auth.reset_password(&app, &body).await?;
+    app.auth.service.reset_password(&app, &body).await?;
     Ok(MenoResponse::no_content("Password reset successful"))
 }
 
 pub async fn google_auth_url(
     State(app): State<Arc<MenoState>>,
 ) -> Result<MenoResponse<GoogleUrlResponse>, AuthError> {
-    let response = app.auth.google_authorize(&app).await?;
+    let response = app.auth.service.google_authorize(&app).await?;
     Ok(MenoResponse::ok("Google auth URL generated", response))
 }
 
@@ -95,7 +95,7 @@ pub async fn google_web_callback(
     MenoBody(body): MenoBody<GoogleWebAuthRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let response = app.auth.google_web_auth(&app, &body).await?;
+    let response = app.auth.service.google_web_auth(&app, &body).await?;
     Ok(MenoResponse::ok("Google authentication success", response))
 }
 
@@ -104,6 +104,6 @@ pub async fn google_mobile_auth(
     MenoBody(body): MenoBody<GoogleMobileAuthRequest>,
 ) -> Result<MenoResponse<AuthResponse>, AuthError> {
     body.validate()?;
-    let response = app.auth.google_mobile_auth(&app, &body).await?;
+    let response = app.auth.service.google_mobile_auth(&app, &body).await?;
     Ok(MenoResponse::ok("Google authentication success", response))
 }

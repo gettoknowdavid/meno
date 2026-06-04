@@ -1,7 +1,10 @@
-use super::{cleanup_jobs, email_jobs, notification_jobs};
+use super::{broadcast_jobs, cleanup_jobs, email_jobs, notification_jobs};
 use crate::jobs::cleanup_jobs::CleanupExpiredTokensJob;
+use crate::state::MenoState;
 use apalis::{layers::retry::RetryPolicy, prelude::*};
 use apalis_postgres::PostgresStorage;
+use apalis_postgres::shared::SharedPostgresStorage;
+use std::sync::Arc;
 use tower::retry::RetryLayer;
 
 /// Runs the Apalis monitor.
@@ -10,19 +13,29 @@ use tower::retry::RetryLayer;
 ///
 /// Design: each worker gets its own PostgresStorage (separate polling loop),
 /// its own concurrency limit, and its own retry policy.
-pub async fn run_monitor(pool: sqlx::PgPool) -> anyhow::Result<()> {
+pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::Result<()> {
     PostgresStorage::setup(&pool).await?;
     tracing::info!("Apalis Postgres migrations applied");
 
-    let email = PostgresStorage::new(&pool);
-    let broadcast_started = PostgresStorage::new(&pool);
-    let broadcast_scheduled = PostgresStorage::new(&pool);
-    let cleanup_storage = PostgresStorage::new(&pool);
+    let mut store = SharedPostgresStorage::new(pool);
+
+    let email = store.make_shared()?;
+    let broadcast_started = store.make_shared()?;
+    let broadcast_scheduled = store.make_shared()?;
+    let cleanup_storage = store.make_shared()?;
+    let broadcast_end = store.make_shared()?;
+
+    let state_email = Arc::clone(&state);
+    let state_started = Arc::clone(&state);
+    let state_scheduled = Arc::clone(&state);
+    let state_cleanup = Arc::clone(&state);
+    let state_end = Arc::clone(&state);
 
     Monitor::new()
         .register(move |_| {
             WorkerBuilder::new("meno-email")
                 .backend(email.clone())
+                .data(state_email.clone())
                 .concurrency(20)
                 .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(email_jobs::send_email)
@@ -30,6 +43,7 @@ pub async fn run_monitor(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .register(move |_| {
             WorkerBuilder::new("meno-broadcast-started-fanout")
                 .backend(broadcast_started.clone())
+                .data(state_started.clone())
                 .concurrency(20)
                 .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(notification_jobs::broadcast_started_fanout)
@@ -37,6 +51,7 @@ pub async fn run_monitor(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .register(move |_| {
             WorkerBuilder::new("meno-broadcast-scheduled-fanout")
                 .backend(broadcast_scheduled.clone())
+                .data(state_scheduled.clone())
                 .concurrency(20)
                 .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(notification_jobs::broadcast_scheduled_fanout)
@@ -44,9 +59,18 @@ pub async fn run_monitor(pool: sqlx::PgPool) -> anyhow::Result<()> {
         .register(move |_| {
             WorkerBuilder::new("meno-broadcast-cleanup-tokens")
                 .backend(cleanup_storage.clone())
+                .data(state_cleanup.clone())
                 .concurrency(20)
                 .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(cleanup_jobs::cleanup_expired_tokens)
+        })
+        .register(move |_| {
+            WorkerBuilder::new("meno-broadcast-end")
+                .backend(broadcast_end.clone())
+                .concurrency(20)
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .data(state_end.clone())
+                .build(broadcast_jobs::end_broadcast)
         })
         .on_event(|_, e| tracing::info!(event = ?e, "Apalis monitor event"))
         .shutdown_timeout(std::time::Duration::from_secs(30))

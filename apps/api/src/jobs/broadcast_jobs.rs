@@ -1,4 +1,3 @@
-use crate::modules::broadcast::model::EndReason;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::state::MenoState;
 use apalis::prelude::*;
@@ -36,6 +35,7 @@ pub async fn end_broadcast(
 
     state
         .broadcast
+        .service
         .end(&state, job.broadcast_id, job.host_id)
         .await?;
 

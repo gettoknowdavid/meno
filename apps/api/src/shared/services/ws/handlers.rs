@@ -31,6 +31,7 @@ pub async fn ws_upgrade(
     State(state): State<Arc<MenoState>>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let claims = state
+        .auth
         .jwt
         .decode_access(&query.token)
         .map_err(|_| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
@@ -46,6 +47,7 @@ pub async fn ws_upgrade(
 
     let user = state
         .auth
+        .service
         .find_user_by_id(claims.sub)
         .await
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Error"))?
@@ -116,6 +118,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     // Check if user is an active host (for heartbeat tuning)
     let is_host = state
         .broadcast
+        .service
         .is_active_host(user.id)
         .await
         .unwrap_or(false);
@@ -241,7 +244,7 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
     }
 
     // Host disconnect - start grace period
-    if let Ok(Some(broadcast)) = state.broadcast.find_active_hosted_by(user_id).await {
+    if let Ok(Some(broadcast)) = state.broadcast.service.find_active_hosted_by(user_id).await {
         // Get disconnect count for tiered grace period
         let count_key = RedisKey::disconnect_count(broadcast.id);
         let disconnect_count: u64 = match state.redis.incr(&count_key).await {
@@ -263,7 +266,12 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
         let value = &chrono::Utc::now().timestamp().to_string();
         let _ = state.redis.set_ex(&start_key, value, grace_secs + 10).await;
 
-        if let Ok(participant_ids) = state.broadcast.get_participants_ids(broadcast.id).await {
+        if let Ok(participant_ids) = state
+            .broadcast
+            .service
+            .get_participants_ids(broadcast.id)
+            .await
+        {
             let payload = WsPayload::host_disconnected(broadcast.id, grace_secs, disconnect_count);
             state.ws.send_to_users(&participant_ids, payload).await;
         }
@@ -293,7 +301,7 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
 pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
     // Find an active broadcast hosted by this user
     // If the user is not the host of the broadcast, nothing happens
-    let broadcast = match state.broadcast.find_active_hosted_by(user_id).await {
+    let broadcast = match state.broadcast.service.find_active_hosted_by(user_id).await {
         Ok(Some(b)) => b,
         Ok(None) => return,
         Err(e) => {
@@ -355,7 +363,12 @@ pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
     );
 
     // Notify all current participants
-    if let Ok(participant_ids) = state.broadcast.get_participants_ids(broadcast.id).await {
+    if let Ok(participant_ids) = state
+        .broadcast
+        .service
+        .get_participants_ids(broadcast.id)
+        .await
+    {
         if !participant_ids.is_empty() {
             let payload = WsPayload::host_reconnected(broadcast.id);
             state.ws.send_to_users(&participant_ids, payload).await;

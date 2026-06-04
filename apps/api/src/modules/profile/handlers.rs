@@ -14,7 +14,7 @@ pub async fn get_me(
     State(app): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
 ) -> Result<MenoResponse<dto::MeResponse>, ProfileError> {
-    let me = app.profile.get_me(auth_user.id).await?;
+    let me = app.profile.service.get_me(auth_user.id).await?;
     Ok(MenoResponse::ok("Profile retrieved", me))
 }
 
@@ -23,7 +23,7 @@ pub async fn get_profile(
     Extension(auth_user): Extension<AuthUser>,
     Path(id): Path<uuid::Uuid>,
 ) -> Result<MenoResponse<PublicProfileResponse>, ProfileError> {
-    let user = app.profile.get_user_by_id(auth_user.id, id).await?;
+    let user = app.profile.service.get_user_by_id(auth_user.id, id).await?;
     Ok(MenoResponse::ok("Profile retrieved", user))
 }
 
@@ -34,7 +34,8 @@ pub async fn get_avatar_upload_url(
 ) -> Result<MenoResponse<dto::AvatarUploadUrlResponse>, ProfileError> {
     let response = app
         .profile
-        .get_avatar_upload_url(&app, auth_user.id, &params.content_type)
+        .service
+        .get_avatar_upload_url(auth_user.id, &params.content_type)
         .await?;
     Ok(MenoResponse::ok("Upload URL generated", response))
 }
@@ -45,7 +46,7 @@ pub async fn update_me(
     MenoBody(body): MenoBody<dto::UpdateProfileRequest>,
 ) -> Result<MenoResponse<dto::MeResponse>, ProfileError> {
     body.validate()?;
-    let me = app.profile.update_me(auth_user.id, &body).await?;
+    let me = app.profile.service.update_me(auth_user.id, &body).await?;
     Ok(MenoResponse::ok("Profile updated", me))
 }
 
@@ -57,6 +58,7 @@ pub async fn search_profiles(
     params.validate()?;
     let results = app
         .profile
+        .service
         .search_profiles(auth_user.id, &params)
         .await?;
     Ok(MenoResponse::ok("Profiles retrieved successfully", results))

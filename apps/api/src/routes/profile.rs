@@ -1,16 +1,23 @@
-use axum::middleware::from_fn_with_state;
-use crate::modules::profile::handlers;
+use crate::modules::profile::handlers as h;
+use crate::shared::middleware::auth::auth_middleware;
+use crate::shared::middleware::idempotency::idempotency_middleware;
 use crate::state::MenoState;
 use axum::Router;
+use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{get, patch};
-use crate::shared::middleware::auth::auth_middleware;
 
 pub fn router(state: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoState>> {
-    Router::new()
-        .route("/me", get(handlers::get_me))
-        .route("/me", patch(handlers::update_me))
-        .route("/me/avatar-upload-url", get(handlers::get_avatar_upload_url))
-        .route("/{id}", get(handlers::get_profile))
-        .route("/", get(handlers::search_profiles))
+    let normal = Router::new()
+        .route("/me", get(h::get_me))
+        .route("/{id}", get(h::get_profile))
+        .route("/", get(h::search_profiles))
+        .layer(from_fn_with_state(state.clone(), auth_middleware));
+
+    let idempotent = Router::new()
+        .route("/me", patch(h::update_me))
+        .route("/me/avatar-upload-url", get(h::get_avatar_upload_url))
         .layer(from_fn_with_state(state.clone(), auth_middleware))
+        .layer(from_fn(idempotency_middleware));
+
+    normal.merge(idempotent)
 }

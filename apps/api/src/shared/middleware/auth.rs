@@ -30,7 +30,7 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(AuthError::MissingToken)?;
 
-    let claims = app.jwt.decode_access(token)?;
+    let claims = app.auth.jwt.decode_access(token)?;
 
     let blocklist_key = RedisKey::block_list("ACCESS_TOKEN", claims.jti);
     match app.redis.get::<String>(&blocklist_key).await {

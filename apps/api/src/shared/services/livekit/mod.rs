@@ -1,11 +1,13 @@
+pub mod circuit_breaker;
 pub mod dto;
 
 use crate::config::MenoConfig;
 use crate::modules::broadcast::dto::UserSummary;
+use crate::modules::broadcast::errors::BroadcastError;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
+use crate::shared::services::livekit::circuit_breaker::CircuitBreaker;
 use crate::shared::services::livekit::dto::{LivekitParticipantInfo, LivekitRole};
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
-use livekit_api::services::ServiceError;
 use livekit_api::services::room::{CreateRoomOptions, RoomClient, UpdateParticipantOptions};
 use livekit_protocol::ParticipantPermission;
 use std::sync::Arc;
@@ -19,17 +21,20 @@ pub struct LivekitService {
     pub api_secret: String,
     pub host: String,
     pub room: Arc<RoomClient>,
+    pub breaker: Arc<CircuitBreaker>,
 }
 impl LivekitService {
     pub fn new(config: &MenoConfig, room: Arc<RoomClient>) -> Self {
         let api_key = config.livekit_api_key.clone();
         let api_secret = config.livekit_api_secret.clone();
         let host = config.livekit_host.clone();
+        let breaker = CircuitBreaker::new(3, 30);
         Self {
             api_key,
             api_secret,
             host,
             room,
+            breaker,
         }
     }
 
@@ -110,7 +115,12 @@ impl LivekitService {
             .to_jwt()
     }
 
-    pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
+    pub async fn create_room(&self, broadcast_id: Uuid) -> Result<(), BroadcastError> {
+        self.breaker
+            .check()
+            .await
+            .map_err(|_| BroadcastError::LiveKitUnavailable)?;
+
         let room_name = broadcast_id.to_string();
         let options = CreateRoomOptions {
             max_participants: 10000,
@@ -118,19 +128,40 @@ impl LivekitService {
             metadata: room_name.clone(),
             ..Default::default()
         };
-        self.room.create_room(&room_name, options).await?;
-        Ok(())
+
+        match self.room.create_room(&room_name, options).await {
+            Ok(_) => {
+                self.breaker.on_success().await;
+                Ok(())
+            }
+            Err(e) => {
+                self.breaker.on_failure().await;
+                Err(BroadcastError::LiveKit(e))
+            }
+        }
     }
 
-    pub async fn delete_room(&self, broadcast_id: Uuid) -> Result<(), ServiceError> {
-        self.room.delete_room(&broadcast_id.to_string()).await?;
-        Ok(())
+    pub async fn delete_room(&self, broadcast_id: Uuid) -> Result<(), BroadcastError> {
+        self.breaker
+            .check()
+            .await
+            .map_err(|_| BroadcastError::LiveKitUnavailable)?;
+        match self.room.delete_room(&broadcast_id.to_string()).await {
+            Ok(_) => {
+                self.breaker.on_success().await;
+                Ok(())
+            }
+            Err(e) => {
+                self.breaker.on_failure().await;
+                Err(BroadcastError::LiveKit(e))
+            }
+        }
     }
 
     pub async fn list_participants(
         &self,
         broadcast_id: Uuid,
-    ) -> Result<Vec<LivekitParticipantInfo>, ServiceError> {
+    ) -> Result<Vec<LivekitParticipantInfo>, BroadcastError> {
         let room_name = broadcast_id.to_string();
         let participants = self.room.list_participants(&room_name).await?;
         let mut result = Vec::with_capacity(participants.len());
@@ -150,7 +181,7 @@ impl LivekitService {
         &self,
         broadcast_id: Uuid,
         user_id: Uuid,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<(), BroadcastError> {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         self.room.remove_participant(&room, &identifier).await?;
@@ -162,7 +193,7 @@ impl LivekitService {
         broadcast_id: Uuid,
         user_id: Uuid,
         can_publish: bool,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<(), BroadcastError> {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         let options = UpdateParticipantOptions {
@@ -186,7 +217,7 @@ impl LivekitService {
         user_id: Uuid,
         track_sid: &str,
         muted: bool,
-    ) -> Result<(), ServiceError> {
+    ) -> Result<(), BroadcastError> {
         let room = broadcast_id.to_string();
         let identifier = user_id.to_string();
         self.room

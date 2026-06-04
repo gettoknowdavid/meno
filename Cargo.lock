@@ -1893,9 +1893,9 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
 name = "livekit-api"
-version = "0.4.24"
+version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2611299f65786fa733f38ef9aab9d796679e6f2f77572b84170949769ca9a25"
+checksum = "c53d6335323ed9e4fd0c3ede761478fc607d147c6e3f2c29dc71ca73bcf18723"
 dependencies = [
  "base64 0.21.7",
  "device-info",
@@ -1919,9 +1919,9 @@ dependencies = [
 
 [[package]]
 name = "livekit-protocol"
-version = "0.7.7"
+version = "0.7.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd59f3759f1a14e60b6bc6d4d415414e1aed686c8e4d2c7862542d95301cdc70"
+checksum = "565d83442aa99684dba5d0841fa342eb572fbd916ba2aa5e92801ecf76620026"
 dependencies = [
  "pbjson",
  "pbjson-types",
@@ -2004,17 +2004,18 @@ dependencies = [
  "argon2",
  "axum",
  "axum-prometheus",
+ "bytes",
  "chrono",
  "dashmap",
  "dotenvy",
  "fred",
  "futures-util",
  "hex",
+ "http-body-util",
  "jsonwebtoken",
  "lettre",
  "livekit-api",
  "livekit-protocol",
- "log",
  "oauth2",
  "object_store",
  "once_cell",
@@ -2029,7 +2030,6 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio",
- "tokio-util",
  "tower",
  "tower-http",
  "tracing",

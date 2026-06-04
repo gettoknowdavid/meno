@@ -88,6 +88,12 @@ pub struct BroadcastTokenRefreshRequest {
     pub broadcast_id: Uuid,
 }
 
+#[derive(Debug, Default, Deserialize)]
+pub struct HomeSectionParams {
+    pub page: Option<i64>,
+    pub limit: Option<i64>,
+}
+
 // ==================== RESPONSES ====================
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct BroadcastResponse {
