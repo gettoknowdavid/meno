@@ -1,7 +1,7 @@
-use crate::modules::auth;
 use crate::modules::broadcast::model::{
     BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
+use crate::shared::types::dto::UserSummary;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sqlx::FromRow;
 use time::format_description::well_known::Rfc3339;
@@ -179,25 +179,6 @@ pub struct BroadcastRefreshTokenResponse {
     pub expires_at: OffsetDateTime,
 }
 
-/// Compact user shape embedded inside broadcast responses.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct UserSummary {
-    pub id: Uuid,
-    pub full_name: String,
-    pub avatar_id: Option<String>,
-    pub avatar_url: Option<String>,
-}
-impl From<auth::model::User> for UserSummary {
-    fn from(u: auth::model::User) -> Self {
-        UserSummary {
-            id: u.id,
-            full_name: u.full_name,
-            avatar_id: u.avatar_id,
-            avatar_url: u.avatar_url,
-        }
-    }
-}
-
 #[derive(Clone, Debug, Serialize)]
 /// Payload data sent through websocket when a broadcast ends.
 pub struct BroadcastEndedPayload {
@@ -212,7 +193,6 @@ impl BroadcastEndedPayload {
         }
     }
 }
-
 #[derive(Clone, Debug, Serialize)]
 pub struct EndBroadcastResponse {
     pub broadcast_id: Uuid,

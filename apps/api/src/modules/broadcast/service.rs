@@ -4,7 +4,7 @@ use crate::modules::broadcast::dto::{
     BroadcastResponse, BroadcastSessionResponse, BroadcastSortBy, CohostSessionResponse,
     CreateBroadcastRequest, EndBroadcastResponse, HomeSectionParams, LeaveBroadcastResponse,
     MAX_COHOSTS, OrderBy, ParticipantListCacheKey, ParticipantListItem, ParticipantParams,
-    UpdateBroadcastRequest, UserSummary,
+    UpdateBroadcastRequest,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -30,6 +30,7 @@ use serde_json::to_value;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use crate::shared::types::dto::UserSummary;
 
 #[derive(Clone)]
 pub struct BroadcastService {

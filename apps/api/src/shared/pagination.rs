@@ -39,3 +39,8 @@ impl<T> PaginationResponse<T> {
         Self::build(limit, page, 0, Vec::<T>::new())
     }
 }
+
+pub enum PaginationDirection {
+    Next,
+    Previous,
+}

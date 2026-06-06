@@ -2,11 +2,11 @@ pub mod circuit_breaker;
 pub mod dto;
 
 use crate::config::MenoConfig;
-use crate::modules::broadcast::dto::UserSummary;
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
 use crate::shared::services::livekit::circuit_breaker::CircuitBreaker;
 use crate::shared::services::livekit::dto::{LivekitParticipantInfo, LivekitRole};
+use crate::shared::types::dto::UserSummary;
 use livekit_api::access_token::{AccessToken, AccessTokenError, VideoGrants};
 use livekit_api::services::room::{CreateRoomOptions, RoomClient, UpdateParticipantOptions};
 use livekit_protocol::ParticipantPermission;

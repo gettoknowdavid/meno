@@ -1,0 +1,102 @@
+use crate::modules::subscribers::errors::SubscribersError;
+use crate::modules::subscribers::repository::SubscribersRepository;
+use crate::shared::middleware::auth::AuthUser;
+use crate::shared::pagination::PaginationResponse;
+use crate::shared::services::ws::WsService;
+use crate::shared::services::ws::dto::WsPayload;
+use crate::shared::types::dto::UserSummary;
+use crate::state::MenoState;
+use uuid::Uuid;
+
+#[derive(Clone)]
+pub struct SubscribersService {
+    pub repo: SubscribersRepository,
+    pub ws: WsService,
+}
+impl SubscribersService {
+    pub fn new(db: sqlx::PgPool, ws: WsService) -> Self {
+        Self {
+            repo: SubscribersRepository::new(db),
+            ws,
+        }
+    }
+
+    pub async fn subscribe(
+        &self,
+        app: &MenoState,
+        auth_user: AuthUser,
+        subscription_id: Uuid,
+    ) -> Result<(), SubscribersError> {
+        if auth_user.id == subscription_id {
+            return Err(SubscribersError::CannotSubscribeToSelf);
+        }
+
+        app.auth
+            .service
+            .find_user_by_id(subscription_id)
+            .await
+            .map_err(|_| SubscribersError::SubscriptionNotFound)?
+            .ok_or(SubscribersError::SubscriptionNotFound)?;
+
+        self.repo.create(auth_user.id, subscription_id).await?;
+
+        let ws = self.ws.clone();
+        let subscriber_id = auth_user.id;
+        let subscriber_name = auth_user.full_name.clone();
+        tokio::spawn(async move {
+            let payload = WsPayload::notification(
+                subscriber_id,
+                "You've got a new subscription",
+                format!("{} is now subscribed to you.", subscriber_name),
+            );
+            ws.send_to_user(subscription_id, payload).await;
+        });
+
+        Ok(())
+    }
+
+    pub async fn unsubscribe(
+        &self,
+        app: &MenoState,
+        auth_user: AuthUser,
+        subscription_id: Uuid,
+    ) -> Result<(), SubscribersError> {
+        if auth_user.id == subscription_id {
+            return Err(SubscribersError::CannotSubscribeToSelf);
+        }
+
+        app.auth
+            .service
+            .find_user_by_id(subscription_id)
+            .await
+            .map_err(|_| SubscribersError::SubscriptionNotFound)?
+            .ok_or(SubscribersError::SubscriptionNotFound)?;
+
+        self.repo.delete(auth_user.id, subscription_id).await?;
+
+        let ws = self.ws.clone();
+        let subscriber_id = auth_user.id;
+        let subscriber_name = auth_user.full_name.clone();
+        tokio::spawn(async move {
+            let payload = WsPayload::notification(
+                subscriber_id,
+                "Someone unsubscribed",
+                format!("{} is no longer subscribed to you", subscriber_name),
+            );
+            ws.send_to_user(subscription_id, payload).await;
+        });
+
+        Ok(())
+    }
+
+    pub async fn get_subscribers(
+        &self,
+        app: &MenoState,
+        auth_id: Uuid,
+    ) -> Result<PaginationResponse<UserSummary>, SubscribersError> {
+        if !self.repo.user_exists(auth_id).await? {
+            return Err(SubscribersError::SubscriberNotFound);
+        }
+        Err(SubscribersError::SubscriberNotFound)
+    }
+}

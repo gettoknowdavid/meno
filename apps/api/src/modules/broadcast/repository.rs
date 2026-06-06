@@ -1,6 +1,6 @@
 use crate::modules::broadcast::dto::{
     BroadcastListItem, BroadcastParams, BroadcastSortBy, OrderBy, ParticipantListItem,
-    ParticipantParams, ParticipantSortBy, UserSummary,
+    ParticipantParams, ParticipantSortBy,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
@@ -10,6 +10,7 @@ use sqlx::{Postgres, QueryBuilder, Transaction};
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use crate::shared::types::dto::UserSummary;
 
 // ==================== INPUTS ====================
 pub struct CreateBroadcastInput<'a> {
@@ -571,7 +572,7 @@ impl BroadcastRepository {
 
         sqlx::query_as!(
             UserSummary,
-            r#"SELECT id, full_name, avatar_id, avatar_url
+            r#"SELECT id, full_name, bio,  avatar_id, avatar_url
                FROM users
                WHERE id = ANY($1) AND deleted_at IS NULL"#,
             ids
@@ -719,7 +720,7 @@ impl BroadcastRepository {
     pub async fn find_user_summary(&self, id: Uuid) -> Result<Option<UserSummary>, BroadcastError> {
         sqlx::query_as!(
             UserSummary,
-            r#"SELECT id, full_name, avatar_id, avatar_url
+            r#"SELECT id, full_name, bio, avatar_id, avatar_url
                FROM users WHERE id = $1 AND deleted_at IS NULL"#,
             id,
         )
@@ -848,7 +849,7 @@ impl BroadcastRepository {
     ) -> Result<Vec<UserSummary>, BroadcastError> {
         sqlx::query_as!(
             UserSummary,
-            r#"SELECT u.id, u.full_name, u.avatar_id, u.avatar_url
+            r#"SELECT u.id, u.full_name, u.bio, u.avatar_id, u.avatar_url
                FROM broadcast_cohosts bc
                JOIN users u ON u.id = bc.cohost_id
                WHERE bc.broadcast_id = $1 AND bc.removed_at IS NULL AND deleted_at IS NUll"#,
