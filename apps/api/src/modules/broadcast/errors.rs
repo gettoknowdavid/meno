@@ -1,4 +1,5 @@
 use crate::modules::broadcast::dto::MAX_COHOSTS;
+use crate::shared::pagination::CursorError;
 use crate::shared::errors::{error_response, validation_error_response};
 use crate::shared::services::redis::coalescing::CacheError;
 use axum::http::StatusCode;
@@ -91,6 +92,9 @@ pub enum BroadcastError {
     LiveKitUnavailable,
 
     // 500 INTERNAL
+    #[error("Cursor error: {0}")]
+    Cursor(#[from] CursorError),
+
     #[error("Cache error: {0}")]
     Cache(#[from] CacheError),
 
@@ -267,6 +271,14 @@ impl axum::response::IntoResponse for BroadcastError {
             }
             BroadcastError::Cache(e) => {
                 tracing::error!(error.kind = "cache", error.message = %e, "cache error in broadcast handler");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            BroadcastError::Cursor(e) => {
+                tracing::error!(error.kind = "cursor", error.message = %e, "cursor error in broadcast handler");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",

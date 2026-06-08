@@ -1,9 +1,9 @@
 use crate::jobs::notification_jobs::BroadcastStartedFanOutJob;
 use crate::modules::broadcast::dto::{
-    BroadcastListCacheKey, BroadcastListItem, BroadcastParams, BroadcastRefreshTokenResponse,
+    BroadcastListCacheKey, BroadcastListItem, BroadcastQuery, BroadcastRefreshTokenResponse,
     BroadcastResponse, BroadcastSessionResponse, BroadcastSortBy, CohostSessionResponse,
-    CreateBroadcastRequest, EndBroadcastResponse, HomeSectionParams, LeaveBroadcastResponse,
-    MAX_COHOSTS, OrderBy, ParticipantListCacheKey, ParticipantListItem, ParticipantParams,
+    CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS,
+    ParticipantListCacheKey, ParticipantListItem, ParticipantQuery, ParticipantSortBy,
     UpdateBroadcastRequest,
 };
 use crate::modules::broadcast::errors::BroadcastError;
@@ -15,8 +15,8 @@ use crate::modules::broadcast::repository::{
     BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
     UpsertParticipantInput,
 };
-use crate::shared::constants::{TTL_15_SECS, TTL_30_SECS, TTL_60_SECS};
-use crate::shared::pagination::PaginationResponse;
+use crate::shared::constants::{TTL_10_SECS, TTL_30_SECS, TTL_60_SECS};
+use crate::shared::pagination::{Cursor, CursorPage, Order};
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
@@ -25,12 +25,12 @@ use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
+use crate::shared::types::dto::UserSummary;
 use crate::state::MenoState;
 use serde_json::to_value;
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
-use crate::shared::types::dto::UserSummary;
 
 #[derive(Clone)]
 pub struct BroadcastService {
@@ -56,7 +56,7 @@ impl BroadcastService {
 
     pub async fn create(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         req: CreateBroadcastRequest,
         creator_id: Uuid,
     ) -> Result<BroadcastResponse, BroadcastError> {
@@ -73,7 +73,7 @@ impl BroadcastService {
         let cohost_ids = req.cohosts.clone().unwrap_or_default();
         let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         let broadcast = self
             .repo
@@ -126,7 +126,7 @@ impl BroadcastService {
 
     pub async fn update(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         req: UpdateBroadcastRequest,
         broadcast_id: Uuid,
         creator_id: Uuid,
@@ -150,7 +150,7 @@ impl BroadcastService {
         let cohost_ids = req.cohosts.clone().unwrap_or_default();
         let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         let broadcast = self
             .repo
@@ -267,7 +267,7 @@ impl BroadcastService {
 
     #[tracing::instrument(
         name = "broadcast.start",
-        skip(self, state),
+        skip(self, app),
         fields(
             broadcast_id = %broadcast_id,
             creator_id   = %user_id,
@@ -277,7 +277,7 @@ impl BroadcastService {
     )]
     pub async fn start(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
@@ -317,7 +317,7 @@ impl BroadcastService {
         tracing::debug!(broadcast_id = %broadcast_id, "HOST token minted");
 
         let now = OffsetDateTime::now_utc();
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         // Set the broadcast status to `active`
         let set_active_input = SetActiveInput {
@@ -346,8 +346,7 @@ impl BroadcastService {
         self.invalidate_list_caches();
         self.invalidate_broadcast_cache(broadcast_id);
 
-        state
-            .jobs
+        app.jobs
             .push_broadcast_started_fanout(BroadcastStartedFanOutJob {
                 broadcast_id,
                 creator_id: broadcast.creator_id,
@@ -428,7 +427,7 @@ impl BroadcastService {
 
     #[tracing::instrument(
         name = "broadcast.end",
-        skip(self, state),
+        skip(self, app),
         fields(
             broadcast_id = %broadcast_id,
             requester_id = %user_id,
@@ -438,7 +437,7 @@ impl BroadcastService {
     )]
     pub async fn end(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<EndBroadcastResponse, BroadcastError> {
@@ -465,7 +464,7 @@ impl BroadcastService {
             .map(|s| (ended_at - s).whole_seconds())
             .unwrap_or(0);
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         // We have to clear the list of participants from the `broadcast_participants` table,
         // but before we do, we need to return the list of participant IDs so we can calculate
@@ -544,7 +543,7 @@ impl BroadcastService {
 
     #[tracing::instrument(
         name = "broadcast.join",
-        skip(self, state),
+        skip(self, app),
         fields(
             broadcast_id = %broadcast_id,
             user_id = %user_id,
@@ -553,7 +552,7 @@ impl BroadcastService {
     )]
     pub async fn join(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
@@ -607,7 +606,7 @@ impl BroadcastService {
 
         let now = OffsetDateTime::now_utc();
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
         self.repo
             .upsert_participant_tx(
                 &UpsertParticipantInput {
@@ -752,12 +751,12 @@ impl BroadcastService {
 
     #[tracing::instrument(
         name = "broadcast.add_cohost",
-        skip(self, state),
+        skip(self, app),
         fields(broadcast_id = %broadcast_id, requester = %requester_id, cohost = %cohost_id)
     )]
     pub async fn add_cohost(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         broadcast_id: Uuid,
         requester_id: Uuid,
         cohost_id: Uuid,
@@ -801,7 +800,7 @@ impl BroadcastService {
 
         let now = OffsetDateTime::now_utc();
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         self.repo
             .add_cohosts(broadcast_id, &[cohost_id], requester_id, &mut tx)
@@ -843,7 +842,7 @@ impl BroadcastService {
 
     #[tracing::instrument(
         name = "broadcast.remove_cohost",
-        skip(self, state),
+        skip(self, app),
         fields(
             broadcast_id    = %broadcast_id,
             cohost_id       = %cohost_id,
@@ -852,7 +851,7 @@ impl BroadcastService {
     )]
     pub async fn remove_cohost(
         &self,
-        state: &MenoState,
+        app: &MenoState,
         broadcast_id: Uuid,
         cohost_id: Uuid,
         requester_id: Uuid,
@@ -880,7 +879,7 @@ impl BroadcastService {
             return Ok(());
         }
 
-        let mut tx = state.db.begin().await?;
+        let mut tx = app.db.begin().await?;
 
         self.repo
             .remove_cohost_tx(broadcast_id, cohost_id, &mut tx)
@@ -1018,94 +1017,62 @@ impl BroadcastService {
         Ok(response)
     }
 
-    #[tracing::instrument(
-        name = "broadcast_service.get_broadcasts",
-        skip(self, params, requester_id),
-        fields(
-            page        = ?params.page,
-            limit       = ?params.limit,
-            status      = ?params.status,
-            cache_hit   = tracing::field::Empty,
-            db_rows     = tracing::field::Empty,
-            total_count = tracing::field::Empty,
-        )
-    )]
+    #[tracing::instrument(name = "broadcast_service.get_broadcasts", skip(self))]
     pub async fn get_broadcasts(
         &self,
-        params: &BroadcastParams,
+        query: &BroadcastQuery,
         requester_id: Option<Uuid>,
-    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        // Need to prevent caching if a broadcast is live, i.e., status == 'active'
+    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
+        let ttl = if query.status == Some(BroadcastStatus::Active) {
+            TTL_10_SECS
+        } else {
+            TTL_30_SECS
+        };
 
         let start = std::time::Instant::now();
 
-        let cache_key = BroadcastListCacheKey::build(params);
-        let should_use_coalescing = cache_key.is_some();
-        if !should_use_coalescing {
+        let broadcast_list_cache_key = BroadcastListCacheKey::build(&query);
+        if !broadcast_list_cache_key.is_some() {
             // Personalized query - go directly to DB without caching
             tracing::debug!("Personalized query (only_subscriptions=true) — skipping cache");
-            return self.get_broadcasts_from_db(params, requester_id).await;
+            return self.get_broadcasts_from_db(&query, requester_id).await;
         }
 
-        let cache_key_str = cache_key.unwrap();
-        let count_cache_key = format!("{}_count", cache_key_str);
+        let cache_key = broadcast_list_cache_key.unwrap();
 
         // Use coalescing cache to prevent thundering herd
-        let response = coalesce_cache(&self.redis, &count_cache_key, TTL_30_SECS, || async {
-            self.get_broadcasts_from_db(params, requester_id).await
+        let page = coalesce_cache(&self.redis, &cache_key, ttl, || async {
+            self.get_broadcasts_from_db(&query, requester_id).await
         })
         .await?;
 
-        // Start building the response
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-
-        // Store count separately for future optimizations (fire-and-forget)
-        let total = response.total_items;
-        let redis = self.redis.clone();
-        tokio::spawn(async move {
-            let count_key = RedisKey::new_raw(&count_cache_key);
-            if let Err(e) = redis.set(&count_key, &total, Some(120)).await {
-                tracing::warn!(
-                    error = %e,
-                    key = %count_cache_key,
-                    "Failed to cache count"
-                );
-            }
-        });
-
         let elapsed = start.elapsed();
         tracing::debug!(
-            page = response.current_page,
-            limit = limit,
-            returned = response.data.len(),
-            total = response.total_items,
+            returned = page.data.len(),
             elapsed_ms = elapsed.as_millis(),
             "broadcast list query complete"
         );
 
-        Ok(response)
+        Ok(page)
     }
 
     /// Now live — all active broadcasts, sorted by live participant count desc.
     /// Cached for 15 seconds: fast-changing but expensive to compute.
     pub async fn get_now_live(
         &self,
-        params: &HomeSectionParams,
-    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        let page = params.page.unwrap_or(1);
-        let limit = params.limit.unwrap_or(20);
-        let cache_key = format!("home:now_live:p{}:l{}", page, limit);
+        query: &BroadcastQuery,
+    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
+        let mut q = query.clone();
+        q.status = Some(BroadcastStatus::Active);
+        q.sort_by = Some(BroadcastSortBy::TotalParticipants);
+        q.order = Some(Order::Desc);
 
-        coalesce_cache(&self.redis, &cache_key, TTL_15_SECS, || async {
-            let filter = BroadcastParams {
-                status: Some(BroadcastStatus::Active),
-                sort_by: Some(BroadcastSortBy::StartTime),
-                order_by: Some(OrderBy::Desc),
-                page: params.page,
-                limit: params.limit,
-                ..Default::default()
-            };
-            self.get_broadcasts_from_db(&filter, None).await
+        let limit = q.limit();
+        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
+        let cache_key = format!("bc:now_live:cur={cursor_str}:lim={limit}");
+
+        coalesce_cache(&self.redis, &cache_key, TTL_10_SECS, || async {
+            self.get_broadcasts_from_db(&q, None).await
         })
         .await
     }
@@ -1114,76 +1081,79 @@ impl BroadcastService {
     /// NOT cached (personalized per user).
     pub async fn get_live_for_you(
         &self,
+        query: &BroadcastQuery,
         user_id: Uuid,
-        params: &HomeSectionParams,
-    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        let filter = BroadcastParams {
-            status: Some(BroadcastStatus::Active),
-            only_subscriptions: Some(true),
-            sort_by: Some(BroadcastSortBy::StartTime),
-            order_by: Some(OrderBy::Desc),
-            page: params.page,
-            limit: params.limit,
-            ..Default::default()
-        };
-        self.get_broadcasts_from_db(&filter, Some(user_id)).await
+    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
+        let mut q = query.clone();
+        q.status = Some(BroadcastStatus::Active);
+        q.only_subscriptions = Some(true);
+        q.sort_by = Some(BroadcastSortBy::CreatedAt);
+        q.order = Some(Order::Desc);
+
+        let limit = q.limit();
+        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
+        let cache_key = format!(
+            "bc:live_for_you:v={v}:cur={cur}:lim={lim}",
+            v = user_id,
+            cur = cursor_str,
+            lim = limit,
+        );
+
+        coalesce_cache(&self.redis, &cache_key, TTL_10_SECS, || async {
+            self.get_broadcasts_from_db(&q, None).await
+        })
+        .await
     }
 
     /// Recently live — ended in the last 24 hours, sorted by end_time desc.
     /// Cached for 5 minutes: content changes infrequently.
     pub async fn get_recently_live(
         &self,
-        params: &HomeSectionParams,
-    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        let page = params.page.unwrap_or(1);
-        let limit = params.limit.unwrap_or(20);
-        let cache_key = format!("home:recently_live:p{}:l{}", page, limit);
+        query: &BroadcastQuery,
+    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
+        let mut q = query.clone();
+        q.status = Some(BroadcastStatus::Inactive);
+        q.end_time_exists = Some(true);
+        q.sort_by = Some(BroadcastSortBy::EndTime);
+        q.order = Some(Order::Desc);
+
+        let now = OffsetDateTime::now_utc();
+        let yesterday = now - time::Duration::hours(24);
+        q.end_time_gte = Some(yesterday);
+        q.end_time_lte = Some(now);
+
+        let limit = q.limit();
+        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
+        let cache_key = format!("bc:recently_live:cur={cursor_str}:lim={limit}");
 
         coalesce_cache(&self.redis, &cache_key, 300, || async {
-            let now = OffsetDateTime::now_utc();
-            let yesterday = now - time::Duration::hours(24);
-            let filter = BroadcastParams {
-                status: Some(BroadcastStatus::Inactive),
-                end_time_exists: Some(true),
-                end_time_gte: Some(yesterday),
-                end_time_lte: Some(now),
-                sort_by: Some(BroadcastSortBy::EndTime),
-                order_by: Some(OrderBy::Desc),
-                page: params.page,
-                limit: params.limit,
-                ..Default::default()
-            };
-            self.get_broadcasts_from_db(&filter, None).await
+            self.get_broadcasts_from_db(&q, None).await
         })
         .await
     }
 
     pub async fn get_participants(
         &self,
-        params: &ParticipantParams,
         broadcast_id: Uuid,
-    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
-        let cache_key =
-            ParticipantListCacheKey::build(broadcast_id, &params).unwrap_or("".to_string());
-
-        let response = coalesce_cache(&self.redis, &cache_key, TTL_30_SECS, || async {
-            self.get_participants_from_db(broadcast_id, params).await
+        query: &ParticipantQuery,
+    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
+        let cache_key = ParticipantListCacheKey::all(broadcast_id, &query);
+        coalesce_cache(&self.redis, &cache_key, TTL_30_SECS, || async {
+            self.get_participants_from_db(broadcast_id, &query).await
         })
-        .await?;
-
-        Ok(response)
+        .await
     }
 
     #[tracing::instrument(
         name = "broadcast_service.get_live_participants",
-        skip(self, params),
+        skip(self),
         fields(broadcast_id = %broadcast_id)
     )]
     pub async fn get_live_participants(
         &self,
-        params: &ParticipantParams,
         broadcast_id: Uuid,
-    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
+        query: &ParticipantQuery,
+    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
         let broadcast = self
             .repo
             .find_by_id(broadcast_id)
@@ -1194,22 +1164,24 @@ impl BroadcastService {
             return Err(BroadcastError::NotLive);
         }
 
-        let (lk_result, roles_result) = tokio::join!(
-            self.livekit.list_participants(broadcast_id),
-            self.repo.get_participant_roles_batch(broadcast_id)
-        );
-
-        let lk_participants = lk_result?;
-        let role_map = roles_result?;
+        let lk_participants = self.livekit.list_participants(broadcast_id).await?;
 
         if lk_participants.is_empty() {
-            let limit = params.limit.unwrap_or(20).clamp(1, 50);
-            let page = params.page.unwrap_or(1).max(1);
-            return Ok(PaginationResponse::empty(limit, page));
+            return Ok(CursorPage {
+                data: Vec::new(),
+                next_cursor: None,
+                has_next_page: false,
+            });
         }
 
         let user_ids: Vec<Uuid> = lk_participants.iter().map(|p| p.id).collect();
-        let users = self.repo.find_users_batch(&user_ids).await?;
+        let (users, role_map) = tokio::join!(
+            self.repo.find_users_batch(&user_ids),
+            self.repo.get_participant_roles_batch(broadcast_id)
+        );
+
+        let users = users?;
+        let role_map = role_map?;
         let user_map: HashMap<Uuid, UserSummary> = users.into_iter().map(|u| (u.id, u)).collect();
 
         // Get roles from broadcast_participants table
@@ -1241,42 +1213,85 @@ impl BroadcastService {
             .collect();
 
         // Apply search filter (keywords)
-        if let Some(ref kw) = params.keywords {
+        if let Some(ref kw) = query.keywords {
             let kw_lower = kw.to_lowercase();
             enriched.retain(|p| p.full_name.to_lowercase().contains(&kw_lower));
         }
-
-        if let Some(ref role_filter) = params.role {
+        if let Some(ref role_filter) = query.role {
             enriched.retain(|p| &p.role == role_filter);
         }
 
-        // Sort: Host → Cohost → Participant
-        enriched.sort_by_key(|p| match p.role {
-            ParticipantRole::Host => 0u8,
-            ParticipantRole::Cohost => 1,
-            ParticipantRole::Participant => 2,
-            ParticipantRole::None => 3,
+        let sort = query.sort_by.unwrap_or(ParticipantSortBy::Role);
+        let order = query.order.unwrap_or(Order::Asc);
+
+        enriched.sort_by(|a, b| {
+            let comparison = match sort {
+                ParticipantSortBy::Role => {
+                    let a_priority = a.role.priority();
+                    let b_priority = b.role.priority();
+                    a_priority.cmp(&b_priority)
+                }
+                ParticipantSortBy::JoinedAt => a.joined_at.cmp(&b.joined_at),
+                ParticipantSortBy::Name => a.full_name.cmp(&b.full_name),
+            };
+
+            match order {
+                Order::Asc => comparison,
+                Order::Desc => comparison.reverse(),
+            }
         });
 
-        let limit = params.limit.unwrap_or(20).clamp(1, 50);
-        let page = params.page.unwrap_or(1).max(1);
-        let offset = ((page - 1) * limit) as usize;
-        let total = enriched.len() as i64;
+        let limit = query.limit();
+        let cursor = query.cursor();
 
-        let items = enriched
+        let start_index = if let Some(cursor) = cursor {
+            match sort {
+                ParticipantSortBy::Role => {
+                    let (priority, id) = cursor.to_score_id().map_err(BroadcastError::Cursor)?;
+                    enriched
+                        .iter()
+                        .position(|p| {
+                            let p_priority = p.role.priority();
+                            (p_priority, p.id) > (priority, id)
+                        })
+                        .unwrap_or(0)
+                }
+                ParticipantSortBy::JoinedAt => {
+                    let (ts, id) = cursor.to_timestamp_id().map_err(BroadcastError::Cursor)?;
+                    enriched
+                        .iter()
+                        .position(|p| (p.joined_at, p.id) > (ts, id))
+                        .unwrap_or(0)
+                }
+                ParticipantSortBy::Name => {
+                    let (name, id) = cursor.to_name_id().map_err(BroadcastError::Cursor)?;
+                    enriched
+                        .iter()
+                        .position(|p| (p.full_name.clone(), p.id) > (name.clone(), id))
+                        .unwrap_or(0)
+                }
+            }
+        } else {
+            0
+        };
+
+        let items: Vec<ParticipantListItem> = enriched
             .into_iter()
-            .skip(offset)
+            .skip(start_index)
             .take(limit as usize)
             .collect();
 
         tracing::debug!(
             broadcast_id = %broadcast_id,
-            total_live = total,
-            returned = limit,
-            "live participant list resolved"
+            total_live = items.len(),
+            "live participant list resolved with cursor pagination"
         );
 
-        Ok(PaginationResponse::build(limit, page, total, items))
+        Ok(CursorPage::from_rows(items, limit, |p| match sort {
+            ParticipantSortBy::Role => Cursor::from_score_id(p.role.priority(), p.id),
+            ParticipantSortBy::JoinedAt => Cursor::from_timestamp_id(p.joined_at, p.id),
+            ParticipantSortBy::Name => Cursor::from_name_id(&p.full_name, p.id),
+        }))
     }
 
     #[tracing::instrument(
@@ -1568,39 +1583,47 @@ impl BroadcastService {
     /// Actual database fetch (extracted for use in coalesce_cache)
     async fn get_broadcasts_from_db(
         &self,
-        params: &BroadcastParams,
+        query: &BroadcastQuery,
         requester_id: Option<Uuid>,
-    ) -> Result<PaginationResponse<BroadcastListItem>, BroadcastError> {
-        let (rows_result, total_result) = tokio::join!(
-            self.repo.find_broadcasts(params, requester_id),
-            self.repo.count_broadcasts(params, requester_id),
-        );
-
-        let rows = rows_result?;
-        let total = total_result?;
-
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let page = params.page.unwrap_or(1).max(1);
-
-        Ok(PaginationResponse::build(limit, page, total, rows))
+    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
+        let limit = query.limit();
+        let sort = query.effective_sort();
+        let rows = self.repo.find_broadcasts(&query, requester_id).await?;
+        let page = self.build_broadcast_page(rows, limit, sort);
+        Ok(page)
     }
 
     async fn get_participants_from_db(
         &self,
         broadcast_id: Uuid,
-        params: &ParticipantParams,
-    ) -> Result<PaginationResponse<ParticipantListItem>, BroadcastError> {
-        let (rows_result, total_result) = tokio::join!(
-            self.repo.find_participants(broadcast_id, params),
-            self.repo.count_participants(broadcast_id, params),
-        );
+        query: &ParticipantQuery,
+    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
+        let limit = query.limit();
+        let rows = self.repo.find_participants(broadcast_id, &query).await?;
+        Ok(CursorPage::from_rows(rows, limit, |r| {
+            Cursor::from_timestamp_id(r.joined_at, r.id)
+        }))
+    }
 
-        let rows = rows_result?;
-        let total = total_result?;
-
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let page = params.page.unwrap_or(1).max(1);
-
-        Ok(PaginationResponse::build(limit, page, total, rows))
+    fn build_broadcast_page(
+        &self,
+        rows: Vec<BroadcastListItem>,
+        limit: i64,
+        sort: BroadcastSortBy,
+    ) -> CursorPage<BroadcastListItem> {
+        CursorPage::from_rows(rows, limit, |r: &BroadcastListItem| match sort {
+            BroadcastSortBy::Title | BroadcastSortBy::CreatedAt => {
+                Cursor::from_timestamp_id(r.created_at, r.id)
+            }
+            BroadcastSortBy::StartTime => {
+                let ts = r.start_time.unwrap_or(OffsetDateTime::now_utc());
+                Cursor::from_timestamp_id(ts, r.id)
+            }
+            BroadcastSortBy::EndTime => {
+                let ts = r.end_time.unwrap_or(r.created_at);
+                Cursor::from_timestamp_id(ts, r.id)
+            }
+            BroadcastSortBy::TotalParticipants => Cursor::from_score_id(r.total_participants, r.id),
+        })
     }
 }

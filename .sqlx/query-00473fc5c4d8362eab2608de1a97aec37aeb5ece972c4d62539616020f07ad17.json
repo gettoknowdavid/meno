@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT u.id, u.full_name, u.avatar_id, u.avatar_url\n               FROM broadcast_cohosts bc\n               JOIN users u ON u.id = bc.cohost_id\n               WHERE bc.broadcast_id = $1 AND bc.removed_at IS NULL AND deleted_at IS NUll",
+  "query": "SELECT id, full_name, bio,  avatar_id, avatar_url\n               FROM users\n               WHERE id = ANY($1) AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -15,26 +15,32 @@
       },
       {
         "ordinal": 2,
+        "name": "bio",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
         "name": "avatar_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "avatar_url",
         "type_info": "Text"
       }
     ],
     "parameters": {
       "Left": [
-        "Uuid"
+        "UuidArray"
       ]
     },
     "nullable": [
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "d8abf3350048b148a99ce6e6e2fc852a6290b33d6e1942cd64fd7e9bed161797"
+  "hash": "00473fc5c4d8362eab2608de1a97aec37aeb5ece972c4d62539616020f07ad17"
 }

@@ -1,10 +1,10 @@
+use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::modules::subscribers::repository::SubscribersRepository;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::pagination::PaginationResponse;
+use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
-use crate::shared::types::dto::UserSummary;
 use crate::state::MenoState;
 use uuid::Uuid;
 
@@ -89,14 +89,81 @@ impl SubscribersService {
         Ok(())
     }
 
-    pub async fn get_subscribers(
+    pub async fn get_my_subscribers(
         &self,
-        app: &MenoState,
         auth_id: Uuid,
-    ) -> Result<PaginationResponse<UserSummary>, SubscribersError> {
+        params: &CursorParams,
+    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
         if !self.repo.user_exists(auth_id).await? {
             return Err(SubscribersError::SubscriberNotFound);
         }
-        Err(SubscribersError::SubscriberNotFound)
+
+        let rows = self
+            .repo
+            .find_subscribers(auth_id, Some(auth_id), &params)
+            .await?;
+
+        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
+            Cursor::from_timestamp_id(r.subscribed_at, r.id)
+        }))
+    }
+
+    pub async fn get_my_subscriptions(
+        &self,
+        auth_id: Uuid,
+        params: &CursorParams,
+    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
+        if !self.repo.user_exists(auth_id).await? {
+            return Err(SubscribersError::SubscriberNotFound);
+        }
+
+        let rows = self
+            .repo
+            .find_subscriptions(auth_id, Some(auth_id), &params)
+            .await?;
+
+        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
+            Cursor::from_timestamp_id(r.subscribed_at, r.id)
+        }))
+    }
+
+    pub async fn get_user_subscribers(
+        &self,
+        auth_id: Uuid,
+        user_id: Uuid,
+        params: &CursorParams,
+    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
+        if !self.repo.user_exists(user_id).await? {
+            return Err(SubscribersError::SubscriberNotFound);
+        }
+
+        let rows = self
+            .repo
+            .find_subscribers(user_id, Some(auth_id), &params)
+            .await?;
+
+        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
+            Cursor::from_timestamp_id(r.subscribed_at, r.id)
+        }))
+    }
+
+    pub async fn get_user_subscriptions(
+        &self,
+        auth_id: Uuid,
+        user_id: Uuid,
+        params: &CursorParams,
+    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
+        if !self.repo.user_exists(user_id).await? {
+            return Err(SubscribersError::SubscriberNotFound);
+        }
+
+        let rows = self
+            .repo
+            .find_subscriptions(user_id, Some(auth_id), &params)
+            .await?;
+
+        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
+            Cursor::from_timestamp_id(r.subscribed_at, r.id)
+        }))
     }
 }

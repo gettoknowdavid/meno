@@ -189,6 +189,16 @@ pub enum ParticipantRole {
     #[default]
     None,
 }
+impl ParticipantRole {
+    pub fn priority(&self) -> i64 {
+        match self {
+            ParticipantRole::Host => 0,
+            ParticipantRole::Cohost => 1,
+            ParticipantRole::Participant => 2,
+            ParticipantRole::None => 3,
+        }
+    }
+}
 impl From<String> for ParticipantRole {
     fn from(s: String) -> Self {
         match s.as_str() {

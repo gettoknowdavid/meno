@@ -1,6 +1,7 @@
 use crate::modules::broadcast::model::{
     BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
 };
+use crate::shared::pagination::{CursorParams, Order};
 use crate::shared::types::dto::UserSummary;
 use serde::{Deserialize, Deserializer, Serialize, de};
 use sqlx::FromRow;
@@ -86,12 +87,6 @@ pub struct AcceptCohostInvitationRequest {
 #[derive(Debug, Deserialize, Validate)]
 pub struct BroadcastTokenRefreshRequest {
     pub broadcast_id: Uuid,
-}
-
-#[derive(Debug, Default, Deserialize)]
-pub struct HomeSectionParams {
-    pub page: Option<i64>,
-    pub limit: Option<i64>,
 }
 
 // ==================== RESPONSES ====================
@@ -246,16 +241,18 @@ pub struct ParticipantListItem {
 }
 
 // ==================== ENUMS ====================
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum BroadcastSortBy {
     #[default]
+    CreatedAt,
     Title,
     StartTime,
     EndTime,
+    TotalParticipants,
 }
 
-#[derive(Debug, Deserialize, Default)]
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ParticipantSortBy {
     #[default]
@@ -264,20 +261,10 @@ pub enum ParticipantSortBy {
     Name,
 }
 
-#[derive(Debug, Deserialize, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum OrderBy {
-    Asc,
-    #[default]
-    Desc,
-}
-
-// ==================== PARAMS ====================
-#[derive(Debug, Default, Deserialize)]
-pub struct BroadcastParams {
-    pub id: Option<Uuid>,
+// ==================== QUERIES ====================
+#[derive(Debug, Default, Deserialize, Clone)]
+pub struct BroadcastQuery {
     pub creator_id: Option<Uuid>,
-    pub exclude_creator_id: Option<Uuid>,
     pub status: Option<BroadcastStatus>,
     pub keywords: Option<String>,
     pub only_subscriptions: Option<bool>,
@@ -306,24 +293,33 @@ pub struct BroadcastParams {
     #[serde(default, deserialize_with = "deserialize_sort_by")]
     pub sort_by: Option<BroadcastSortBy>,
 
-    #[serde(default, deserialize_with = "deserialize_order_by")]
-    pub order_by: Option<OrderBy>,
+    #[serde(default, deserialize_with = "deserialize_order")]
+    pub order: Option<Order>,
 
-    /// The current page number. Min 1
-    pub page: Option<i64>,
-
-    /// Results per page. Min 1, max 100. Defaults to 20.
-    pub limit: Option<i64>,
+    #[serde(flatten)]
+    pub pagination: CursorParams,
+}
+impl BroadcastQuery {
+    /// Convenience: forward to the embedded CursorParams.
+    pub fn limit(&self) -> i64 {
+        self.pagination.limit()
+    }
+    pub fn limit_plus_one(&self) -> i64 {
+        self.pagination.limit_plus_one()
+    }
+    pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
+        self.pagination.cursor.as_ref()
+    }
+    pub fn effective_order(&self) -> Order {
+        self.order.unwrap_or_default()
+    }
+    pub fn effective_sort(&self) -> BroadcastSortBy {
+        self.sort_by.unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct ParticipantParams {
-    /// The current page number. Min 1
-    pub page: Option<i64>,
-
-    /// Results per page. Min 1, max 100. Defaults to 20.
-    pub limit: Option<i64>,
-
+pub struct ParticipantQuery {
     pub keywords: Option<String>,
 
     #[serde(default, deserialize_with = "deserialize_participant_role")]
@@ -332,25 +328,39 @@ pub struct ParticipantParams {
     #[serde(default, deserialize_with = "deserialize_sort_by_participant")]
     pub sort_by: Option<ParticipantSortBy>,
 
-    #[serde(default, deserialize_with = "deserialize_order_by")]
-    pub order_by: Option<OrderBy>,
+    #[serde(default, deserialize_with = "deserialize_order")]
+    pub order: Option<Order>,
+
+    #[serde(flatten)]
+    pub pagination: CursorParams,
+}
+impl ParticipantQuery {
+    pub fn limit(&self) -> i64 {
+        self.pagination.limit()
+    }
+    pub fn limit_plus_one(&self) -> i64 {
+        self.pagination.limit_plus_one()
+    }
+    pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
+        self.pagination.cursor.as_ref()
+    }
 }
 
 // ==================== PARAM CACHE KEYS ====================
 /// Generates a compact, deterministic Redis key from `BroadcastParams`.
 ///
 /// Design goals:
-///   1. Deterministic — same logical query always maps to the same key.
-///   2. Compact — short strings keep Redis memory low at scale.
-///   3. Namespace-prefixed — easy to scan / invalidate by pattern.
-///   4. Collision-safe — every param that changes the result set is included.
+///   1. Deterministic: the same logical query always maps to the same key.
+///   2. Compact: short strings keep Redis memory low at scale.
+///   3. Namespace-prefixed: easy to scan / invalidate by pattern.
+///   4. Collision-safe: for every param that changes, the result set is included.
 ///
 /// Format:
 ///   `bl:{segment1}:{segment2}:...`
 ///   where each segment is `{field_abbrev}={value}` for non-default values only.
 ///   Segments are always emitted in a fixed alphabetical order so that two
 ///   `BroadcastParams` with the same logical meaning but different field
-///   insertion order produce identical keys.
+///   insertion orders produce identical keys.
 ///
 /// Page + limit are included because they change which rows are returned.
 pub struct BroadcastListCacheKey;
@@ -359,25 +369,18 @@ impl BroadcastListCacheKey {
     /// (currently: viewer-specific `only_subscriptions=true` queries, because
     /// the result set differs per user and caching would require per-user keys
     /// which defeat the purpose of a shared broadcast-list cache).
-    pub fn build(params: &BroadcastParams) -> Option<String> {
-        // Don't cache personalised feeds — they'd need a per-user key
-        if params.only_subscriptions == Some(true) {
+    pub fn build(query: &BroadcastQuery) -> Option<String> {
+        // Don't cache personalized feeds — they'd need a per-user key
+        if query.only_subscriptions == Some(true) {
             return None;
         }
 
         let mut parts: Vec<String> = Vec::with_capacity(16);
 
-        // Fixed emission order — alphabetical by abbreviation.
-        if let Some(id) = params.id {
-            parts.push(format!("bi={}", id));
+        if let Some(cid) = query.creator_id {
+            parts.push(format!("cid={}", cid));
         }
-        if let Some(cid) = params.creator_id {
-            parts.push(format!("ci={}", cid));
-        }
-        if let Some(xcid) = params.exclude_creator_id {
-            parts.push(format!("xci={}", xcid));
-        }
-        if let Some(ref kw) = params.keywords {
+        if let Some(ref kw) = query.keywords {
             // Hash the keyword to keep key short and avoid special-char issues.
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
@@ -385,7 +388,7 @@ impl BroadcastListCacheKey {
             kw.hash(&mut h);
             parts.push(format!("kw={:x}", h.finish()));
         }
-        if let Some(ref s) = params.status {
+        if let Some(ref s) = query.status {
             parts.push(format!("s={:?}", s));
         }
 
@@ -397,42 +400,35 @@ impl BroadcastListCacheKey {
                 }
             };
         }
-        push_time!(params.start_time_gt, "stgt");
-        push_time!(params.start_time_gte, "stge");
-        push_time!(params.start_time_lt, "stlt");
-        push_time!(params.start_time_lte, "stle");
-        push_time!(params.end_time_gt, "etgt");
-        push_time!(params.end_time_gte, "etge");
-        push_time!(params.end_time_lt, "etlt");
-        push_time!(params.end_time_lte, "etle");
+        push_time!(query.start_time_gt, "stgt");
+        push_time!(query.start_time_gte, "stge");
+        push_time!(query.start_time_lt, "stlt");
+        push_time!(query.start_time_lte, "stle");
+        push_time!(query.end_time_gt, "etgt");
+        push_time!(query.end_time_gte, "etge");
+        push_time!(query.end_time_lt, "etlt");
+        push_time!(query.end_time_lte, "etle");
 
-        if let Some(e) = params.start_time_exists {
+        if let Some(e) = query.start_time_exists {
             parts.push(format!("ste={}", e as u8));
         }
-        if let Some(e) = params.end_time_exists {
+        if let Some(e) = query.end_time_exists {
             parts.push(format!("ete={}", e as u8));
         }
 
         // Sort / order — only when non-default
-        match params.sort_by {
-            None | Some(BroadcastSortBy::StartTime) => {} // default, omit
-            Some(ref s) => parts.push(format!("sb={:?}", s)),
-        }
-        match params.order_by {
-            None | Some(OrderBy::Desc) => {} // default, omit
-            Some(ref o) => parts.push(format!("ob={:?}", o)),
-        }
+        parts.push(format!("sb={:?}", query.sort_by.unwrap_or_default()));
+        parts.push(format!("ord={:?}", query.order.unwrap_or_default()));
 
-        // Pagination — always include; different pages = different results.
-        let page = params.page.unwrap_or(1).max(1);
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        parts.push(format!("pg={}", page));
-        parts.push(format!("lm={}", limit));
+        let cursor_str = query.cursor().map(|c| c.0.clone()).unwrap_or_default();
+        parts.push(format!("cur={}", cursor_str));
+
+        parts.push(format!("lim={:?}", query.limit()));
 
         let key = if parts.is_empty() {
-            "bl:all".to_string()
+            "bc:list:all".to_string()
         } else {
-            format!("bl:{}", parts.join(":"))
+            format!("bc:list:{}", parts.join(":"))
         };
 
         Some(key)
@@ -441,10 +437,10 @@ impl BroadcastListCacheKey {
 
 pub struct ParticipantListCacheKey;
 impl ParticipantListCacheKey {
-    pub fn build(broadcast_id: Uuid, params: &ParticipantParams) -> Option<String> {
-        let mut parts = vec![format!("pid:{}", broadcast_id)];
+    fn build(prefix: &str, broadcast_id: Uuid, query: &ParticipantQuery) -> String {
+        let mut parts: Vec<String> = Vec::with_capacity(16);
 
-        if let Some(ref kw) = params.keywords {
+        if let Some(ref kw) = query.keywords {
             // Hash the keyword to keep key short and avoid special-char issues.
             use std::collections::hash_map::DefaultHasher;
             use std::hash::{Hash, Hasher};
@@ -452,27 +448,29 @@ impl ParticipantListCacheKey {
             kw.hash(&mut h);
             parts.push(format!("kw={:x}", h.finish()));
         }
-
-        if let Some(ref r) = params.role {
+        if let Some(ref r) = query.role {
             parts.push(format!("s={:?}", r));
         }
-
-        match params.sort_by {
-            None | Some(ParticipantSortBy::Role) => {} // default, omit
+        match query.sort_by {
+            None | Some(ParticipantSortBy::Role) => {}
             Some(ref s) => parts.push(format!("sb={:?}", s)),
         }
-
-        match params.order_by {
-            None | Some(OrderBy::Desc) => {} // default, omit
+        match query.order {
+            None | Some(Order::Desc) => {}
             Some(ref o) => parts.push(format!("ob={:?}", o)),
         }
 
-        let page = params.page.unwrap_or(1).max(1);
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        parts.push(format!("pg={}", page));
-        parts.push(format!("lm={}", limit));
+        format!("bc:{}:{}:{}", prefix, broadcast_id, parts.join(":"))
+    }
 
-        Some(format!("pl:{}", parts.join(":")))
+    /// Builds the key for the main participants list
+    pub fn all(broadcast_id: Uuid, query: &ParticipantQuery) -> String {
+        Self::build("participants", broadcast_id, query)
+    }
+
+    /// Builds the key for the live participants list
+    pub fn live(broadcast_id: Uuid, query: &ParticipantQuery) -> String {
+        Self::build("live_participants", broadcast_id, query)
     }
 }
 
@@ -480,7 +478,7 @@ impl ParticipantListCacheKey {
 /// Flexible timestamp deserializer that accepts:
 ///   - Full RFC 3339: "2026-05-26T21:55:37Z"
 ///   - Full RFC 3339 with offset: "2026-05-26T21:55:37+01:00"
-///   - Date only: "2026-05-26"  (treated as midnight UTC)
+///   - Date only: "2026-05-26" (treated as midnight UTC)
 ///   - Unix timestamp (i64): 1716768000
 pub fn deserialize_flexible_datetime<'de, D>(de: D) -> Result<Option<OffsetDateTime>, D::Error>
 where
@@ -560,6 +558,8 @@ where
         Some("title") => Ok(Some(BroadcastSortBy::Title)),
         Some("start_time") => Ok(Some(BroadcastSortBy::StartTime)),
         Some("end_time") => Ok(Some(BroadcastSortBy::EndTime)),
+        Some("created_at") => Ok(Some(BroadcastSortBy::CreatedAt)),
+        Some("total_participants") => Ok(Some(BroadcastSortBy::TotalParticipants)),
         Some(other) => Err(de::Error::custom(format!(
             "unknown sort_by '{}': expected one of title, start_time, end_time",
             other
@@ -568,15 +568,15 @@ where
 }
 
 /// Order by deserializer
-fn deserialize_order_by<'de, D>(de: D) -> Result<Option<OrderBy>, D::Error>
+fn deserialize_order<'de, D>(de: D) -> Result<Option<Order>, D::Error>
 where
     D: Deserializer<'de>,
 {
     let s = Option::<String>::deserialize(de)?;
     match s.as_deref().map(str::to_lowercase).as_deref() {
         None | Some("") => Ok(None),
-        Some("asc") => Ok(Some(OrderBy::Asc)),
-        Some("desc") => Ok(Some(OrderBy::Desc)),
+        Some("asc") => Ok(Some(Order::Asc)),
+        Some("desc") => Ok(Some(Order::Desc)),
         Some(other) => Err(de::Error::custom(format!(
             "unknown order_by '{}': expected 'asc' or 'desc'",
             other

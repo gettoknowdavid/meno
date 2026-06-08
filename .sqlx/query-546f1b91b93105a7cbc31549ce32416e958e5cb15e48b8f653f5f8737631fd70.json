@@ -1,6 +1,6 @@
 {
   "db_name": "PostgreSQL",
-  "query": "SELECT id, full_name, avatar_id, avatar_url\n               FROM users WHERE id = $1 AND deleted_at IS NULL",
+  "query": "SELECT id, full_name, bio, avatar_id, avatar_url\n               FROM users WHERE id = $1 AND deleted_at IS NULL",
   "describe": {
     "columns": [
       {
@@ -15,11 +15,16 @@
       },
       {
         "ordinal": 2,
+        "name": "bio",
+        "type_info": "Varchar"
+      },
+      {
+        "ordinal": 3,
         "name": "avatar_id",
         "type_info": "Text"
       },
       {
-        "ordinal": 3,
+        "ordinal": 4,
         "name": "avatar_url",
         "type_info": "Text"
       }
@@ -33,8 +38,9 @@
       false,
       false,
       true,
+      true,
       true
     ]
   },
-  "hash": "5ac1b31e30e287d6682ac5bf7e48d8a63cd2c386a7b46cc713faebb9a5de2e0f"
+  "hash": "546f1b91b93105a7cbc31549ce32416e958e5cb15e48b8f653f5f8737631fd70"
 }

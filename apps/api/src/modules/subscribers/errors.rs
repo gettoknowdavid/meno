@@ -1,4 +1,5 @@
 use crate::shared::errors::error_response;
+use crate::shared::pagination::CursorError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
@@ -13,6 +14,9 @@ pub enum SubscribersError {
 
     #[error("Subscription not found")]
     SubscriptionNotFound,
+
+    #[error("Cursor error: {0}")]
+    Cursor(#[from] CursorError),
 
     #[error(transparent)]
     Database(#[from] sqlx::Error),
@@ -47,7 +51,7 @@ impl IntoResponse for SubscribersError {
                     // Don't log the full SQL error in prod (may contain data)
                     // Use error chain for correlation
                     error.message = %e,
-                    "database error in user_subscribers handler"
+                    "database error in subscribers handler"
                 );
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -56,7 +60,7 @@ impl IntoResponse for SubscribersError {
                 )
             }
             SubscribersError::Redis(e) => {
-                tracing::error!(error.kind = "redis", error.message = %e, "redis error in user_subscribers handler");
+                tracing::error!(error.kind = "redis", error.message = %e, "redis error in subscribers handler");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",
@@ -65,6 +69,14 @@ impl IntoResponse for SubscribersError {
             }
             SubscribersError::Internal(e) => {
                 tracing::error!(error.kind = "internal", error.message = %e, "unhandled internal error");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            SubscribersError::Cursor(e) => {
+                tracing::error!(error.kind = "cursor", error.message = %e, "cursor error in subscribers handler");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",

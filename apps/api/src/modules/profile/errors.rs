@@ -1,4 +1,5 @@
 use crate::shared::errors::{error_response, validation_error_response};
+use crate::shared::pagination::CursorError;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use thiserror::Error;
@@ -21,8 +22,11 @@ pub enum ProfileError {
     #[error("Avatar key not found in storage — upload the file first")]
     AvatarNotUploaded,
 
+    #[error("Cursor error: {0}")]
+    Cursor(#[from] CursorError),
+
     #[error("Storage error: {0}")]
-    StorageError(String),
+    Storage(String),
 
     #[error(transparent)]
     Database(#[from] sqlx::Error),
@@ -65,11 +69,46 @@ impl IntoResponse for ProfileError {
                 "AVATAR_NOT_UPLOADED",
                 &self.to_string(),
             ),
-            ProfileError::StorageError(_)
-            | ProfileError::Database(_)
-            | ProfileError::Redis(_)
-            | ProfileError::Internal(_) => {
-                tracing::error!("{:?}", self);
+            ProfileError::Internal(e) => {
+                tracing::error!(error.kind = "internal", error.message = %e, "unhandled internal error");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            ProfileError::Database(e) => {
+                tracing::error!(
+                    error.kind = "database",
+                    // Don't log the full SQL error in prod (may contain data)
+                    // Use error chain for correlation
+                    error.message = %e,
+                    "database error in profile handler"
+                );
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            ProfileError::Redis(e) => {
+                tracing::error!(error.kind = "redis", error.message = %e, "redis error in profile handler");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            ProfileError::Storage(e) => {
+                tracing::error!(error.kind = "storage", error.message = %e, "storage error in profile handler");
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
+            ProfileError::Cursor(e) => {
+                tracing::error!(error.kind = "cursor", error.message = %e, "cursor error in profile handler");
                 error_response(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "INTERNAL_ERROR",

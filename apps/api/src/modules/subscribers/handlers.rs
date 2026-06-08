@@ -1,7 +1,8 @@
+use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::pagination::PaginationResponse;
-use crate::shared::types::dto::UserSummary;
+use crate::shared::middleware::extractors::MenoQuery;
+use crate::shared::pagination::{CursorPage, CursorParams};
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
 use axum::Extension;
@@ -28,31 +29,55 @@ pub async fn unsubscribe(
 }
 
 pub async fn get_my_subscribers(
-    State(state): State<Arc<MenoState>>,
-    Extension(auth_user): Extension<AuthUser>,
-) -> Result<MenoResponse<PaginationResponse<UserSummary>>, SubscribersError> {
-    Err(SubscribersError::SubscriberNotFound)
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    MenoQuery(params): MenoQuery<CursorParams>,
+) -> Result<MenoResponse<CursorPage<SubscriberItem>>, SubscribersError> {
+    let response = app
+        .subscribers
+        .service
+        .get_my_subscribers(auth.id, &params)
+        .await?;
+    Ok(MenoResponse::ok("Subscribers retrieved", response))
 }
 
 pub async fn get_my_subscriptions(
-    State(state): State<Arc<MenoState>>,
-    Extension(auth_user): Extension<AuthUser>,
-) -> Result<MenoResponse<PaginationResponse<UserSummary>>, SubscribersError> {
-    Err(SubscribersError::SubscriberNotFound)
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    MenoQuery(params): MenoQuery<CursorParams>,
+) -> Result<MenoResponse<CursorPage<SubscriberItem>>, SubscribersError> {
+    let response = app
+        .subscribers
+        .service
+        .get_my_subscriptions(auth.id, &params)
+        .await?;
+    Ok(MenoResponse::ok("Subscriptions retrieved", response))
 }
 
-pub async fn get_subscribers(
-    State(state): State<Arc<MenoState>>,
-    Extension(auth_user): Extension<AuthUser>,
+pub async fn get_user_subscribers(
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
     Path(user_id): Path<Uuid>,
-) -> Result<MenoResponse<PaginationResponse<UserSummary>>, SubscribersError> {
-    Err(SubscribersError::SubscriberNotFound)
+    MenoQuery(params): MenoQuery<CursorParams>,
+) -> Result<MenoResponse<CursorPage<SubscriberItem>>, SubscribersError> {
+    let response = app
+        .subscribers
+        .service
+        .get_user_subscribers(auth.id, user_id, &params)
+        .await?;
+    Ok(MenoResponse::ok("Subscribers retrieved", response))
 }
 
-pub async fn get_subscriptions(
-    State(state): State<Arc<MenoState>>,
-    Extension(auth_user): Extension<AuthUser>,
+pub async fn get_user_subscriptions(
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
     Path(user_id): Path<Uuid>,
-) -> Result<MenoResponse<PaginationResponse<UserSummary>>, SubscribersError> {
-    Err(SubscribersError::SubscriberNotFound)
+    MenoQuery(params): MenoQuery<CursorParams>,
+) -> Result<MenoResponse<CursorPage<SubscriberItem>>, SubscribersError> {
+    let response = app
+        .subscribers
+        .service
+        .get_user_subscriptions(auth.id, user_id, &params)
+        .await?;
+    Ok(MenoResponse::ok("Subscriptions retrieved", response))
 }

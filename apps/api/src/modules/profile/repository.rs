@@ -1,8 +1,9 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::dto::ProfileSearchResult;
+use crate::modules::profile::dto::{ProfileSearchQuery, ProfileSearchResult};
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::{GeneralSettings, Profile};
 
+use sqlx::{Postgres, QueryBuilder};
 use std::str::FromStr;
 use uuid::Uuid;
 
@@ -112,52 +113,75 @@ impl ProfileRepository {
     }
     pub async fn search_profiles(
         &self,
-        query: &str,
-        limit: i64,
-        offset: i64,
+        query: &ProfileSearchQuery,
         current_user_id: Uuid,
     ) -> Result<Vec<ProfileSearchResult>, ProfileError> {
-        let rows = sqlx::query!(
-            r#"SELECT u.id, u.full_name, u.bio, u.avatar_url, u.followers, u.following, u.broadcasts,
-               EXISTS(SELECT 1 FROM user_subscribers us WHERE us.subscriber_id = $1 AND us.subscription_id = u.id) AS is_following
-               FROM users u
-               WHERE u.deleted_at IS NULL
-               AND u.search_vector @@ websearch_to_tsquery('english', $2)
-               ORDER BY ts_rank(u.search_vector, websearch_to_tsquery('english', $2)) DESC, u.full_name
-               LIMIT $3 OFFSET $4"#,
-            current_user_id,
-            query,
-            limit,
-            offset
-        )
-            .fetch_all(&self.db)
-            .await
-            .map_err(ProfileError::Database)?;
+        let (cursor_rank, cursor_ts, cursor_id) = match &query.cursor() {
+            None => (None, None, None),
+            Some(c) => {
+                let (rank, ts, id) = c.to_rank_timestamp_id()?;
+                (Some(rank), Some(ts), Some(id))
+            }
+        };
 
-        let results = rows
-            .iter()
-            .map(|row| ProfileSearchResult {
-                id: row.id,
-                full_name: row.full_name.clone(),
-                bio: row.bio.clone(),
-                avatar_url: row.avatar_url.clone(),
-                is_following: row.is_following.unwrap_or(false),
-                followers: row.followers,
-                following: row.following,
-                broadcasts: row.broadcasts,
-            })
-            .collect();
-        Ok(results)
-    }
-    pub async fn count_search_profiles(&self, query: &str) -> Result<i64, ProfileError> {
-        sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS "count!" FROM users
-               WHERE deleted_at IS NULL
-               AND search_vector @@ websearch_to_tsquery('english', $1)"#,
-            query
-        )
-        .fetch_one(&self.db)
-        .await
-        .map_err(ProfileError::Database)
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            r#"
+            SELECT
+                u.id,
+                u.full_name,
+                u.bio,
+                u.avatar_url,
+                u.followers,
+                u.following,
+                u.broadcasts,
+                u.created_at
+                EXISTS(
+                    SELECT 1 FROM user_subscribers us
+                    WHERE us.subscriber_id =
+            "#,
+        );
+
+        qb.push_bind(current_user_id);
+
+        qb.push(
+            " AND us.subscription_id = u.id
+            ) AS is_following,
+            ts_rank(to_tsvector('english', full_name), plainto_tsquery('english',",
+        );
+
+        qb.push_bind(&query.q)
+            .push(
+                r#")) AS rank
+                    FROM users
+                    WHERE deleted_at IS NULL
+                    AND to_tsvector('english', full_name) @@ plainto_tsquery('english',
+                    "#,
+            )
+            .push_bind(&query.q)
+            .push(")");
+
+        // Cursor condition for rank-based pagination
+        // We use (rank, created_at, id) as the composite cursor
+        if let (Some(rank), Some(ts), Some(id)) = (cursor_rank, cursor_ts, cursor_id) {
+            qb.push(" AND (rank, u.created_at, u.id) < (")
+                .push_bind(rank)
+                .push(", ")
+                .push_bind(ts)
+                .push(", ")
+                .push_bind(id)
+                .push(")");
+        }
+
+        // Sort by rank first, then recency for stable cursor
+        qb.push(" ORDER BY rank DESC, created_at DESC, id DESC")
+            .push(" LIMIT ")
+            .push_bind(query.limit_plus_one());
+
+        let rows = qb
+            .build_query_as::<ProfileSearchResult>()
+            .fetch_all(&self.db)
+            .await?;
+
+        Ok(rows)
     }
 }

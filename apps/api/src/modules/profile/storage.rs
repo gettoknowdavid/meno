@@ -14,7 +14,7 @@ impl ProfileStorage {
         self.storage
             .object_exists(&key)
             .await
-            .map_err(|e| ProfileError::StorageError(e.to_string()))
+            .map_err(|e| ProfileError::Storage(e.to_string()))
     }
     pub fn get_avatar_url(&self, key: &str) -> String {
         self.storage.public_url_for(&key)
@@ -23,12 +23,12 @@ impl ProfileStorage {
         self.storage
             .presigned_upload_url(avatar_id)
             .await
-            .map_err(|e| ProfileError::StorageError(e.to_string()))
+            .map_err(|e| ProfileError::Storage(e.to_string()))
     }
     pub async fn delete_avatar(&self, key: &str) -> Result<(), ProfileError> {
         self.storage
             .delete(&key)
             .await
-            .map_err(|e| ProfileError::StorageError(e.to_string()))
+            .map_err(|e| ProfileError::Storage(e.to_string()))
     }
 }

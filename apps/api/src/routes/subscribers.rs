@@ -10,8 +10,8 @@ pub fn router(app: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoState
     let normal = Router::new()
         .route("/me/subscribers", get(h::get_my_subscribers))
         .route("/me/subscriptions", get(h::get_my_subscriptions))
-        .route("/{id}/subscribers", get(h::get_subscribers))
-        .route("/{id}/subscriptions", get(h::get_subscriptions))
+        .route("/{id}/subscribers", get(h::get_user_subscribers))
+        .route("/{id}/subscriptions", get(h::get_user_subscriptions))
         .layer(from_fn_with_state(app.clone(), auth_middleware));
 
     let idempotent = Router::new()

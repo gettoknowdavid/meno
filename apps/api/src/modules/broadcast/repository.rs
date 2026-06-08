@@ -1,16 +1,18 @@
 use crate::modules::broadcast::dto::{
-    BroadcastListItem, BroadcastParams, BroadcastSortBy, OrderBy, ParticipantListItem,
-    ParticipantParams, ParticipantSortBy,
+    BroadcastListItem, BroadcastQuery, BroadcastSortBy, ParticipantListItem, ParticipantQuery,
+    ParticipantSortBy,
 };
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastParticipant, EndReason, ParticipantRole,
 };
+use crate::shared::pagination::{Order};
+use crate::shared::repository::{push_cursor_condition, push_order_and_limit};
+use crate::shared::types::dto::UserSummary;
 use sqlx::{Postgres, QueryBuilder, Transaction};
 use std::collections::HashMap;
 use time::OffsetDateTime;
 use uuid::Uuid;
-use crate::shared::types::dto::UserSummary;
 
 // ==================== INPUTS ====================
 pub struct CreateBroadcastInput<'a> {
@@ -157,21 +159,59 @@ impl BroadcastRepository {
     /// A span is opened here, so slow queries surface in the trace tree with the
     /// filter parameters attached. Bind parameters are not logged to avoid
     /// leaking PII (keywords, user IDs) in structured logs.
-    #[tracing::instrument(
-        name = "broadcast_repo.find",
-        skip(self, params, requester_id),
-        fields(
-            page  = ?params.page,
-            limit = ?params.limit,
-            status = ?params.status,
-        )
-    )]
+    #[tracing::instrument(name = "broadcast_repo.find")]
     pub async fn find_broadcasts(
         &self,
-        params: &BroadcastParams,
+        query: &BroadcastQuery,
         requester_id: Option<Uuid>,
     ) -> Result<Vec<BroadcastListItem>, BroadcastError> {
-        let mut qb = QueryBuilder::<Postgres>::new(
+        let order = query.effective_order();
+        let sort = query.effective_sort();
+        let dir = order.sql();
+        let op = order.cursor_op();
+
+        // Decode the cursor, whose shape depends on the sort field.
+        // We do this first to display any possible errors before touching the DB
+        let cursor_ts1: Option<OffsetDateTime>;
+        let cursor_ts2: Option<OffsetDateTime>;
+        let cursor_score: Option<i64>;
+        let cursor_id: Option<Uuid>;
+
+        match sort {
+            BroadcastSortBy::TotalParticipants => {
+                cursor_ts1 = None;
+                cursor_ts2 = None;
+                match query.cursor() {
+                    None => {
+                        cursor_id = None;
+                        cursor_score = None;
+                    }
+                    Some(c) => {
+                        let (score, id) = c.to_score_id().map_err(BroadcastError::Cursor)?;
+                        cursor_score = Some(score);
+                        cursor_id = Some(id);
+                    }
+                }
+            }
+            _ => {
+                cursor_score = None;
+                match query.cursor() {
+                    None => {
+                        cursor_ts1 = None;
+                        cursor_ts2 = None;
+                        cursor_id = None;
+                    }
+                    Some(c) => {
+                        let (ts, id) = c.to_timestamp_id().map_err(BroadcastError::Cursor)?;
+                        cursor_ts1 = Some(ts);
+                        cursor_ts2 = Some(ts);
+                        cursor_id = Some(id);
+                    }
+                }
+            }
+        }
+
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             r#"
             SELECT
                 b.id,
@@ -180,296 +220,402 @@ impl BroadcastRepository {
                 b.time_zone,
                 b.image_url,
                 b.image_id,
-                b.status::text       AS status,
+                b.status,
                 b.created_at,
                 b.start_time,
                 b.end_time,
                 b.creator_id,
-
                 (
-                    SELECT COUNT(*)
-                    FROM   broadcast_participants bp
-                    WHERE  bp.broadcast_id = b.id
+                    SELECT COUNT(*) FROM broadcast_participants bp
+                    WHERE bp.broadcast_id = b.id
                 ) AS total_participants,
-
-                COALESCE(u.full_name, 'Unknown')  AS creator_name,
-                u.avatar_url                       AS creator_avatar_url,
-                u.avatar_id                        AS creator_avatar_id
-
-            FROM  broadcasts b
-            LEFT  JOIN users u
-                  ON  u.id = b.creator_id
-                  AND u.deleted_at IS NULL
-
+                COALESCE(u.full_name, 'Unknown') AS creator_name,
+                u.avatar_url AS creator_avatar_url,
+                u.avatar_id AS creator_avatar_id
+            FROM broadcasts b
+            LEFT JOIN users u ON  u.id = b.creator_id AND u.deleted_at IS NULL
             WHERE b.deleted_at IS NULL
             "#,
         );
 
-        Self::apply_broadcast_filters(&mut qb, params, requester_id);
-
-        // Order By
-        //
-        // NULLS LAST on all columns — ensures rows without a start/end time
-        // sort predictably rather than floating to the top.
-        let order_dir = match params.order_by.as_ref().unwrap_or(&OrderBy::Desc) {
-            OrderBy::Asc => "ASC NULLS LAST",
-            OrderBy::Desc => "DESC NULLS LAST",
-        };
-
-        let sort_col = match params
-            .sort_by
-            .as_ref()
-            .unwrap_or(&BroadcastSortBy::StartTime)
-        {
-            BroadcastSortBy::Title => "b.title",
-            BroadcastSortBy::StartTime => "b.start_time",
-            BroadcastSortBy::EndTime => "b.end_time",
-        };
-
-        qb.push(format!(" ORDER BY {} {}", sort_col, order_dir));
-
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let offset = ((params.page.unwrap_or(1).max(1)) - 1) * limit;
-
-        qb.push(" LIMIT ").push_bind(limit);
-        qb.push(" OFFSET ").push_bind(offset);
-
-        let rows = qb
-            .build_query_as::<BroadcastListItem>()
-            .fetch_all(&self.db)
-            .await
-            .map_err(BroadcastError::Database)?;
-
-        tracing::debug!(returned = rows.len(), "broadcast list query complete");
-
-        Ok(rows)
-    }
-
-    /// Run a COUNT(*) with the exact same WHERE clause as `find_list`.
-    /// Called in parallel with `find_list` from the service layer.
-    ///
-    /// Uses `COUNT(DISTINCT b.id)` for correctness even if future JOINs
-    /// cause fan-out.
-    #[tracing::instrument(
-        name = "broadcast_repo.count_broadcasts",
-        skip(self, params, requester_id)
-    )]
-    pub async fn count_broadcasts(
-        &self,
-        params: &BroadcastParams,
-        requester_id: Option<Uuid>,
-    ) -> Result<i64, BroadcastError> {
-        let mut qb = QueryBuilder::<Postgres>::new(
-            r#"SELECT COUNT(DISTINCT b.id)
-                   FROM broadcasts b
-                   LEFT JOIN users u
-                        ON u.id = b.creator_id
-                        AND u.deleted_at IS NULL
-                   WHERE b.deleted_at IS NULL"#,
-        );
-
-        Self::apply_broadcast_filters(&mut qb, params, requester_id);
-
-        let total: i64 = qb
-            .build_query_scalar()
-            .fetch_one(&self.db)
-            .await
-            .map_err(BroadcastError::Database)?;
-
-        Ok(total)
-    }
-
-    /// Appends WHERE clauses to `qb` based on `params`.
-    ///
-    /// Extracted as a static method, so `find_list` and `count_broadcasts` share
-    /// identical filter logic — they can never drift out of sync.
-    ///
-    /// ## Why static?
-    /// A `&self` receiver would imply DB access; making it static signals that
-    /// it only mutates the query builder.
-    fn apply_broadcast_filters(
-        qb: &mut QueryBuilder<Postgres>,
-        params: &BroadcastParams,
-        requester_id: Option<Uuid>,
-    ) {
-        // Broadcast ID
-        if let Some(id) = params.id {
-            qb.push(" AND b.id = ").push_bind(id);
-        }
-
-        // Creator filters
-        if let Some(cid) = params.creator_id {
+        // Filters
+        if let Some(cid) = query.creator_id {
             qb.push(" AND b.creator_id = ").push_bind(cid);
         }
-        if let Some(xcid) = params.exclude_creator_id {
-            qb.push(" AND b.creator_id <> ").push_bind(xcid);
+        if let Some(status) = &query.status {
+            qb.push(" AND b.status = ").push_bind(status);
         }
-
-        // Status
-        if let Some(ref s) = params.status {
-            // Cast to text to match the `status::text` alias in SELECT
-            qb.push(" AND b.status = ").push_bind(s.clone());
-        }
-
-        // Keywords
-        if let Some(ref kw) = params.keywords {
-            qb.push(
-                r#" AND to_tsvector('english', b.title || ' ' || COALESCE(b.description, ''))
-                 @@ plainto_tsquery('english', "#,
-            )
-            .push_bind(kw.clone())
-            .push(")");
-        }
-
-        // Subscriptions
-        if params.only_subscriptions == Some(true) {
+        if query.only_subscriptions.unwrap_or(false) {
             if let Some(vid) = requester_id {
                 qb.push(
-                    r#" AND b.creator_id IN
-                     (SELECT subscription_id FROM user_subscribers
-                      WHERE subscriber_id = "#,
+                    " AND b.creator_id IN (
+                        SELECT subscription_id
+                        FROM user_subscribers
+                        WHERE subscriber_id = ",
                 )
                 .push_bind(vid)
                 .push(")");
             }
         }
+        if let Some(ref kw) = query.keywords {
+            qb.push(
+                r#" AND to_tsvector('english', b.title || ' ' || b.description)
+                    @@ plainto_tsquery('english', "#,
+            )
+            .push_bind(kw.trim())
+            .push(")");
+        }
 
-        // Start-time range filters
-        if let Some(v) = params.start_time_gt {
+        if let Some(v) = query.start_time_gt {
             qb.push(" AND b.start_time > ").push_bind(v);
         }
-        if let Some(v) = params.start_time_gte {
+        if let Some(v) = query.start_time_gte {
             qb.push(" AND b.start_time >= ").push_bind(v);
         }
-        if let Some(v) = params.start_time_lt {
+        if let Some(v) = query.start_time_lt {
             qb.push(" AND b.start_time < ").push_bind(v);
         }
-        if let Some(v) = params.start_time_lte {
+        if let Some(v) = query.start_time_lte {
             qb.push(" AND b.start_time <= ").push_bind(v);
         }
 
-        // End-time range filters
-        if let Some(v) = params.end_time_gt {
+        if let Some(v) = query.end_time_gt {
             qb.push(" AND b.end_time > ").push_bind(v);
         }
-        if let Some(v) = params.end_time_gte {
+        if let Some(v) = query.end_time_gte {
             qb.push(" AND b.end_time >= ").push_bind(v);
         }
-        if let Some(v) = params.end_time_lt {
+        if let Some(v) = query.end_time_lt {
             qb.push(" AND b.end_time < ").push_bind(v);
         }
-        if let Some(v) = params.end_time_lte {
+        if let Some(v) = query.end_time_lte {
             qb.push(" AND b.end_time <= ").push_bind(v);
         }
 
-        // Existence checks
-        if let Some(exists) = params.start_time_exists {
+        if let Some(exists) = query.start_time_exists {
             qb.push(if exists {
                 " AND b.start_time IS NOT NULL"
             } else {
                 " AND b.start_time IS NULL"
             });
         }
-        if let Some(exists) = params.end_time_exists {
+        if let Some(exists) = query.end_time_exists {
             qb.push(if exists {
                 " AND b.end_time IS NOT NULL"
             } else {
                 " AND b.end_time IS NULL"
             });
         }
+
+        // Cursor Condition
+        // Each sort field has a corresponding cursor column.  The cursor
+        // condition must use the EXACT same expression as ORDER BY.
+        match sort {
+            BroadcastSortBy::CreatedAt => {
+                push_cursor_condition(
+                    &mut qb,
+                    "b.created_at",
+                    "b.id",
+                    cursor_ts1,
+                    cursor_id,
+                    order,
+                );
+            }
+            BroadcastSortBy::Title => {
+                push_cursor_condition(
+                    &mut qb,
+                    "b.created_at",
+                    "b.id",
+                    cursor_ts1,
+                    cursor_id,
+                    order,
+                );
+            }
+            BroadcastSortBy::StartTime => {
+                if let (Some(ts), Some(id)) = (cursor_ts1, cursor_id) {
+                    let op_str = op;
+                    qb.push(format!(" AND (b.start_time, b.id) {op_str} ("))
+                        .push_bind(ts)
+                        .push(", ")
+                        .push_bind(id)
+                        .push(")");
+                }
+            }
+            BroadcastSortBy::EndTime => {
+                if let (Some(ts1), Some(ts2), Some(id)) = (cursor_ts1, cursor_ts2, cursor_id) {
+                    let op_str = op;
+                    qb.push(format!(
+                        " AND (COALESCE(b.end_time, b.created_at), b.id) {op_str} ("
+                    ))
+                    .push_bind(ts2)
+                    .push(", ")
+                    .push_bind(ts1)
+                    .push(", ")
+                    .push_bind(id)
+                    .push(")");
+                }
+            }
+            BroadcastSortBy::TotalParticipants => {
+                if let (Some(score), Some(id)) = (cursor_score, cursor_id) {
+                    let op_str = op;
+                    qb.push(format!(
+                        " AND (
+                            (SELECT COUNT(*)::BIGINT FROM broadcast_participants bp2
+                             WHERE bp2.broadcast_id = b.id),
+                            b.id
+                        ) {op_str} ("
+                    ))
+                    .push_bind(score)
+                    .push(", ")
+                    .push_bind(id)
+                    .push(")");
+                }
+            }
+        }
+
+        // Order by
+        // Always include `b.id` as a tiebreaker so the page boundary is
+        // deterministic even when the primary sort column has duplicates.
+        match sort {
+            BroadcastSortBy::CreatedAt => {
+                qb.push(format!(" ORDER BY b.created_at {dir}, b.id {dir}"));
+            }
+            BroadcastSortBy::Title => {
+                qb.push(format!(
+                    " ORDER BY b.title {dir}, b.created_at {dir}, b.id {dir}"
+                ));
+            }
+            BroadcastSortBy::StartTime => {
+                qb.push(format!(
+                    " ORDER BY b.start_time {dir} NULLS LAST, b.id {dir}"
+                ));
+            }
+            BroadcastSortBy::EndTime => {
+                qb.push(format!(
+                    " ORDER BY COALESCE(b.end_time, b.created_at) {dir}, b.id {dir}"
+                ));
+            }
+            BroadcastSortBy::TotalParticipants => {
+                qb.push(format!(" ORDER BY total_participants {dir}, b.id {dir}"));
+            }
+        }
+
+        // Fetch one extra row to determine has_next_page.
+        qb.push(" LIMIT ").push_bind(query.limit_plus_one());
+
+        let rows = qb
+            .build_query_as::<BroadcastListItem>()
+            .fetch_all(&self.db)
+            .await?;
+
+        tracing::debug!(returned = rows.len(), "broadcast list query complete");
+
+        Ok(rows)
     }
 
     pub async fn find_participants(
         &self,
         broadcast_id: Uuid,
-        params: &ParticipantParams,
+        query: &ParticipantQuery,
     ) -> Result<Vec<ParticipantListItem>, BroadcastError> {
-        let mut qb = QueryBuilder::new(
+        let cursor = query.cursor();
+        let sort = query.sort_by.unwrap_or_default();
+        let order = query.order.unwrap_or(Order::Asc);
+        let dir = order.sql();
+        let op = order.cursor_op();
+
+        let (cursor_ts, cursor_id, cursor_name, cursor_role) = match (cursor, sort) {
+            (None, _) => (None, None, None, None),
+            (Some(c), ParticipantSortBy::JoinedAt) => {
+                let (ts, id) = c.to_timestamp_id().map_err(BroadcastError::Cursor)?;
+                (Some(ts), Some(id), None, None)
+            }
+            (Some(c), ParticipantSortBy::Name) => {
+                // For name sorting, cursor is (name, id)
+                let (name, id) = c.to_name_id().map_err(BroadcastError::Cursor)?;
+                (None, Some(id), Some(name), None)
+            }
+            (Some(c), ParticipantSortBy::Role) => {
+                let (priority, id) = c.to_score_id().map_err(BroadcastError::Cursor)?;
+                let role = match priority {
+                    0 => Some(ParticipantRole::Host),
+                    1 => Some(ParticipantRole::Cohost),
+                    2 => Some(ParticipantRole::Participant),
+                    _ => None,
+                };
+                (None, Some(id), None, role)
+            }
+        };
+
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             r#"
             SELECT
                 u.id,
                 u.full_name,
                 u.avatar_id,
                 u.avatar_url,
-                bp.role::text AS role,
+                bp.role,
                 bp.joined_at
             FROM broadcast_participants bp
-            INNER JOIN users u ON u.id = bp.participant_id AND u.deleted_at IS NULL
+            INNER JOIN users u
+                ON u.id = bp.participant_id
+                AND u.deleted_at IS NULL
             WHERE bp.broadcast_id =
             "#,
         );
-
         qb.push_bind(broadcast_id);
-        Self::apply_participant_filters(&mut qb, params);
 
-        let order_dir = match params.order_by.as_ref().unwrap_or(&OrderBy::Desc) {
-            OrderBy::Asc => "ASC NULLS LAST",
-            OrderBy::Desc => "DESC NULLS LAST",
-        };
-
-        let sort_col = match params.sort_by.as_ref().unwrap_or(&ParticipantSortBy::Role) {
-            ParticipantSortBy::Role => "bp.role",
-            ParticipantSortBy::JoinedAt => "bp.joined_at",
-            ParticipantSortBy::Name => "u.full_name",
-        };
-
-        qb.push(format!(" ORDER BY {} {}", sort_col, order_dir));
-
-        let limit = params.limit.unwrap_or(20).clamp(1, 100);
-        let offset = ((params.page.unwrap_or(1).max(1) - 1) * limit).max(0);
-
-        qb.push(" LIMIT ").push_bind(limit);
-        qb.push(" OFFSET ").push_bind(offset);
-
-        let rows = qb
-            .build_query_as::<ParticipantListItem>()
-            .fetch_all(&self.db)
-            .await
-            .map_err(BroadcastError::Database)?;
-
-        Ok(rows)
-    }
-
-    pub async fn count_participants(
-        &self,
-        broadcast_id: Uuid,
-        params: &ParticipantParams,
-    ) -> Result<i64, BroadcastError> {
-        let mut qb = QueryBuilder::<Postgres>::new(
-            r#"
-            SELECT COUNT(DISTINCT bp.participant_id)
-            FROM broadcast_participants bp
-            INNER JOIN users u ON u.id = bp.participant_id AND u.deleted_at IS NULL
-            WHERE bp.broadcast_id =
-            "#,
-        );
-
-        qb.push_bind(broadcast_id);
-        Self::apply_participant_filters(&mut qb, &params);
-
-        let total: i64 = qb
-            .build_query_scalar()
-            .fetch_one(&self.db)
-            .await
-            .map_err(BroadcastError::Database)?;
-
-        Ok(total)
-    }
-
-    fn apply_participant_filters(qb: &mut QueryBuilder<Postgres>, params: &ParticipantParams) {
-        // Role
-        if let Some(ref r) = params.role {
-            qb.push(" AND bp.role = ").push_bind(r.clone());
+        if let Some(role) = &query.role {
+            qb.push(" AND bp.role = ").push_bind(role);
         }
-
-        // Keywords
-        if let Some(ref kw) = params.keywords {
+        if let Some(ref kw) = query.keywords {
             if !kw.is_empty() {
                 qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
                     .push_bind(kw.clone())
                     .push(")");
             }
         }
+
+        // Cursor condition based on the sort field
+        match sort {
+            ParticipantSortBy::Role => {
+                if let (Some(r), Some(id)) = (cursor_role, cursor_id) {
+                    qb.push(format!(" AND (bp.role, bp.participant_id) {} (", op))
+                        .push_bind(r)
+                        .push(", ")
+                        .push_bind(id)
+                        .push(")");
+                }
+            }
+            ParticipantSortBy::JoinedAt => {
+                if let (Some(ts), Some(id)) = (cursor_ts, cursor_id) {
+                    qb.push(format!(" AND (bp.joined_at, bp.participant_id) {} (", op))
+                        .push_bind(ts)
+                        .push(", ")
+                        .push_bind(id)
+                        .push(")");
+                }
+            }
+            ParticipantSortBy::Name => {
+                if let (Some(n), Some(id)) = (cursor_name, cursor_id) {
+                    qb.push(format!(" AND (u.full_name, bp.participant_id) {} (", op))
+                        .push_bind(n)
+                        .push(", ")
+                        .push_bind(id)
+                        .push(")");
+                }
+            }
+        }
+
+        // Order by
+        match sort {
+            ParticipantSortBy::Role => {
+                qb.push(format!(
+                    " ORDER BY \
+                 CASE bp.role \
+                     WHEN 'host' THEN 0 \
+                     WHEN 'cohost' THEN 1 \
+                     WHEN 'participant' THEN 2 \
+                     ELSE 3 \
+                 END {}, \
+                 bp.participant_id {}",
+                    dir, dir
+                ));
+            }
+            ParticipantSortBy::JoinedAt => {
+                qb.push(format!(
+                    " ORDER BY bp.joined_at {}, bp.participant_id {}",
+                    dir, dir
+                ));
+            }
+            ParticipantSortBy::Name => {
+                qb.push(format!(
+                    " ORDER BY u.full_name {}, bp.participant_id {}",
+                    dir, dir
+                ));
+            }
+        }
+
+        qb.push(" LIMIT ").push_bind(query.limit_plus_one());
+
+        let rows = qb
+            .build_query_as::<ParticipantListItem>()
+            .fetch_all(&self.db)
+            .await?;
+
+        Ok(rows)
+    }
+
+    pub async fn find_live_participants(
+        &self,
+        broadcast_id: Uuid,
+        query: &ParticipantQuery,
+    ) -> Result<Vec<ParticipantListItem>, BroadcastError> {
+        let (cursor_ts, cursor_id) = match query.cursor() {
+            None => (None, None),
+            Some(c) => {
+                let (ts, id) = c.to_timestamp_id().map_err(|_| sqlx::Error::RowNotFound)?;
+                (Some(ts), Some(id))
+            }
+        };
+
+        let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
+            r#"
+            SELECT
+                u.id,
+                u.full_name,
+                u.avatar_id,
+                u.avatar_url,
+                bp.role,
+                bp.joined_at
+            FROM broadcast_participants bp
+            INNER JOIN users u
+                ON u.id = bp.participant_id
+                AND u.deleted_at IS NULL
+            INNER JOIN broadcasts b
+                ON b.id = bp.broadcast_id
+                AND status = 'active'
+                AND end_time IS NULL
+                AND deleted_at IS NULL
+            WHERE bp.broadcast_id =
+            "#,
+        );
+        qb.push_bind(broadcast_id);
+
+        if let Some(role) = &query.role {
+            qb.push(" AND bp.role = ").push_bind(role);
+        }
+        if let Some(ref kw) = query.keywords {
+            if !kw.is_empty() {
+                qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
+                    .push_bind(kw.clone())
+                    .push(")");
+            }
+        }
+
+        push_cursor_condition(
+            &mut qb,
+            "bp.joined_at",
+            "bp.participant_id",
+            cursor_ts,
+            cursor_id,
+            Order::Asc,
+        );
+
+        push_order_and_limit(
+            &mut qb,
+            "bp.joined_at",
+            "bp.participant_id",
+            Order::Asc,
+            query.limit_plus_one(),
+        );
+
+        let rows = qb
+            .build_query_as::<ParticipantListItem>()
+            .fetch_all(&self.db)
+            .await?;
+
+        Ok(rows)
     }
 
     pub async fn find_by_id(&self, id: Uuid) -> Result<Option<Broadcast>, BroadcastError> {
