@@ -16,7 +16,7 @@ pub fn init_telemetry() {
             .with_thread_ids(true)
             .boxed()
     } else {
-        // Development: pretty output with colours
+        // Development: pretty output with colors
         fmt::layer()
             .pretty()
             .with_target(true)

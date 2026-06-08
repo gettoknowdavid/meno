@@ -1,14 +1,14 @@
 use crate::modules::auth::model::AuthProvider;
 use crate::modules::profile::cache::ProfileCache;
 use crate::modules::profile::dto::{
-    AvatarUploadUrlResponse, MeResponse, ProfileSearchParam, ProfileSearchResult,
+    AvatarUploadUrlResponse, MeResponse, ProfileSearchQuery, ProfileSearchResult,
     PublicProfileResponse, UpdateProfileRequest,
 };
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::GeneralSettings;
 use crate::modules::profile::repository::ProfileRepository;
 use crate::modules::profile::storage::ProfileStorage;
-use crate::shared::pagination::{PaginationParams, PaginationResponse};
+use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
@@ -171,51 +171,27 @@ impl ProfileService {
 
     pub async fn search_profiles(
         &self,
+        query: &ProfileSearchQuery,
         current_user_id: Uuid,
-        params: &ProfileSearchParam,
-    ) -> Result<PaginationResponse<ProfileSearchResult>, ProfileError> {
-        let q = &params.q.trim().to_lowercase();
-        let page = params.page.unwrap_or(1);
-        let limit = params.limit.unwrap_or(50);
+    ) -> Result<CursorPage<ProfileSearchResult>, ProfileError> {
+        let q = &query.q.trim().to_lowercase();
 
-        let cache_key = RedisKey::search_results(&q, page, limit);
+        let limit = query.limit();
+        let cache_key = RedisKey::search_results(&q, 0, limit.clone());
 
         if let Some(cached_results) = self.cache.get_cached_search_results(&cache_key).await? {
-            return self.build_pagination(&q, limit, page, cached_results).await;
+            return self.apply_cursor(cached_results, limit.clone());
         }
 
-        let pagination = PaginationParams::new(page, limit);
+        let results = self.repo.search_profiles(&query, current_user_id).await?;
 
-        let results = self
-            .repo
-            .search_profiles(&q, limit, pagination.offset(), current_user_id)
-            .await?;
+        if query.cursor().is_none() && results.len() <= 100 {
+            self.cache
+                .cache_search_results(&cache_key, results.clone())
+                .await?;
+        }
 
-        self.cache
-            .cache_search_results(&cache_key, results.clone())
-            .await?;
-
-        self.build_pagination(&q, limit, page, results).await
-    }
-    async fn build_pagination<T>(
-        &self,
-        q: &str,
-        limit: i64,
-        page: i64,
-        data: Vec<T>,
-    ) -> Result<PaginationResponse<T>, ProfileError> {
-        let total = self.repo.count_search_profiles(q).await?;
-        let total_pages = if total == 0 {
-            0
-        } else {
-            (total + limit - 1) / limit
-        };
-        Ok(PaginationResponse {
-            total_items: total,
-            total_pages,
-            current_page: page,
-            data,
-        })
+        self.apply_cursor(results, limit)
     }
 
     async fn update_avatar_url(
@@ -247,5 +223,15 @@ impl ProfileService {
                 Ok(())
             }
         }
+    }
+
+    fn apply_cursor(
+        &self,
+        results: Vec<ProfileSearchResult>,
+        limit: i64,
+    ) -> Result<CursorPage<ProfileSearchResult>, ProfileError> {
+        Ok(CursorPage::from_rows(results, limit, |p| {
+            Cursor::from_timestamp_id(p.created_at, p.id)
+        }))
     }
 }

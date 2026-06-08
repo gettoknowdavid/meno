@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "DELETE FROM user_subscribers WHERE subscriber_id = $1 AND subscription_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c22e51f8bfd2be5b99543c42cc565a511cd59efedecd1db44973e55832c6afc8"
+}

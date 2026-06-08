@@ -2,11 +2,11 @@ use crate::modules::profile::dto;
 use crate::modules::profile::dto::PublicProfileResponse;
 use crate::modules::profile::errors::ProfileError;
 use crate::shared::middleware::auth::AuthUser;
-use crate::shared::middleware::extractors::MenoBody;
-use crate::shared::pagination::PaginationResponse;
+use crate::shared::middleware::extractors::{MenoBody, MenoQuery};
+use crate::shared::pagination::CursorPage;
 use crate::shared::types::meno_response::MenoResponse;
 use crate::state::MenoState;
-use axum::extract::{Extension, Path, Query, State};
+use axum::extract::{Extension, Path, State};
 use std::sync::Arc;
 use validator::Validate;
 
@@ -30,7 +30,7 @@ pub async fn get_profile(
 pub async fn get_avatar_upload_url(
     State(app): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Query(params): Query<dto::AvatarUploadUrlParams>,
+    MenoQuery(params): MenoQuery<dto::AvatarUploadUrlParams>,
 ) -> Result<MenoResponse<dto::AvatarUploadUrlResponse>, ProfileError> {
     let response = app
         .profile
@@ -53,13 +53,13 @@ pub async fn update_me(
 pub async fn search_profiles(
     State(app): State<Arc<MenoState>>,
     Extension(auth_user): Extension<AuthUser>,
-    Query(params): Query<dto::ProfileSearchParam>,
-) -> Result<MenoResponse<PaginationResponse<dto::ProfileSearchResult>>, ProfileError> {
-    params.validate()?;
+    MenoQuery(query): MenoQuery<dto::ProfileSearchQuery>,
+) -> Result<MenoResponse<CursorPage<dto::ProfileSearchResult>>, ProfileError> {
+    query.validate()?;
     let results = app
         .profile
         .service
-        .search_profiles(auth_user.id, &params)
+        .search_profiles(&query, auth_user.id)
         .await?;
     Ok(MenoResponse::ok("Profiles retrieved successfully", results))
 }

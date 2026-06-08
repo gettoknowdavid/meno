@@ -150,6 +150,12 @@ impl RedisKey {
     pub fn idempotency(key: Uuid) -> Self {
         Self::new(format!("idem:{}", key))
     }
+
+    /// Cursor result cache
+    /// Key encodes: module + owner + cursor_value + limit, so different callers never collide.
+    pub fn cursor_cache(module: &str, owner_id: Uuid, cursor: &str, limit: i64) -> String {
+        format!("cursor:{}:{}:{}:{}", module, owner_id, cursor, limit)
+    }
 }
 impl std::fmt::Display for RedisKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

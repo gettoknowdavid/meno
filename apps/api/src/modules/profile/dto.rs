@@ -1,6 +1,8 @@
 use crate::modules::auth::model::AuthProvider;
 use crate::modules::profile::model::{Display, GeneralSettings};
+use crate::shared::pagination::CursorParams;
 use serde::{Deserialize, Serialize};
+use sqlx::FromRow;
 use time::{OffsetDateTime, serde::rfc3339};
 use uuid::Uuid;
 use validator::Validate;
@@ -18,15 +20,23 @@ pub struct UpdateProfileRequest {
 }
 
 #[derive(Debug, Deserialize, Validate)]
-pub struct ProfileSearchParam {
+pub struct ProfileSearchQuery {
     #[validate(length(min = 3, message = "Keywords must be at least 3 characters"))]
     pub q: String,
 
-    #[validate(range(min = 1, message = "Minimum page number is 1"))]
-    pub page: Option<i64>,
-
-    #[validate(range(min = 20, max = 50, message = "Min: 20, Max: 50"))]
-    pub limit: Option<i64>,
+    #[serde(flatten)]
+    pub pagination: CursorParams,
+}
+impl ProfileSearchQuery {
+    pub fn limit(&self) -> i64 {
+        self.pagination.limit()
+    }
+    pub fn limit_plus_one(&self) -> i64 {
+        self.pagination.limit_plus_one()
+    }
+    pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
+        self.pagination.cursor.as_ref()
+    }
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -64,7 +74,7 @@ pub struct PublicProfileResponse {
     pub created_at: OffsetDateTime,
 }
 
-#[derive(Debug, Serialize, Deserialize, Clone)]
+#[derive(Debug, Serialize, Deserialize, Clone, FromRow)]
 pub struct ProfileSearchResult {
     pub id: Uuid,
     pub full_name: String,
@@ -74,6 +84,8 @@ pub struct ProfileSearchResult {
     pub followers: i64,
     pub following: i64,
     pub broadcasts: i64,
+    #[serde(with = "rfc3339")]
+    pub created_at: OffsetDateTime,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

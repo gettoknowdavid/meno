@@ -1,11 +1,12 @@
 pub mod constants;
+pub mod email;
 pub mod errors;
 pub mod integrations;
 pub mod middleware;
 pub mod pagination;
+pub mod repository;
 pub mod services;
 pub mod signals;
 pub mod telemetry;
 pub mod types;
 pub mod utils;
-pub mod email;
