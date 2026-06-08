@@ -6,6 +6,7 @@ use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::state::MenoState;
+use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Clone)]
@@ -21,6 +22,7 @@ impl SubscribersService {
         }
     }
 
+    #[instrument(skip(self, app, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
     pub async fn subscribe(
         &self,
         app: &MenoState,
@@ -51,10 +53,11 @@ impl SubscribersService {
             );
             ws.send_to_user(subscription_id, payload).await;
         });
-
+        tracing::info!("Subscription created successfully");
         Ok(())
     }
 
+    #[instrument(skip(self, app, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
     pub async fn unsubscribe(
         &self,
         app: &MenoState,
@@ -89,6 +92,7 @@ impl SubscribersService {
         Ok(())
     }
 
+    #[instrument(skip(self, params), fields(auth_id = %auth_id))]
     pub async fn get_my_subscribers(
         &self,
         auth_id: Uuid,
@@ -108,6 +112,7 @@ impl SubscribersService {
         }))
     }
 
+    #[instrument(skip(self, params), fields(auth_id = %auth_id))]
     pub async fn get_my_subscriptions(
         &self,
         auth_id: Uuid,
@@ -127,6 +132,7 @@ impl SubscribersService {
         }))
     }
 
+    #[instrument(skip(self, params), fields(auth_id = %auth_id, user_id = %user_id))]
     pub async fn get_user_subscribers(
         &self,
         auth_id: Uuid,
@@ -147,6 +153,7 @@ impl SubscribersService {
         }))
     }
 
+    #[instrument(skip(self, params), fields(auth_id = %auth_id, user_id = %user_id))]
     pub async fn get_user_subscriptions(
         &self,
         auth_id: Uuid,

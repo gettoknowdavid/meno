@@ -3,6 +3,7 @@ use crate::modules::subscribers::errors::SubscribersError;
 use crate::shared::pagination::{CursorParams, Order};
 use crate::shared::repository::{push_cursor_condition, push_order_and_limit};
 use sqlx::{Postgres, QueryBuilder};
+use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -14,11 +15,13 @@ impl SubscribersRepository {
         Self { db }
     }
 
+    #[instrument(skip(self), fields(subscriber_id = %subscriber_id, subscription_id = %subscription_id))]
     pub async fn create(
         &self,
         subscriber_id: Uuid,
         subscription_id: Uuid,
     ) -> Result<(), SubscribersError> {
+        tracing::info!("Creating subscriber relationship");
         sqlx::query!(
             r#"INSERT INTO user_subscribers (subscriber_id, subscription_id)
             VALUES ($1, $2)
@@ -29,14 +32,17 @@ impl SubscribersRepository {
         .execute(&self.db)
         .await
         .map_err(SubscribersError::Database)?;
+        tracing::info!("Successfully created subscriber relationship");
         Ok(())
     }
 
+    #[instrument(skip(self), fields(subscriber_id = %subscriber_id, subscription_id = %subscription_id))]
     pub async fn delete(
         &self,
         subscriber_id: Uuid,
         subscription_id: Uuid,
     ) -> Result<(), SubscribersError> {
+        tracing::info!("Deleting subscriber relationship");
         sqlx::query!(
             r#"DELETE FROM user_subscribers WHERE subscriber_id = $1 AND subscription_id = $2"#,
             subscriber_id,
@@ -45,15 +51,19 @@ impl SubscribersRepository {
         .execute(&self.db)
         .await
         .map_err(SubscribersError::Database)?;
+        tracing::info!("Successfully deleted subscriber relationship");
         Ok(())
     }
 
+    #[instrument(skip(self, params, viewer_id), fields(subscription_id = %subscription_id, ?viewer_id, limit = params.limit))]
     pub async fn find_subscribers(
         &self,
         subscription_id: Uuid,
         viewer_id: Option<Uuid>,
         params: &CursorParams,
     ) -> Result<Vec<SubscriberItem>, SubscribersError> {
+        tracing::debug!("Fetching subscribers list");
+
         let (cursor_ts, cursor_id) = match &params.cursor {
             None => (None, None),
             Some(c) => {
@@ -70,7 +80,8 @@ impl SubscribersRepository {
                 u.bio,
                 u.avatar_url,
                 u.avatar_id,
-                us.created_at AS subscribed_at
+                us.created_at AS subscribed_at,
+                false AS is_following
             FROM user_subscribers us
             INNER JOIN users u
                 ON u.id = us.subscriber_id
@@ -111,9 +122,12 @@ impl SubscribersRepository {
             }
         }
 
+        tracing::info!(count = rows.len(), "Fetched subscribers");
+
         Ok(rows)
     }
 
+    #[instrument(skip(self, params, viewer_id), fields(subscriber_id = %subscriber_id, ?viewer_id, limit = params.limit))]
     pub async fn find_subscriptions(
         &self,
         subscriber_id: Uuid,
@@ -130,9 +144,18 @@ impl SubscribersRepository {
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
             r#"
-            SELECT u.id, u.full_name, u.bio, u.avatar_url, u.avatar_id, us.created_at AS subscribed_at
+            SELECT
+                u.id,
+                u.full_name,
+                u.bio,
+                u.avatar_url,
+                u.avatar_id,
+                us.created_at AS subscribed_at,
+                false AS is_following
             FROM user_subscribers us
-            INNER JOIN users u ON u.id = us.subscription_id AND u.deleted_at IS NULL
+                INNER JOIN users u
+                ON u.id = us.subscription_id
+                AND u.deleted_at IS NULL
             WHERE us.subscriber_id =
             "#,
         );
