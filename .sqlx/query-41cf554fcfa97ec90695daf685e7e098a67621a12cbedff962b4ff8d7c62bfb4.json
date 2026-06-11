@@ -1,0 +1,23 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE notifications\n               SET read = true, read_at = NOW()\n               WHERE id = $1 AND owner_id = $2 AND read = false\n               RETURNING id",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "id",
+        "type_info": "Uuid"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false
+    ]
+  },
+  "hash": "41cf554fcfa97ec90695daf685e7e098a67621a12cbedff962b4ff8d7c62bfb4"
+}

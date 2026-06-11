@@ -1,8 +1,10 @@
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::notifications::state::NotificationState;
 use crate::modules::profile::state::ProfileState;
 use crate::modules::subscribers::state::SubscribersState;
 use crate::routes::health;
+use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::ws;
 use crate::{
     config::MenoConfig,
@@ -46,6 +48,7 @@ pub struct MenoState {
     pub profile: ProfileState,
     pub broadcast: BroadcastState,
     pub subscribers: SubscribersState,
+    pub notifications: NotificationState,
     pub livekit: LivekitService,
     pub ws: WsService,
     pub jobs: JobQueue,
@@ -60,11 +63,13 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
     let jobs = JobQueue::new(&db);
     let livekit = build_livekit_service(&config);
     let smtp = build_smtp_transport(&config);
+    let push = PushNotificationService::new(&config);
 
     let auth = AuthState::new(db.clone(), redis.clone(), &config);
     let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
     let broadcast = BroadcastState::new(db.clone(), redis.clone(), livekit.clone(), ws.clone());
     let subscribers = SubscribersState::new(db.clone(), ws.clone());
+    let notifications = NotificationState::new(db.clone(), redis.clone(), ws.clone(), push.clone());
 
     let state = Arc::new(MenoState {
         config,
@@ -74,6 +79,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
         profile,
         broadcast,
         subscribers,
+        notifications,
         livekit,
         ws,
         jobs,

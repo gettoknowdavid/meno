@@ -1,6 +1,7 @@
 use crate::shared::middleware::rate_limit::RateLimitConfig;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use std::env::var;
+use std::fs::read_to_string;
 
 #[derive(Clone)]
 pub struct MenoConfig {
@@ -14,8 +15,9 @@ pub struct MenoConfig {
 
     // pub email_url: String,
     // pub cloudinary_url: String,
+    pub firebase_project_id: String,
+    pub firebase_service_account_json: String,
 
-    // pub firebase_service_account_url: String,
     pub google_client_id: String,
     pub google_client_secret: String,
     pub google_redirect_uri: String,
@@ -55,17 +57,21 @@ pub struct MenoConfig {
 impl MenoConfig {
     pub fn from_env() -> Result<MenoConfig> {
         dotenvy::dotenv().ok();
+
+        let service_account_json = if let Ok(p) = var("FIREBASE_SERVICE_ACCOUNT_PATH") {
+            read_to_string(&p).context(format!("Failed to read service account from {}", p))?
+        } else {
+            return Err(anyhow!("FIREBASE_SERVICE_ACCOUNT_PATH is missing"));
+        };
+
         Ok(MenoConfig {
             livekit_api_key: var("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is missing")?,
             livekit_api_secret: var("LIVEKIT_API_SECRET")
                 .context("LIVEKIT_API_SECRET is missing")?,
             livekit_host: var("LIVEKIT_HOST").context("LIVEKIT_HOST is missing")?,
-            // aws_region: var("AWS_REGION").context("AWS_REGION is missing")?,
-            // aws_access_key_id: var("AWS_ACCESS_KEY_ID").context("AWS_ACCESS_KEY_ID is missing")?,
-            // aws_secret_access_key: var("AWS_SECRET_ACCESS_KEY").context("AWS_SECRET_ACCESS_KEY is missing")?,
-            // email_url: var("EMAIL_URL").context("EMAIL_URL is missing")?,
-            // cloudinary_url: var("CLOUDINARY_URL").context("CLOUDINARY_URL is missing")?,
-            // firebase_service_account_url: var("FIREBASE_SERVICE_ACCOUNT_URL").context("FIREBASE_SERVICE_ACCOUNT_URL is missing")?,
+            firebase_project_id: var("FIREBASE_PROJECT_ID")
+                .context("FIREBASE_PROJECT_ID is missing")?,
+            firebase_service_account_json: service_account_json,
             google_client_id: var("GOOGLE_CLIENT_ID").context("GOOGLE_CLIENT_ID is missing")?,
             google_client_secret: var("GOOGLE_CLIENT_SECRET")
                 .context("GOOGLE_CLIENT_SECRET is missing")?,
