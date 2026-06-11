@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT user_id, push_notification_token\n               FROM general_settings\n               WHERE user_id = ANY($1)\n                 AND push_notification_token IS NOT NULL\n                 AND push_notifications = true",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "user_id",
+        "type_info": "Uuid"
+      },
+      {
+        "ordinal": 1,
+        "name": "push_notification_token",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "UuidArray"
+      ]
+    },
+    "nullable": [
+      false,
+      true
+    ]
+  },
+  "hash": "457f177cd563c1ba03973699ab87c9bc8349f186eaaa176c60656b23f989c855"
+}

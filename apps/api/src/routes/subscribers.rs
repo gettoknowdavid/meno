@@ -5,8 +5,9 @@ use crate::state::MenoState;
 use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, post};
+use std::sync::Arc;
 
-pub fn router(app: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoState>> {
+pub fn router(app: Arc<MenoState>) -> Router<Arc<MenoState>> {
     let normal = Router::new()
         .route("/me/subscribers", get(h::get_my_subscribers))
         .route("/me/subscriptions", get(h::get_my_subscriptions))

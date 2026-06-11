@@ -156,6 +156,16 @@ impl RedisKey {
     pub fn cursor_cache(module: &str, owner_id: Uuid, cursor: &str, limit: i64) -> String {
         format!("cursor:{}:{}:{}:{}", module, owner_id, cursor, limit)
     }
+
+    /// Per-user unread notification count.
+    /// Incremented on `notify()`, decremented on `mark_read()`,
+    /// reset to 0 on `mark_all_read()`.
+    ///
+    /// TTL: 1 hour (refreshed on every write).
+    /// Type: i64
+    pub fn unread_count(user_id: Uuid) -> Self {
+        Self::new(format!("u:{}:unread", user_id))
+    }
 }
 impl std::fmt::Display for RedisKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

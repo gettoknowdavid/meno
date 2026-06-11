@@ -7,6 +7,10 @@ services:
     environment:
       - RUST_LOG=info
       - DATABASE_URL=postgres://meno:password@postgres:5432/meno_dev
+      - FIREBASE_PROJECT_ID=inklings-meno
+      - FIREBASE_SERVICE_ACCOUNT_PATH=/run/secrets/firebase-service-account
+    secrets:
+      - firebase-service-account
     ports:
       - "8080:8080"
     networks:
@@ -135,3 +139,7 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
+
+secrets:
+  firebase-service-account:
+    file: ./secrets/inklings-meno-firebase-adminsdk-fbsvc-32c4a66be7.json

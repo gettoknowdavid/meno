@@ -11,27 +11,30 @@ CREATE TABLE public.notification_types
     description TEXT,                 -- e.g. "You have been added as a co-host to a broadcast"
     icon        TEXT,                 -- e.g. "user-plus"
     color       TEXT,                 -- e.g. "#22C55E"
-    createdAt   TIMESTAMPTZ NOT NULL DEFAULT now()
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 -- Notification Templates
 CREATE TABLE public.notification_templates
 (
-    id        UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
-    type      TEXT        NOT NULL REFERENCES notification_types (code) ON DELETE RESTRICT ON UPDATE CASCADE,
+    id         UUID PRIMARY KEY     DEFAULT gen_random_uuid(),
+    type       TEXT        NOT NULL REFERENCES notification_types (code) ON DELETE RESTRICT ON UPDATE CASCADE,
 
-    title     TEXT        NOT NULL,
-    body      TEXT        NOT NULL,
-    image_url TEXT,
+    title      TEXT        NOT NULL,
+    body       TEXT        NOT NULL,
+    image_url  TEXT,
 
-    metadata  JSONB       NOT NULL DEFAULT '{}',
-    is_active BOOLEAN     NOT NULL DEFAULT TRUE,
+    metadata   JSONB       NOT NULL DEFAULT '{}',
+    is_active  BOOLEAN     NOT NULL DEFAULT TRUE,
 
-    createdAt TIMESTAMPTZ NOT NULL DEFAULT now(),
-    updatedAt TIMESTAMPTZ NOT NULL DEFAULT now(),
-    deletedAt TIMESTAMPTZ
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    deleted_at TIMESTAMPTZ
 );
-CREATE INDEX idx_notification_templates_type ON notification_templates (type);
+
+CREATE INDEX IF NOT EXISTS idx_notification_templates_type
+    ON notification_templates (type)
+    WHERE is_active = true AND deleted_at IS NULL;
 
 -- User Notifications (Per user instance - lightweight)
 CREATE TABLE public.notifications
@@ -53,13 +56,37 @@ CREATE TABLE public.notifications
 
     created_at      TIMESTAMPTZ NOT NULL DEFAULT now()
 );
-CREATE INDEX idx_notifications_owner ON notifications (owner_id, created_at DESC);
-CREATE INDEX idx_notifications_unread ON notifications (owner_id) WHERE read = false AND archived_at IS NULL;
 
-CREATE INDEX idx_notifications_template ON notifications (template_id);
-CREATE INDEX idx_notifications_actor ON notifications (actor_id);
-CREATE INDEX idx_notifications_broadcast ON notifications (broadcast_id);
+-- Index for the primary list query (owner + unread filter + cursor)
+CREATE INDEX IF NOT EXISTS idx_notifications_owner_created
+    ON notifications (owner_id, created_at DESC, id DESC)
+    WHERE archived_at IS NULL;
 
-CREATE INDEX idx_notifications_owner_type ON notifications (owner_id, template_id, created_at DESC);
+-- Index for unread-count query
+CREATE INDEX IF NOT EXISTS idx_notifications_owner_unread
+    ON notifications (owner_id)
+    WHERE read = false AND archived_at IS NULL;
+
+CREATE INDEX idx_notifications_template ON notifications (template_id) WHERE archived_at IS NULL;
+CREATE INDEX idx_notifications_actor ON notifications (actor_id) WHERE archived_at IS NULL;
+CREATE INDEX idx_notifications_broadcast ON notifications (broadcast_id) WHERE archived_at IS NULL;
+
+CREATE INDEX idx_notifications_owner_type ON notifications (owner_id, template_id, created_at DESC) WHERE archived_at IS NULL;
 
 SELECT setup_updated_at_triggers();
+
+INSERT INTO notification_types (code, label, description)
+VALUES ('added_as_cohost', 'Added as Co-host', 'You were invited to co-host a broadcast'),
+       ('user_subscribed', 'New Follower', 'Someone subscribed to you'),
+       ('scheduled_broadcast', 'Upcoming Broadcast', 'A creator you follow scheduled a broadcast'),
+       ('live_broadcast_started', 'Live Now', 'A creator you follow went live'),
+       ('broadcast_ended', 'Broadcast Ended', 'A broadcast you were in has ended')
+ON CONFLICT (code) DO NOTHING;
+
+INSERT INTO notification_templates (type, title, body)
+VALUES ('added_as_cohost', 'Co-host Invite', '{actor} invited you to co-host {broadcast}'),
+       ('user_subscribed', 'New Follower', '{actor} started following you'),
+       ('scheduled_broadcast', 'Upcoming Broadcast', '{actor} scheduled a broadcast: {title}'),
+       ('live_broadcast_started', 'Live Now', '{actor} is live: {title}'),
+       ('broadcast_ended', 'Broadcast Ended', '{title} has ended')
+ON CONFLICT DO NOTHING;

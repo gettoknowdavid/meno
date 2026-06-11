@@ -6,13 +6,13 @@ use axum::Router;
 use axum::middleware::{from_fn, from_fn_with_state};
 use axum::routing::{delete, get, patch, post, put};
 
-pub fn router(state: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoState>> {
+pub fn router(app: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoState>> {
     let normal = Router::new()
         .route("/", get(h::get_broadcasts))
         .route("/{id}", get(h::get_broadcast))
         .route("/{id}/participants", get(h::get_participants))
         .route("/{id}/live-participants", get(h::get_live_participants))
-        .layer(from_fn_with_state(state.clone(), auth_middleware));
+        .layer(from_fn_with_state(app.clone(), auth_middleware));
 
     let idempotent = Router::new()
         .route("/", post(h::create_broadcast))
@@ -26,7 +26,7 @@ pub fn router(state: std::sync::Arc<MenoState>) -> Router<std::sync::Arc<MenoSta
         .route("/{id}/cohosts/{user_id}", delete(h::remove_cohost))
         .route("/{id}/token", post(h::refresh_token))
         .layer(from_fn(idempotency_middleware))
-        .layer(from_fn_with_state(state.clone(), auth_middleware));
+        .layer(from_fn_with_state(app.clone(), auth_middleware));
 
     normal.merge(idempotent)
 }
