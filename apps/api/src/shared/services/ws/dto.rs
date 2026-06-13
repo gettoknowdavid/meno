@@ -157,6 +157,13 @@ impl WsPayload {
             serde_json::json!({ "timestamp": OffsetDateTime::now_utc() }),
         )
     }
+
+    pub fn new_chat_message(data: impl Serialize) -> Self {
+        Self::new(WsEvent::NewMessage, data)
+    }
+    pub fn edit_chat_message(data: impl Serialize) -> Self {
+        Self::new(WsEvent::EditedMessage, data)
+    }
 }
 
 /// Client message received from WebSocket

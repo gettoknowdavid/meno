@@ -44,6 +44,9 @@ pub enum WsEvent {
     /// It is a lightweight way to notify the FE of a change in the broadcast list, so it can
     /// refetch the `Now Live`, `Recently Live` and `Live For You` sections of the home page.
     HomeInvalidated,
+
+    NewMessage,
+    EditedMessage,
 }
 impl FromStr for WsEvent {
     type Err = String;
@@ -71,6 +74,8 @@ impl FromStr for WsEvent {
             "recordingPublished" => Ok(WsEvent::RecordingPublished),
             "notification" => Ok(WsEvent::Notification),
             "homeInvalidated" => Ok(WsEvent::HomeInvalidated),
+            "newMessage" => Ok(WsEvent::NewMessage),
+            "editedMessage" => Ok(WsEvent::EditedMessage),
             _ => Err(format!("Unknown WebSocket event: {}", s)),
         }
     }
@@ -100,6 +105,8 @@ impl fmt::Display for WsEvent {
             WsEvent::RecordingPublished => "recordingPublished",
             WsEvent::Notification => "notification",
             WsEvent::HomeInvalidated => "homeInvalidated",
+            WsEvent::NewMessage => "newMessage",
+            WsEvent::EditedMessage => "editedMessage",
         };
         write!(f, "{}", s)
     }

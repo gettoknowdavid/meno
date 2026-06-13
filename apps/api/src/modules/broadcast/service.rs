@@ -1400,7 +1400,7 @@ impl BroadcastService {
     pub async fn is_active_host(&self, user_id: Uuid) -> Result<bool, BroadcastError> {
         self.repo.is_active_host(user_id).await
     }
-
+    
     /// Invalidate ALL broadcast-list cache entries.
     ///
     /// Call this whenever the global list could have changed:
