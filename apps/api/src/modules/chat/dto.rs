@@ -83,9 +83,20 @@ pub struct ChatReactionResponse {
     pub id: Uuid,
     pub content: String,
     pub broadcast_id: Uuid,
-    pub sender: UserSummary,
+    pub sender_id: Uuid,
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
+}
+impl From<ChatReactionRow> for ChatReactionResponse {
+    fn from(v: ChatReactionRow) -> Self {
+        Self {
+            id: v.id,
+            content: v.content,
+            broadcast_id: v.broadcast_id,
+            sender_id: v.sender_id,
+            created_at: v.created_at,
+        }
+    }
 }
 
 /// Flat DB row joined with sender info — used internally by the repo.
@@ -123,14 +134,4 @@ pub struct ChatReactionRow {
     pub broadcast_id: Uuid,
     pub created_at: OffsetDateTime,
     pub sender_id: Uuid,
-}
-
-// ##################### KEYS ####################
-pub fn chat_list_cache_key(broadcast_id: Uuid, cursor: Option<&str>, limit: i64) -> String {
-    format!(
-        "chat:{}:msgs:cur={}:lim={}",
-        broadcast_id,
-        cursor.unwrap_or(""),
-        limit
-    )
 }

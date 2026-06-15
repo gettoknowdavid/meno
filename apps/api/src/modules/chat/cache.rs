@@ -13,14 +13,13 @@ impl ChatCache {
     }
 
     pub fn chat_list_cache_key(broadcast_id: Uuid, cursor: Option<&str>, limit: i64) -> String {
-        format!(
-            "chat:{}:msgs:cur={}:lim={}",
-            broadcast_id,
-            cursor.unwrap_or(""),
-            limit
-        )
+        match cursor {
+            Some(c) if !c.is_empty() => {
+                format!("chat:{}:msgs:cur={}:lim={}", broadcast_id, c, limit)
+            }
+            _ => format!("chat:{}:msgs:cur=_start:lim={}", broadcast_id, limit),
+        }
     }
-
     pub async fn invalidate_chat(&self, broadcast_id: Uuid) {
         let redis = self.redis.clone();
         let broadcast_id_clone = broadcast_id.clone();

@@ -47,6 +47,8 @@ pub enum WsEvent {
 
     NewMessage,
     EditedMessage,
+    DeletedMessage,
+    NewReaction,
 }
 impl FromStr for WsEvent {
     type Err = String;
@@ -76,6 +78,8 @@ impl FromStr for WsEvent {
             "homeInvalidated" => Ok(WsEvent::HomeInvalidated),
             "newMessage" => Ok(WsEvent::NewMessage),
             "editedMessage" => Ok(WsEvent::EditedMessage),
+            "deletedMessage" => Ok(WsEvent::DeletedMessage),
+            "newReaction" => Ok(WsEvent::NewReaction),
             _ => Err(format!("Unknown WebSocket event: {}", s)),
         }
     }
@@ -107,6 +111,8 @@ impl fmt::Display for WsEvent {
             WsEvent::HomeInvalidated => "homeInvalidated",
             WsEvent::NewMessage => "newMessage",
             WsEvent::EditedMessage => "editedMessage",
+            WsEvent::DeletedMessage => "deletedMessage",
+            WsEvent::NewReaction => "newReaction",
         };
         write!(f, "{}", s)
     }

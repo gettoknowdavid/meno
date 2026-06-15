@@ -1395,12 +1395,19 @@ impl BroadcastService {
         self.repo.get_participant_ids(broadcast_id).await
     }
 
+    pub async fn find_by_id(
+        &self,
+        broadcast_id: Uuid,
+    ) -> Result<Option<Broadcast>, BroadcastError> {
+        self.repo.find_by_id(broadcast_id).await
+    }
+
     /// Check if user is currently hosting any active broadcast
     /// Useful for quick checks without fetching full broadcast data
     pub async fn is_active_host(&self, user_id: Uuid) -> Result<bool, BroadcastError> {
         self.repo.is_active_host(user_id).await
     }
-    
+
     /// Invalidate ALL broadcast-list cache entries.
     ///
     /// Call this whenever the global list could have changed:

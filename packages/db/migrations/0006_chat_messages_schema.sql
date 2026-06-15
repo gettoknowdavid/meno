@@ -11,6 +11,7 @@ CREATE TABLE public.chat_messages
 );
 
 CREATE INDEX idx_chat_messages_broadcast ON chat_messages (broadcast_id, created_at DESC) WHERE deleted_at IS NULL;
+CREATE INDEX idx_users_deleted ON users(id) WHERE deleted_at IS NULL;
 
 SELECT setup_updated_at_triggers();
 

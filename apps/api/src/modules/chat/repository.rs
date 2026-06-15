@@ -68,7 +68,7 @@ impl ChatRepository {
                         m.deleted_at,
                         m.sender_id,
                         u.full_name AS sender_name,
-                        u.bio AS sender_bio
+                        u.bio AS sender_bio,
                         u.avatar_id AS sender_avatar_id,
                         u.avatar_url AS sender_avatar_url
             FROM chat_messages m
@@ -116,8 +116,7 @@ impl ChatRepository {
                     u.avatar_id AS sender_avatar_id,
                     u.avatar_url AS sender_avatar_url
             FROM chat_messages m
-            JOIN users u ON u.id = m.sender_id
-            WHERE m.id = $1 AND m.deleted_at IS NULL"#,
+            JOIN users u ON u.id = m.sender_id WHERE m.id = $1 AND m.deleted_at IS NULL"#,
             message_id,
         )
         .fetch_optional(&self.db)

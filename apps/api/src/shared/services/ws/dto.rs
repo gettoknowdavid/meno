@@ -158,11 +158,20 @@ impl WsPayload {
         )
     }
 
-    pub fn new_chat_message(data: impl Serialize) -> Self {
+    pub fn new_message(data: impl Serialize) -> Self {
         Self::new(WsEvent::NewMessage, data)
     }
-    pub fn edit_chat_message(data: impl Serialize) -> Self {
+    pub fn edited_message(data: impl Serialize) -> Self {
         Self::new(WsEvent::EditedMessage, data)
+    }
+    pub fn deleted_message(broadcast_id: Uuid, message_id: Uuid) -> Self {
+        Self::new(
+            WsEvent::DeletedMessage,
+            serde_json::json!({ "messageId": message_id, "broadcastId": broadcast_id }),
+        )
+    }
+    pub fn new_reaction(data: impl Serialize) -> Self {
+        Self::new(WsEvent::NewReaction, data)
     }
 }
 
