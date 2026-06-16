@@ -10,24 +10,40 @@ use validator::Validate;
 // #################### REQUESTS ####################
 #[derive(Debug, Deserialize, Validate)]
 pub struct SendMessageRequest {
+    pub broadcast_id: Uuid,
+    pub sender_id: Uuid,
     #[validate(length(min = 1, max = 256, message = "Message must be 1–256 characters"))]
     pub content: String,
 }
 
 #[derive(Debug, Deserialize, Validate)]
 pub struct EditMessageRequest {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+    pub sender_id: Uuid,
     #[validate(length(min = 1, max = 256, message = "Message must be 1–256 characters"))]
     pub content: String,
 }
 
 #[derive(Debug, Deserialize, Validate)]
+pub struct DeleteMessageRequest {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+    pub sender_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Validate)]
 pub struct SendReactionRequest {
+    pub broadcast_id: Uuid,
+    pub sender_id: Uuid,
     #[validate(length(min = 1, max = 32, message = "Reaction must be 1–32 characters"))]
     pub content: String,
 }
 
 #[derive(Debug, Default, Deserialize, Clone)]
 pub struct ChatMessageQuery {
+    pub broadcast_id: Uuid,
+
     #[serde(flatten)]
     pub pagination: CursorParams,
 }

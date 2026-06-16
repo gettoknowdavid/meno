@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use validator::Validate;
 
 /// Generic WebSocket payload sent from server to client
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -197,4 +198,25 @@ pub struct ParticipantWsResponseData {
     pub full_name: String,
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsEditMessage {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+    #[validate(length(min = 1, max = 256))]
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsDeleteMessage {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsSendReaction {
+    pub broadcast_id: Uuid,
+    #[validate(length(min = 1, max = 32))]
+    pub content: String,
 }

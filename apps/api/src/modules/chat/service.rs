@@ -1,5 +1,8 @@
 use crate::modules::chat::cache::ChatCache;
-use crate::modules::chat::dto::{ChatMessageQuery, ChatMessageResponse, ChatReactionResponse};
+use crate::modules::chat::dto::{
+    ChatMessageQuery, ChatMessageResponse, ChatReactionResponse, DeleteMessageRequest,
+    EditMessageRequest, SendMessageRequest, SendReactionRequest,
+};
 use crate::modules::chat::errors::ChatError;
 use crate::modules::chat::repository::ChatRepository;
 use crate::shared::constants::{TTL_10_SECS, TTL_60_SECS};
@@ -9,7 +12,6 @@ use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::state::MenoState;
-use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ChatService {
@@ -30,19 +32,18 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.send_message",
-        skip(self, app),
-        fields(broadcast_id = %broadcast_id, sender_id = %sender_id)
+        skip(self, app, req),
+        fields(broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_message(
         &self,
         app: &MenoState,
-        broadcast_id: Uuid,
-        sender_id: Uuid,
-        content: &str,
+        req: &SendMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (is_active_broadcast_result, is_participant_result) = tokio::join!(
-            self.repo.is_active_broadcast(broadcast_id),
-            self.repo.is_broadcast_participant(broadcast_id, sender_id)
+            self.repo.is_active_broadcast(req.broadcast_id),
+            self.repo
+                .is_broadcast_participant(req.broadcast_id, req.sender_id)
         );
 
         let is_active_broadcast = is_active_broadcast_result?;
@@ -57,25 +58,26 @@ impl ChatService {
 
         let row = self
             .repo
-            .create_message(broadcast_id, sender_id, content)
+            .create_message(req.broadcast_id, req.sender_id, &req.content)
             .await?;
 
-        self.cache.invalidate_chat(broadcast_id).await;
+        self.cache.invalidate_chat(req.broadcast_id).await;
 
         let response = ChatMessageResponse::from(row);
 
+        let b_id = req.broadcast_id.clone();
         let response_clone = response.clone();
         let broadcast_service = app.broadcast.service.clone();
         let ws = self.ws.clone();
         tokio::spawn(async move {
             let payload = WsPayload::new_message(response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(broadcast_id).await {
+            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
                 ws.send_to_users(&ids, payload).await;
             }
         });
 
         tracing::info!(
-            broadcast_id = %broadcast_id,
+            broadcast_id = %req.broadcast_id,
             message_id   = %response.id,
             "Chat message sent"
         );
@@ -86,13 +88,14 @@ impl ChatService {
     #[tracing::instrument(
         name = "chat.get_messages",
         skip(self, query),
-        fields(broadcast_id = %broadcast_id)
+        fields(broadcast_id = %query.broadcast_id)
     )]
     pub async fn get_messages(
         &self,
-        broadcast_id: Uuid,
         query: &ChatMessageQuery,
     ) -> Result<CursorPage<ChatMessageResponse>, ChatError> {
+        let broadcast_id = query.broadcast_id;
+
         let limit = query.limit();
         let cursor_str = query.cursor().map(|c| c.0.as_str()).unwrap_or("");
         let cache_key = ChatCache::chat_list_cache_key(broadcast_id, Some(cursor_str), limit);
@@ -114,20 +117,17 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.edit_message",
-        skip(self, app),
-        fields(message_id = %message_id, sender_id = %sender_id)
+        skip(self, app, req),
+        fields(message_id = %req.message_id, sender_id = %req.sender_id)
     )]
     pub async fn edit_message(
         &self,
         app: &MenoState,
-        broadcast_id: Uuid,
-        message_id: Uuid,
-        sender_id: Uuid,
-        content: &str,
+        req: &EditMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (message_result, is_active_broadcast_result) = tokio::join!(
-            self.repo.find_message_by_id(message_id),
-            self.repo.is_active_broadcast(broadcast_id),
+            self.repo.find_message_by_id(req.message_id),
+            self.repo.is_active_broadcast(req.broadcast_id),
         );
 
         let message = message_result?.ok_or(ChatError::NotFound)?;
@@ -135,7 +135,7 @@ impl ChatService {
         if !is_active_broadcast_result? {
             return Err(ChatError::BroadcastNotLive);
         }
-        if sender_id != message.sender_id {
+        if req.sender_id != message.sender_id {
             return Err(ChatError::NotSender);
         }
         if !message.can_be_edited() {
@@ -144,76 +144,79 @@ impl ChatService {
 
         let row = self
             .repo
-            .update_message(message_id, sender_id, content)
+            .update_message(req.message_id, req.sender_id, &req.content)
             .await?
             .ok_or(ChatError::NotFound)?;
 
         let response = ChatMessageResponse::from(row);
 
-        self.cache.invalidate_chat(broadcast_id).await;
+        self.cache.invalidate_chat(req.broadcast_id).await;
 
+        let b_id = req.broadcast_id;
         let response_clone = response.clone();
         let broadcast_service = app.broadcast.service.clone();
         let ws = self.ws.clone();
         tokio::spawn(async move {
             let payload = WsPayload::edited_message(response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(broadcast_id).await {
+            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
                 ws.send_to_users(&ids, payload).await;
             }
         });
 
-        tracing::info!(message_id = %message_id, "Chat message edited");
+        tracing::info!(message_id = %req.message_id, "Chat message edited");
 
         Ok(response)
     }
 
     #[tracing::instrument(
         name = "chat.delete_message",
-        skip(self, app),
-        fields(broadcast_id = %broadcast_id, message_id = %message_id, sender_id = %sender_id)
+        skip(self, app, req),
+        fields(broadcast_id = %req.broadcast_id, message_id = %req.message_id, sender_id = %req.sender_id)
     )]
     pub async fn delete_message(
         &self,
         app: &MenoState,
-        broadcast_id: Uuid,
-        message_id: Uuid,
-        sender_id: Uuid,
+        req: &DeleteMessageRequest,
     ) -> Result<(), ChatError> {
-        let deleted = self.repo.soft_delete_message(message_id, sender_id).await?;
+        let deleted = self
+            .repo
+            .soft_delete_message(req.message_id, req.sender_id)
+            .await?;
         if !deleted {
             return Err(ChatError::NotSender);
         }
 
-        self.cache.invalidate_chat(broadcast_id).await;
+        self.cache.invalidate_chat(req.broadcast_id).await;
 
+        let b_id = req.broadcast_id;
+        let message_id = req.message_id;
         let broadcast_service = app.broadcast.service.clone();
         let ws = self.ws.clone();
         tokio::spawn(async move {
-            let payload = WsPayload::deleted_message(broadcast_id, message_id);
-            if let Ok(ids) = broadcast_service.get_participants_ids(broadcast_id).await {
+            let payload = WsPayload::deleted_message(b_id, message_id);
+            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
                 ws.send_to_users(&ids, payload).await
             }
         });
 
-        tracing::info!(message_id = %message_id, "Chat message deleted");
+        tracing::info!(message_id = %req.message_id, "Chat message deleted");
         Ok(())
     }
 
     #[tracing::instrument(
         name   = "chat.send_reaction",
         skip   (self, app),
-        fields (broadcast_id = %broadcast_id, sender_id = %sender_id)
+        fields (broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_reaction(
         &self,
         app: &MenoState,
-        broadcast_id: Uuid,
-        sender_id: Uuid,
-        content: &str,
+        req: &SendReactionRequest,
     ) -> Result<ChatReactionResponse, ChatError> {
         let (is_active_broadcast, is_participant_result) = tokio::join!(
-            self.repo.is_active_broadcast(broadcast_id),
-            self.repo.is_broadcast_participant(broadcast_id, sender_id),
+            self.repo.is_active_broadcast(req.broadcast_id),
+            self.repo
+                .is_broadcast_participant(req.broadcast_id, req.sender_id),
         );
 
         if !is_active_broadcast? {
@@ -225,22 +228,23 @@ impl ChatService {
 
         let row = self
             .repo
-            .create_reaction(broadcast_id, sender_id, content)
+            .create_reaction(req.broadcast_id, req.sender_id, &req.content)
             .await?;
         let response = ChatReactionResponse::from(row);
 
+        let b_id = req.broadcast_id;
         let broadcast_service = app.broadcast.service.clone();
         let ws = self.ws.clone();
         let response_clone = response.clone();
         tokio::spawn(async move {
             let payload = WsPayload::new_reaction(&response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(broadcast_id).await {
+            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
                 ws.send_to_users(&ids, payload).await
             }
         });
 
         tracing::info!(
-            broadcast_id = %broadcast_id,
+            broadcast_id = %req.broadcast_id,
             reaction_id  = %response.id,
             "Chat reaction sent"
         );
