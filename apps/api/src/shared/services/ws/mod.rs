@@ -50,7 +50,7 @@ pub struct WsService {
     /// user_id → all active connections for that user on this instance.
     clients: Arc<DashMap<Uuid, Vec<ConnectionSender>>>,
 
-    /// broadcast_id → set of user_ids currently in that room on this instance.
+    /// `broadcast_id` → set of user_ids currently in that room on this instance.
     /// Mirrors the Redis membership set for local fast-path delivery.
     rooms: Arc<DashMap<Uuid, DashSet<Uuid>>>,
 
@@ -95,8 +95,8 @@ impl WsService {
 
     /// Unregister one specific connection.
     ///
-    /// If this was the last connection for the user the client entry is
-    /// removed entirely so `is_online` returns `false`.
+    /// If this was the last connection for the user, the client entry is
+    /// removed entirely, so `is_online` returns `false`.
     pub fn unregister(&self, user_id: Uuid, conn_id: usize) {
         if let Some(mut entry) = self.clients.get_mut(&user_id) {
             entry.retain(|c| c.conn_id != conn_id);
@@ -139,7 +139,7 @@ impl WsService {
     ///
     /// Call this from:
     /// 1. `BroadcastService::leave` (HTTP leave endpoint).
-    /// 2. `BroadcastService::end`   (broadcast ended — all participants removed).
+    /// 2. `BroadcastService::end` (broadcast ended — all participants removed).
     /// 3. `ws/handlers::handle_socket` cleanup on disconnect.
     pub async fn leave_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
         if let Some(room) = self.rooms.get(&broadcast_id) {
@@ -237,6 +237,11 @@ impl WsService {
     ) {
         let payload = WsPayload::error(broadcast_id, code, message);
         self.send_to_user(user_id, payload).await;
+    }
+
+    pub async fn send_unsupported_error(&self, user_id: Uuid, message: String) {
+        self.send_error(user_id, Uuid::nil(), WsErrorCode::Unsupported, message)
+            .await
     }
 
     /// Store a message for an offline user in a Redis ring-buffer.
