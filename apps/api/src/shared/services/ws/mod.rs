@@ -5,7 +5,8 @@ use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{WsErrorCode, WsPayload};
 use crate::shared::services::ws::model::WsEvent;
-use dashmap::DashMap;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
+use dashmap::{DashMap, DashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -34,16 +35,16 @@ pub struct ConnectionSender {
 #[derive(Clone)]
 pub struct WsService {
     clients: Arc<DashMap<Uuid, Vec<ConnectionSender>>>,
+    rooms: Arc<DashMap<Uuid, DashSet<Uuid>>>,
     conn_seq: Arc<AtomicUsize>,
     redis: RedisService,
 }
 impl WsService {
     pub fn new(redis: RedisService) -> Self {
-        let clients = Arc::new(DashMap::new());
-        let conn_seq = Arc::new(AtomicUsize::new(0));
         Self {
-            clients,
-            conn_seq,
+            clients: Arc::new(DashMap::new()),
+            rooms: Arc::new(DashMap::new()),
+            conn_seq: Arc::new(AtomicUsize::new(0)),
             redis,
         }
     }
@@ -65,6 +66,82 @@ impl WsService {
         let conn_id = self.conn_seq.fetch_add(1, Ordering::Relaxed);
         entry.push(ConnectionSender { conn_id, sender });
         Some(conn_id)
+    }
+
+    /// Register a user and join their rooms
+    pub async fn register_with_rooms(
+        &self,
+        user_id: Uuid,
+        sender: mpsc::Sender<Arc<WsPayload>>,
+        broadcast_ids: &[Uuid],
+        bridge: &WsPubSubBridge,
+    ) -> Option<usize> {
+        let conn_id = self.register(user_id, sender)?;
+
+        // Join each room
+        for &broadcast_id in broadcast_ids {
+            self.join_room(user_id, broadcast_id, bridge).await;
+        }
+
+        Some(conn_id)
+    }
+
+    /// Join a room (local + Redis)
+    pub async fn join_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
+        // Local room tracking
+        self.rooms
+            .entry(broadcast_id)
+            .or_insert_with(DashSet::new)
+            .insert(user_id);
+
+        // Redis membership
+        if let Err(e) = bridge.join_room(user_id, broadcast_id).await {
+            tracing::warn!(error = %e, "Failed to join room in Redis");
+        }
+    }
+
+    /// Leave a room
+    pub async fn leave_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
+        if let Some(room) = self.rooms.get(&broadcast_id) {
+            room.remove(&user_id);
+            if room.is_empty() {
+                drop(room);
+                self.rooms.remove(&broadcast_id);
+            }
+        }
+
+        if let Err(e) = bridge.leave_room(user_id, broadcast_id).await {
+            tracing::warn!(error = %e, "Failed to leave room in Redis");
+        }
+    }
+
+    /// Send to all members of a room (local only)
+    pub async fn send_to_room(&self, broadcast_id: Uuid, payload: WsPayload) {
+        if let Some(room) = self.rooms.get(&broadcast_id) {
+            let arc_payload = Arc::new(payload);
+            for user_id in room.iter() {
+                let user_id = *user_id;
+                if let Some(senders) = self.clients.get(&user_id) {
+                    for sender in senders.iter() {
+                        let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Get room members (from the local cache or fallback to Redis)
+    pub async fn get_room_members(&self, broadcast_id: Uuid, bridge: &WsPubSubBridge) -> Vec<Uuid> {
+        // Try local first
+        if let Some(room) = self.rooms.get(&broadcast_id) {
+            return room.iter().map(|u| *u).collect();
+        }
+
+        // Fallback to Redis
+        bridge
+            .get_room_members(broadcast_id)
+            .await
+            .unwrap_or_default()
     }
 
     /// Unregister a specific connection

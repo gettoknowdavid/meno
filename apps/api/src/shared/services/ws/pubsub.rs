@@ -1,24 +1,78 @@
 use crate::config::MenoConfig;
+use crate::modules::chat::errors::ChatError;
+use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
+use anyhow::Result;
 use fred::clients::SubscriberClient;
 use fred::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::broadcast::error::RecvError;
 use uuid::Uuid;
 
-/// The single Redis channel name all instances subscribe to.
-const WS_PUBSUB_CHANNEL: &str = "meno:ws:events";
+/// Main Redis channel for targeted messages (user DMs, system broadcasts)
+const WS_MAIN_CHANNEL: &str = "meno:ws:events";
 
-/// Envelope wrapping every cross-instance message.
-/// `target_user_id` is None for broadcast-all; Some(id) for targeted delivery.
-#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
-pub struct WsPubSubEnvelope {
-    /// The user to deliver to. None = broadcast to all connected clients.
-    pub target_user_id: Option<Uuid>,
+/// Redis channel prefix for room-based messages
+/// Format: meno:ws:room:{broadcast_id}
+const WS_ROOM_CHANNEL_PREFIX: &str = "meno:ws:room:";
 
-    /// The actual payload the client receives.
+/// TTL for room memberships (1 hour)
+const ROOM_MEMBERSHIP_TTL_SECS: u64 = 3600;
+
+/// Maximum retry attempts for pub/sub operations
+const MAX_RETRIES: u32 = 3;
+
+/// Envelope for room-based delivery
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WsRoomEnvelope {
+    pub room_id: Uuid,
     pub payload: WsPayload,
+}
+
+/// Envelope for targeted delivery (still useful for DMs)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WsUserEnvelope {
+    pub user_id: Uuid,
+    pub payload: WsPayload,
+}
+
+/// Broadcast-to-all envelope (no target)
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct WsBroadcastEnvelope {
+    pub payload: WsPayload,
+}
+
+/// Unified envelope type with explicit tagging for serialization
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "type", content = "data")]
+pub enum WsPubSubEnvelope {
+    #[serde(rename = "room")]
+    Room(WsRoomEnvelope),
+
+    #[serde(rename = "user")]
+    User(WsUserEnvelope),
+
+    #[serde(rename = "broadcast")]
+    Broadcast(WsBroadcastEnvelope),
+}
+impl WsPubSubEnvelope {
+    /// Create a room envelope
+    pub fn room(room_id: Uuid, payload: WsPayload) -> Self {
+        Self::Room(WsRoomEnvelope { room_id, payload })
+    }
+
+    /// Create a user envelope
+    pub fn user(user_id: Uuid, payload: WsPayload) -> Self {
+        Self::User(WsUserEnvelope { user_id, payload })
+    }
+
+    /// Create a broadcast envelope
+    pub fn broadcast(payload: WsPayload) -> Self {
+        Self::Broadcast(WsBroadcastEnvelope { payload })
+    }
 }
 
 /// Owned by AppState. Wraps a fred SubscriberClient for the receive loop
@@ -32,18 +86,20 @@ pub struct WsPubSubEnvelope {
 /// requires (a connection in SUBSCRIBE mode cannot issue PUBLISH).
 #[derive(Clone)]
 pub struct WsPubSubBridge {
-    /// Regular client — used only for PUBLISH.
+    /// Regular Redis client for publishing
     publisher: Client,
 
-    /// Dedicated subscriber — used only for SUBSCRIBE / message receive.
-    /// Wrapped in Arc so it can be moved into the background task while
-    /// the bridge is also cloned into AppState.
+    /// Dedicated subscriber client for receiving messages
     subscriber: Arc<SubscriberClient>,
 
+    /// Local WebSocket service for delivery
     hub: WsService,
+
+    /// Redis service for room management
+    redis: RedisService,
 }
 impl WsPubSubBridge {
-    pub async fn build(config: &MenoConfig, hub: WsService) -> anyhow::Result<Self> {
+    pub async fn build(config: &MenoConfig, hub: WsService, redis: RedisService) -> Result<Self> {
         let builder = Builder::from_config(Config::from_url(&config.redis_url)?);
 
         let publisher: Client = builder.build()?;
@@ -58,83 +114,337 @@ impl WsPubSubBridge {
             publisher,
             subscriber: Arc::new(subscriber),
             hub,
+            redis,
         })
     }
 
-    /// Publish a targeted WS message so every instance can try to deliver it.
+    /// Publish a message to all members of a room
+    #[tracing::instrument(
+        name = "pubsub.publish_to_room",
+        skip(self, payload),
+        fields(broadcast_id = %broadcast_id, event = %payload.event)
+    )]
+    pub async fn publish_to_room(&self, broadcast_id: Uuid, payload: WsPayload) {
+        let envelope = WsPubSubEnvelope::room(broadcast_id, payload);
+        let channel = format!("{}{}", WS_ROOM_CHANNEL_PREFIX, broadcast_id);
+        self.publish(&channel, envelope, MAX_RETRIES).await;
+    }
+
+    /// Publish a message to a specific user
     #[tracing::instrument(
         name = "pubsub.publish_to_user",
         skip(self, payload),
         fields(target_user_id = %user_id)
     )]
     pub async fn publish_to_user(&self, user_id: Uuid, payload: WsPayload) {
-        let envelope = WsPubSubEnvelope {
-            target_user_id: Some(user_id),
-            payload,
-        };
-        self.publish(envelope).await;
+        let envelope = WsPubSubEnvelope::user(user_id, payload);
+        self.publish(WS_MAIN_CHANNEL, envelope, MAX_RETRIES).await;
     }
 
-    /// Publish to every connected client across all instances.
-    #[tracing::instrument(name = "pubsub.publish_all", skip(self, payload))]
-    pub async fn publish_all(&self, payload: WsPayload) {
-        let envelope = WsPubSubEnvelope {
-            target_user_id: None,
-            payload,
-        };
-        self.publish(envelope).await;
-    }
-
-    /// Fan-out: publish to a slice of users.
-    ///
-    /// One PUBLISH per user keeps delivery logic simple. For very large fan-outs
-    /// (thousands of subscribers) you can switch to a Vec<Uuid> envelope and
-    /// batch into a single PUBLISH — optimize when profiling shows it matters.
+    /// Publish to multiple users efficiently
+    #[tracing::instrument(
+        name = "pubsub.publish_to_users",
+        skip(self, payload),
+        fields(count = user_ids.len())
+    )]
     pub async fn publish_to_users(&self, user_ids: &[Uuid], payload: WsPayload) {
-        let arc_payload = Arc::new(payload);
-        for &id in user_ids {
-            self.publish_to_user(id, (*arc_payload).clone()).await;
+        if user_ids.is_empty() {
+            return;
+        }
+
+        // For small batches (< 10), publish individually
+        if user_ids.len() <= 10 {
+            for &user_id in user_ids {
+                self.publish_to_user(user_id, payload.clone()).await;
+            }
+            return;
+        }
+
+        for &user_id in user_ids {
+            let envelope = WsPubSubEnvelope::user(user_id, payload.clone());
+            if let Ok(json) = serde_json::to_string(&envelope) {
+                let _ = self.redis.publish(WS_MAIN_CHANNEL, json).await;
+            }
         }
     }
 
-    /// Spawn the subscriber receive loop as a background Tokio task.
-    ///
-    /// Call once from `build_meno_router` — after this, the bridge is ready.
-    /// The task runs until the process exits; no join handle is needed.
-    ///
-    /// ```rust
-    /// bridge.spawn_subscriber_loop();
-    /// ```
+    /// Broadcast to all connected users across all instances
+    #[tracing::instrument(name = "pubsub.broadcast_all", skip(self, payload))]
+    pub async fn broadcast_all(&self, payload: WsPayload) {
+        let envelope = WsPubSubEnvelope::broadcast(payload);
+        self.publish(WS_MAIN_CHANNEL, envelope, MAX_RETRIES).await;
+    }
+
+    /// Join a user to a room
+    #[tracing::instrument(
+        name = "pubsub.join_room",
+        skip(self),
+        fields(user_id = %user_id, broadcast_id = %broadcast_id)
+    )]
+    pub async fn join_room(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<(), ChatError> {
+        let room_key = RedisKey::new(format!("room:{}:members", broadcast_id));
+        let ttl = ROOM_MEMBERSHIP_TTL_SECS as i64;
+        let user_str = user_id.to_string();
+
+        // Add user to room set
+        let added = self.redis.sadd::<i64, _>(&room_key, &user_str).await?;
+
+        // Set TTL on room (extends existing TTL)
+        let _: () = self.redis.expire(&room_key, ttl).await?;
+
+        // Subscribe this instance to the room channel
+        let channel = format!("{}{}", WS_ROOM_CHANNEL_PREFIX, broadcast_id);
+        if let Err(e) = self.subscriber.subscribe(&channel).await {
+            tracing::warn!(
+                error = %e,
+                room = %broadcast_id,
+                "Failed to subscribe local instance to room"
+            );
+            // Non-fatal - local delivery will still work
+        }
+
+        tracing::debug!(
+            user_id = %user_id,
+            broadcast_id = %broadcast_id,
+            "User joined room (added={})",
+            added
+        );
+
+        Ok(())
+    }
+
+    /// Remove a user from a room
+    #[tracing::instrument(
+        name = "pubsub.leave_room",
+        skip(self),
+        fields(user_id = %user_id, broadcast_id = %broadcast_id)
+    )]
+    pub async fn leave_room(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<(), ChatError> {
+        let room_key = RedisKey::new(format!("room:{}:members", broadcast_id));
+        let user_str = user_id.to_string();
+
+        // Remove user from room set
+        let removed = self.redis.srem::<i64, _>(&room_key, &user_str).await?;
+
+        // Check if room is empty
+        let count = self.redis.scard::<i64>(&room_key).await?;
+        if count == 0 {
+            // Unsubscribe local instance from room
+            let channel = format!("{}{}", WS_ROOM_CHANNEL_PREFIX, broadcast_id);
+            if let Err(e) = self.subscriber.unsubscribe(&channel).await {
+                tracing::warn!(
+                    error = %e,
+                    room = %broadcast_id,
+                    "Failed to unsubscribe from empty room"
+                );
+            }
+            // Clean up Redis key
+            let _ = self.redis.del(&room_key).await?;
+        }
+
+        tracing::debug!(
+            user_id = %user_id,
+            broadcast_id = %broadcast_id,
+            "User left room (removed={})",
+            removed
+        );
+
+        Ok(())
+    }
+
+    /// Check if a user is in a room
+    #[tracing::instrument(
+        name = "pubsub.is_member",
+        skip(self),
+        fields(user_id = %user_id, broadcast_id = %broadcast_id)
+    )]
+    pub async fn is_member(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, ChatError> {
+        let key = RedisKey::new(format!("room:{}:members", broadcast_id));
+        let user_str = user_id.to_string();
+
+        let is_member = self.redis.sismember::<bool, _>(&key, &user_str).await?;
+        Ok(is_member)
+    }
+
+    /// Get all members of a room
+    #[tracing::instrument(
+        name = "pubsub.get_room_members",
+        skip(self),
+        fields(broadcast_id = %broadcast_id)
+    )]
+    pub async fn get_room_members(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, ChatError> {
+        let key = RedisKey::new(format!("room:{}:members", broadcast_id));
+
+        let members = self.redis.smembers::<Vec<String>>(&key).await?;
+
+        let uuids: Vec<Uuid> = members
+            .into_iter()
+            .filter_map(|s| Uuid::parse_str(&s).ok())
+            .collect();
+
+        tracing::debug!(
+            broadcast_id = %broadcast_id,
+            count = uuids.len(),
+            "Retrieved room members"
+        );
+
+        Ok(uuids)
+    }
+
+    /// Get count of members in a room
+    pub async fn room_member_count(&self, broadcast_id: Uuid) -> Result<i64, ChatError> {
+        let key = RedisKey::new(format!("room:{}:members", broadcast_id));
+        let count = self.redis.scard::<i64>(&key).await?;
+        Ok(count)
+    }
+
+    /// Initialize a room with a list of participants (for broadcast start)
+    #[tracing::instrument(
+        name = "pubsub.init_room",
+        skip(self, participant_ids),
+        fields(broadcast_id = %broadcast_id, count = participant_ids.len())
+    )]
+    pub async fn init_room(
+        &self,
+        broadcast_id: Uuid,
+        participant_ids: &[Uuid],
+    ) -> Result<(), ChatError> {
+        if participant_ids.is_empty() {
+            return Ok(());
+        }
+
+        let key = RedisKey::new(format!("room:{}:members", broadcast_id));
+        let ttl = ROOM_MEMBERSHIP_TTL_SECS as i64;
+
+        // Convert Uuids to strings
+        let ids: Vec<String> = participant_ids.iter().map(|id| id.to_string()).collect();
+
+        // Add all participants at once
+        let added = self.redis.sadd::<i64, Vec<String>>(&key, ids).await?;
+        let _: () = self.redis.expire(&key, ttl).await?;
+
+        // Subscribe local instance to room
+        let channel = format!("{}{}", WS_ROOM_CHANNEL_PREFIX, broadcast_id);
+        if let Err(e) = self.subscriber.subscribe(&channel).await {
+            tracing::warn!(
+                error = %e,
+                room = %broadcast_id,
+                "Failed to subscribe to initialized room"
+            );
+        }
+
+        tracing::info!(
+            broadcast_id = %broadcast_id,
+            added = added,
+            total = participant_ids.len(),
+            "Room initialized"
+        );
+
+        Ok(())
+    }
+
+    /// Spawn the subscriber receive loop
     pub fn spawn_subscriber_loop(&self) {
         let subscriber = Arc::clone(&self.subscriber);
         let hub = self.hub.clone();
 
+        // Subscribe to main channel for user/broadcast messages
+        let main_channel = WS_MAIN_CHANNEL.to_string();
+        let subscriber_clone = subscriber.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = subscriber_clone.subscribe(&main_channel).await {
+                tracing::error!(
+                    error = %e,
+                    channel = %main_channel,
+                    "Failed to subscribe to main channel"
+                );
+                return;
+            }
+            tracing::info!(channel = %main_channel, "Subscribed to main channel");
+        });
+
+        // Subscribe to room pattern
+        let pattern = format!("{}*", WS_ROOM_CHANNEL_PREFIX);
+        let subscriber_clone = subscriber.clone();
+
+        tokio::spawn(async move {
+            if let Err(e) = subscriber_clone.psubscribe(&pattern).await {
+                tracing::error!(
+                    error = %e,
+                    pattern = %pattern,
+                    "Failed to subscribe to room pattern"
+                );
+                return;
+            }
+            tracing::info!(pattern = %pattern, "Subscribed to room pattern");
+        });
+
+        // Run the main "receive" loop
         tokio::spawn(async move {
             run_subscriber_loop(subscriber, hub).await;
         });
     }
 
-    async fn publish(&self, envelope: WsPubSubEnvelope) {
+    /// Clean up empty rooms (maintenance)
+    #[tracing::instrument(name = "pubsub.cleanup_rooms", skip(self))]
+    pub async fn cleanup_empty_rooms(&self) -> Result<u64, ChatError> {
+        let pattern = "room:*:members";
+        let cleaned = self.redis.delete_by_pattern(pattern).await?;
+
+        if cleaned > 0 {
+            tracing::info!(cleaned = cleaned, "Cleaned up empty rooms");
+        }
+
+        Ok(cleaned)
+    }
+
+    /// Publish with retry logic
+    async fn publish(&self, channel: &str, envelope: WsPubSubEnvelope, max_retries: u32) {
         let json = match serde_json::to_string(&envelope) {
             Ok(j) => j,
             Err(e) => {
-                tracing::error!(error = %e, "Failed to serialise WS pub/sub envelope");
+                tracing::error!(error = %e, channel = %channel, "Failed to serialize envelope");
                 return;
             }
         };
 
-        if let Err(e) = self
-            .publisher
-            .publish::<i64, _, _>(WS_PUBSUB_CHANNEL, json)
-            .await
-        {
-            // Non-fatal — log and move on. The client may miss one event but
-            // will reconcile via the next poll / reconnect drain.
-            tracing::warn!(
-                error = %e,
-                channel = WS_PUBSUB_CHANNEL,
-                "WS pub/sub publish failed"
-            );
+        let mut attempts = 0;
+        loop {
+            attempts += 1;
+            match self.publisher.publish::<i64, _, _>(channel, &json).await {
+                Ok(_) => {
+                    if attempts > 1 {
+                        tracing::debug!(
+                            channel = %channel,
+                            attempts = attempts,
+                            "Publish succeeded after retry"
+                        );
+                    }
+                    return;
+                }
+                Err(e) => {
+                    if attempts >= max_retries {
+                        tracing::error!(
+                            error = %e,
+                            channel = %channel,
+                            attempts = attempts,
+                            "Publish failed after all retries"
+                        );
+                        return;
+                    }
+
+                    let backoff = std::time::Duration::from_millis(100 * attempts as u64);
+                    tracing::warn!(
+                        error = %e,
+                        channel = %channel,
+                        attempt = attempts,
+                        next_retry_ms = backoff.as_millis(),
+                        "Publish failed, retrying"
+                    );
+                    tokio::time::sleep(backoff).await;
+                }
+            }
         }
     }
 }
@@ -150,29 +460,8 @@ impl WsPubSubBridge {
 ///     (Lagged error), some messages are dropped. This is acceptable for WS events because the
 ///     client will reconcile on reconnect via the Redis buffer drain.
 async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) {
-    // Spawn fred's built-in reconnect-and-resubscribe task.
-    // This must be called BEFORE `subscribe()` so fred knows which channels
-    // to restore after a Redis restart.
-    let _manage_task = subscriber.manage_subscriptions();
-
-    // Subscribe to the single shared channel
-    if let Err(e) = subscriber.subscribe(WS_PUBSUB_CHANNEL).await {
-        tracing::error!(
-            error = %e,
-            channel = WS_PUBSUB_CHANNEL,
-            "Failed to subscribe to pub/sub channel. Exiting loop"
-        );
-        return;
-    }
-
-    tracing::info!(
-        channel = WS_PUBSUB_CHANNEL,
-        "Redis pub/sub subscriber loop running"
-    );
-
     // Raw broadcast receiver — no extra task, messages arrive here directly.
     let mut message_rx = subscriber.message_rx();
-
     loop {
         match message_rx.recv().await {
             Ok(msg) => {
@@ -187,7 +476,6 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
                         continue;
                     }
                 };
-
                 let envelope = match serde_json::from_str::<WsPubSubEnvelope>(&json) {
                     Ok(e) => e,
                     Err(e) => {
@@ -199,7 +487,6 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
                         continue;
                     }
                 };
-
                 deliver_locally(&hub, envelope).await;
             }
             Err(RecvError::Lagged(skipped)) => {
@@ -210,7 +497,6 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
                     "WS pub/sub receiver lagged. Some events dropped"
                 );
             }
-
             Err(RecvError::Closed) => {
                 // The SubscriberClient was dropped or the process is shutting down.
                 tracing::info!("WS pub/sub message channel closed. Subscriber loop exiting");
@@ -218,17 +504,24 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
             }
         }
     }
+    tracing::warn!("Subscriber loop exited");
 }
 
 /// Deliver an envelope to whichever clients are on THIS instance.
 /// The local WsHub handles buffering for offline users automatically.
 async fn deliver_locally(hub: &WsService, envelope: WsPubSubEnvelope) {
-    match envelope.target_user_id {
-        Some(user_id) => {
-            hub.send_to_user(user_id, envelope.payload).await;
+    match envelope {
+        WsPubSubEnvelope::Room(room_env) => {
+            // Deliver to all local users in this room
+            hub.send_to_room(room_env.room_id, room_env.payload).await;
         }
-        None => {
-            hub.broadcast_all(envelope.payload).await;
+        WsPubSubEnvelope::User(user_env) => {
+            // Deliver to specific user
+            hub.send_to_user(user_env.user_id, user_env.payload).await;
+        }
+        WsPubSubEnvelope::Broadcast(broadcast_env) => {
+            // Deliver to all local users
+            hub.broadcast_all(broadcast_env.payload).await;
         }
     }
 }

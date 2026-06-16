@@ -32,12 +32,11 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.send_message",
-        skip(self, app, req),
+        skip(self, req),
         fields(broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_message(
         &self,
-        app: &MenoState,
         req: &SendMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (is_active_broadcast_result, is_participant_result) = tokio::join!(
@@ -64,17 +63,6 @@ impl ChatService {
         self.cache.invalidate_chat(req.broadcast_id).await;
 
         let response = ChatMessageResponse::from(row);
-
-        let b_id = req.broadcast_id.clone();
-        let response_clone = response.clone();
-        let broadcast_service = app.broadcast.service.clone();
-        let ws = self.ws.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::new_message(response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
-                ws.send_to_users(&ids, payload).await;
-            }
-        });
 
         tracing::info!(
             broadcast_id = %req.broadcast_id,

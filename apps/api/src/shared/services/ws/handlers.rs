@@ -1,11 +1,8 @@
 use crate::jobs::broadcast_jobs::EndBroadcastJob;
 use crate::modules::auth::model::User;
 use crate::modules::broadcast::model::EndReason;
-use crate::modules::chat::dto::SendMessageRequest;
-use crate::modules::chat::errors::ChatError;
 use crate::shared::constants::{MAX_WS_CONNECTIONS_PER_USER, TTL_3600_SECS};
 use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::ws::dto;
 use crate::shared::services::ws::dto::{ClientMessage, WsErrorCode, WsPayload, WsQuery};
 use crate::shared::services::ws::model::{HeartbeatConfig, WsEvent};
 use crate::state::MenoState;
@@ -26,7 +23,6 @@ use tokio::{
     time,
 };
 use uuid::Uuid;
-use validator::Validate;
 
 /// GET /ws?token=<access_jwt>
 pub async fn ws_upgrade(
@@ -445,7 +441,7 @@ fn start_heartbeat_task(
     })
 }
 
-/// Start task that writes outgoing messages to the WebSocket
+/// Start a task that writes outgoing messages to the WebSocket
 fn start_write_task(
     ws_sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     mut hub_rx: mpsc::Receiver<Arc<WsPayload>>,
@@ -507,37 +503,4 @@ async fn run_read_loop(
 
 fn error_response(code: StatusCode, message: &str) -> (StatusCode, Json<Value>) {
     (code, Json(json!({"error": message})))
-}
-
-//
-// Chat Handlers
-async fn handle_ws_send_message(app: &MenoState, req: SendMessageRequest) {
-    if let Err(e) = req.validate() {
-        // Send validation error via WS
-        let _ = app
-            .ws
-            .send_error(
-                req.sender_id,
-                req.broadcast_id,
-                WsErrorCode::Unsupported,
-                format!("Validation failed: {:?}", e),
-            )
-            .await;
-        return;
-    }
-
-    match app.chat.service.send_message(app, &req).await {
-        Err(err) => {
-            let code = match &err {
-                ChatError::BroadcastNotLive => WsErrorCode::BroadcastForciblyEnded,
-                ChatError::NotParticipant => WsErrorCode::KickedFromRoom,
-                _ => WsErrorCode::Unsupported,
-            };
-            let _ = app
-                .ws
-                .send_error(req.sender_id, req.broadcast_id, code, err.to_string())
-                .await;
-        }
-        Ok(_) | Err(_) => todo!(),
-    }
 }

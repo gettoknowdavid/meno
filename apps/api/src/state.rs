@@ -68,7 +68,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
     let smtp = build_smtp_transport(&config);
     let push = PushNotificationService::new(&config);
     let ws = WsService::new(redis.clone());
-    let bridge = WsPubSubBridge::build(&config, ws.clone())
+    let bridge = WsPubSubBridge::build(&config, ws.clone(), redis.clone())
         .await
         .expect("Failed to build WS pub/sub bridge");
 
