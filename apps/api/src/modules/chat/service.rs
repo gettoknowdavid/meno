@@ -9,7 +9,6 @@ use crate::shared::constants::{TTL_10_SECS, TTL_60_SECS};
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::coalescing::coalesce_cache;
-use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::state::MenoState;
 
@@ -18,25 +17,24 @@ pub struct ChatService {
     repo: ChatRepository,
     redis: RedisService,
     cache: ChatCache,
-    ws: WsService,
 }
 impl ChatService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, ws: WsService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: RedisService) -> Self {
         Self {
             repo: ChatRepository::new(db),
             cache: ChatCache::new(redis.clone()),
             redis,
-            ws,
         }
     }
 
     #[tracing::instrument(
         name = "chat.send_message",
-        skip(self, req),
+        skip(self, app, req),
         fields(broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_message(
         &self,
+        app: &MenoState,
         req: &SendMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (is_active_broadcast_result, is_participant_result) = tokio::join!(
@@ -63,6 +61,9 @@ impl ChatService {
         self.cache.invalidate_chat(req.broadcast_id).await;
 
         let response = ChatMessageResponse::from(row);
+
+        let payload = WsPayload::new_message(response.clone());
+        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(
             broadcast_id = %req.broadcast_id,
@@ -140,16 +141,8 @@ impl ChatService {
 
         self.cache.invalidate_chat(req.broadcast_id).await;
 
-        let b_id = req.broadcast_id;
-        let response_clone = response.clone();
-        let broadcast_service = app.broadcast.service.clone();
-        let ws = self.ws.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::edited_message(response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
-                ws.send_to_users(&ids, payload).await;
-            }
-        });
+        let payload = WsPayload::edited_message(response.clone());
+        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(message_id = %req.message_id, "Chat message edited");
 
@@ -176,16 +169,8 @@ impl ChatService {
 
         self.cache.invalidate_chat(req.broadcast_id).await;
 
-        let b_id = req.broadcast_id;
-        let message_id = req.message_id;
-        let broadcast_service = app.broadcast.service.clone();
-        let ws = self.ws.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::deleted_message(b_id, message_id);
-            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
-                ws.send_to_users(&ids, payload).await
-            }
-        });
+        let payload = WsPayload::deleted_message(req.broadcast_id, req.message_id);
+        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(message_id = %req.message_id, "Chat message deleted");
         Ok(())
@@ -220,16 +205,8 @@ impl ChatService {
             .await?;
         let response = ChatReactionResponse::from(row);
 
-        let b_id = req.broadcast_id;
-        let broadcast_service = app.broadcast.service.clone();
-        let ws = self.ws.clone();
-        let response_clone = response.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::new_reaction(&response_clone);
-            if let Ok(ids) = broadcast_service.get_participants_ids(b_id).await {
-                ws.send_to_users(&ids, payload).await
-            }
-        });
+        let payload = WsPayload::new_reaction(response.clone());
+        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(
             broadcast_id = %req.broadcast_id,

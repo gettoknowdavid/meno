@@ -81,7 +81,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
         broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone(), ws.clone()),
         subscribers: SubscribersState::new(db.clone(), ws.clone()),
         notifications: NotificationState::new(db.clone(), redis.clone(), ws.clone(), push.clone()),
-        chat: ChatState::new(db.clone(), redis.clone(), ws.clone()),
+        chat: ChatState::new(db.clone(), redis.clone()),
         pubsub: Arc::new(bridge),
         livekit,
         ws,
