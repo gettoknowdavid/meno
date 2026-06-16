@@ -47,7 +47,7 @@ pub async fn delete_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    app.broadcast.service.delete(id, auth.id).await?;
+    app.broadcast.service.delete(&app, id, auth.id).await?;
     Ok(MenoResponse::no_content("Broadcast deleted successfully"))
 }
 
@@ -89,7 +89,7 @@ pub async fn leave_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    let response = app.broadcast.service.leave(id, auth.id).await?;
+    let response = app.broadcast.service.leave(&app, id, auth.id).await?;
     Ok(MenoResponse::ok("Broadcast left", response))
 }
 

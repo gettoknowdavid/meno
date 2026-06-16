@@ -27,8 +27,8 @@ use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
 use crate::shared::types::dto::UserSummary;
 use crate::state::MenoState;
-use serde_json::to_value;
 use std::collections::HashMap;
+use std::sync::Arc;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -194,7 +194,12 @@ impl BroadcastService {
         self.build_response(broadcast, creator, cohosts, ctx).await
     }
 
-    pub async fn delete(&self, broadcast_id: Uuid, creator_id: Uuid) -> Result<(), BroadcastError> {
+    pub async fn delete(
+        &self,
+        app: &MenoState,
+        broadcast_id: Uuid,
+        creator_id: Uuid,
+    ) -> Result<(), BroadcastError> {
         let (broadcast_result, creator_result) = tokio::join!(
             self.repo.find_by_id(broadcast_id),
             self.repo.find_user_summary(creator_id)
@@ -219,11 +224,10 @@ impl BroadcastService {
 
         let repo = self.repo.clone();
         let redis = self.redis.clone();
-        let ws = self.ws.clone();
         let broadcast_clone = broadcast.clone();
         let creator_clone = creator.clone();
         let is_scheduled = broadcast.can_be_scheduled();
-
+        let pubsub = Arc::clone(&app.pubsub);
         tokio::spawn(async move {
             let keys = vec![
                 RedisKey::live_count(broadcast_id),
@@ -240,16 +244,17 @@ impl BroadcastService {
                         let payload = WsPayload::new(
                             WsEvent::BroadcastDeleted,
                             serde_json::json!({
-                                "broadcastId": broadcast_clone.id,
+                                "broadcastId":    broadcast_clone.id,
                                 "broadcastTitle": broadcast_clone.title,
                                 "message": format!(
-                                    "The broadcast scheduled for this {:?}, by {} has been cancelled.",
-                                    broadcast_clone.start_time,
+                                    "The broadcast scheduled by {} has been cancelled.",
                                     creator_clone.full_name,
                                 ),
                             }),
                         );
-                        ws.send_to_users(&subscriber_ids, payload).await;
+                        // publish_to_users pipelines all PUBLISH commands in one round trip
+                        // and reaches users on every instance.
+                        pubsub.publish_to_users(&subscriber_ids, payload).await;
                     }
                 }
             }
@@ -346,6 +351,11 @@ impl BroadcastService {
         self.invalidate_list_caches();
         self.invalidate_broadcast_cache(broadcast_id);
 
+        //  Seed the Redis room with the host as the first member so that
+        if let Err(e) = app.pubsub.init_room(broadcast_id, &[creator.id]).await {
+            tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to init room in Redis");
+        }
+
         app.jobs
             .push_broadcast_started_fanout(BroadcastStartedFanOutJob {
                 broadcast_id,
@@ -355,50 +365,6 @@ impl BroadcastService {
             })
             .await
             .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue broadcast fanout"));
-
-        let redis = self.redis.clone();
-        let ws = self.ws.clone();
-        let broadcast_clone = broadcast.clone();
-        let creator_clone = creator.clone();
-        let svc = self.clone();
-
-        tokio::spawn(async move {
-            // Store broadcast start time for quota
-            let start_key = RedisKey::started_at(broadcast_clone.id);
-            let _ = redis.set(&start_key, &now, None).await;
-
-            // Set a live count key Redis to 1
-            // This is the number of currently live participants, and the creator is the first
-            // in the list
-            let count_key = RedisKey::live_count(broadcast_clone.id);
-            let _ = redis.set(&count_key, &1_i64, None).await;
-
-            let online_users = ws.get_online_users();
-            if !online_users.is_empty() {
-                if let Ok(response) = svc
-                    .build_response(
-                        broadcast_clone,
-                        creator_clone,
-                        vec![],
-                        BroadcastContext {
-                            participant_role: ParticipantRole::None,
-                            live_count: 1,
-                            ..Default::default()
-                        },
-                    )
-                    .await
-                {
-                    let payload = WsPayload {
-                        event: WsEvent::NewBroadcast,
-                        data: to_value(&response).unwrap_or_default(),
-                    };
-                    ws.send_to_users(&online_users, payload).await;
-                }
-            }
-
-            // Notify the FE of changes on the home page
-            ws.broadcast_all(WsPayload::home_invalidated()).await;
-        });
 
         // Generate the broadcast response struct
         let cohosts = self.repo.get_cohosts(broadcast_id).await?;
@@ -412,6 +378,35 @@ impl BroadcastService {
         let broadcast_response = self
             .build_response(broadcast, creator, cohosts, ctx)
             .await?;
+
+        let redis = self.redis.clone();
+        let svc = self.clone();
+        let response_clone = broadcast_response.clone();
+        let pubsub = Arc::clone(&app.pubsub);
+        tokio::spawn(async move {
+            let b_id = response_clone.id;
+            let creator_id = response_clone.creator.id;
+
+            // Store broadcast start time for quota
+            let start_key = RedisKey::started_at(b_id);
+            let _ = redis.set(&start_key, &now, None).await;
+
+            // Set a live count key Redis to 1
+            // This is the number of currently live participants, and the creator is the first
+            // in the list
+            let count_key = RedisKey::live_count(b_id);
+            let _ = redis.set(&count_key, &1_i64, None).await;
+
+            if let Ok(subscriber_ids) = svc.repo.get_subscriber_ids(creator_id).await {
+                if !subscriber_ids.is_empty() {
+                    let payload = WsPayload::new_broadcast(response_clone);
+                    pubsub.publish_to_users(&subscriber_ids, payload).await;
+                }
+            }
+
+            // Notify the FE of changes on the home page
+            pubsub.broadcast_all(WsPayload::home_invalidated()).await;
+        });
 
         tracing::info!(
             broadcast_id = %broadcast_id,
@@ -487,25 +482,31 @@ impl BroadcastService {
 
         let livekit = self.livekit.clone();
         let redis = self.redis.clone();
-        let ws = self.ws.clone();
-        let broadcast_id_clone = broadcast_id;
         let reason = EndReason::Normal;
-
+        let pubsub = Arc::clone(&app.pubsub);
         tokio::spawn(async move {
-            // Delete the LiveKit room
             let _ = livekit.delete_room(broadcast_id).await;
 
-            // Clean up the Redis key holding the number of currently live participants
             let count_key = RedisKey::live_count(broadcast_id);
             let _ = redis.del(&count_key).await;
 
-            // Clean the `grace-key` from Redis
             let grace_key = RedisKey::host_grace(broadcast_id);
             let _ = redis.del(&grace_key).await;
 
-            let online_users = ws.get_online_users();
-            let payload = WsPayload::ended_broadcast(broadcast_id_clone, reason);
-            ws.send_to_users(&online_users, payload).await;
+            // Notify every participant on every instance that the broadcast ended.
+            // publish_to_room targets only room members; broadcast_all targets
+            // every connected user (non-members may also want to update their UI).
+            // We do both: room members get it first via room channel, then
+            // broadcast_all ensures the home feed update reaches non-participants.
+            let ended_payload = WsPayload::ended_broadcast(broadcast_id, reason);
+            pubsub.publish_to_room(broadcast_id, ended_payload).await;
+
+            // HomeInvalidated is already sent via broadcast_all — no change needed there.
+
+            // Tear down the Redis room membership set now that the broadcast is over.
+            if let Err(e) = pubsub.destroy_room(broadcast_id).await {
+                tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to destroy room");
+            }
         });
 
         // Check if the recording is available and ready; this is only possible if the creator
@@ -624,26 +625,21 @@ impl BroadcastService {
         self.invalidate_list_caches();
         self.invalidate_broadcast_cache(broadcast_id);
 
-        let repo = self.repo.clone();
-        let ws = self.ws.clone();
-        let redis = self.redis.clone();
-        let broadcast_clone = broadcast.clone();
-        let user_clone = user.clone();
+        app.ws.join_room(user_id, broadcast.id, &app.pubsub).await;
 
+        let pubsub = Arc::clone(&app.pubsub);
+        let redis = self.redis.clone();
+        let b_id = broadcast.id;
+        let user_clone = user.clone();
         tokio::spawn(async move {
-            let count_key = RedisKey::live_count(broadcast_clone.id);
+            let count_key = RedisKey::live_count(b_id);
             let new_count = redis.incr(&count_key).await.unwrap_or(1);
 
-            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_clone.id).await {
-                if !participant_ids.is_empty() {
-                    let payload = WsPayload::participant_joined(user_clone);
-                    ws.send_to_users(&participant_ids, payload).await;
+            let joined_payload = WsPayload::participant_joined(user_clone);
+            pubsub.publish_to_room(b_id, joined_payload).await;
 
-                    let count_payload =
-                        WsPayload::number_of_live_participants(broadcast_clone.id, new_count);
-                    ws.send_to_users(&participant_ids, count_payload).await;
-                }
-            }
+            let count_payload = WsPayload::number_of_live_participants(b_id, new_count);
+            pubsub.publish_to_room(b_id, count_payload).await;
         });
 
         let (creator_result, cohosts_result, total_count_result) = tokio::join!(
@@ -688,6 +684,7 @@ impl BroadcastService {
 
     pub async fn leave(
         &self,
+        app: &MenoState,
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<LeaveBroadcastResponse, BroadcastError> {
@@ -717,11 +714,11 @@ impl BroadcastService {
         self.invalidate_list_caches();
         self.invalidate_broadcast_cache(broadcast_id);
 
-        let ws = self.ws.clone();
-        let redis = self.redis.clone();
-        let repo = self.repo.clone();
-        let user_clone = user.clone();
+        app.ws.leave_room(user_id, broadcast_id, &app.pubsub).await;
 
+        let pubsub = Arc::clone(&app.pubsub);
+        let redis = self.redis.clone();
+        let user_clone = user.clone();
         tokio::spawn(async move {
             let count_key = RedisKey::live_count(broadcast_id);
             let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
@@ -729,10 +726,8 @@ impl BroadcastService {
                 let _ = redis.del(&count_key).await;
             }
 
-            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_id).await {
-                let payload = WsPayload::participant_left(user_clone);
-                ws.send_to_users(&participant_ids, payload).await;
-            }
+            let payload = WsPayload::participant_left(user_clone);
+            pubsub.publish_to_room(broadcast_id, payload).await;
         });
 
         tracing::info!(
@@ -919,18 +914,13 @@ impl BroadcastService {
 
             // Decrement live count (cohost was a live participant)
             let redis = self.redis.clone();
-            let ws = self.ws.clone();
-            let repo = self.repo.clone();
-
+            let pubsub = Arc::clone(&app.pubsub);
             tokio::spawn(async move {
                 let count_key = RedisKey::live_count(broadcast_id);
                 let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
 
-                // Notify remaining participants of updated count
-                if let Ok(ids) = repo.get_participant_ids(broadcast_id).await {
-                    let payload = WsPayload::number_of_live_participants(broadcast_id, remaining);
-                    ws.send_to_users(&ids, payload).await;
-                }
+                let payload = WsPayload::number_of_live_participants(broadcast_id, remaining);
+                pubsub.publish_to_room(broadcast_id, payload).await;
             });
         } else {
             // Update LiveKit permissions (revokes publish capability)
@@ -956,15 +946,11 @@ impl BroadcastService {
             self.ws.send_to_user(cohost_id, payload).await;
         }
 
-        let ws = self.ws.clone();
-        let repo = self.repo.clone();
+        let pubsub = Arc::clone(&app.pubsub);
         let cohost_clone = cohost_user.clone();
-
         tokio::spawn(async move {
-            if let Ok(participant_ids) = repo.get_participant_ids(broadcast_id).await {
-                let payload = WsPayload::removed_cohost(cohost_clone);
-                ws.send_to_users(&participant_ids, payload).await;
-            }
+            let payload = WsPayload::removed_cohost(cohost_clone);
+            pubsub.publish_to_room(broadcast_id, payload).await;
         });
 
         tracing::info!(
