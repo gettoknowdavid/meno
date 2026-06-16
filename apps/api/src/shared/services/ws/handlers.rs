@@ -94,6 +94,24 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     span.record("conn_id", conn_id);
     tracing::info!(user_id = %user.id, conn_id = conn_id, "WebSocket connected");
 
+    // Resolve any live broadcast this user is currently part of.
+    // This covers both participants and hosts reconnecting mid-broadcast.
+    let room_broadcast_id: Option<Uuid> = {
+        let (as_host_result, as_participant_result) = tokio::join!(
+            state.broadcast.service.find_active_hosted_by(user.id),
+            state.broadcast.service.find_active_participant(user.id)
+        );
+
+        let as_host = as_host_result.ok().flatten().map(|b| b.id);
+        let as_participant = as_participant_result.ok().flatten().map(|p| p.broadcast_id);
+
+        as_host.or(as_participant)
+    };
+
+    if let Some(bid) = room_broadcast_id {
+        state.ws.join_room(user.id, bid, &state.pubsub).await;
+    }
+
     // Handle host reconnection here
     handle_reconnect(&state, user.id).await;
 
@@ -161,6 +179,10 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     // Cleanup
     heartbeat_task.abort();
     write_task.abort();
+
+    if let Some(bid) = room_broadcast_id {
+        state.ws.leave_room(user.id, bid, &state.pubsub).await;
+    }
     state.ws.unregister(user.id, conn_id);
 
     // Remove presence

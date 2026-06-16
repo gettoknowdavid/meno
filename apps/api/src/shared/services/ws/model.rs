@@ -76,6 +76,7 @@ impl FromStr for WsEvent {
             "cohostDeclined" => Ok(WsEvent::CohostDeclined),
             "newCohost" => Ok(WsEvent::NewCohost),
             "removedCohost" => Ok(WsEvent::RemovedCohost),
+            "cohostDemotion" => Ok(WsEvent::CohostDemotion),
             "recordingReady" => Ok(WsEvent::RecordingReady),
             "recordingPublished" => Ok(WsEvent::RecordingPublished),
             "notification" => Ok(WsEvent::Notification),

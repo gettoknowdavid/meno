@@ -19,26 +19,47 @@ pub mod handlers;
 pub mod model;
 pub mod pubsub;
 
+/// A single WebSocket connection for one user.
+/// A user may have multiple concurrent connections (e.g., web + mobile),
+/// each identified by a unique `conn_id`.
 #[derive(Clone)]
 pub struct ConnectionSender {
-    conn_id: usize,
+    pub conn_id: usize,
     sender: mpsc::Sender<Arc<WsPayload>>,
 }
 
-/// WebSocket service managing user connections with offline message buffering
+/// Manages all in-process WebSocket connections and provides the local
+/// delivery layer for the pub/sub bridge.
 ///
-/// Design decisions:
-/// - Uses DashMap for O(1) concurrent access to the connection map
-/// - Offline messages buffered in Redis (survives server restarts)
-/// - Ring buffer pattern (LPUSH + LTRIM) for bounded queue
-/// - Atomic sequence for connection IDs
+/// ## Responsibilities
+/// - **Registry** — tracks which users have active connections on *this*
+///   instance (`clients` map).
+/// - **Room tracking** — maintains a local set of which users are in each
+///   broadcast room, mirroring the Redis membership set.
+/// - **Delivery** — sends payloads to local connections; buffers to Redis
+///   for offline users.
+/// - **Pub/sub integration** — `join_room` / `leave_room` delegate to
+///   `WsPubSubBridge` to keep the Redis membership set consistent.
+///
+/// ## What it does NOT do
+/// Cross-instance delivery.  That is the exclusive responsibility of
+/// `WsPubSubBridge`.  Application code that needs to reach users on other
+/// instances must go through the bridge, not this service.
 #[derive(Clone)]
 pub struct WsService {
+    /// user_id → all active connections for that user on this instance.
     clients: Arc<DashMap<Uuid, Vec<ConnectionSender>>>,
+
+    /// broadcast_id → set of user_ids currently in that room on this instance.
+    /// Mirrors the Redis membership set for local fast-path delivery.
     rooms: Arc<DashMap<Uuid, DashSet<Uuid>>>,
+
+    /// Monotonically increasing connection ID source.
     conn_seq: Arc<AtomicUsize>,
+
     redis: RedisService,
 }
+
 impl WsService {
     pub fn new(redis: RedisService) -> Self {
         Self {
@@ -49,58 +70,77 @@ impl WsService {
         }
     }
 
-    /// Register a new connection for a user
-    /// Returns the connection ID for later unregistration
+    /// Register a new WebSocket connection for `user_id`.
+    ///
+    /// Returns the unique `conn_id` for later unregistration, or `None` if
+    /// the per-user connection limit has been reached.
     pub fn register(&self, user_id: Uuid, sender: mpsc::Sender<Arc<WsPayload>>) -> Option<usize> {
         let mut entry = self.clients.entry(user_id).or_insert_with(Vec::new);
 
         if entry.len() >= MAX_WS_CONNECTIONS_PER_USER {
             tracing::warn!(
-                user_id = %user_id,
+                user_id     = %user_id,
                 connections = entry.len(),
-                "WS connection limit reached, rejecting"
+                "WS connection limit reached — rejecting new connection"
             );
             return None;
         }
 
         let conn_id = self.conn_seq.fetch_add(1, Ordering::Relaxed);
         entry.push(ConnectionSender { conn_id, sender });
+
+        tracing::debug!(user_id = %user_id, conn_id, "WS connection registered");
         Some(conn_id)
     }
 
-    /// Register a user and join their rooms
-    pub async fn register_with_rooms(
-        &self,
-        user_id: Uuid,
-        sender: mpsc::Sender<Arc<WsPayload>>,
-        broadcast_ids: &[Uuid],
-        bridge: &WsPubSubBridge,
-    ) -> Option<usize> {
-        let conn_id = self.register(user_id, sender)?;
-
-        // Join each room
-        for &broadcast_id in broadcast_ids {
-            self.join_room(user_id, broadcast_id, bridge).await;
+    /// Unregister one specific connection.
+    ///
+    /// If this was the last connection for the user the client entry is
+    /// removed entirely so `is_online` returns `false`.
+    pub fn unregister(&self, user_id: Uuid, conn_id: usize) {
+        if let Some(mut entry) = self.clients.get_mut(&user_id) {
+            entry.retain(|c| c.conn_id != conn_id);
+            if entry.is_empty() {
+                drop(entry);
+                self.clients.remove(&user_id);
+            }
         }
-
-        Some(conn_id)
+        tracing::debug!(user_id = %user_id, conn_id, "WS connection unregistered");
     }
 
-    /// Join a room (local + Redis)
+    /// Add a user to a broadcast room on this instance **and** in Redis.
+    ///
+    /// Call this from two places:
+    /// 1. `BroadcastService::join` (HTTP) — when a user joins a live broadcast.
+    /// 2. `ws/handlers::handle_socket` — when a user reconnects via WebSocket
+    ///    while they are still an active participant.
+    ///
+    /// It is safe to call multiple times; Redis SADD and the local DashSet are
+    /// both idempotent.
     pub async fn join_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
-        // Local room tracking
+        // Update the local room map.
         self.rooms
             .entry(broadcast_id)
             .or_insert_with(DashSet::new)
             .insert(user_id);
 
-        // Redis membership
+        // Update Redis and subscribe this instance to the room channel.
         if let Err(e) = bridge.join_room(user_id, broadcast_id).await {
-            tracing::warn!(error = %e, "Failed to join room in Redis");
+            tracing::warn!(
+                error        = %e,
+                user_id      = %user_id,
+                broadcast_id = %broadcast_id,
+                "Failed to join room in Redis — local delivery still works"
+            );
         }
     }
 
-    /// Leave a room
+    /// Remove a user from a broadcast room on this instance **and** in Redis.
+    ///
+    /// Call this from:
+    /// 1. `BroadcastService::leave` (HTTP leave endpoint).
+    /// 2. `BroadcastService::end`   (broadcast ended — all participants removed).
+    /// 3. `ws/handlers::handle_socket` cleanup on disconnect.
     pub async fn leave_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
         if let Some(room) = self.rooms.get(&broadcast_id) {
             room.remove(&user_id);
@@ -111,147 +151,83 @@ impl WsService {
         }
 
         if let Err(e) = bridge.leave_room(user_id, broadcast_id).await {
-            tracing::warn!(error = %e, "Failed to leave room in Redis");
+            tracing::warn!(
+                error        = %e,
+                user_id      = %user_id,
+                broadcast_id = %broadcast_id,
+                "Failed to leave room in Redis"
+            );
         }
     }
 
-    /// Send to all members of a room (local only)
+    /// Deliver a payload to all local connections in a room.
+    ///
+    /// This is called by `deliver_locally` in `pubsub.rs` after a message
+    /// arrives from Redis.  It only touches the local `rooms` DashMap and
+    /// never calls Redis itself — the bridge already handled cross-instance
+    /// routing.
     pub async fn send_to_room(&self, broadcast_id: Uuid, payload: WsPayload) {
-        if let Some(room) = self.rooms.get(&broadcast_id) {
-            let arc_payload = Arc::new(payload);
-            for user_id in room.iter() {
-                let user_id = *user_id;
-                if let Some(senders) = self.clients.get(&user_id) {
-                    for sender in senders.iter() {
-                        let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
-                    }
+        let room = match self.rooms.get(&broadcast_id) {
+            Some(r) => r,
+            None => return, // No local listeners for this room in this instance.
+        };
+
+        let arc_payload = Arc::new(payload);
+        for user_id in room.iter() {
+            if let Some(senders) = self.clients.get(&*user_id) {
+                for sender in senders.iter() {
+                    let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
                 }
             }
         }
     }
 
-    /// Get room members (from the local cache or fallback to Redis)
-    pub async fn get_room_members(&self, broadcast_id: Uuid, bridge: &WsPubSubBridge) -> Vec<Uuid> {
-        // Try local first
-        if let Some(room) = self.rooms.get(&broadcast_id) {
-            return room.iter().map(|u| *u).collect();
-        }
-
-        // Fallback to Redis
-        bridge
-            .get_room_members(broadcast_id)
-            .await
-            .unwrap_or_default()
-    }
-
-    /// Unregister a specific connection
-    pub fn unregister(&self, user_id: Uuid, conn_id: usize) {
-        if let Some(mut entry) = self.clients.get_mut(&user_id) {
-            entry.retain(|e| e.conn_id != conn_id);
-
-            if entry.is_empty() {
-                drop(entry);
-                self.clients.remove(&user_id);
-            }
-        }
-    }
-
-    /// Send payload to a specific user (all their connections)
-    /// If the user is offline, buffers the message in Redis
+    /// Deliver a payload to all connections for a specific user on this instance.
+    ///
+    /// If the user is not connected locally, the message is buffered in Redis
+    /// so it can be replayed when they reconnect.
     pub async fn send_to_user(&self, user_id: Uuid, payload: WsPayload) {
-        // Check if user is online
         if let Some(senders) = self.clients.get(&user_id) {
-            let arc_payload = Arc::new(payload);
-            for sender in senders.iter() {
-                let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
+            let arc = Arc::new(payload);
+            for s in senders.iter() {
+                let _ = s.sender.send(Arc::clone(&arc)).await;
             }
             return;
         }
 
-        // User is offline - buffer in Redis
+        // User is not connected on this instance — buffer for later replay.
         self.buffer_message(user_id, payload).await;
     }
 
-    /// Send payload to multiple users efficiently
+    /// Deliver a payload to multiple users (local delivery only).
+    ///
+    /// For cross-instance fan-out use `WsPubSubBridge::publish_to_users`.
+    /// This variant is kept for cases where the caller has already resolved
+    /// that all target users are local (e.g., inside `deliver_locally`).
     pub async fn send_to_users(&self, user_ids: &[Uuid], payload: WsPayload) {
-        let arc_payload = Arc::new(payload);
-        for &user_id in user_ids {
-            if let Some(senders) = self.clients.get(&user_id) {
-                for sender in senders.iter() {
-                    let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
+        let arc = Arc::new(payload);
+        for &uid in user_ids {
+            if let Some(senders) = self.clients.get(&uid) {
+                for s in senders.iter() {
+                    let _ = s.sender.send(Arc::clone(&arc)).await;
                 }
             } else {
-                // Offline user - buffer
-                self.buffer_message(user_id, (*arc_payload).clone()).await;
+                self.buffer_message(uid, (*arc).clone()).await;
             }
         }
     }
 
-    /// Buffer a message for an offline user in Redis
-    /// Uses the ring buffer pattern: LPUSH + LTRIM to keep last N messages
-    pub async fn buffer_message(&self, user_id: Uuid, payload: WsPayload) {
-        let key = RedisKey::ws_buffer(user_id);
-        let json = match serde_json::to_string(&payload) {
-            Ok(j) => j,
-            Err(e) => {
-                tracing::error!("Failed to serialize buffered message: {}", e);
-                return;
+    /// Deliver a payload to every locally connected user.
+    pub async fn broadcast_all(&self, payload: WsPayload) {
+        let arc = Arc::new(payload);
+        for entry in self.clients.iter() {
+            for s in entry.value().iter() {
+                let _ = s.sender.send(Arc::clone(&arc)).await;
             }
-        };
-
-        // Push the payload to the top of the list in Redis
-        let _ = self.redis.lpush(&key, &json).await;
-
-        // Use LTRIM to keep only last MESSAGE_BUFFER_SIZE items (ring buffer)
-        let _ = self.redis.ltrim(&key, 0, MESSAGE_BUFFER_SIZE).await;
-
-        // Set expiry time
-        let _ = self.redis.expire(&key, MESSAGE_BUFFER_TTL_SECS).await;
+        }
     }
 
-    /// Drain and replay buffered messages for a user on reconnection
-    /// Returns messages in chronological order (oldest first)
-    pub async fn drain_message_buffer(&self, user_id: Uuid) -> Vec<WsPayload> {
-        let key = RedisKey::ws_buffer(user_id).to_string();
-
-        // Atomic GETDEL pattern: LRANGE then DEL
-        let script = r#"
-            local items = redis.call('LRANGE', KEYS[1], 0, -1)
-            redis.call('DEL', KEYS[1])
-            return items
-        "#;
-        let items = match self
-            .redis
-            .eval::<Vec<String>, Vec<String>, Vec<String>>(script, vec![key], vec![])
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!("Failed to drain message buffer: {}", e);
-                return Vec::new();
-            }
-        };
-
-        // Items are in LIFO order (newest first) due to LPUSH
-        // Reverse to get chronological order
-        items
-            .into_iter()
-            .rev()
-            .filter_map(|json| serde_json::from_str::<WsPayload>(&json).ok())
-            .collect()
-    }
-
-    /// Get the number of active connections for a user
-    pub fn connection_count(&self, user_id: Uuid) -> usize {
-        self.clients.get(&user_id).map(|v| v.len()).unwrap_or(0)
-    }
-
-    /// Check if the user has any active connection
-    pub fn is_online(&self, user_id: Uuid) -> bool {
-        self.clients.contains_key(&user_id)
-    }
-
-    /// Send an error to a specific user
+    /// Send a structured error payload to a specific user.
     pub async fn send_error(
         &self,
         user_id: Uuid,
@@ -263,31 +239,84 @@ impl WsService {
         self.send_to_user(user_id, payload).await;
     }
 
-    /// Broadcast to ALL connected clients
-    pub async fn broadcast_all(&self, payload: WsPayload) {
-        let arc_payload = Arc::new(payload);
-        for entry in self.clients.iter() {
-            for sender in entry.value().iter() {
-                let _ = sender.sender.send(Arc::clone(&arc_payload)).await;
+    /// Store a message for an offline user in a Redis ring-buffer.
+    ///
+    /// Uses `LPUSH` + `LTRIM` to keep only the last `MESSAGE_BUFFER_SIZE`
+    /// messages, capped at `MESSAGE_BUFFER_TTL_SECS`.
+    pub async fn buffer_message(&self, user_id: Uuid, payload: WsPayload) {
+        let key = RedisKey::ws_buffer(user_id);
+        let json = match serde_json::to_string(&payload) {
+            Ok(j) => j,
+            Err(e) => {
+                tracing::error!(error = %e, user_id = %user_id, "Failed to serialise buffered message");
+                return;
             }
-        }
+        };
+
+        let _ = self.redis.lpush(&key, &json).await;
+        let _ = self.redis.ltrim(&key, 0, MESSAGE_BUFFER_SIZE).await;
+        let _ = self.redis.expire(&key, MESSAGE_BUFFER_TTL_SECS).await;
     }
 
-    /// Get all online user IDs
+    /// Drain the offline message buffer for a user and return messages in
+    /// chronological order (oldest first).
+    ///
+    /// Uses a Lua script for an atomic LRANGE + DEL so no message is delivered
+    /// twice if two connections race to reconnect.
+    pub async fn drain_message_buffer(&self, user_id: Uuid) -> Vec<WsPayload> {
+        let key = RedisKey::ws_buffer(user_id).to_string();
+
+        let script = r#"
+            local items = redis.call('LRANGE', KEYS[1], 0, -1)
+            redis.call('DEL', KEYS[1])
+            return items
+        "#;
+
+        let items: Vec<String> = match self
+            .redis
+            .eval::<Vec<String>, Vec<String>, Vec<String>>(script, vec![key], vec![])
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, user_id = %user_id, "Failed to drain message buffer");
+                return Vec::new();
+            }
+        };
+
+        // Items were LPUSH-ed (newest first); reverse to get chronological order.
+        items
+            .into_iter()
+            .rev()
+            .filter_map(|json| serde_json::from_str::<WsPayload>(&json).ok())
+            .collect()
+    }
+
+    pub fn is_online(&self, user_id: Uuid) -> bool {
+        self.clients.contains_key(&user_id)
+    }
+
+    pub fn connection_count(&self, user_id: Uuid) -> usize {
+        self.clients.get(&user_id).map(|v| v.len()).unwrap_or(0)
+    }
+
+    /// Return all user IDs that have at least one active connection on this
+    /// instance.  Used for "now-live" fan-outs where the caller wants to
+    /// notify every online user.
     pub fn get_online_users(&self) -> Vec<Uuid> {
-        self.clients.iter().map(|v| *v.key()).collect()
+        self.clients.iter().map(|e| *e.key()).collect()
     }
 
+    /// Notify all connected clients of an imminent shutdown so they can
+    /// trigger their reconnection logic before the process exits.
     pub async fn close_all_connections(&self) {
-        // Send a close frame to all connected clients before shutting down.
-        // This lets Flutter/Next.js trigger their reconnection logic cleanly.
-        let close_payload = WsPayload::new(
+        let payload = WsPayload::new(
             WsEvent::BroadcastError,
             serde_json::json!({ "code": "SERVER_SHUTDOWN", "recoverable": true }),
         );
-        self.broadcast_all(close_payload).await;
+        self.broadcast_all(payload).await;
 
-        // Give clients 2 seconds to acknowledge before hard close
+        // Give clients a short window to acknowledge before the hard close.
         tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }

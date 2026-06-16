@@ -58,7 +58,7 @@ impl WsPayload {
 
     pub fn host_reconnected(broadcast_id: Uuid) -> Self {
         Self::new(
-            WsEvent::HostDisconnected,
+            WsEvent::HostReconnected,
             serde_json::json!({"broadcastId": broadcast_id}),
         )
     }
@@ -68,7 +68,7 @@ impl WsPayload {
     }
 
     pub fn participant_left(participant: impl Serialize) -> Self {
-        Self::new(WsEvent::ParticipantJoined, participant)
+        Self::new(WsEvent::ParticipantLeft, participant)
     }
 
     pub fn participant_kicked(participant: impl Serialize) -> Self {
