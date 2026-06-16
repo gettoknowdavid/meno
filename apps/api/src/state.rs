@@ -7,6 +7,7 @@ use crate::modules::subscribers::state::SubscribersState;
 use crate::routes::health;
 use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::ws;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::{
     config::MenoConfig,
     jobs::{JobQueue, monitor},
@@ -53,6 +54,7 @@ pub struct MenoState {
     pub chat: ChatState,
     pub livekit: LivekitService,
     pub ws: WsService,
+    pub pubsub: Arc<WsPubSubBridge>,
     pub jobs: JobQueue,
     pub smtp: AsyncSmtpTransport<Tokio1Executor>,
 }
@@ -60,12 +62,18 @@ pub struct MenoState {
 pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let config = Arc::new(config);
 
-    let ws = WsService::new(redis.clone());
     let storage = StorageService::new(&config);
     let jobs = JobQueue::new(&db);
     let livekit = build_livekit_service(&config);
     let smtp = build_smtp_transport(&config);
     let push = PushNotificationService::new(&config);
+    let ws = WsService::new(redis.clone());
+    let bridge = WsPubSubBridge::build(&config, ws.clone())
+        .await
+        .expect("Failed to build WS pub/sub bridge");
+
+    // Spawn the receive loop before any request can arrive.
+    bridge.spawn_subscriber_loop();
 
     let state = Arc::new(MenoState {
         auth: AuthState::new(db.clone(), redis.clone(), &config),
@@ -74,13 +82,14 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
         subscribers: SubscribersState::new(db.clone(), ws.clone()),
         notifications: NotificationState::new(db.clone(), redis.clone(), ws.clone(), push.clone()),
         chat: ChatState::new(db.clone(), redis.clone(), ws.clone()),
+        pubsub: Arc::new(bridge),
         livekit,
         ws,
         jobs,
         smtp,
         redis,
-        db: db.clone(),
         config,
+        db: db.clone(),
     });
 
     start_background_workers(&db, Arc::clone(&state));

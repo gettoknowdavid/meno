@@ -57,6 +57,10 @@ impl RedisService {
         Ok(Self { pool })
     }
 
+    pub fn config(&self) -> Config {
+        self.pool.client_config()
+    }
+
     pub async fn get<T: DeserializeOwned>(&self, key: &RedisKey) -> Result<Option<T>, Error> {
         let data: Option<String> = self.pool.get(key.as_ref()).await?;
         match data {

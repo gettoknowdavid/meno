@@ -16,6 +16,7 @@ pub mod dto;
 pub mod errors;
 pub mod handlers;
 pub mod model;
+pub mod pubsub;
 
 #[derive(Clone)]
 pub struct ConnectionSender {
