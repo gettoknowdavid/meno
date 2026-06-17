@@ -182,6 +182,38 @@ impl WsService {
         }
     }
 
+    /// Returns `true` if this was the *first* local member of the room
+    /// (i.e. this instance needs to subscribe to the room channel).
+    pub fn add_local_room_member(&self, broadcast_id: Uuid, user_id: Uuid) -> bool {
+        let room = self.rooms.entry(broadcast_id).or_insert_with(DashSet::new);
+        let was_empty = room.is_empty();
+        room.insert(user_id);
+        was_empty
+    }
+
+    /// Returns `true` if this was the *last* local member (this instance
+    /// should unsubscribe from the room channel).
+    pub fn remove_local_room_member(&self, broadcast_id: Uuid, user_id: Uuid) -> bool {
+        let mut became_empty = false;
+        if let Some(room) = self.rooms.get(&broadcast_id) {
+            room.remove(&user_id);
+            became_empty = room.is_empty();
+        }
+        if became_empty {
+            self.rooms.remove(&broadcast_id);
+        }
+        became_empty
+    }
+
+    /// Drops every local member of a room at once — used when this instance
+    /// learns the broadcast has ended.
+    pub fn clear_local_room(&self, broadcast_id: Uuid) -> Vec<Uuid> {
+        self.rooms
+            .remove(&broadcast_id)
+            .map(|(_, set)| set.iter().map(|u| *u).collect())
+            .unwrap_or_default()
+    }
+
     /// Deliver a payload to all connections for a specific user on this instance.
     ///
     /// If the user is not connected locally, the message is buffered in Redis

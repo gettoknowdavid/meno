@@ -319,15 +319,8 @@ async fn handle_disconnect(app: &MenoState, user_id: Uuid, is_host: bool) {
         let value = &chrono::Utc::now().timestamp().to_string();
         let _ = app.redis.set_ex(&start_key, value, grace_secs + 10).await;
 
-        if let Ok(participant_ids) = app
-            .broadcast
-            .service
-            .get_participants_ids(broadcast.id)
-            .await
-        {
-            let payload = WsPayload::host_disconnected(broadcast.id, grace_secs, disconnect_count);
-            app.ws.send_to_users(&participant_ids, payload).await;
-        }
+        let payload = WsPayload::host_disconnected(broadcast.id, grace_secs, disconnect_count);
+        app.pubsub.publish_to_room(broadcast.id, payload).await;
 
         app.jobs
             .push_broadcast_end(EndBroadcastJob {
@@ -415,23 +408,8 @@ pub async fn handle_reconnect(app: &MenoState, user_id: Uuid) {
     );
 
     // Notify all current participants
-    if let Ok(participant_ids) = app
-        .broadcast
-        .service
-        .get_participants_ids(broadcast.id)
-        .await
-    {
-        if !participant_ids.is_empty() {
-            let payload = WsPayload::host_reconnected(broadcast.id);
-            app.ws.send_to_users(&participant_ids, payload).await;
-
-            tracing::debug!(
-                broadcast_id = %broadcast.id,
-                notified = participant_ids.len(),
-                "Sent hostReconnected to room"
-            );
-        }
-    }
+    let payload = WsPayload::host_reconnected(broadcast.id);
+    app.pubsub.publish_to_room(broadcast.id, payload).await;
 }
 
 /// Check reconnect rate limit to prevent DoS and crash loops

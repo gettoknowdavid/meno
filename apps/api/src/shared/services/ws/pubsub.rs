@@ -3,6 +3,7 @@ use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
+use crate::shared::services::ws::model::WsEvent;
 use anyhow::Result;
 use fred::clients::SubscriberClient;
 use fred::prelude::*;
@@ -50,7 +51,7 @@ pub struct WsBroadcastEnvelope {
     pub payload: WsPayload,
 }
 
-/// Unified, tagged envelope. The `type` tag lets every instance deserialise
+/// Unified, tagged envelope. The `type` tag lets every instance deserialize
 /// the correct variant without additional routing logic.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "type", content = "data")]
@@ -238,24 +239,17 @@ impl WsPubSubBridge {
     )]
     pub async fn join_room(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<()> {
         let key = room_member_key(broadcast_id);
-        let user_str = user_id.to_string();
 
         // SADD + EXPIRE in two commands is fine here; the SET already existed
         // (created when the broadcast started), so there is no race.
-        let _added: i64 = self.redis.sadd(&key, &user_str).await?;
+        let _added: i64 = self.redis.sadd(&key, user_id.to_string()).await?;
         self.redis.expire(&key, ROOM_MEMBERSHIP_TTL_SECS).await?;
 
-        // Subscribe this instance to the room channel.
-        // If already subscribed (e.g., another user is in the same room on
-        // this instance), fred deduplicates the SUBSCRIBE command.
-        let channel = room_channel(broadcast_id);
-        if let Err(e) = self.subscriber.subscribe(&channel).await {
-            // Non-fatal: local delivery still works; log and continue.
-            tracing::warn!(
-                error       = %e,
-                broadcast_id = %broadcast_id,
-                "Failed to subscribe local instance to room channel"
-            );
+        if self.hub.add_local_room_member(broadcast_id, user_id) {
+            let channel = room_channel(broadcast_id);
+            if let Err(e) = self.subscriber.subscribe(&channel).await {
+                tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to subscribe to room channel");
+            }
         }
 
         tracing::debug!(user_id = %user_id, broadcast_id = %broadcast_id, "User joined room");
@@ -276,21 +270,15 @@ impl WsPubSubBridge {
     )]
     pub async fn leave_room(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<()> {
         let key = room_member_key(broadcast_id);
-        let user_str = user_id.to_string();
-
-        let _removed: i64 = self.redis.srem(&key, &user_str).await?;
-
-        let remaining: i64 = self.redis.scard(&key).await?;
-        if remaining == 0 {
-            // No one left in this room on any instance — clean up.
+        let _removed: i64 = self.redis.srem(&key, user_id.to_string()).await?;
+        if self.redis.scard::<i64>(&key).await? == 0 {
             let _ = self.redis.del(&key).await;
+        }
+
+        if self.hub.remove_local_room_member(broadcast_id, user_id) {
             let channel = room_channel(broadcast_id);
             if let Err(e) = self.subscriber.unsubscribe(&channel).await {
-                tracing::warn!(
-                    error        = %e,
-                    broadcast_id = %broadcast_id,
-                    "Failed to unsubscribe from empty room channel"
-                );
+                tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to unsubscribe from room channel");
             }
         }
 
@@ -325,15 +313,15 @@ impl WsPubSubBridge {
         let _: i64 = self.redis.sadd(&key, ids).await?;
         self.redis.expire(&key, ROOM_MEMBERSHIP_TTL_SECS).await?;
 
-        // Subscribe this instance to the room channel.
-        let channel = room_channel(broadcast_id);
-        if let Err(e) = self.subscriber.subscribe(&channel).await {
-            tracing::warn!(
-                error        = %e,
-                broadcast_id = %broadcast_id,
-                "Failed to subscribe to newly initialised room channel"
-            );
-        }
+        // // Subscribe this instance to the room channel.
+        // let channel = room_channel(broadcast_id);
+        // if let Err(e) = self.subscriber.subscribe(&channel).await {
+        //     tracing::warn!(
+        //         error        = %e,
+        //         broadcast_id = %broadcast_id,
+        //         "Failed to subscribe to newly initialised room channel"
+        //     );
+        // }
 
         tracing::info!(
             broadcast_id = %broadcast_id,
@@ -353,21 +341,21 @@ impl WsPubSubBridge {
         fields(broadcast_id = %broadcast_id)
     )]
     pub async fn destroy_room(&self, broadcast_id: Uuid) -> Result<()> {
-        let key = room_member_key(broadcast_id);
-        let _ = self.redis.del(&key).await;
-
-        let channel = room_channel(broadcast_id);
-        if let Err(e) = self.subscriber.unsubscribe(&channel).await {
-            // May already be unsubscribed if the room was empty — not an error.
-            tracing::debug!(
-                error        = %e,
-                broadcast_id = %broadcast_id,
-                "Unsubscribe from destroyed room (may already have been clean)"
-            );
-        }
-
+        let _ = self.redis.del(&room_member_key(broadcast_id)).await;
         tracing::info!(broadcast_id = %broadcast_id, "Room destroyed");
         Ok(())
+    }
+
+    /// Every instance runs this independently when it observes (via the room
+    /// channel itself) that the broadcast has ended — there's no single "owner"
+    /// instance that can unsubscribe on everyone else's behalf.
+    pub async fn teardown_local_room(&self, broadcast_id: Uuid) {
+        if !self.hub.clear_local_room(broadcast_id).is_empty() {
+            let channel = room_channel(broadcast_id);
+            if let Err(e) = self.subscriber.unsubscribe(&channel).await {
+                tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to unsubscribe after room teardown");
+            }
+        }
     }
 
     /// Check whether a user is currently a member of a room (cross-instance).
@@ -394,7 +382,7 @@ impl WsPubSubBridge {
     /// the server starts accepting connections.
     pub fn spawn_subscriber_loop(&self) {
         let subscriber = Arc::clone(&self.subscriber);
-        let hub = self.hub.clone();
+        let bridge = self.clone();
 
         // Subscribe to the main channel (user-targeted and broadcast messages).
         {
@@ -426,7 +414,7 @@ impl WsPubSubBridge {
 
         // Main receive loop — runs for the lifetime of the process.
         tokio::spawn(async move {
-            run_subscriber_loop(subscriber, hub).await;
+            run_subscriber_loop(subscriber, bridge).await;
         });
     }
 
@@ -485,7 +473,7 @@ impl WsPubSubBridge {
 ///   on reconnect via the offline-message buffer.
 /// - `SubscriberClient` handles Redis reconnection automatically; we never
 ///   need to re-subscribe manually after a disconnect.
-async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) {
+async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, bridge: WsPubSubBridge) {
     let mut rx = subscriber.message_rx();
 
     loop {
@@ -507,7 +495,7 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
                     }
                 };
 
-                deliver_locally(&hub, envelope).await;
+                deliver_locally(&bridge, envelope).await;
             }
 
             Err(RecvError::Lagged(n)) => {
@@ -537,17 +525,20 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, hub: WsService) 
 /// Redis message.  `WsService::send_to_room` / `send_to_user` /
 /// `broadcast_all` only touch the local in-process `DashMap`, so there
 /// is no cross-instance coordination here.
-async fn deliver_locally(hub: &WsService, envelope: WsPubSubEnvelope) {
+async fn deliver_locally(bridge: &WsPubSubBridge, envelope: WsPubSubEnvelope) {
     match envelope {
         WsPubSubEnvelope::Room(e) => {
-            hub.send_to_room(e.room_id, e.payload).await;
+            let ended = matches!(
+                e.payload.event,
+                WsEvent::EndedBroadcast | WsEvent::BroadcastDeleted
+            );
+            bridge.hub.send_to_room(e.room_id, e.payload).await;
+            if ended {
+                bridge.teardown_local_room(e.room_id).await;
+            }
         }
-        WsPubSubEnvelope::User(e) => {
-            hub.send_to_user(e.user_id, e.payload).await;
-        }
-        WsPubSubEnvelope::Broadcast(e) => {
-            hub.broadcast_all(e.payload).await;
-        }
+        WsPubSubEnvelope::User(e) => bridge.hub.send_to_user(e.user_id, e.payload).await,
+        WsPubSubEnvelope::Broadcast(e) => bridge.hub.broadcast_all(e.payload).await,
     }
 }
 
