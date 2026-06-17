@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use time::OffsetDateTime;
 use uuid::Uuid;
+use validator::Validate;
 
 /// Generic WebSocket payload sent from server to client
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -57,7 +58,7 @@ impl WsPayload {
 
     pub fn host_reconnected(broadcast_id: Uuid) -> Self {
         Self::new(
-            WsEvent::HostDisconnected,
+            WsEvent::HostReconnected,
             serde_json::json!({"broadcastId": broadcast_id}),
         )
     }
@@ -67,7 +68,7 @@ impl WsPayload {
     }
 
     pub fn participant_left(participant: impl Serialize) -> Self {
-        Self::new(WsEvent::ParticipantJoined, participant)
+        Self::new(WsEvent::ParticipantLeft, participant)
     }
 
     pub fn participant_kicked(participant: impl Serialize) -> Self {
@@ -157,6 +158,22 @@ impl WsPayload {
             serde_json::json!({ "timestamp": OffsetDateTime::now_utc() }),
         )
     }
+
+    pub fn new_message(data: impl Serialize) -> Self {
+        Self::new(WsEvent::NewMessage, data)
+    }
+    pub fn edited_message(data: impl Serialize) -> Self {
+        Self::new(WsEvent::EditedMessage, data)
+    }
+    pub fn deleted_message(broadcast_id: Uuid, message_id: Uuid) -> Self {
+        Self::new(
+            WsEvent::DeletedMessage,
+            serde_json::json!({ "messageId": message_id, "broadcastId": broadcast_id }),
+        )
+    }
+    pub fn new_reaction(data: impl Serialize) -> Self {
+        Self::new(WsEvent::NewReaction, data)
+    }
 }
 
 /// Client message received from WebSocket
@@ -181,4 +198,25 @@ pub struct ParticipantWsResponseData {
     pub full_name: String,
     pub bio: Option<String>,
     pub avatar_url: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsEditMessage {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+    #[validate(length(min = 1, max = 256))]
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsDeleteMessage {
+    pub broadcast_id: Uuid,
+    pub message_id: Uuid,
+}
+
+#[derive(Debug, Deserialize, Validate)]
+pub struct WsSendReaction {
+    pub broadcast_id: Uuid,
+    #[validate(length(min = 1, max = 32))]
+    pub content: String,
 }

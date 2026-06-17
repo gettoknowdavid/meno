@@ -44,6 +44,15 @@ pub enum WsEvent {
     /// It is a lightweight way to notify the FE of a change in the broadcast list, so it can
     /// refetch the `Now Live`, `Recently Live` and `Live For You` sections of the home page.
     HomeInvalidated,
+
+    NewMessage,
+    EditedMessage,
+    DeletedMessage,
+    NewReaction,
+    SendMessage,
+    EditMessage,
+    DeleteMessage,
+    SendReaction,
 }
 impl FromStr for WsEvent {
     type Err = String;
@@ -67,10 +76,19 @@ impl FromStr for WsEvent {
             "cohostDeclined" => Ok(WsEvent::CohostDeclined),
             "newCohost" => Ok(WsEvent::NewCohost),
             "removedCohost" => Ok(WsEvent::RemovedCohost),
+            "cohostDemotion" => Ok(WsEvent::CohostDemotion),
             "recordingReady" => Ok(WsEvent::RecordingReady),
             "recordingPublished" => Ok(WsEvent::RecordingPublished),
             "notification" => Ok(WsEvent::Notification),
             "homeInvalidated" => Ok(WsEvent::HomeInvalidated),
+            "newMessage" => Ok(WsEvent::NewMessage),
+            "editedMessage" => Ok(WsEvent::EditedMessage),
+            "deletedMessage" => Ok(WsEvent::DeletedMessage),
+            "newReaction" => Ok(WsEvent::NewReaction),
+            "sendMessage" => Ok(WsEvent::SendMessage),
+            "editMessage" => Ok(WsEvent::EditMessage),
+            "deleteMessage" => Ok(WsEvent::DeleteMessage),
+            "sendReaction" => Ok(WsEvent::SendReaction),
             _ => Err(format!("Unknown WebSocket event: {}", s)),
         }
     }
@@ -100,6 +118,14 @@ impl fmt::Display for WsEvent {
             WsEvent::RecordingPublished => "recordingPublished",
             WsEvent::Notification => "notification",
             WsEvent::HomeInvalidated => "homeInvalidated",
+            WsEvent::NewMessage => "newMessage",
+            WsEvent::EditedMessage => "editedMessage",
+            WsEvent::DeletedMessage => "deletedMessage",
+            WsEvent::NewReaction => "newReaction",
+            WsEvent::SendMessage => "sendMessage",
+            WsEvent::EditMessage => "editMessage",
+            WsEvent::DeleteMessage => "deleteMessage",
+            WsEvent::SendReaction => "sendReaction",
         };
         write!(f, "{}", s)
     }

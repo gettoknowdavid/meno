@@ -1,9 +1,12 @@
 use crate::jobs::broadcast_jobs::EndBroadcastJob;
 use crate::modules::auth::model::User;
 use crate::modules::broadcast::model::EndReason;
+use crate::modules::chat::dto::{
+    DeleteMessageRequest, EditMessageRequest, SendMessageRequest, SendReactionRequest,
+};
 use crate::shared::constants::{MAX_WS_CONNECTIONS_PER_USER, TTL_3600_SECS};
 use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::ws::dto::{ClientMessage, WsErrorCode, WsPayload, WsQuery};
+use crate::shared::services::ws::dto::{ClientMessage, WsPayload, WsQuery};
 use crate::shared::services::ws::model::{HeartbeatConfig, WsEvent};
 use crate::state::MenoState;
 use axum::{
@@ -28,9 +31,9 @@ use uuid::Uuid;
 pub async fn ws_upgrade(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
-    State(state): State<Arc<MenoState>>,
+    State(app): State<Arc<MenoState>>,
 ) -> Result<Response, (StatusCode, Json<Value>)> {
-    let claims = state
+    let claims = app
         .auth
         .jwt
         .decode_access(&query.token)
@@ -41,11 +44,11 @@ pub async fn ws_upgrade(
     }
 
     // Check reconnect rate limit before upgrading
-    if let Err(e) = check_reconnect_rate(&state, claims.sub).await {
+    if let Err(e) = check_reconnect_rate(&app, claims.sub).await {
         return Err(e);
     }
 
-    let user = state
+    let user = app
         .auth
         .service
         .find_user_by_id(claims.sub)
@@ -53,7 +56,7 @@ pub async fn ws_upgrade(
         .map_err(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "Internal Error"))?
         .ok_or(error_response(StatusCode::BAD_REQUEST, "User not found"))?;
 
-    if state.ws.connection_count(user.id) >= MAX_WS_CONNECTIONS_PER_USER {
+    if app.ws.connection_count(user.id) >= MAX_WS_CONNECTIONS_PER_USER {
         tracing::warn!(user_id = %user.id, "Connection limit reached before upgrade");
         return Err(error_response(
             StatusCode::TOO_MANY_REQUESTS,
@@ -61,7 +64,7 @@ pub async fn ws_upgrade(
         ));
     }
 
-    Ok(ws.on_upgrade(move |socket| handle_socket(socket, user, state)))
+    Ok(ws.on_upgrade(move |socket| handle_socket(socket, user, app)))
 }
 
 /// Main WebSocket connection handler
@@ -71,7 +74,7 @@ pub async fn ws_upgrade(
 /// - Grace period tracking
 /// - Message draining on reconnect
 /// - Clean disconnect handling
-async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
+async fn handle_socket(socket: WebSocket, user: User, app: Arc<MenoState>) {
     let span = tracing::info_span!(
         "ws_connection",
         user_id = %user.id,
@@ -83,7 +86,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     let ws_sender = Arc::new(Mutex::new(ws_sender));
 
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
-    let conn_id = match state.ws.register(user.id, hub_tx) {
+    let conn_id = match app.ws.register(user.id, hub_tx) {
         Some(id) => id,
         None => {
             tracing::warn!(user_id = %user.id, "Race condition on connection limit");
@@ -94,11 +97,29 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     span.record("conn_id", conn_id);
     tracing::info!(user_id = %user.id, conn_id = conn_id, "WebSocket connected");
 
+    // Resolve any live broadcast this user is currently part of.
+    // This covers both participants and hosts reconnecting mid-broadcast.
+    let room_broadcast_id: Option<Uuid> = {
+        let (as_host_result, as_participant_result) = tokio::join!(
+            app.broadcast.service.find_active_hosted_by(user.id),
+            app.broadcast.service.find_active_participant(user.id)
+        );
+
+        let as_host = as_host_result.ok().flatten().map(|b| b.id);
+        let as_participant = as_participant_result.ok().flatten().map(|p| p.broadcast_id);
+
+        as_host.or(as_participant)
+    };
+
+    if let Some(bid) = room_broadcast_id {
+        app.ws.join_room(user.id, bid, &app.pubsub).await;
+    }
+
     // Handle host reconnection here
-    handle_reconnect(&state, user.id).await;
+    handle_reconnect(&app, user.id).await;
 
     // Drain any buffered messages from previous disconnects
-    let buffered_messages = state.ws.drain_message_buffer(user.id).await;
+    let buffered_messages = app.ws.drain_message_buffer(user.id).await;
     if !buffered_messages.is_empty() {
         tracing::info!(
             "Replaying {} buffered messages to user {}",
@@ -116,7 +137,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     }
 
     // Check if user is an active host (for heartbeat tuning)
-    let is_host = state
+    let is_host = app
         .broadcast
         .service
         .is_active_host(user.id)
@@ -134,7 +155,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
 
     // Set presence in Redis
     let presence_key = RedisKey::presence(user.id);
-    let _ = state.redis.set_ex(&presence_key, "1", 120).await;
+    let _ = app.redis.set_ex(&presence_key, "1", 120).await;
 
     // Heartbeat task (sends periodic pings)
     let heartbeat_task = start_heartbeat_task(
@@ -150,7 +171,7 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     // Main read loop
     let is_disconnected = run_read_loop(
         &mut ws_receiver,
-        &state,
+        &app,
         user.id,
         &missed_pongs,
         pong_timeout,
@@ -161,10 +182,14 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
     // Cleanup
     heartbeat_task.abort();
     write_task.abort();
-    state.ws.unregister(user.id, conn_id);
+
+    if let Some(bid) = room_broadcast_id {
+        app.ws.leave_room(user.id, bid, &app.pubsub).await;
+    }
+    app.ws.unregister(user.id, conn_id);
 
     // Remove presence
-    let _ = state.redis.del(&presence_key).await;
+    let _ = app.redis.del(&presence_key).await;
 
     // Handle disconnection cleanup
     if is_disconnected {
@@ -174,13 +199,13 @@ async fn handle_socket(socket: WebSocket, user: User, state: Arc<MenoState>) {
             is_host = is_host,
             "WebSocket disconnected"
         );
-        handle_disconnect(&state, user.id, is_host).await;
+        handle_disconnect(&app, user.id, is_host).await;
     }
 }
 
 /// Handle incoming client messages
 /// Handle incoming client messages
-async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str) {
+async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
     let msg: ClientMessage = match serde_json::from_str(raw_text) {
         Ok(m) => m,
         Err(e) => {
@@ -188,7 +213,6 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
             return;
         }
     };
-
     match msg.event {
         WsEvent::Heartbeat => {
             // === SEND ACKNOWLEDGMENT BACK TO CLIENT ===
@@ -201,15 +225,51 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
                 }),
             );
 
-            let _ = state.ws.send_to_user(user_id, ack_payload).await;
+            let _ = app.ws.send_to_user(user_id, ack_payload).await;
 
             // Refresh presence in Redis
             let presence_key = RedisKey::presence(user_id);
-            let _ = state.redis.expire(&presence_key, 120).await;
+            let _ = app.redis.expire(&presence_key, 120).await;
 
             tracing::debug!(user_id = %user_id, "heartbeat received");
         }
-
+        WsEvent::SendMessage => match serde_json::from_value::<SendMessageRequest>(msg.data) {
+            Err(e) => {
+                tracing::warn!(user_id = %user_id, error = %e, "Malformed sendMessage payload");
+                let message = format!("Invalid payload: {e}");
+                app.ws.send_unsupported_error(user_id, message).await;
+            }
+            Ok(data) => {
+                crate::modules::chat::handlers::handle_ws_send_message(&app, data).await;
+            }
+        },
+        WsEvent::EditMessage => match serde_json::from_value::<EditMessageRequest>(msg.data) {
+            Err(e) => {
+                let message = format!("Invalid payload: {e}");
+                app.ws.send_unsupported_error(user_id, message).await;
+            }
+            Ok(data) => {
+                crate::modules::chat::handlers::handle_ws_edit_message(&app, data).await;
+            }
+        },
+        WsEvent::DeleteMessage => match serde_json::from_value::<DeleteMessageRequest>(msg.data) {
+            Err(e) => {
+                let message = format!("Invalid payload: {e}");
+                app.ws.send_unsupported_error(user_id, message).await;
+            }
+            Ok(data) => {
+                crate::modules::chat::handlers::handle_ws_delete_message(&app, data).await;
+            }
+        },
+        WsEvent::SendReaction => match serde_json::from_value::<SendReactionRequest>(msg.data) {
+            Err(e) => {
+                let message = format!("Invalid payload: {e}");
+                app.ws.send_unsupported_error(user_id, message).await;
+            }
+            Ok(data) => {
+                crate::modules::chat::handlers::handle_ws_send_reaction(&app, data).await;
+            }
+        },
         _ => {
             tracing::warn!(
                 user_id  = %user_id,
@@ -217,15 +277,8 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
                 "unsupported WebSocket event from client"
             );
 
-            let _ = state
-                .ws
-                .send_error(
-                    user_id,
-                    Uuid::nil(),
-                    WsErrorCode::Unsupported,
-                    format!("Unsupported event: {}", msg.event),
-                )
-                .await;
+            let message = format!("Unsupported event: {}", msg.event);
+            let _ = app.ws.send_unsupported_error(user_id, message).await;
         }
     }
 }
@@ -233,10 +286,10 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw_text: &str)
 /// Handle disconnection - may trigger host grace period
 #[tracing::instrument(
     name = "ws.handle_disconnect",
-    skip(state),
+    skip(app),
     fields(user_id = %user_id, is_host = %is_host)
 )]
-async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
+async fn handle_disconnect(app: &MenoState, user_id: Uuid, is_host: bool) {
     if !is_host {
         // Regular listener disconnect - handled by participant leave HTTP endpoint
         // The client should call DELETE /broadcasts/:id/participant on disconnect
@@ -244,14 +297,14 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
     }
 
     // Host disconnect - start grace period
-    if let Ok(Some(broadcast)) = state.broadcast.service.find_active_hosted_by(user_id).await {
+    if let Ok(Some(broadcast)) = app.broadcast.service.find_active_hosted_by(user_id).await {
         // Get disconnect count for tiered grace period
         let count_key = RedisKey::disconnect_count(broadcast.id);
-        let disconnect_count: u64 = match state.redis.incr(&count_key).await {
+        let disconnect_count: u64 = match app.redis.incr(&count_key).await {
             Ok(c) => c as u64,
             Err(_) => 1,
         };
-        let _ = state.redis.expire(&count_key, TTL_3600_SECS).await;
+        let _ = app.redis.expire(&count_key, TTL_3600_SECS).await;
 
         let config = crate::shared::services::ws::model::GracePeriodConfig::default();
         let grace_secs = config.get_grace_seconds(disconnect_count);
@@ -259,25 +312,17 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
         // Set grace period key in Redis
         let grace_key = RedisKey::host_grace(broadcast.id);
         let value = &grace_secs.to_string();
-        let _ = state.redis.set_ex(&grace_key, value, grace_secs).await;
+        let _ = app.redis.set_ex(&grace_key, value, grace_secs).await;
 
         // Store grace start time
         let start_key = RedisKey::grace_started(broadcast.id);
         let value = &chrono::Utc::now().timestamp().to_string();
-        let _ = state.redis.set_ex(&start_key, value, grace_secs + 10).await;
+        let _ = app.redis.set_ex(&start_key, value, grace_secs + 10).await;
 
-        if let Ok(participant_ids) = state
-            .broadcast
-            .service
-            .get_participants_ids(broadcast.id)
-            .await
-        {
-            let payload = WsPayload::host_disconnected(broadcast.id, grace_secs, disconnect_count);
-            state.ws.send_to_users(&participant_ids, payload).await;
-        }
+        let payload = WsPayload::host_disconnected(broadcast.id, grace_secs, disconnect_count);
+        app.pubsub.publish_to_room(broadcast.id, payload).await;
 
-        state
-            .jobs
+        app.jobs
             .push_broadcast_end(EndBroadcastJob {
                 broadcast_id: broadcast.id,
                 host_id: user_id,
@@ -295,13 +340,13 @@ async fn handle_disconnect(state: &MenoState, user_id: Uuid, is_host: bool) {
 /// This is the server-side counterpart to the client's reconnect logic.
 #[tracing::instrument(
     name = "ws.handle_reconnect",
-    skip(state),
+    skip(app),
     fields(user_id = %user_id)
 )]
-pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
+pub async fn handle_reconnect(app: &MenoState, user_id: Uuid) {
     // Find an active broadcast hosted by this user
     // If the user is not the host of the broadcast, nothing happens
-    let broadcast = match state.broadcast.service.find_active_hosted_by(user_id).await {
+    let broadcast = match app.broadcast.service.find_active_hosted_by(user_id).await {
         Ok(Some(b)) => b,
         Ok(None) => return,
         Err(e) => {
@@ -317,7 +362,7 @@ pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
     let grace_key = RedisKey::host_grace(broadcast.id);
 
     // Check if we were in a grace period
-    let was_in_grace = match state.redis.exists(&grace_key).await {
+    let was_in_grace = match app.redis.exists(&grace_key).await {
         Ok(exists) => exists,
         Err(e) => {
             tracing::warn!(
@@ -335,7 +380,7 @@ pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
     }
 
     // Clear the grace key atomically
-    let deleted = match state.redis.del(&grace_key).await {
+    let deleted = match app.redis.del(&grace_key).await {
         Ok(n) => n,
         Err(e) => {
             tracing::error!(
@@ -363,23 +408,8 @@ pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
     );
 
     // Notify all current participants
-    if let Ok(participant_ids) = state
-        .broadcast
-        .service
-        .get_participants_ids(broadcast.id)
-        .await
-    {
-        if !participant_ids.is_empty() {
-            let payload = WsPayload::host_reconnected(broadcast.id);
-            state.ws.send_to_users(&participant_ids, payload).await;
-
-            tracing::debug!(
-                broadcast_id = %broadcast.id,
-                notified = participant_ids.len(),
-                "Sent hostReconnected to room"
-            );
-        }
-    }
+    let payload = WsPayload::host_reconnected(broadcast.id);
+    app.pubsub.publish_to_room(broadcast.id, payload).await;
 }
 
 /// Check reconnect rate limit to prevent DoS and crash loops
@@ -389,17 +419,17 @@ pub async fn handle_reconnect(state: &MenoState, user_id: Uuid) {
 ///
 /// Limits: 10 reconnects per 60 seconds → 30s backoff
 async fn check_reconnect_rate(
-    state: &MenoState,
+    app: &MenoState,
     user_id: Uuid,
 ) -> Result<(), (StatusCode, Json<Value>)> {
     let key = RedisKey::reconnect_rate(user_id);
 
-    let count: i64 = state.redis.incr(&key).await.map_err(|_| {
+    let count: i64 = app.redis.incr(&key).await.map_err(|_| {
         error_response(StatusCode::INTERNAL_SERVER_ERROR, "Rate limit check failed")
     })?;
 
     if count == 1 {
-        let _ = state.redis.expire(&key, 60).await;
+        let _ = app.redis.expire(&key, 60).await;
     }
 
     if count > 10 {
@@ -441,7 +471,7 @@ fn start_heartbeat_task(
     })
 }
 
-/// Start task that writes outgoing messages to the WebSocket
+/// Start a task that writes outgoing messages to the WebSocket
 fn start_write_task(
     ws_sender: Arc<Mutex<SplitSink<WebSocket, Message>>>,
     mut hub_rx: mpsc::Receiver<Arc<WsPayload>>,
@@ -460,7 +490,7 @@ fn start_write_task(
 /// Main read loop for incoming WebSocket messages
 async fn run_read_loop(
     ws_receiver: &mut SplitStream<WebSocket>,
-    state: &MenoState,
+    app: &MenoState,
     user_id: Uuid,
     missed_pongs: &AtomicU32,
     pong_timeout: time::Duration,
@@ -473,7 +503,7 @@ async fn run_read_loop(
             Ok(Some(Ok(Message::Text(text)))) => {
                 missed_count = 0;
                 missed_pongs.store(0, atomic::Ordering::Relaxed);
-                handle_client_message(state, user_id, &text).await;
+                handle_client_message(app, user_id, &text).await;
             }
             Ok(Some(Ok(Message::Ping(_)))) => {
                 missed_count = 0;

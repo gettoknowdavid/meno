@@ -512,7 +512,7 @@ where
             // Try date-only (YYYY-MM-DD) → midnight UTC
             if let Ok(date) = Date::parse(
                 v,
-                &time::format_description::parse("[year]-[month]-[day]").unwrap(),
+                &time::format_description::parse_borrowed::<3>("[year]-[month]-[day]").unwrap(),
             ) {
                 let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
                 return Ok(Some(dt));
@@ -521,8 +521,10 @@ where
             // Try common ISO 8601 without timezone: "2026-05-26T21:55:37"
             if let Ok(pdt) = PrimitiveDateTime::parse(
                 v,
-                &time::format_description::parse("[year]-[month]-[day]T[hour]:[minute]:[second]")
-                    .unwrap(),
+                &time::format_description::parse_borrowed::<3>(
+                    "[year]-[month]-[day]T[hour]:[minute]:[second]",
+                )
+                .unwrap(),
             ) {
                 return Ok(Some(pdt.assume_utc()));
             }

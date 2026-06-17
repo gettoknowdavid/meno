@@ -7,7 +7,7 @@ use uuid::Uuid;
 #[derive(Debug, Clone)]
 pub struct RedisKey(String);
 impl RedisKey {
-    fn new(key: String) -> Self {
+    pub(crate) fn new(key: String) -> Self {
         Self(key)
     }
 

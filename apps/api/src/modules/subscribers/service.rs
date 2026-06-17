@@ -3,22 +3,20 @@ use crate::modules::subscribers::errors::SubscribersError;
 use crate::modules::subscribers::repository::SubscribersRepository;
 use crate::shared::middleware::auth::AuthUser;
 use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
-use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::state::MenoState;
+use std::sync::Arc;
 use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct SubscribersService {
     pub repo: SubscribersRepository,
-    pub ws: WsService,
 }
 impl SubscribersService {
-    pub fn new(db: sqlx::PgPool, ws: WsService) -> Self {
+    pub fn new(db: sqlx::PgPool) -> Self {
         Self {
             repo: SubscribersRepository::new(db),
-            ws,
         }
     }
 
@@ -42,7 +40,7 @@ impl SubscribersService {
 
         self.repo.create(auth_user.id, subscription_id).await?;
 
-        let ws = self.ws.clone();
+        let pubsub = Arc::clone(&app.pubsub);
         let subscriber_id = auth_user.id;
         let subscriber_name = auth_user.full_name.clone();
         tokio::spawn(async move {
@@ -51,7 +49,7 @@ impl SubscribersService {
                 "You've got a new subscription",
                 format!("{} is now subscribed to you.", subscriber_name),
             );
-            ws.send_to_user(subscription_id, payload).await;
+            pubsub.publish_to_user(subscription_id, payload).await;
         });
         tracing::info!("Subscription created successfully");
         Ok(())
@@ -77,7 +75,7 @@ impl SubscribersService {
 
         self.repo.delete(auth_user.id, subscription_id).await?;
 
-        let ws = self.ws.clone();
+        let pubsub = Arc::clone(&app.pubsub);
         let subscriber_id = auth_user.id;
         let subscriber_name = auth_user.full_name.clone();
         tokio::spawn(async move {
@@ -86,7 +84,7 @@ impl SubscribersService {
                 "Someone unsubscribed",
                 format!("{} is no longer subscribed to you", subscriber_name),
             );
-            ws.send_to_user(subscription_id, payload).await;
+            pubsub.publish_to_user(subscription_id, payload).await;
         });
 
         Ok(())

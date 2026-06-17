@@ -57,6 +57,10 @@ impl RedisService {
         Ok(Self { pool })
     }
 
+    pub fn config(&self) -> Config {
+        self.pool.client_config()
+    }
+
     pub async fn get<T: DeserializeOwned>(&self, key: &RedisKey) -> Result<Option<T>, Error> {
         let data: Option<String> = self.pool.get(key.as_ref()).await?;
         match data {
@@ -164,6 +168,47 @@ impl RedisService {
         self.pool.eval(script, keys, args).await
     }
 
+    pub async fn sadd<R, V>(&self, key: &RedisKey, members: V) -> Result<R, Error>
+    where
+        R: FromValue,
+        V: TryInto<MultipleValues> + Send,
+        V::Error: Into<Error> + Send,
+    {
+        self.pool.sadd(key.as_ref(), members).await
+    }
+
+    pub async fn srem<R, V>(&self, key: &RedisKey, members: V) -> Result<R, Error>
+    where
+        R: FromValue,
+        V: TryInto<MultipleValues> + Send,
+        V::Error: Into<Error> + Send,
+    {
+        self.pool.srem(key.as_ref(), members).await
+    }
+
+    pub async fn scard<R>(&self, key: &RedisKey) -> Result<R, Error>
+    where
+        R: FromValue,
+    {
+        self.pool.scard(key.as_ref()).await
+    }
+
+    pub async fn sismember<R, V>(&self, key: &RedisKey, member: V) -> Result<R, Error>
+    where
+        R: FromValue,
+        V: TryInto<Value> + Send,
+        V::Error: Into<Error> + Send,
+    {
+        self.pool.sismember(key.as_ref(), member).await
+    }
+
+    pub async fn smembers<R>(&self, key: &RedisKey) -> Result<R, Error>
+    where
+        R: FromValue,
+    {
+        self.pool.smembers(key.as_ref()).await
+    }
+
     /// Invalidates all user-specific keys in the redis cache
     pub async fn invalidate_all_user_keys(&self, user_id: Uuid) -> Result<u64, Error> {
         let pattern = format!("u:{}:*", user_id);
@@ -233,5 +278,9 @@ impl RedisService {
         }
 
         Ok(deleted)
+    }
+
+    pub async fn publish(&self, channel: &str, message: String) -> Result<(), Error> {
+        self.pipeline().publish::<(), _, _>(channel, message).await
     }
 }

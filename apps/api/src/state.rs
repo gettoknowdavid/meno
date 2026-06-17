@@ -1,11 +1,13 @@
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::chat::state::ChatState;
 use crate::modules::notifications::state::NotificationState;
 use crate::modules::profile::state::ProfileState;
 use crate::modules::subscribers::state::SubscribersState;
 use crate::routes::health;
 use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::ws;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::{
     config::MenoConfig,
     jobs::{JobQueue, monitor},
@@ -49,8 +51,10 @@ pub struct MenoState {
     pub broadcast: BroadcastState,
     pub subscribers: SubscribersState,
     pub notifications: NotificationState,
+    pub chat: ChatState,
     pub livekit: LivekitService,
     pub ws: WsService,
+    pub pubsub: Arc<WsPubSubBridge>,
     pub jobs: JobQueue,
     pub smtp: AsyncSmtpTransport<Tokio1Executor>,
 }
@@ -58,36 +62,37 @@ pub struct MenoState {
 pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
     let config = Arc::new(config);
 
-    let ws = WsService::new(redis.clone());
     let storage = StorageService::new(&config);
     let jobs = JobQueue::new(&db);
     let livekit = build_livekit_service(&config);
     let smtp = build_smtp_transport(&config);
     let push = PushNotificationService::new(&config);
+    let ws = WsService::new(redis.clone());
+    let bridge = WsPubSubBridge::build(&config, ws.clone(), redis.clone())
+        .await
+        .expect("Failed to build WS pub/sub bridge");
 
-    let auth = AuthState::new(db.clone(), redis.clone(), &config);
-    let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
-    let broadcast = BroadcastState::new(db.clone(), redis.clone(), livekit.clone(), ws.clone());
-    let subscribers = SubscribersState::new(db.clone(), ws.clone());
-    let notifications = NotificationState::new(db.clone(), redis.clone(), ws.clone(), push.clone());
+    // Spawn the receive loop before any request can arrive.
+    bridge.spawn_subscriber_loop();
 
     let state = Arc::new(MenoState {
-        config,
-        db: db.clone(),
-        redis,
-        auth,
-        profile,
-        broadcast,
-        subscribers,
-        notifications,
+        auth: AuthState::new(db.clone(), redis.clone(), &config),
+        profile: ProfileState::new(db.clone(), redis.clone(), storage.clone()),
+        broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone()),
+        subscribers: SubscribersState::new(db.clone()),
+        notifications: NotificationState::new(db.clone(), redis.clone(), push.clone()),
+        chat: ChatState::new(db.clone(), redis.clone()),
+        pubsub: Arc::new(bridge),
         livekit,
         ws,
         jobs,
         smtp,
+        redis,
+        config,
+        db: db.clone(),
     });
 
     start_background_workers(&db, Arc::clone(&state));
-
     build_middleware_stack(state)
 }
 

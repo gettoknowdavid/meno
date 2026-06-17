@@ -9,9 +9,9 @@ use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::types::dto::UserSummary;
+use crate::state::MenoState;
 use fred::prelude::KeysInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -30,21 +30,14 @@ type TemplateCache = Arc<RwLock<HashMap<String, NotificationTemplate>>>;
 pub struct NotificationService {
     repo: NotificationRepository,
     redis: RedisService,
-    ws: WsService,
     push: PushNotificationService,
     templates: TemplateCache,
 }
 impl NotificationService {
-    pub fn new(
-        db: sqlx::PgPool,
-        redis: RedisService,
-        ws: WsService,
-        push: PushNotificationService,
-    ) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: RedisService, push: PushNotificationService) -> Self {
         Self {
             repo: NotificationRepository::new(db),
             redis,
-            ws,
             push,
             templates: Arc::new(RwLock::new(HashMap::new())),
         }
@@ -76,11 +69,12 @@ impl NotificationService {
     ///
     /// This function is **fire-and-forget safe** — callers may `tokio::spawn` it.
     #[instrument(
-        skip(self, actor, broadcast_title),
+        skip(self, app, actor, broadcast_title),
         fields(owner_id = %owner_id, type_code = %type_code)
     )]
     pub async fn notify(
         &self,
+        app: &MenoState,
         owner_id: Uuid,
         type_code: &str,
         actor: Option<&UserSummary>,
@@ -98,9 +92,8 @@ impl NotificationService {
             .create(owner_id, template.id, actor_id, broadcast_id, None)
             .await?;
 
-        // Handle In-App Notifications via WebSocket
         let ws_payload = WsPayload::notification(owner_id, &title, &body);
-        self.ws.send_to_user(owner_id, ws_payload).await;
+        app.pubsub.publish_to_user(owner_id, ws_payload).await;
 
         // Handle Push notifications
         let push = self.push.clone();

@@ -10,7 +10,7 @@ edition = "2024"
 anyhow = "1.0.102"
 axum = { version = "0.8.9", features = ["multipart", "ws", "macros"] }
 dotenvy = "0.15.7"
-fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts", "native-tls", "enable-native-tls"] }
+fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts", "i-pubsub", "native-tls", "enable-native-tls"] }
 jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.149"
@@ -19,7 +19,7 @@ thiserror = "2.0.18"
 time = { version = "0.3.47", features = ["serde", "serde-well-known"] }
 tokio = { version = "1.52.3", features = ["full"] }
 tower = "0.5.3"
-tower-http = { version = "0.6.8", features = ["cors", "trace", "timeout", "request-id"] }
+tower-http = { version = "0.7.0", features = ["cors", "trace", "timeout", "request-id"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 uuid = { version = "1.23.1", features = ["v4", "serde"] }
