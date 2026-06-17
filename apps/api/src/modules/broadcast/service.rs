@@ -22,7 +22,6 @@ use crate::shared::services::livekit::dto::LivekitRole;
 use crate::shared::services::redis::RedisService;
 use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
 use crate::shared::types::dto::UserSummary;
@@ -37,20 +36,13 @@ pub struct BroadcastService {
     repo: BroadcastRepository,
     livekit: LivekitService,
     redis: RedisService,
-    ws: WsService,
 }
 impl BroadcastService {
-    pub fn new(
-        repo: BroadcastRepository,
-        livekit: LivekitService,
-        redis: RedisService,
-        ws: WsService,
-    ) -> Self {
+    pub fn new(repo: BroadcastRepository, livekit: LivekitService, redis: RedisService) -> Self {
         Self {
             repo,
             livekit,
             redis,
-            ws,
         }
     }
 
@@ -815,12 +807,11 @@ impl BroadcastService {
 
         tx.commit().await?;
 
-        let ws = self.ws.clone();
+        let pubsub = Arc::clone(&app.pubsub);
         let token = broadcast_token.clone();
-
         tokio::spawn(async move {
             let payload = WsPayload::cohost_invitation(broadcast_id, token);
-            ws.send_to_user(cohost_id, payload).await;
+            pubsub.publish_to_user(cohost_id, payload).await;
         });
 
         tracing::info!(
@@ -943,7 +934,7 @@ impl BroadcastService {
             //   a) Reconnect if disconnected (Cloud), or
             //   b) Refresh their token (Self-hosted)
             let payload = WsPayload::cohost_demotion(broadcast_id, new_token);
-            self.ws.send_to_user(cohost_id, payload).await;
+            app.pubsub.publish_to_user(cohost_id, payload).await;
         }
 
         let pubsub = Arc::clone(&app.pubsub);

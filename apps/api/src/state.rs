@@ -78,9 +78,9 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
     let state = Arc::new(MenoState {
         auth: AuthState::new(db.clone(), redis.clone(), &config),
         profile: ProfileState::new(db.clone(), redis.clone(), storage.clone()),
-        broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone(), ws.clone()),
-        subscribers: SubscribersState::new(db.clone(), ws.clone()),
-        notifications: NotificationState::new(db.clone(), redis.clone(), ws.clone(), push.clone()),
+        broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone()),
+        subscribers: SubscribersState::new(db.clone()),
+        notifications: NotificationState::new(db.clone(), redis.clone(), push.clone()),
         chat: ChatState::new(db.clone(), redis.clone()),
         pubsub: Arc::new(bridge),
         livekit,
