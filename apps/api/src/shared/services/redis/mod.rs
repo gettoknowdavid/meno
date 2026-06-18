@@ -41,10 +41,10 @@ impl Default for RedisConfig {
 }
 
 #[derive(Clone)]
-pub struct RedisService {
+pub struct Redis {
     pool: Pool,
 }
-impl RedisService {
+impl Redis {
     pub async fn new(config: RedisConfig) -> anyhow::Result<Self> {
         let min_delay = config.reconnect_backoff_ms;
         let max_delay = config.reconnect_max_delay_ms;

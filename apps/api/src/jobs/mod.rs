@@ -16,14 +16,14 @@ pub mod monitor;
 pub mod notification_jobs;
 
 #[derive(Clone)]
-pub struct JobQueue {
+pub struct Jobs {
     pub email: Arc<Mutex<PostgresStorage<SendEmailJob>>>,
     pub broadcast_started: Arc<Mutex<PostgresStorage<BroadcastStartedFanOutJob>>>,
     pub broadcast_scheduled: Arc<Mutex<PostgresStorage<BroadcastScheduledFanOutJob>>>,
     pub cleanup: Arc<Mutex<PostgresStorage<CleanupExpiredTokensJob>>>,
     pub broadcast_end: Arc<Mutex<PostgresStorage<EndBroadcastJob>>>,
 }
-impl JobQueue {
+impl Jobs {
     /// Build all storage instances.
     /// Call once at startup, after `PostgresStorage::setup()` has run migrations.
     pub fn new(pool: &sqlx::PgPool) -> Self {

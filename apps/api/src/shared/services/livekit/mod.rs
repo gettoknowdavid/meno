@@ -1,7 +1,7 @@
 pub mod circuit_breaker;
 pub mod dto;
 
-use crate::config::MenoConfig;
+use crate::config::Config;
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::shared::constants::LIVEKIT_ACCESS_TOKEN_TTL;
 use crate::shared::services::livekit::circuit_breaker::CircuitBreaker;
@@ -24,7 +24,7 @@ pub struct LivekitService {
     pub breaker: Arc<CircuitBreaker>,
 }
 impl LivekitService {
-    pub fn new(config: &MenoConfig, room: Arc<RoomClient>) -> Self {
+    pub fn new(config: &Config, room: Arc<RoomClient>) -> Self {
         let api_key = config.livekit_api_key.clone();
         let api_secret = config.livekit_api_secret.clone();
         let host = config.livekit_host.clone();

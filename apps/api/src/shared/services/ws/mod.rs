@@ -1,7 +1,7 @@
 use crate::shared::constants::{
     MAX_WS_CONNECTIONS_PER_USER, MESSAGE_BUFFER_SIZE, MESSAGE_BUFFER_TTL_SECS,
 };
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::{WsErrorCode, WsPayload};
 use crate::shared::services::ws::model::WsEvent;
@@ -57,11 +57,11 @@ pub struct WsService {
     /// Monotonically increasing connection ID source.
     conn_seq: Arc<AtomicUsize>,
 
-    redis: RedisService,
+    redis: Redis,
 }
 
 impl WsService {
-    pub fn new(redis: RedisService) -> Self {
+    pub fn new(redis: Redis) -> Self {
         Self {
             clients: Arc::new(DashMap::new()),
             rooms: Arc::new(DashMap::new()),

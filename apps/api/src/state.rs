@@ -9,12 +9,12 @@ use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::ws;
 use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::{
-    config::MenoConfig,
-    jobs::{JobQueue, monitor},
+    config::Config,
+    jobs::{Jobs, monitor},
     routes::build_meno_routes,
     shared::middleware::timing::timing_middleware,
     shared::services::livekit::LivekitService,
-    shared::services::redis::RedisService,
+    shared::services::redis::Redis,
     shared::services::storage::StorageService,
     shared::services::ws::WsService,
 };
@@ -43,9 +43,9 @@ use tower_http::{
 
 #[derive(Clone)]
 pub struct MenoState {
-    pub config: Arc<MenoConfig>,
+    pub config: Arc<Config>,
     pub db: PgPool,
-    pub redis: RedisService,
+    pub redis: Redis,
     pub auth: AuthState,
     pub profile: ProfileState,
     pub broadcast: BroadcastState,
@@ -55,15 +55,15 @@ pub struct MenoState {
     pub livekit: LivekitService,
     pub ws: WsService,
     pub pubsub: Arc<WsPubSubBridge>,
-    pub jobs: JobQueue,
+    pub jobs: Jobs,
     pub smtp: AsyncSmtpTransport<Tokio1Executor>,
 }
 
-pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisService) -> Router {
+pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Router {
     let config = Arc::new(config);
 
     let storage = StorageService::new(&config);
-    let jobs = JobQueue::new(&db);
+    let jobs = Jobs::new(&db);
     let livekit = build_livekit_service(&config);
     let smtp = build_smtp_transport(&config);
     let push = PushNotificationService::new(&config);
@@ -76,7 +76,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
     bridge.spawn_subscriber_loop();
 
     let state = Arc::new(MenoState {
-        auth: AuthState::new(db.clone(), redis.clone(), &config),
+        auth: AuthState::new(db.clone(), redis.clone(), Arc::clone(&config), jobs.clone()),
         profile: ProfileState::new(db.clone(), redis.clone(), storage.clone()),
         broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone()),
         subscribers: SubscribersState::new(db.clone()),
@@ -96,7 +96,7 @@ pub async fn build_meno_router(config: MenoConfig, db: PgPool, redis: RedisServi
     build_middleware_stack(state)
 }
 
-fn build_livekit_service(config: &MenoConfig) -> LivekitService {
+fn build_livekit_service(config: &Config) -> LivekitService {
     LivekitService::new(
         config,
         Arc::new(RoomClient::with_api_key(
@@ -107,7 +107,7 @@ fn build_livekit_service(config: &MenoConfig) -> LivekitService {
     )
 }
 
-fn build_smtp_transport(config: &MenoConfig) -> AsyncSmtpTransport<Tokio1Executor> {
+fn build_smtp_transport(config: &Config) -> AsyncSmtpTransport<Tokio1Executor> {
     let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
     AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
         .unwrap()
@@ -117,7 +117,7 @@ fn build_smtp_transport(config: &MenoConfig) -> AsyncSmtpTransport<Tokio1Executo
         .build()
 }
 
-fn build_cors(config: &MenoConfig) -> CorsLayer {
+fn build_cors(config: &Config) -> CorsLayer {
     let allowed_origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
     CorsLayer::new()
         .allow_origin(AllowOrigin::list(allowed_origins))

@@ -1,14 +1,14 @@
 use crate::modules::chat::errors::ChatError;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ChatCache {
-    redis: RedisService,
+    redis: Redis,
 }
 impl ChatCache {
-    pub fn new(redis: RedisService) -> Self {
+    pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
 

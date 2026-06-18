@@ -19,7 +19,7 @@ use crate::shared::constants::{TTL_10_SECS, TTL_30_SECS, TTL_60_SECS};
 use crate::shared::pagination::{Cursor, CursorPage, Order};
 use crate::shared::services::livekit::LivekitService;
 use crate::shared::services::livekit::dto::LivekitRole;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::WsPayload;
@@ -35,10 +35,10 @@ use uuid::Uuid;
 pub struct BroadcastService {
     repo: BroadcastRepository,
     livekit: LivekitService,
-    redis: RedisService,
+    redis: Redis,
 }
 impl BroadcastService {
-    pub fn new(repo: BroadcastRepository, livekit: LivekitService, redis: RedisService) -> Self {
+    pub fn new(repo: BroadcastRepository, livekit: LivekitService, redis: Redis) -> Self {
         Self {
             repo,
             livekit,

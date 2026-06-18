@@ -19,7 +19,7 @@
 mod dto;
 pub mod error;
 
-use crate::config::MenoConfig;
+use crate::config::Config;
 use crate::modules::notifications::repository::NotificationRepository;
 use crate::shared::services::livekit::circuit_breaker::CircuitBreaker;
 use crate::shared::services::push::dto::{
@@ -64,7 +64,7 @@ pub struct PushNotificationService {
     breaker: Arc<CircuitBreaker>,
 }
 impl PushNotificationService {
-    pub fn new(config: &MenoConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
             .build()

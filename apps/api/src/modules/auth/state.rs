@@ -1,26 +1,19 @@
-use crate::config::MenoConfig;
-use crate::modules::auth::jwt::Jwt;
+use crate::config::Config;
+use crate::jobs::Jobs;
+use crate::modules::auth::jwt::{Jwt, JwtConfig};
 use crate::modules::auth::services::AuthService;
-use crate::shared::integrations::google::GoogleAuthService;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
+use sqlx::PgPool;
 
 #[derive(Clone)]
 pub struct AuthState {
     pub service: AuthService,
     pub jwt: Jwt,
-    pub google: GoogleAuthService,
 }
 impl AuthState {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, config: &MenoConfig) -> Self {
-        Self {
-            service: AuthService::new(db, redis),
-            jwt: Jwt::new(
-                &config.jwt_secret,
-                &config.jwt_refresh_secret,
-                config.access_token_expiration,
-                config.refresh_token_expiration,
-            ),
-            google: GoogleAuthService::new(config),
-        }
+    pub fn new(db: PgPool, redis: Redis, config: std::sync::Arc<Config>, jobs: Jobs) -> Self {
+        let jwt = Jwt::new(&JwtConfig::from_config(&config));
+        let service = AuthService::new(db, redis, jobs, config, jwt.clone());
+        Self { service, jwt }
     }
 }

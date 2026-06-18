@@ -1,5 +1,5 @@
 use crate::shared::constants::{LOCK_MAX_RETRIES, LOCK_RETRY_MS, LOCK_TTL_SECS};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use std::future::Future;
 use std::time::Duration;
@@ -30,7 +30,7 @@ use tracing::{debug, warn};
 /// ).await?;
 /// ```
 pub async fn coalesce_cache<T, E, Fut>(
-    redis: &RedisService,
+    redis: &Redis,
     cache_key: &str,
     ttl_secs: i64,
     fetcher: impl Fn() -> Fut,
@@ -114,7 +114,7 @@ where
 }
 
 /// Try to acquire a distributed lock using SET NX (set if not exists)
-async fn try_acquire_lock(redis: &RedisService, cache_key: &str, ttl_secs: u64) -> bool {
+async fn try_acquire_lock(redis: &Redis, cache_key: &str, ttl_secs: u64) -> bool {
     let lock_key = RedisKey::lock(cache_key);
 
     // Use a Lua script for atomic NX+EXPIRE (avoids race on older Redis):
@@ -133,7 +133,7 @@ async fn try_acquire_lock(redis: &RedisService, cache_key: &str, ttl_secs: u64) 
 }
 
 /// Release the distributed lock
-pub async fn release_lock(redis: &RedisService, cache_key: &str) {
+pub async fn release_lock(redis: &Redis, cache_key: &str) {
     let lock_key = RedisKey::lock(cache_key);
     let _ = redis.del(&lock_key).await;
 }

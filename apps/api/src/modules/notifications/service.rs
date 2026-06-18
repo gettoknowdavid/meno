@@ -7,7 +7,7 @@ use crate::modules::notifications::model::{NotificationTemplate, codes};
 use crate::modules::notifications::repository::NotificationRepository;
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::push::PushNotificationService;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::types::dto::UserSummary;
@@ -29,12 +29,12 @@ type TemplateCache = Arc<RwLock<HashMap<String, NotificationTemplate>>>;
 #[derive(Clone)]
 pub struct NotificationService {
     repo: NotificationRepository,
-    redis: RedisService,
+    redis: Redis,
     push: PushNotificationService,
     templates: TemplateCache,
 }
 impl NotificationService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, push: PushNotificationService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: Redis, push: PushNotificationService) -> Self {
         Self {
             repo: NotificationRepository::new(db),
             redis,

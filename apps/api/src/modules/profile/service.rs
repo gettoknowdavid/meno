@@ -9,7 +9,7 @@ use crate::modules::profile::model::GeneralSettings;
 use crate::modules::profile::repository::ProfileRepository;
 use crate::modules::profile::storage::ProfileStorage;
 use crate::shared::pagination::{Cursor, CursorPage};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
 use uuid::Uuid;
@@ -21,7 +21,7 @@ pub struct ProfileService {
     pub storage: ProfileStorage,
 }
 impl ProfileService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: Redis, storage: StorageService) -> Self {
         Self {
             repo: ProfileRepository::new(db),
             cache: ProfileCache::new(redis),

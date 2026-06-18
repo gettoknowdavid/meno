@@ -4,7 +4,7 @@ use std::env::var;
 use std::fs::read_to_string;
 
 #[derive(Clone)]
-pub struct MenoConfig {
+pub struct Config {
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
     pub livekit_host: String,
@@ -54,8 +54,8 @@ pub struct MenoConfig {
     pub storage_public_url: String,
 }
 
-impl MenoConfig {
-    pub fn from_env() -> Result<MenoConfig> {
+impl Config {
+    pub fn from_env() -> Result<Config> {
         dotenvy::dotenv().ok();
 
         let service_account_json = if let Ok(p) = var("FIREBASE_SERVICE_ACCOUNT_PATH") {
@@ -64,7 +64,7 @@ impl MenoConfig {
             return Err(anyhow!("FIREBASE_SERVICE_ACCOUNT_PATH is missing"));
         };
 
-        Ok(MenoConfig {
+        Ok(Config {
             livekit_api_key: var("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is missing")?,
             livekit_api_secret: var("LIVEKIT_API_SECRET")
                 .context("LIVEKIT_API_SECRET is missing")?,

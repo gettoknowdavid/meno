@@ -1,7 +1,7 @@
 use meno_api::{
-    config::MenoConfig,
+    config::Config,
     database::create_postgres_pool,
-    shared::services::redis::{RedisConfig, RedisService},
+    shared::services::redis::{RedisConfig, Redis},
     shared::signals::shutdown_signal,
     shared::telemetry::init_telemetry,
     state::build_meno_router,
@@ -15,12 +15,12 @@ async fn main() -> anyhow::Result<()> {
 
     init_telemetry();
 
-    let config = MenoConfig::from_env()?;
+    let config = Config::from_env()?;
 
     let env = config.env.clone();
     let port = config.port;
     let db = create_postgres_pool(config.database_url.as_str()).await;
-    let redis = RedisService::new(RedisConfig::from_url(config.redis_url.clone())).await?;
+    let redis = Redis::new(RedisConfig::from_url(config.redis_url.clone())).await?;
 
     let router = build_meno_router(config, db, redis).await;
 

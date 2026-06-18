@@ -1,5 +1,5 @@
-use crate::config::MenoConfig;
-use crate::shared::services::redis::RedisService;
+use crate::config::Config;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::WsService;
 use crate::shared::services::ws::dto::WsPayload;
@@ -103,12 +103,13 @@ pub struct WsPubSubBridge {
     publisher: Client,
     subscriber: Arc<SubscriberClient>,
     hub: WsService,
-    redis: RedisService,
+    redis: Redis,
 }
 impl WsPubSubBridge {
     /// Build both Redis clients from the same config and verify connectivity.
-    pub async fn build(config: &MenoConfig, hub: WsService, redis: RedisService) -> Result<Self> {
-        let builder = Builder::from_config(Config::from_url(&config.redis_url)?);
+    pub async fn build(config: &Config, hub: WsService, redis: Redis) -> Result<Self> {
+        let redis_config = fred::prelude::Config::from_url(&config.redis_url)?;
+        let builder = Builder::from_config(redis_config);
 
         let publisher: Client = builder.build()?;
         publisher.init().await?;

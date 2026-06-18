@@ -1,7 +1,7 @@
 use crate::modules::auth::model::AuthProvider;
 use crate::modules::profile::dto::{MeResponse, ProfileSearchResult, PublicProfileResponse};
 use crate::modules::profile::errors::ProfileError;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 
 use crate::shared::constants::TTL_60_SECS;
 use crate::shared::services::redis::keys::RedisKey;
@@ -9,10 +9,10 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ProfileCache {
-    redis: RedisService,
+    redis: Redis,
 }
 impl ProfileCache {
-    pub fn new(redis: RedisService) -> Self {
+    pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
 

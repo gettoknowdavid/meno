@@ -7,7 +7,7 @@ use crate::modules::chat::errors::ChatError;
 use crate::modules::chat::repository::ChatRepository;
 use crate::shared::constants::{TTL_10_SECS, TTL_60_SECS};
 use crate::shared::pagination::{Cursor, CursorPage};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::state::MenoState;
@@ -15,11 +15,11 @@ use crate::state::MenoState;
 #[derive(Clone)]
 pub struct ChatService {
     repo: ChatRepository,
-    redis: RedisService,
+    redis: Redis,
     cache: ChatCache,
 }
 impl ChatService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: Redis) -> Self {
         Self {
             repo: ChatRepository::new(db),
             cache: ChatCache::new(redis.clone()),

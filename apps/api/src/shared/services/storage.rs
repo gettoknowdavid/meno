@@ -1,4 +1,4 @@
-use crate::config::MenoConfig;
+use crate::config::Config;
 use anyhow::Result;
 use axum::http::Method;
 use object_store::ObjectStoreExt;
@@ -13,7 +13,7 @@ pub struct StorageService {
     pub public_url: String,
 }
 impl StorageService {
-    pub fn new(config: &MenoConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         let store = object_store::aws::AmazonS3Builder::new()
             .with_endpoint(&config.storage_endpoint)
             .with_access_key_id(&config.storage_access_key)

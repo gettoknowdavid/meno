@@ -1,8 +1,10 @@
+use std::str::FromStr;
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::jwt::hash_token;
 use crate::modules::auth::model::{AuthProvider, RefreshToken, User, UserIdentity};
 use time::{Duration, OffsetDateTime};
 use uuid::Uuid;
+use crate::modules::profile::errors::ProfileError;
 
 #[derive(Clone)]
 pub struct AuthRepository {
@@ -104,6 +106,23 @@ impl AuthRepository {
         .fetch_optional(&self.db)
         .await
         .map_err(AuthError::Database)
+    }
+    pub async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, AuthError> {
+        let rows = sqlx::query!(
+            "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
+            user_id,
+        )
+            .fetch_all(&self.db)
+            .await
+            .map_err(ProfileError::Database)?;
+
+        let providers = rows
+            .iter()
+            .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
+            .map(|s| AuthProvider::from(s))
+            .collect();
+
+        Ok(providers)
     }
     pub async fn link_provider(
         &self,

@@ -1,4 +1,4 @@
-use crate::config::MenoConfig;
+use crate::config::Config;
 use anyhow::{Result, ensure};
 use oauth2::url::Url;
 use oauth2::{
@@ -39,7 +39,7 @@ pub struct GoogleAuthService {
     client: OAuthClient,
 }
 impl GoogleAuthService {
-    pub fn new(config: &MenoConfig) -> Self {
+    pub fn new(config: &Config) -> Self {
         let auth_uri =
             AuthUrl::new(config.google_auth_uri.clone()).expect("Invalid Google auth URI");
         let token_uri =

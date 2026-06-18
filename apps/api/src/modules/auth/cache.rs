@@ -1,7 +1,7 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::OtpType;
 use crate::shared::constants::{MAX_LOGIN_ATTEMPTS, TTL_60_SECS, TTL_300_SECS, TTL_900_SECS};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use fred::prelude::*;
 use std::collections::HashMap;
@@ -9,10 +9,10 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct AuthCache {
-    redis: RedisService,
+    redis: Redis,
 }
 impl AuthCache {
-    pub fn new(redis: RedisService) -> Self {
+    pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
 
@@ -149,5 +149,11 @@ impl AuthCache {
         let key = RedisKey::rate_limit("LOGIN_ATTEMPTS", &email);
         self.redis.del(&key).await.map_err(AuthError::Redis)?;
         Ok(())
+    }
+    pub async fn invalidate_all_user_keys(&self, user_id: Uuid) -> Result<u64, AuthError> {
+        self.redis
+            .invalidate_all_user_keys(user_id)
+            .await
+            .map_err(AuthError::Redis)
     }
 }

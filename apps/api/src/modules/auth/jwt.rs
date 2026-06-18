@@ -1,3 +1,4 @@
+use crate::config::Config;
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AuthProvider, UserRole};
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
@@ -38,6 +39,24 @@ pub struct RefreshClaims {
     pub iat: i64,
 }
 
+#[derive(Clone)]
+pub struct JwtConfig {
+    pub jwt_secret: String,
+    pub jwt_refresh_secret: String,
+    pub access_token_expiration: i64,
+    pub refresh_token_expiration: i64,
+}
+impl JwtConfig {
+    pub fn from_config(config: &Config) -> Self {
+        Self {
+            jwt_secret: config.jwt_secret.clone(),
+            jwt_refresh_secret: config.jwt_refresh_secret.clone(),
+            access_token_expiration: config.access_token_expiration,
+            refresh_token_expiration: config.refresh_token_expiration,
+        }
+    }
+}
+
 /// Owns the encoding/decoding keys, so secrets are only parsed once at startup,
 /// not on every request. Cheap to clone (keys are Arc-backed internally).
 #[derive(Clone)]
@@ -50,22 +69,20 @@ pub struct Jwt {
     refresh_expires_in: i64,
 }
 impl Jwt {
-    pub fn new(
-        access_secret: &str,
-        refresh_secret: &str,
-        access_expires_in: i64,
-        refresh_expires_in: i64,
-    ) -> Self {
-        assert!(!access_secret.is_empty(), "JWT_SECRET required");
-        assert!(!refresh_secret.is_empty(), "JWT_REFRESH_SECRET required");
+    pub fn new(config: &JwtConfig) -> Self {
+        assert!(!&config.jwt_secret.is_empty(), "JWT_SECRET required");
+        assert!(
+            !&config.jwt_refresh_secret.is_empty(),
+            "JWT_REFRESH_SECRET required"
+        );
 
         Self {
-            access_encoding_key: EncodingKey::from_secret(access_secret.as_bytes()),
-            access_decoding_key: DecodingKey::from_secret(access_secret.as_bytes()),
-            refresh_encoding_key: EncodingKey::from_secret(refresh_secret.as_bytes()),
-            refresh_decoding_key: DecodingKey::from_secret(refresh_secret.as_bytes()),
-            access_expires_in,
-            refresh_expires_in,
+            access_encoding_key: EncodingKey::from_secret(&config.jwt_secret.as_bytes()),
+            access_decoding_key: DecodingKey::from_secret(&config.jwt_secret.as_bytes()),
+            refresh_encoding_key: EncodingKey::from_secret(&config.jwt_refresh_secret.as_bytes()),
+            refresh_decoding_key: DecodingKey::from_secret(&config.jwt_refresh_secret.as_bytes()),
+            access_expires_in: config.access_token_expiration,
+            refresh_expires_in: config.refresh_token_expiration,
         }
     }
 
@@ -161,12 +178,13 @@ mod tests {
     const TEST_EMAIL: &str = "johndoe@example.com";
 
     fn setup() -> Jwt {
-        Jwt::new(
-            "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff",
-            "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06",
-            900,
-            604800,
-        )
+        let config = JwtConfig {
+            jwt_secret: "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff".to_string(),
+            jwt_refresh_secret: "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06".to_string(),
+            access_token_expiration: 900,
+            refresh_token_expiration: 604800,
+        };
+        Jwt::new(&config)
     }
 
     #[test]
@@ -216,12 +234,13 @@ mod tests {
 
     #[test]
     fn test_expired_access_token_returns_correct_error() {
-        let svc = Jwt::new(
-            "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff",
-            "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06",
-            2,
-            604800,
-        );
+        let config = JwtConfig {
+            jwt_secret: "3c627b443d66b86547acf70c6aa3f9277e7abe85417b9260d34b7a51d91b5ddedbb3dfdcb713f4bdb4f6581e2a73499217bca9e9b0a21d2c2f102dd2b581d5ff".to_string(),
+            jwt_refresh_secret: "36a45f0c13f17237ee3e676021b0f480f1c50a47089f91edd3a447949f4c24d87013bf26d39342ebd0b151ef79172dfa9bf4abbe060772823ba6563b1a92ee06".to_string(),
+            access_token_expiration: 900,
+            refresh_token_expiration: 604800,
+        };
+        let svc = Jwt::new(&config);
 
         let user_id = Uuid::parse_str(TEST_USER_ID).expect("valid UUID");
 
