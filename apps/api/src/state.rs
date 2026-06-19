@@ -63,7 +63,6 @@ pub struct MenoState {
 pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Router {
     let config = Arc::new(config);
 
-    // ── Shared infrastructure ──────────────────────────────────────────────
     let storage = StorageService::new(&config);
     let jobs = Jobs::new(&db);
     let livekit = build_livekit(&config);
@@ -71,22 +70,30 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
     let push = PushNotificationService::new(&config);
     let ws = WsService::new(redis.clone());
 
-    let bridge = WsPubSubBridge::build(&config, ws.clone(), redis.clone())
-        .await
-        .expect("WsPubSubBridge failed to initialise");
-    bridge.spawn_subscriber_loop();
+    let bridge = build_ws_pubsub_bridge(&config, ws.clone(), redis.clone()).await;
     let pubsub = Arc::new(bridge);
 
-    // ── Module wiring ──────────────────────────────────────────────────────
-    // Each module state owns its own Arc<Repo>, Arc<Cache>, etc.
-    // Nothing is shared between modules except the primitives above.
+    let auth = AuthState::new(db.clone(), redis.clone(), &config, jobs.clone());
+    let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
+    let broadcast = BroadcastState::new(
+        db.clone(),
+        redis.clone(),
+        livekit.clone(),
+        pubsub.clone(),
+        ws.clone(),
+        jobs.clone(),
+    );
+    let subscribers = SubscribersState::new(db.clone());
+    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone());
+    let chat = ChatState::new(db.clone(), redis.clone());
+
     let state = Arc::new(MenoState {
-        auth: AuthState::new(db.clone(), redis.clone(), &config, jobs.clone()),
-        profile: ProfileState::new(db.clone(), redis.clone(), storage.clone()),
-        broadcast: BroadcastState::new(db.clone(), redis.clone(), livekit.clone()),
-        subscribers: SubscribersState::new(db.clone()),
-        notifications: NotificationState::new(db.clone(), redis.clone(), push.clone()),
-        chat: ChatState::new(db.clone(), redis.clone()),
+        auth,
+        profile,
+        broadcast,
+        subscribers,
+        notifications,
+        chat,
         ws,
         pubsub,
         jobs,
@@ -98,6 +105,14 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
 
     start_background_workers(&state.db, Arc::clone(&state));
     build_middleware_stack(state)
+}
+
+async fn build_ws_pubsub_bridge(config: &Config, ws: WsService, redis: Redis) -> WsPubSubBridge {
+    let bridge = WsPubSubBridge::build(&config, ws, redis)
+        .await
+        .expect("WsPubSubBridge failed to initialise");
+    bridge.spawn_subscriber_loop();
+    bridge
 }
 
 fn build_livekit(config: &Config) -> LivekitService {

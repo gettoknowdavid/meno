@@ -33,14 +33,12 @@ pub async fn end_broadcast(
     // Grace period still active → host never reconnected → end the broadcast
     let _ = state.redis.del(&grace_key).await;
 
-    state
-        .broadcast
-        .service
-        .end(&state, job.broadcast_id, job.host_id)
-        .await?;
+    let broadcast_id = job.broadcast_id;
+    let host_id = job.host_id;
+    state.broadcast.service.end(broadcast_id, host_id).await?;
 
     tracing::info!(
-        broadcast_id = %job.broadcast_id,
+        broadcast_id = %broadcast_id,
         reason       = %job.reason,
         "Broadcast ended via background job"
     );

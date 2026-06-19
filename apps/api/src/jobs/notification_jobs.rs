@@ -1,4 +1,4 @@
-use crate::modules::broadcast::repository::BroadcastRepository;
+use crate::modules::broadcast::repository::{BroadcastRepo, BroadcastRepository};
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
 use crate::state::MenoState;
@@ -32,9 +32,9 @@ pub struct BroadcastScheduledFanOutJob {
 
 pub async fn broadcast_started_fanout(
     job: BroadcastStartedFanOutJob,
-    state: Data<Arc<MenoState>>,
+    app: Data<Arc<MenoState>>,
 ) -> Result<(), BoxDynError> {
-    let repo = BroadcastRepository::new(state.db.clone());
+    let repo = BroadcastRepository::new(app.db.clone());
     let ids = repo.get_subscriber_ids(job.creator_id).await?;
     if ids.is_empty() {
         return Ok(());
@@ -49,7 +49,7 @@ pub async fn broadcast_started_fanout(
             "creatorId": job.creator_id,
         }),
     );
-    state.ws.send_to_users(&ids, payload).await;
+    app.pubsub.publish_to_users(&ids, payload).await;
 
     tracing::info!(
         broadcast_id = %job.broadcast_id,
@@ -61,9 +61,9 @@ pub async fn broadcast_started_fanout(
 
 pub async fn broadcast_scheduled_fanout(
     job: BroadcastScheduledFanOutJob,
-    state: Data<Arc<MenoState>>,
+    app: Data<Arc<MenoState>>,
 ) -> Result<(), BoxDynError> {
-    let repo = BroadcastRepository::new(state.db.clone());
+    let repo = BroadcastRepository::new(app.db.clone());
     let ids = repo.get_subscriber_ids(job.creator_id).await?;
     if ids.is_empty() {
         return Ok(());
@@ -79,7 +79,7 @@ pub async fn broadcast_scheduled_fanout(
             "startTime": job.start_time,
         }),
     );
-    state.ws.send_to_users(&ids, payload).await;
+    app.pubsub.publish_to_users(&ids, payload).await;
 
     tracing::info!(
         broadcast_id = %job.broadcast_id,
