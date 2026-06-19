@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::modules::auth::cache::{AuthCache, RedisAuthCache};
+use crate::modules::auth::cache::{AuthCache, AuthRedisCache};
 use crate::modules::auth::repository::{AuthRepo, AuthRepository};
 use crate::modules::auth::services::AuthService;
 use crate::modules::auth::token::TokenService;
@@ -17,7 +17,7 @@ pub struct AuthState {
 impl AuthState {
     pub fn new(db: sqlx::PgPool, redis: Redis, config: &Config, jobs: crate::jobs::Jobs) -> Self {
         let repo: Arc<dyn AuthRepo> = Arc::new(AuthRepository::new(db));
-        let cache: Arc<dyn AuthCache> = Arc::new(RedisAuthCache::new(redis));
+        let cache: Arc<dyn AuthCache> = Arc::new(AuthRedisCache::new(redis));
         let google = Arc::new(GoogleAuth::new(config));
 
         let token_config = crate::modules::auth::token::TokenConfig {

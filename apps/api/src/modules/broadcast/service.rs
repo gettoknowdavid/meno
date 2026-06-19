@@ -1,5 +1,6 @@
 use crate::jobs::Jobs;
 use crate::jobs::notification_jobs::BroadcastStartedFanOutJob;
+use crate::modules::broadcast::cache::BroadcastCache;
 use crate::modules::broadcast::dto::{
     BroadcastListCacheKey, BroadcastListItem, BroadcastQuery, BroadcastRefreshTokenResponse,
     BroadcastResponse, BroadcastSessionResponse, BroadcastSortBy, CohostSessionResponse,
@@ -28,7 +29,7 @@ use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::model::WsEvent;
 use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::shared::types::dto::UserSummary;
-use sqlx::{Postgres, Transaction};
+use sqlx::{PgPool, Postgres, Transaction};
 use std::collections::HashMap;
 use std::sync::Arc;
 use time::OffsetDateTime;
@@ -36,36 +37,99 @@ use uuid::Uuid;
 
 pub type DynBroadcastService = BroadcastService<BroadcastRepository>;
 
+#[derive(Default)]
+pub struct BroadcastServiceBuilder<R: BroadcastRepo = BroadcastRepository> {
+    repo: Option<Arc<R>>,
+    cache: Option<Arc<dyn BroadcastCache>>,
+    db: Option<PgPool>,
+    redis: Option<Redis>,
+    livekit: Option<LivekitService>,
+    pubsub: Option<Arc<WsPubSubBridge>>,
+    ws: Option<WsService>,
+    jobs: Option<Jobs>,
+}
+impl<R: BroadcastRepo> BroadcastServiceBuilder<R> {
+    pub fn new() -> Self {
+        Self {
+            repo: None,
+            cache: None,
+            db: None,
+            redis: None,
+            livekit: None,
+            pubsub: None,
+            ws: None,
+            jobs: None,
+        }
+    }
+
+    pub fn repo(mut self, repo: Arc<R>) -> Self {
+        self.repo = Some(repo);
+        self
+    }
+
+    pub fn cache(mut self, cache: Arc<dyn BroadcastCache>) -> Self {
+        self.cache = Some(cache);
+        self
+    }
+
+    pub fn db(mut self, db: PgPool) -> Self {
+        self.db = Some(db);
+        self
+    }
+
+    pub fn redis(mut self, redis: Redis) -> Self {
+        self.redis = Some(redis);
+        self
+    }
+
+    pub fn livekit(mut self, livekit: LivekitService) -> Self {
+        self.livekit = Some(livekit);
+        self
+    }
+
+    pub fn pubsub(mut self, pubsub: Arc<WsPubSubBridge>) -> Self {
+        self.pubsub = Some(pubsub);
+        self
+    }
+
+    pub fn ws(mut self, ws: WsService) -> Self {
+        self.ws = Some(ws);
+        self
+    }
+
+    pub fn jobs(mut self, jobs: Jobs) -> Self {
+        self.jobs = Some(jobs);
+        self
+    }
+
+    pub fn build(self) -> BroadcastService<R> {
+        BroadcastService {
+            repo: self.repo.expect("repo is required"),
+            cache: self.cache.expect("cache is required"),
+            db: self.db.expect("db is required"),
+            redis: self.redis.expect("redis is required"),
+            livekit: self.livekit.expect("livekit is required"),
+            pubsub: self.pubsub.expect("pubsub is required"),
+            ws: self.ws.expect("ws is required"),
+            jobs: self.jobs.expect("jobs is required"),
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct BroadcastService<R: BroadcastRepo = BroadcastRepository> {
     repo: Arc<R>,
-    db: sqlx::PgPool,
+    cache: Arc<dyn BroadcastCache>,
+    db: PgPool,
     redis: Redis,
     livekit: LivekitService,
     pubsub: Arc<WsPubSubBridge>,
     ws: WsService,
     jobs: Jobs,
 }
-
 impl<R: BroadcastRepo> BroadcastService<R> {
-    pub fn new(
-        repo: Arc<R>,
-        db: sqlx::PgPool,
-        redis: Redis,
-        livekit: LivekitService,
-        pubsub: Arc<WsPubSubBridge>,
-        ws: WsService,
-        jobs: Jobs,
-    ) -> Self {
-        Self {
-            repo,
-            db,
-            redis,
-            livekit,
-            pubsub,
-            ws,
-            jobs,
-        }
+    pub fn builder() -> BroadcastServiceBuilder<R> {
+        BroadcastServiceBuilder::new()
     }
 
     pub async fn create(
@@ -77,10 +141,10 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             return Err(BroadcastError::AlreadyLive);
         }
 
-        if let Some(st) = req.start_time {
-            if st <= OffsetDateTime::now_utc() {
-                return Err(BroadcastError::StartTimeInPast);
-            }
+        if let Some(st) = req.start_time
+            && st <= OffsetDateTime::now_utc()
+        {
+            return Err(BroadcastError::StartTimeInPast);
         }
 
         let cohost_ids = req.cohosts.clone().unwrap_or_default();
@@ -180,8 +244,8 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         tx.commit().await?;
 
         // Cache Invalidation
-        self.invalidate_list_caches();
-        self.invalidate_broadcast_cache(broadcast_id);
+        self.cache.invalidate_list_caches();
+        self.cache.invalidate_broadcast_cache(broadcast_id);
 
         let ctx = BroadcastContext {
             participant_id: Some(creator_id),
@@ -237,23 +301,22 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             }
 
             if is_scheduled {
-                if let Ok(subscriber_ids) = repo.get_subscriber_ids(creator_clone.id).await {
-                    if !subscriber_ids.is_empty() {
-                        let payload = WsPayload::new(
-                            WsEvent::BroadcastDeleted,
-                            serde_json::json!({
-                                "broadcastId":    broadcast_clone.id,
-                                "broadcastTitle": broadcast_clone.title,
-                                "message": format!(
-                                    "The broadcast scheduled by {} has been cancelled.",
-                                    creator_clone.full_name,
-                                ),
-                            }),
-                        );
-                        // publish_to_users pipelines all PUBLISH commands in one round trip
-                        // and reaches users on every instance.
-                        let _ = pubsub.publish_to_users(&subscriber_ids, payload).await;
-                    }
+                let Ok(sub_ids) = repo.get_subscriber_ids(creator_clone.id).await else {
+                    return;
+                };
+                if !sub_ids.is_empty() {
+                    let payload = WsPayload::new(
+                        WsEvent::BroadcastDeleted,
+                        serde_json::json!({
+                            "broadcastId":    broadcast_clone.id,
+                            "broadcastTitle": broadcast_clone.title,
+                            "message": format!(
+                                "The broadcast scheduled by {} has been cancelled.",
+                                creator_clone.full_name,
+                            ),
+                        }),
+                    );
+                    let _ = pubsub.publish_to_users(&sub_ids, payload).await;
                 }
             }
         });
@@ -325,7 +388,7 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         let set_active_input = SetActiveInput {
             broadcast_id,
             broadcast_token: broadcast_token.clone(),
-            start_time: now.clone(),
+            start_time: now,
         };
         let broadcast = self.repo.set_active(&mut *tx, &set_active_input).await?;
 
@@ -343,8 +406,8 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         tx.commit().await?;
 
         // Cache Invalidation
-        self.invalidate_list_caches();
-        self.invalidate_broadcast_cache(broadcast_id);
+        self.cache.invalidate_list_caches();
+        self.cache.invalidate_broadcast_cache(broadcast_id);
 
         //  Seed the Redis room with the host as the first member so that
         if let Err(e) = self.pubsub.init_room(broadcast_id, &[creator.id]).await {
@@ -375,28 +438,25 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             .await?;
 
         let repo = Arc::clone(&self.repo);
+        let cache = Arc::clone(&self.cache);
         let pubsub = Arc::clone(&self.pubsub);
-        let redis = self.redis.clone();
         let response_clone = broadcast_response.clone();
         tokio::spawn(async move {
-            let b_id = response_clone.id;
             let creator_id = response_clone.creator.id;
 
             // Store broadcast start time for quota
-            let start_key = RedisKey::started_at(b_id);
-            let _ = redis.set(&start_key, &now, None).await;
+            let _ = cache.set_started_at(broadcast_id, &now).await;
 
             // Set a live count key Redis to 1
             // This is the number of currently live participants, and the creator is the first
             // in the list
-            let count_key = RedisKey::live_count(b_id);
-            let _ = redis.set(&count_key, &1_i64, None).await;
+            let _ = cache.set_live_count(broadcast_id).await;
 
-            if let Ok(subscriber_ids) = repo.get_subscriber_ids(creator_id).await {
-                if !subscriber_ids.is_empty() {
-                    let payload = WsPayload::new_broadcast(response_clone);
-                    pubsub.publish_to_users(&subscriber_ids, payload).await;
-                }
+            if let Ok(sub_ids) = repo.get_subscriber_ids(creator_id).await
+                && !sub_ids.is_empty()
+            {
+                let payload = WsPayload::new_broadcast(response_clone);
+                pubsub.publish_to_users(&sub_ids, payload).await;
             }
 
             // Notify the FE of changes on the home page
@@ -427,7 +487,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
     )]
     pub async fn end(
         &self,
-
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<EndBroadcastResponse, BroadcastError> {
@@ -472,21 +531,18 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         tx.commit().await?;
 
         // Cache Invalidation
-        self.invalidate_list_caches();
-        self.invalidate_broadcast_cache(broadcast_id);
+        self.cache.invalidate_list_caches();
+        self.cache.invalidate_broadcast_cache(broadcast_id);
 
+        let cache = Arc::clone(&self.cache);
         let pubsub = Arc::clone(&self.pubsub);
         let livekit = self.livekit.clone();
-        let redis = self.redis.clone();
         let reason = EndReason::Normal;
         tokio::spawn(async move {
             let _ = livekit.delete_room(broadcast_id).await;
 
-            let count_key = RedisKey::live_count(broadcast_id);
-            let _ = redis.del(&count_key).await;
-
-            let grace_key = RedisKey::host_grace(broadcast_id);
-            let _ = redis.del(&grace_key).await;
+            let _ = cache.delete_live_count(broadcast_id).await;
+            let _ = cache.delete_host_grace(broadcast_id).await;
 
             // Notify every participant on every instance that the broadcast ended.
             // publish_to_room targets only room members; broadcast_all targets
@@ -548,7 +604,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
     )]
     pub async fn join(
         &self,
-
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<BroadcastSessionResponse, BroadcastError> {
@@ -615,18 +670,17 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         tx.commit().await?;
 
         // Cache Invalidation
-        self.invalidate_list_caches();
-        self.invalidate_broadcast_cache(broadcast_id);
+        self.cache.invalidate_list_caches();
+        self.cache.invalidate_broadcast_cache(broadcast_id);
 
         self.ws.join_room(user_id, broadcast.id, &self.pubsub).await;
 
+        let cache = Arc::clone(&self.cache);
         let pubsub = Arc::clone(&self.pubsub);
-        let redis = self.redis.clone();
         let b_id = broadcast.id;
         let user_clone = user.clone();
         tokio::spawn(async move {
-            let count_key = RedisKey::live_count(b_id);
-            let new_count = redis.incr(&count_key).await.unwrap_or(1);
+            let new_count = cache.increment_live_count(b_id).await.unwrap_or(1);
 
             let joined_payload = WsPayload::participant_joined(user_clone);
             pubsub.publish_to_room(b_id, joined_payload).await;
@@ -645,8 +699,7 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         let cohosts = cohosts_result?;
         let total_count = total_count_result?;
 
-        let live_count_key = RedisKey::live_count(broadcast_id);
-        let live_count = self.redis.get::<i64>(&live_count_key).await?.unwrap_or(1);
+        let live_count = self.cache.get_live_count(broadcast_id).await?.unwrap_or(1);
 
         let ctx = self
             .build_ctx(
@@ -677,7 +730,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
 
     pub async fn leave(
         &self,
-
         broadcast_id: Uuid,
         user_id: Uuid,
     ) -> Result<LeaveBroadcastResponse, BroadcastError> {
@@ -706,22 +758,18 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             .await?;
 
         // Cache Invalidation
-        self.invalidate_list_caches();
-        self.invalidate_broadcast_cache(broadcast_id);
+        self.cache.invalidate_list_caches();
+        self.cache.invalidate_broadcast_cache(broadcast_id);
 
         self.ws
             .leave_room(user_id, broadcast_id, &self.pubsub)
             .await;
 
         let pubsub = Arc::clone(&self.pubsub);
-        let redis = self.redis.clone();
+        let cache = Arc::clone(&self.cache);
         let user_clone = user.clone();
         tokio::spawn(async move {
-            let count_key = RedisKey::live_count(broadcast_id);
-            let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
-            if remaining == 0 {
-                let _ = redis.del(&count_key).await;
-            }
+            let _ = cache.decrement_live_count(broadcast_id).await;
 
             let payload = WsPayload::participant_left(user_clone);
             pubsub.publish_to_room(broadcast_id, payload).await;
@@ -766,10 +814,10 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
         let cohost = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
 
-        if let Ok(cohosts) = cohosts_result {
-            if cohosts.len() == MAX_COHOSTS {
-                return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
-            }
+        if let Ok(cohosts) = cohosts_result
+            && cohosts.len() == MAX_COHOSTS
+        {
+            return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
         }
 
         if broadcast.status != BroadcastStatus::Active {
@@ -1383,62 +1431,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         self.repo.is_active_host(user_id).await
     }
 
-    /// Invalidate ALL broadcast-list cache entries.
-    ///
-    /// Call this whenever the global list could have changed:
-    ///   - `go_live` (a new active broadcast appears)
-    ///   - `end_broadcast` (an active broadcast disappears)
-    ///   - `create` (a new draft / scheduled broadcast appears)
-    ///   - `delete` (a broadcast disappears)
-    fn invalidate_list_caches(&self) {
-        let redis = self.redis.clone();
-        tokio::spawn(async move {
-            if let Err(e) = redis.delete_by_pattern("home:now_live:*").await {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to invalidate `Now Live` list cache"
-                );
-            } else {
-                tracing::debug!("`Now Live` list cache invalidated");
-            }
-
-            if let Err(e) = redis.delete_by_pattern("home:recently_live:*").await {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to invalidate `Recently Live` list cache"
-                );
-            } else {
-                tracing::debug!("`Recently Live` list cache invalidated");
-            }
-
-            if let Err(e) = redis.delete_by_pattern("bl:*").await {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to invalidate broadcast list cache"
-                );
-            } else {
-                tracing::debug!("Broadcast list cache invalidated");
-            }
-
-            if let Err(e) = redis.delete_by_pattern("pl:*").await {
-                tracing::warn!(
-                    error = %e,
-                    "Failed to invalidate participant list cache"
-                );
-            } else {
-                tracing::debug!("Participant list cache invalidated");
-            }
-        });
-    }
-
-    fn invalidate_broadcast_cache(&self, broadcast_id: Uuid) {
-        let redis = self.redis.clone();
-        tokio::spawn(async move {
-            let key = RedisKey::broadcast(broadcast_id);
-            let _ = redis.del(&key).await;
-        });
-    }
-
     // ==================== HELPERS ====================
     async fn build_response(
         &self,
@@ -1549,7 +1541,7 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             }
 
             // Handle Deduplicate here
-            let mut deduped = cohost_ids.clone();
+            let mut deduped = cohost_ids.to_owned();
             deduped.sort_unstable();
             deduped.dedup();
 

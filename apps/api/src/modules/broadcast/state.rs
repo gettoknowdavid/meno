@@ -1,4 +1,5 @@
 use crate::jobs::Jobs;
+use crate::modules::broadcast::cache::{BroadcastCache, BroadcastRedisCache};
 use crate::modules::broadcast::repository::BroadcastRepository;
 use crate::modules::broadcast::service::{BroadcastService, DynBroadcastService};
 use crate::shared::services::livekit::LivekitService;
@@ -22,15 +23,19 @@ impl BroadcastState {
         jobs: Jobs,
     ) -> Self {
         let repo = Arc::new(BroadcastRepository::new(db.clone()));
-        let service = Arc::new(BroadcastService::new(
-            Arc::clone(&repo),
-            db,
-            redis,
-            livekit,
-            pubsub,
-            ws,
-            jobs,
-        ));
+        let cache: Arc<dyn BroadcastCache> = Arc::new(BroadcastRedisCache::new(redis.clone()));
+        let service = Arc::new(
+            BroadcastService::builder()
+                .repo(Arc::clone(&repo))
+                .cache(Arc::clone(&cache))
+                .db(db)
+                .redis(redis)
+                .livekit(livekit)
+                .pubsub(pubsub)
+                .ws(ws)
+                .jobs(jobs)
+                .build(),
+        );
         Self { service }
     }
 }

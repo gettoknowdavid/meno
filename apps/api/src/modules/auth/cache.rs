@@ -12,6 +12,17 @@ const TTL_RATE_WINDOW_SECS: i64 = 900;
 const MAX_LOGIN_ATTEMPTS: u64 = 10;
 const TTL_ACCESS_TOKEN_BLOCK_MAX: i64 = 900;
 
+#[derive(Clone)]
+pub struct AuthRedisCache {
+    redis: Redis,
+}
+
+impl AuthRedisCache {
+    pub fn new(redis: Redis) -> Self {
+        Self { redis }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait AuthCache: Send + Sync + 'static {
     async fn store_otp(&self, email: &str, otp: &str, otp_type: &OtpType) -> Result<(), AuthError>;
@@ -38,21 +49,10 @@ pub trait AuthCache: Send + Sync + 'static {
     async fn block_all_user_tokens(&self, user_id: Uuid, ttl: i64) -> Result<(), AuthError>;
 }
 
-#[derive(Clone)]
-pub struct RedisAuthCache {
-    redis: Redis,
-}
-
-impl RedisAuthCache {
-    pub fn new(redis: Redis) -> Self {
-        Self { redis }
-    }
-}
-
 #[async_trait::async_trait]
-impl AuthCache for RedisAuthCache {
+impl AuthCache for AuthRedisCache {
     async fn store_otp(&self, email: &str, otp: &str, otp_type: &OtpType) -> Result<(), AuthError> {
-        let key = RedisKey::otp(email, &otp_type.to_string());
+        let key = RedisKey::otp(email, otp_type.as_ref());
         self.redis
             .set::<String>(&key, &otp.to_string(), Some(TTL_OTP_SECS))
             .await
@@ -65,7 +65,7 @@ impl AuthCache for RedisAuthCache {
         code: &str,
         otp_type: &OtpType,
     ) -> Result<bool, AuthError> {
-        let key = RedisKey::otp(email, &otp_type.to_string());
+        let key = RedisKey::otp(email, otp_type.as_ref());
         let stored: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         match stored {
             Some(ref s) if s == code => {
@@ -78,7 +78,7 @@ impl AuthCache for RedisAuthCache {
     }
 
     async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError> {
-        let key = RedisKey::otp(email, &otp_type.to_string());
+        let key = RedisKey::otp(email, otp_type.as_ref());
         self.redis.del(&key).await.map_err(AuthError::Redis)?;
         Ok(())
     }
