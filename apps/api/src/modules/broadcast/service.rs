@@ -12,7 +12,7 @@ use crate::modules::broadcast::model::{
     ParticipantRole,
 };
 use crate::modules::broadcast::repository::{
-    BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
+    BroadcastRepo, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
     UpsertParticipantInput,
 };
 use crate::shared::constants::{TTL_10_SECS, TTL_30_SECS, TTL_60_SECS};
@@ -33,12 +33,12 @@ use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct BroadcastService {
-    repo: BroadcastRepository,
+    repo: Arc<dyn BroadcastRepo>,
     livekit: LivekitService,
     redis: Redis,
 }
 impl BroadcastService {
-    pub fn new(repo: BroadcastRepository, livekit: LivekitService, redis: Redis) -> Self {
+    pub fn new(repo: Arc<dyn BroadcastRepo>, livekit: LivekitService, redis: Redis) -> Self {
         Self {
             repo,
             livekit,

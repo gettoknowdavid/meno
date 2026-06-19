@@ -4,8 +4,17 @@ use std::str::FromStr;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// The trait exists solely to enable test doubles.
-/// In production, only `AuthRepository` implements it.
+#[derive(Debug, Clone)]
+pub struct AuthRepository {
+    db: sqlx::PgPool,
+}
+
+impl AuthRepository {
+    pub fn new(db: sqlx::PgPool) -> Self {
+        Self { db }
+    }
+}
+
 #[async_trait::async_trait]
 pub trait AuthRepo: Send + Sync + 'static {
     async fn create_user(&self, full_name: &str, email: &str) -> Result<User, AuthError>;
@@ -69,17 +78,6 @@ pub trait AuthRepo: Send + Sync + 'static {
     async fn revoke_all_refresh_tokens(&self, user_id: Uuid) -> Result<(), AuthError>;
 
     async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError>;
-}
-
-#[derive(Debug, Clone)]
-pub struct AuthRepository {
-    db: sqlx::PgPool,
-}
-
-impl AuthRepository {
-    pub fn new(db: sqlx::PgPool) -> Self {
-        Self { db }
-    }
 }
 
 #[async_trait::async_trait]
