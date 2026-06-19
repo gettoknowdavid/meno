@@ -49,7 +49,7 @@ services:
     image: redis/redisinsight:latest
     container_name: meno-redis-insight
     ports:
-      - "5599:5599"
+      - "5540:5540"
     networks:
       - meno-network
     depends_on:

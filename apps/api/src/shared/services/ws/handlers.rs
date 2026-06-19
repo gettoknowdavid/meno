@@ -35,7 +35,7 @@ pub async fn ws_upgrade(
 ) -> Result<Response, (StatusCode, Json<Value>)> {
     let claims = app
         .auth
-        .jwt
+        .tokens
         .decode_access(&query.token)
         .map_err(|_| error_response(StatusCode::UNAUTHORIZED, "Invalid token"))?;
 

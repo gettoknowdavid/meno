@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::jobs::Jobs;
 use crate::jobs::email_jobs::{SendEmailJob, reset_pwd_email_html, verify_email_html};
 use crate::modules::auth::cache::AuthCache;
@@ -8,41 +7,41 @@ use crate::modules::auth::dto::{
     ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
 };
 use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::jwt::Jwt;
-use crate::modules::auth::jwt::verify_token_hash;
-use crate::modules::auth::model::OtpType::{ResetPassword, VerifyEmail};
 use crate::modules::auth::model::{AuthProvider, OtpType, User};
-use crate::modules::auth::password::{hash_password, verify_password};
-use crate::modules::auth::repository::AuthRepository;
-use crate::modules::auth::utils::generate_otp;
-use crate::shared::integrations::google::GoogleAuthService;
+use crate::modules::auth::repository::AuthRepo;
+use crate::modules::auth::token::{IssuedTokenPair, TokenService};
+use crate::shared::integrations::google::GoogleAuth;
 use crate::shared::integrations::google::GoogleUserInfo;
-use crate::shared::services::redis::Redis;
-use sqlx::PgPool;
 use std::sync::Arc;
-use time::OffsetDateTime;
-use uuid::Uuid;
 
+/// `AuthService` orchestrates auth flows. It holds its dependencies directly.
+/// It never takes `&MenoState`.
 #[derive(Clone)]
 pub struct AuthService {
-    repo: AuthRepository,
-    cache: AuthCache,
+    repo: Arc<dyn AuthRepo>,
+    cache: Arc<dyn AuthCache>,
+    tokens: Arc<TokenService>,
+    google: Arc<GoogleAuth>,
     jobs: Jobs,
-    jwt: Jwt,
-    config: Arc<Config>,
-    google: GoogleAuthService,
 }
+
 impl AuthService {
-    pub fn new(db: PgPool, redis: Redis, jobs: Jobs, config: Arc<Config>, jwt: Jwt) -> Self {
+    pub fn new(
+        repo: Arc<dyn AuthRepo>,
+        cache: Arc<dyn AuthCache>,
+        tokens: Arc<TokenService>,
+        google: Arc<GoogleAuth>,
+        jobs: Jobs,
+    ) -> Self {
         Self {
-            repo: AuthRepository::new(db),
-            cache: AuthCache::new(redis),
-            google: GoogleAuthService::new(&config),
-            config,
-            jwt,
+            repo,
+            cache,
+            tokens,
+            google,
             jobs,
         }
     }
+
     pub async fn register(&self, req: &RegisterRequest) -> Result<AuthResponse, AuthError> {
         let existing = self
             .repo
@@ -53,28 +52,24 @@ impl AuthService {
             return Err(AuthError::EmailTaken);
         }
 
-        let pwd_hash = self.spawn_hash_pwd(req.password.clone()).await?;
-
-        let user = self.repo.create_user_tx(&req.full_name, &req.email).await?;
-
+        let pwd_hash = hash_password_async(req.password.clone()).await?;
+        let user = self.repo.create_user(&req.full_name, &req.email).await?;
         self.repo
             .create_identity(user.id, &AuthProvider::Email, &user.email, Some(&pwd_hash))
             .await?;
 
         let otp = generate_otp();
         self.cache
-            .store_otp(&user.email, &otp, &VerifyEmail)
+            .store_otp(&user.email, &otp, &OtpType::VerifyEmail)
             .await?;
+        self.push_email(&user.email, &user.full_name, &otp, &OtpType::VerifyEmail);
 
-        self.push_email(
-            req.email.clone(),
-            user.full_name.clone(),
-            otp.clone(),
-            &VerifyEmail,
-        )
-        .await;
-
-        self.issue_tokens(&user).await
+        // New users have only the email provider
+        let pair = self
+            .tokens
+            .issue_pair(&user, vec![AuthProvider::Email])
+            .await?;
+        Ok(build_auth_response(user, pair, vec![AuthProvider::Email]))
     }
 
     pub async fn verify_email(&self, req: &VerifyEmailRequest) -> Result<AuthResponse, AuthError> {
@@ -90,7 +85,7 @@ impl AuthService {
 
         if !self
             .cache
-            .verify_otp(&req.email, &req.code, &VerifyEmail)
+            .verify_otp(&req.email, &req.code, &OtpType::VerifyEmail)
             .await?
         {
             return Err(AuthError::InvalidOtp);
@@ -98,19 +93,28 @@ impl AuthService {
 
         self.repo.set_verified(&req.email).await?;
 
-        self.issue_tokens(&user).await
+        // Re-fetch to get updated verified flag
+        let user = self
+            .repo
+            .find_by_id(user.id)
+            .await?
+            .ok_or(AuthError::UserNotFound)?;
+
+        let providers = vec![AuthProvider::Email];
+        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
+        Ok(build_auth_response(user, pair, providers))
     }
 
     pub async fn resend_otp(&self, req: &ResendOtpRequest) -> Result<(), AuthError> {
+        // Return Ok even if user not found (don't leak email existence)
         let user = match self.repo.find_by_email(&req.email).await? {
-            Some(value) => value,
+            Some(u) => u,
             None => return Ok(()),
         };
 
-        match &req.otp_type {
-            VerifyEmail if user.verified => return Err(AuthError::EmailAlreadyVerified),
-            _ => {}
-        };
+        if matches!(req.otp_type, OtpType::VerifyEmail) && user.verified {
+            return Err(AuthError::EmailAlreadyVerified);
+        }
 
         if !self.cache.can_resend_otp(&req.email).await? {
             return Err(AuthError::TooManyRequests);
@@ -119,30 +123,16 @@ impl AuthService {
         self.cache
             .revoke_otp(&req.email, req.otp_type.clone())
             .await?;
-
         let otp = generate_otp();
-
         self.cache
             .store_otp(&req.email, &otp, &req.otp_type)
             .await?;
-
-        self.push_email(
-            req.email.clone(),
-            user.full_name.clone(),
-            otp.clone(),
-            &req.otp_type,
-        )
-        .await;
-
+        self.push_email(&user.email, &user.full_name, &otp, &req.otp_type);
         self.cache.set_resend_cooldown(&req.email).await?;
         Ok(())
     }
 
     pub async fn login(&self, req: &LoginRequest) -> Result<AuthResponse, AuthError> {
-        // Adds tracing spans for security auditing.
-        let span = tracing::info_span!("auth.login", email = %req.email);
-        let _guard = span.enter();
-
         let identity = self
             .repo
             .find_identity(&AuthProvider::Email, &req.email)
@@ -151,12 +141,12 @@ impl AuthService {
 
         self.cache.check_login_rate_limit(&req.email).await?;
 
-        let password_hash = identity
+        let hash = identity
             .password_hash
             .as_deref()
             .ok_or(AuthError::InvalidCredentials)?;
 
-        if !verify_password(&req.password, password_hash) {
+        if !verify_password_sync(&req.password, hash) {
             tracing::warn!(email = %req.email, "login.invalid_credentials");
             return Err(AuthError::InvalidCredentials);
         }
@@ -167,151 +157,78 @@ impl AuthService {
             .await?
             .ok_or(AuthError::UserNotFound)?;
 
+        if !user.verified {
+            return Err(AuthError::EmailNotVerified);
+        }
+
         let _ = self.cache.clear_login_rate_limit(&req.email).await;
         tracing::info!(user_id = %user.id, "login.success");
 
-        self.issue_tokens(&user).await
+        // Fetch all linked providers for the access token claims
+        let providers = self.get_providers(user.id).await?;
+        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
+        Ok(build_auth_response(user, pair, providers))
+    }
+
+    pub async fn logout(&self, req: &LogoutRequest) -> Result<(), AuthError> {
+        self.tokens
+            .revoke(&req.refresh_token, req.access_token.as_deref())
+            .await?;
+        Ok(())
+    }
+
+    pub async fn refresh(&self, req: &RefreshTokenRequest) -> Result<AuthResponse, AuthError> {
+        let providers = self.get_providers_from_refresh(&req.refresh_token).await?;
+        let (pair, user) = self
+            .tokens
+            .rotate(&req.refresh_token, providers.clone())
+            .await?;
+        Ok(build_auth_response(user, pair, providers))
     }
 
     pub async fn forgot_password(&self, req: &ForgotPasswordRequest) -> Result<(), AuthError> {
         let user = match self.repo.find_by_email(&req.email).await? {
             Some(u) => u,
-            None => return Ok(()),
+            None => return Ok(()), // Never reveal whether email exists
         };
 
         let otp = generate_otp();
-
         self.cache
-            .store_otp(&req.email, &otp, &ResetPassword)
+            .store_otp(&req.email, &otp, &OtpType::ResetPassword)
             .await?;
-
-        self.push_email(
-            req.email.clone(),
-            user.full_name.clone(),
-            otp.clone(),
-            &ResetPassword,
-        )
-        .await;
-
+        self.push_email(&user.email, &user.full_name, &otp, &OtpType::ResetPassword);
         Ok(())
     }
 
     pub async fn reset_password(&self, req: &ResetPasswordRequest) -> Result<(), AuthError> {
         let user = match self.repo.find_by_email(&req.email).await? {
-            Some(value) => value,
+            Some(u) => u,
             None => return Ok(()),
         };
+
         if !self
             .cache
-            .verify_otp(&user.email, &req.code, &ResetPassword)
+            .verify_otp(&user.email, &req.code, &OtpType::ResetPassword)
             .await?
         {
             return Err(AuthError::InvalidOtp);
         }
-        let pwd_hash = self.spawn_hash_pwd(req.new_password.clone()).await?;
-        self.repo.update_password(user.id, pwd_hash).await?;
-        self.cache.revoke_otp(&user.email, ResetPassword).await?;
-        self.repo.revoke_all_refresh_tokens(user.id).await?;
+
+        let hash = hash_password_async(req.new_password.clone()).await?;
+        self.repo.update_password(user.id, hash).await?;
         self.cache
-            .block_all_user_access_tokens(user.id, self.config.access_token_expiration)
-            .await?;
-        Ok(())
-    }
-
-    pub async fn logout(&self, req: &LogoutRequest) -> Result<(), AuthError> {
-        let claims = &self.jwt.decode_refresh(&req.refresh_token)?;
-        self.repo.revoke_refresh_token(claims.jti).await?;
-
-        if let Some(ref access_token) = req.access_token {
-            if let Ok(access_claims) = self.jwt.decode_access(access_token) {
-                let now = OffsetDateTime::now_utc().unix_timestamp();
-                let remaining_secs = access_claims.exp.saturating_sub(now);
-                if remaining_secs > 0 {
-                    self.cache
-                        .block_access_token(access_claims.jti, remaining_secs)
-                        .await?;
-                }
-            }
-        }
-
-        self.cache.invalidate_all_user_keys(claims.sub).await?;
-
-        Ok(())
-    }
-
-    pub async fn refresh(&self, req: &RefreshTokenRequest) -> Result<AuthResponse, AuthError> {
-        let claims = self.jwt.decode_refresh(&req.refresh_token)?;
-
-        let user = match self.repo.find_by_id(claims.sub).await? {
-            None => return Err(AuthError::UserNotFound),
-            Some(value) => value,
-        };
-
-        let stored = self
-            .repo
-            .find_refresh_token(claims.jti, claims.sub)
-            .await?
-            .ok_or(AuthError::RefreshTokenNotFound)?;
-
-        if !verify_token_hash(&req.refresh_token, &stored.token_hash) {
-            return Err(AuthError::InvalidToken);
-        }
-
-        // Check DB-level expiry for extra security
-        if stored.expires_at < OffsetDateTime::now_utc() {
-            self.repo.revoke_refresh_token(claims.jti).await?;
-            return Err(AuthError::RefreshTokenExpired);
-        }
-
-        let providers = self
-            .repo
-            .find_providers(user.id)
-            .await
-            .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
-
-        let access_token = self.jwt.sign_access(
-            user.id,
-            &user.email,
-            &user.full_name,
-            user.verified,
-            providers.clone(),
-            user.role.clone(),
-        )?;
-
-        let (new_refresh_token, new_jti) = self.jwt.sign_refresh(user.id)?;
-
-        self.repo
-            .rotate_refresh_token(
-                user.id,
-                claims.jti,
-                new_jti,
-                &new_refresh_token,
-                self.config.refresh_token_expiration,
-            )
+            .revoke_otp(&user.email, OtpType::ResetPassword)
             .await?;
 
-        Ok(AuthResponse {
-            access_token,
-            refresh_token: new_refresh_token,
-            user: UserResponse {
-                id: user.id,
-                full_name: user.full_name.clone(),
-                bio: user.bio.clone(),
-                email: user.email.clone(),
-                verified: user.verified,
-                avatar_id: user.avatar_id.clone(),
-                avatar_url: user.avatar_url.clone(),
-                providers,
-                created_at: user.created_at,
-                deleted_at: user.deleted_at,
-            },
-        })
+        // Revoke all sessions — password changed
+        self.tokens.revoke_all_for_user(user.id).await?;
+        Ok(())
     }
 
     pub async fn google_authorize(&self) -> Result<GoogleUrlResponse, AuthError> {
-        let (url, csrf_token, pkce_code_verifier) = self.google.authorize_url();
+        let (url, csrf_token, pkce_verifier) = self.google.authorize_url();
         self.cache
-            .store_oauth_state(csrf_token.secret(), pkce_code_verifier.secret())
+            .store_oauth_state(csrf_token.secret(), pkce_verifier.secret())
             .await?;
         Ok(GoogleUrlResponse {
             url: url.to_string(),
@@ -322,15 +239,13 @@ impl AuthService {
         &self,
         req: &GoogleWebAuthRequest,
     ) -> Result<AuthResponse, AuthError> {
-        let raw_verifier = self.cache.consumes_oauth_state(&req.state).await?;
-        let pkce_code_verifier = oauth2::PkceCodeVerifier::new(raw_verifier);
-
+        let raw_verifier = self.cache.consume_oauth_state(&req.state).await?;
+        let pkce = oauth2::PkceCodeVerifier::new(raw_verifier);
         let userinfo = self
             .google
-            .exchange_code(req.code.clone(), pkce_code_verifier)
+            .exchange_code(req.code.clone(), pkce)
             .await
             .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
-
         self.upsert_google_user(&userinfo).await
     }
 
@@ -343,118 +258,127 @@ impl AuthService {
             .verify_id_token(&req.id_token)
             .await
             .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
-
         self.upsert_google_user(&userinfo).await
     }
 
-    pub async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, AuthError> {
+    /// Exposed for the auth middleware — no DB call on the hot path.
+    pub fn decode_access_claims(
+        &self,
+        token: &str,
+    ) -> Result<crate::modules::auth::token::AccessClaims, AuthError> {
+        self.tokens.decode_access(token)
+    }
+
+    pub async fn find_user_by_id(&self, id: uuid::Uuid) -> Result<Option<User>, AuthError> {
         self.repo.find_by_id(id).await
     }
 
-    // Helper functions
-    async fn push_email(&self, to: String, name: String, otp: String, otp_type: &OtpType) {
-        let (subject, html) = match otp_type {
-            VerifyEmail => verify_email_html(&name, &otp),
-            ResetPassword => reset_pwd_email_html(&name, &otp),
-        };
-
-        self.jobs
-            .push_email(SendEmailJob { to, subject, html })
-            .await
-            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue email"))
-    }
-    async fn spawn_hash_pwd(&self, password: String) -> Result<String, AuthError> {
-        tokio::task::spawn_blocking({
-            let password = password.clone();
-            move || hash_password(&password)
-        })
-        .await
-        .map_err(|e| AuthError::Internal(e.into()))?
-        .map_err(|_| AuthError::PasswordHash)
-    }
-    async fn upsert_google_user(
-        &self,
-        userinfo: &GoogleUserInfo,
-    ) -> Result<AuthResponse, AuthError> {
-        let existing_identity = self
+    async fn upsert_google_user(&self, info: &GoogleUserInfo) -> Result<AuthResponse, AuthError> {
+        let existing = self
             .repo
-            .find_identity(&AuthProvider::Google, &userinfo.sub)
+            .find_identity(&AuthProvider::Google, &info.sub)
             .await?;
 
-        let user = if let Some(identity) = existing_identity {
+        let user = if let Some(identity) = existing {
             self.repo
                 .find_by_id(identity.user_id)
                 .await?
                 .ok_or(AuthError::UserNotFound)?
         } else {
-            let existing_user = self.repo.find_by_email(&userinfo.email).await?;
-            if let Some(user) = existing_user {
-                self.repo
-                    .link_provider(user.id, &AuthProvider::Google, &userinfo.sub)
-                    .await?;
-                user
-            } else {
-                let user = self
-                    .repo
-                    .create_user_tx(&userinfo.name, &userinfo.email)
-                    .await?;
-
-                self.repo
-                    .create_identity(user.id, &AuthProvider::Google, &user.email, None)
-                    .await?;
-
-                if userinfo.email_verified {
-                    self.repo.set_verified(&userinfo.email).await?;
+            match self.repo.find_by_email(&info.email).await? {
+                Some(user) => {
+                    self.repo
+                        .link_provider(user.id, &AuthProvider::Google, &info.sub)
+                        .await?;
+                    user
                 }
-
-                user
+                None => {
+                    let user = self.repo.create_user(&info.name, &info.email).await?;
+                    self.repo
+                        .create_identity(user.id, &AuthProvider::Google, &user.email, None)
+                        .await?;
+                    if info.email_verified {
+                        self.repo.set_verified(&info.email).await?;
+                    }
+                    self.repo
+                        .find_by_id(user.id)
+                        .await?
+                        .ok_or(AuthError::UserNotFound)?
+                }
             }
         };
 
-        self.issue_tokens(&user).await
+        let providers = self.get_providers(user.id).await?;
+        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
+        Ok(build_auth_response(user, pair, providers))
     }
-    async fn issue_tokens(&self, user: &User) -> Result<AuthResponse, AuthError> {
-        let providers = self
-            .repo
-            .find_providers(user.id)
-            .await
-            .map_err(|e| AuthError::Internal(anyhow::anyhow!(e)))?;
 
-        let access_token = self.jwt.sign_access(
-            user.id,
-            &user.email,
-            &user.full_name,
-            user.verified,
-            providers.clone(),
-            user.role.clone(),
-        )?;
+    async fn get_providers(&self, user_id: uuid::Uuid) -> Result<Vec<AuthProvider>, AuthError> {
+        self.repo.find_user_providers(user_id).await
+    }
 
-        let (refresh_token, jti) = self.jwt.sign_refresh(user.id)?;
+    async fn get_providers_from_refresh(
+        &self,
+        refresh_token: &str,
+    ) -> Result<Vec<AuthProvider>, AuthError> {
+        let claims = self.tokens.decode_refresh(refresh_token)?;
+        self.get_providers(claims.sub).await
+    }
 
-        self.repo
-            .store_refresh_token(
-                jti,
-                user.id,
-                &refresh_token,
-                self.config.refresh_token_expiration,
-            )
-            .await?;
+    fn push_email(&self, to: &str, name: &str, otp: &str, otp_type: &OtpType) {
+        let (subject, html) = match otp_type {
+            OtpType::VerifyEmail => verify_email_html(name, otp),
+            OtpType::ResetPassword => reset_pwd_email_html(name, otp),
+        };
+        let job = SendEmailJob {
+            to: to.to_string(),
+            subject,
+            html,
+        };
+        let jobs = self.jobs.clone();
+        tokio::spawn(async move {
+            jobs.push_email(job)
+                .await
+                .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue email"));
+        });
+    }
+}
 
-        Ok(AuthResponse {
-            access_token,
-            refresh_token,
-            user: UserResponse {
-                id: user.id,
-                full_name: user.full_name.clone(),
-                bio: user.bio.clone(),
-                email: user.email.clone(),
-                verified: user.verified,
-                avatar_id: user.avatar_id.clone(),
-                avatar_url: user.avatar_url.clone(),
-                providers,
-                created_at: user.created_at,
-                deleted_at: user.deleted_at,
-            },
-        })
+pub(crate) fn generate_otp() -> String {
+    use rand::RngExt;
+    format!("{:06}", rand::rng().random_range(100_000_u32..=999_999))
+}
+
+async fn hash_password_async(password: String) -> Result<String, AuthError> {
+    tokio::task::spawn_blocking(move || crate::modules::auth::password::hash_password(&password))
+        .await
+        .map_err(|e| AuthError::Internal(e.into()))?
+        .map_err(|_| AuthError::PasswordHash)
+}
+
+fn verify_password_sync(password: &str, hash: &str) -> bool {
+    crate::modules::auth::password::verify_password(password, hash)
+}
+
+fn build_auth_response(
+    user: User,
+    pair: IssuedTokenPair,
+    providers: Vec<AuthProvider>,
+) -> AuthResponse {
+    AuthResponse {
+        access_token: pair.access_token,
+        refresh_token: pair.refresh_token,
+        user: UserResponse {
+            id: user.id,
+            full_name: user.full_name,
+            bio: user.bio,
+            email: user.email,
+            verified: user.verified,
+            avatar_id: user.avatar_id,
+            avatar_url: user.avatar_url,
+            providers,
+            created_at: user.created_at,
+            deleted_at: user.deleted_at,
+        },
     }
 }

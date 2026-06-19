@@ -1,63 +1,71 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::OtpType;
-use crate::shared::constants::{MAX_LOGIN_ATTEMPTS, TTL_60_SECS, TTL_300_SECS, TTL_900_SECS};
 use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
-use fred::prelude::*;
+use fred::interfaces::{HashesInterface, KeysInterface};
 use std::collections::HashMap;
 use uuid::Uuid;
 
+const TTL_OTP_SECS: i64 = 900;
+const TTL_COOLDOWN_SECS: i64 = 60;
+const TTL_RATE_WINDOW_SECS: i64 = 900;
+const MAX_LOGIN_ATTEMPTS: u64 = 10;
+const TTL_ACCESS_TOKEN_BLOCK_MAX: i64 = 900;
+
+#[async_trait::async_trait]
+pub trait AuthCache: Send + Sync + 'static {
+    async fn store_otp(&self, email: &str, otp: &str, otp_type: &OtpType) -> Result<(), AuthError>;
+    async fn verify_otp(
+        &self,
+        email: &str,
+        code: &str,
+        otp_type: &OtpType,
+    ) -> Result<bool, AuthError>;
+    async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError>;
+    async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError>;
+    async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError>;
+    async fn store_oauth_state(&self, state: &str, verifier: &str) -> Result<(), AuthError>;
+    async fn consume_oauth_state(&self, state: &str) -> Result<String, AuthError>;
+    async fn check_login_rate_limit(&self, email: &str) -> Result<(), AuthError>;
+    async fn clear_login_rate_limit(&self, email: &str) -> Result<(), AuthError>;
+    async fn block_access_token(&self, jti: Uuid, remaining_secs: i64) -> Result<(), AuthError>;
+    async fn is_token_blocked(&self, jti: Uuid) -> Result<bool, AuthError>;
+    async fn is_user_tokens_blocked(
+        &self,
+        user_id: Uuid,
+        issued_at: i64,
+    ) -> Result<bool, AuthError>;
+    async fn block_all_user_tokens(&self, user_id: Uuid, ttl: i64) -> Result<(), AuthError>;
+}
+
 #[derive(Clone)]
-pub struct AuthCache {
+pub struct RedisAuthCache {
     redis: Redis,
 }
-impl AuthCache {
+
+impl RedisAuthCache {
     pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
+}
 
-    pub async fn block_access_token(
-        &self,
-        jti: Uuid,
-        remaining_secs: i64,
-    ) -> Result<(), AuthError> {
-        let key = RedisKey::block_list("ACCESS_TOKEN", jti);
+#[async_trait::async_trait]
+impl AuthCache for RedisAuthCache {
+    async fn store_otp(&self, email: &str, otp: &str, otp_type: &OtpType) -> Result<(), AuthError> {
+        let key = RedisKey::otp(email, &otp_type.to_string());
         self.redis
-            .set::<String>(&key, &"BLOCKED".to_string(), Some(remaining_secs))
-            .await
-            .map_err(AuthError::Redis)?;
-        Ok(())
-    }
-    pub async fn block_all_user_access_tokens(
-        &self,
-        user_id: Uuid,
-        access_token_ttl_secs: i64,
-    ) -> Result<(), AuthError> {
-        let key = RedisKey::block_list("ALL_USER_ACCESS_TOKENS", user_id);
-        self.redis
-            .set::<String>(&key, &"BLOCKED".to_string(), Some(access_token_ttl_secs))
+            .set::<String>(&key, &otp.to_string(), Some(TTL_OTP_SECS))
             .await
             .map_err(AuthError::Redis)
     }
-    pub async fn store_otp(
-        &self,
-        email: &str,
-        otp: &str,
-        otp_type: &OtpType,
-    ) -> Result<(), AuthError> {
-        let key = RedisKey::otp(&email, &otp_type.to_string());
-        self.redis
-            .set::<String>(&key, &otp.to_string(), Some(TTL_900_SECS))
-            .await
-            .map_err(AuthError::Redis)
-    }
-    pub async fn verify_otp(
+
+    async fn verify_otp(
         &self,
         email: &str,
         code: &str,
         otp_type: &OtpType,
     ) -> Result<bool, AuthError> {
-        let key = RedisKey::otp(&email, &otp_type.to_string());
+        let key = RedisKey::otp(email, &otp_type.to_string());
         let stored: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         match stored {
             Some(ref s) if s == code => {
@@ -68,91 +76,111 @@ impl AuthCache {
             None => Err(AuthError::InvalidOtp),
         }
     }
-    pub async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError> {
-        let key = RedisKey::otp(&email, &otp_type.to_string());
+
+    async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError> {
+        let key = RedisKey::otp(email, &otp_type.to_string());
         self.redis.del(&key).await.map_err(AuthError::Redis)?;
         Ok(())
     }
-    pub async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
+
+    async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError> {
         let key = RedisKey::rate_limit("OTP_RESEND", email);
         let exists: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         Ok(exists.is_none())
     }
-    pub async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError> {
+
+    async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError> {
         let key = RedisKey::rate_limit("OTP_RESEND", email);
-        let value = "1".to_string();
         self.redis
-            .set::<String>(&key, &value, Some(TTL_60_SECS))
+            .set::<String>(&key, &"1".to_string(), Some(TTL_COOLDOWN_SECS))
             .await
             .map_err(AuthError::Redis)
     }
-    pub async fn store_oauth_state(
-        &self,
-        state: &String,
-        verifier: &String,
-    ) -> Result<(), AuthError> {
-        let key = RedisKey::oauth2_state(&state);
 
+    async fn store_oauth_state(&self, state: &str, verifier: &str) -> Result<(), AuthError> {
+        let key = RedisKey::oauth2_state(state);
         let mut fields = HashMap::new();
-        fields.insert("csrf_token", "true");
-        fields.insert("pkce_code_verifier", verifier);
+        fields.insert("csrf_token".to_string(), "true".to_string());
+        fields.insert("pkce_code_verifier".to_string(), verifier.to_string());
 
         let pipeline = self.redis.pipeline();
-
         pipeline
             .hset::<(), _, _>(key.as_ref(), fields)
             .await
             .map_err(AuthError::Redis)?;
-
         pipeline
-            .expire::<(), _>(key.as_ref(), TTL_300_SECS, None)
+            .expire::<(), _>(key.as_ref(), 300, None)
             .await
             .map_err(AuthError::Redis)?;
-
         pipeline.all::<()>().await.map_err(AuthError::Redis)?;
-
         Ok(())
     }
 
-    pub async fn consumes_oauth_state(&self, state: &String) -> Result<String, AuthError> {
-        let key = RedisKey::oauth2_state(&state);
-
+    async fn consume_oauth_state(&self, state: &str) -> Result<String, AuthError> {
+        let key = RedisKey::oauth2_state(state);
         let data: HashMap<String, String> =
             self.redis.hgetall(&key).await.map_err(AuthError::Redis)?;
-
         let _ = self.redis.del(&key).await;
 
-        let has_csrf = data.get("csrf_token");
-        let pkce_code_verifier = data.get("pkce_code_verifier");
-
-        match (has_csrf, pkce_code_verifier) {
+        match (data.get("csrf_token"), data.get("pkce_code_verifier")) {
             (Some(csrf), Some(verifier)) if csrf == "true" => Ok(verifier.clone()),
             _ => Err(AuthError::InvalidToken),
         }
     }
-    pub async fn check_login_rate_limit(&self, email: &str) -> Result<(), AuthError> {
-        let key = RedisKey::rate_limit("LOGIN_ATTEMPTS", &email);
 
+    async fn check_login_rate_limit(&self, email: &str) -> Result<(), AuthError> {
+        let key = RedisKey::rate_limit("LOGIN_ATTEMPTS", email);
         let count: u64 = self
             .redis
-            .incr_and_expire_if_first(&key, TTL_900_SECS)
+            .incr_and_expire_if_first(&key, TTL_RATE_WINDOW_SECS)
             .await
             .map_err(AuthError::Redis)?;
 
         if count > MAX_LOGIN_ATTEMPTS {
             return Err(AuthError::TooManyRequests);
         }
-
         Ok(())
     }
-    pub async fn clear_login_rate_limit(&self, email: &str) -> Result<(), AuthError> {
-        let key = RedisKey::rate_limit("LOGIN_ATTEMPTS", &email);
+
+    async fn clear_login_rate_limit(&self, email: &str) -> Result<(), AuthError> {
+        let key = RedisKey::rate_limit("LOGIN_ATTEMPTS", email);
         self.redis.del(&key).await.map_err(AuthError::Redis)?;
         Ok(())
     }
-    pub async fn invalidate_all_user_keys(&self, user_id: Uuid) -> Result<u64, AuthError> {
+
+    async fn block_access_token(&self, jti: Uuid, remaining_secs: i64) -> Result<(), AuthError> {
+        // Clamp to max so we don't store stale blocklist entries forever
+        let ttl = remaining_secs.min(TTL_ACCESS_TOKEN_BLOCK_MAX);
+        if ttl <= 0 {
+            return Ok(());
+        }
+        let key = RedisKey::block_list("ACCESS_TOKEN", jti);
         self.redis
-            .invalidate_all_user_keys(user_id)
+            .set::<String>(&key, &"BLOCKED".to_string(), Some(ttl))
+            .await
+            .map_err(AuthError::Redis)
+    }
+
+    async fn is_token_blocked(&self, jti: Uuid) -> Result<bool, AuthError> {
+        let key = RedisKey::block_list("ACCESS_TOKEN", jti);
+        self.redis.exists(&key).await.map_err(AuthError::Redis)
+    }
+
+    async fn is_user_tokens_blocked(
+        &self,
+        user_id: Uuid,
+        issued_at: i64,
+    ) -> Result<bool, AuthError> {
+        let key = RedisKey::block_list("ALL_USER_ACCESS_TOKENS", user_id);
+        let blocked_at: Option<i64> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
+        Ok(blocked_at.is_some_and(|b| issued_at < b))
+    }
+
+    async fn block_all_user_tokens(&self, user_id: Uuid, ttl: i64) -> Result<(), AuthError> {
+        let key = RedisKey::block_list("ALL_USER_ACCESS_TOKENS", user_id);
+        let blocked_at = time::OffsetDateTime::now_utc().unix_timestamp();
+        self.redis
+            .set::<i64>(&key, &blocked_at, Some(ttl))
             .await
             .map_err(AuthError::Redis)
     }

@@ -2066,6 +2066,7 @@ dependencies = [
  "apalis",
  "apalis-postgres",
  "argon2",
+ "async-trait",
  "axum",
  "axum-prometheus",
  "base64 0.22.1",

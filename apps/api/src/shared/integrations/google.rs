@@ -35,10 +35,10 @@ pub struct GoogleUserInfo {
 }
 
 #[derive(Clone)]
-pub struct GoogleAuthService {
+pub struct GoogleAuth {
     client: OAuthClient,
 }
-impl GoogleAuthService {
+impl GoogleAuth {
     pub fn new(config: &Config) -> Self {
         let auth_uri =
             AuthUrl::new(config.google_auth_uri.clone()).expect("Invalid Google auth URI");

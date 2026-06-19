@@ -1,19 +1,46 @@
 use crate::config::Config;
-use crate::jobs::Jobs;
-use crate::modules::auth::jwt::{Jwt, JwtConfig};
+use crate::modules::auth::cache::{AuthCache, RedisAuthCache};
+use crate::modules::auth::repository::{AuthRepo, AuthRepository};
 use crate::modules::auth::services::AuthService;
+use crate::modules::auth::token::TokenService;
+use crate::shared::integrations::google::GoogleAuth;
 use crate::shared::services::redis::Redis;
-use sqlx::PgPool;
+use std::sync::Arc;
 
+/// Everything the auth module needs at runtime, already wired and ready.
 #[derive(Clone)]
 pub struct AuthState {
-    pub service: AuthService,
-    pub jwt: Jwt,
+    pub service: Arc<AuthService>,
+    pub tokens: Arc<TokenService>,
 }
+
 impl AuthState {
-    pub fn new(db: PgPool, redis: Redis, config: std::sync::Arc<Config>, jobs: Jobs) -> Self {
-        let jwt = Jwt::new(&JwtConfig::from_config(&config));
-        let service = AuthService::new(db, redis, jobs, config, jwt.clone());
-        Self { service, jwt }
+    pub fn new(db: sqlx::PgPool, redis: Redis, config: &Config, jobs: crate::jobs::Jobs) -> Self {
+        let repo: Arc<dyn AuthRepo> = Arc::new(AuthRepository::new(db));
+        let cache: Arc<dyn AuthCache> = Arc::new(RedisAuthCache::new(redis));
+        let google = Arc::new(GoogleAuth::new(config));
+
+        let token_config = crate::modules::auth::token::TokenConfig {
+            access_secret: config.jwt_secret.clone(),
+            refresh_secret: config.jwt_refresh_secret.clone(),
+            access_ttl_secs: config.access_token_expiration,
+            refresh_ttl_secs: config.refresh_token_expiration,
+        };
+
+        let tokens = Arc::new(TokenService::new(
+            token_config,
+            Arc::clone(&repo),
+            Arc::clone(&cache),
+        ));
+
+        let service = Arc::new(AuthService::new(
+            Arc::clone(&repo),
+            Arc::clone(&cache),
+            Arc::clone(&tokens),
+            google,
+            jobs,
+        ));
+
+        Self { service, tokens }
     }
 }

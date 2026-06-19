@@ -1,4 +1,4 @@
-use crate::modules::auth::repository::AuthRepository;
+use crate::modules::auth::repository::{AuthRepo, AuthRepository};
 use crate::state::MenoState;
 use apalis::prelude::{BoxDynError, Data};
 use serde::{Deserialize, Serialize};
