@@ -1,16 +1,15 @@
-use crate::modules::chat::service::ChatService;
-use crate::shared::services::redis::Redis;
-use crate::shared::services::ws::pubsub::WsPubSubBridge;
-use std::sync::Arc;
-
 #[derive(Clone)]
 pub struct ChatState {
-    pub service: ChatService,
+    pub service: crate::modules::chat::service::ChatService,
 }
 impl ChatState {
-    pub fn new(db: sqlx::PgPool, redis: Redis, pubsub: Arc<WsPubSubBridge>) -> Self {
+    pub fn new(
+        db: sqlx::PgPool,
+        redis: crate::shared::services::redis::Redis,
+        pubsub: std::sync::Arc<crate::shared::services::ws::pubsub::WsPubSubBridge>,
+    ) -> Self {
         Self {
-            service: ChatService::new(db, redis, pubsub),
+            service: crate::modules::chat::service::ChatService::new(db, redis, pubsub),
         }
     }
 }
