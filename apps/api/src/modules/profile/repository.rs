@@ -6,7 +6,6 @@ use crate::modules::profile::model::{GeneralSettings, Profile};
 use sqlx::{Postgres, QueryBuilder};
 use std::str::FromStr;
 use uuid::Uuid;
-
 #[derive(Clone)]
 pub struct ProfileRepository {
     db: sqlx::PgPool,
@@ -16,7 +15,40 @@ impl ProfileRepository {
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
-    pub async fn find_by_id(&self, user_id: Uuid) -> Result<Option<Profile>, ProfileError> {
+}
+
+#[async_trait::async_trait]
+pub trait ProfileRepo: Send + Sync + 'static {
+    async fn find_by_id(&self, user_id: Uuid) -> Result<Option<Profile>, ProfileError>;
+    async fn find_user_settings(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<GeneralSettings>, ProfileError>;
+    async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, ProfileError>;
+    async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, ProfileError>;
+    async fn update_profile(
+        &self,
+        id: Uuid,
+        full_name: Option<&str>,
+        bio: Option<&str>,
+        avatar_key: Option<&str>,
+        avatar_url: Option<&str>,
+    ) -> Result<Profile, ProfileError>;
+    async fn is_following(
+        &self,
+        subscription_id: Uuid,
+        subscriber_id: Uuid,
+    ) -> Result<bool, ProfileError>;
+    async fn search_profiles(
+        &self,
+        query: &ProfileSearchQuery,
+        current_user_id: Uuid,
+    ) -> Result<Vec<ProfileSearchResult>, ProfileError>;
+}
+
+#[async_trait::async_trait]
+impl ProfileRepo for ProfileRepository {
+    async fn find_by_id(&self, user_id: Uuid) -> Result<Option<Profile>, ProfileError> {
         sqlx::query_as!(
             Profile,
             r#"SELECT id, full_name, bio, email, avatar_id, avatar_url,
@@ -28,7 +60,7 @@ impl ProfileRepository {
         .await
         .map_err(ProfileError::Database)
     }
-    pub async fn find_user_settings(
+    async fn find_user_settings(
         &self,
         user_id: Uuid,
     ) -> Result<Option<GeneralSettings>, ProfileError> {
@@ -41,7 +73,7 @@ impl ProfileRepository {
         .await
         .map_err(ProfileError::Database)
     }
-    pub async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, ProfileError> {
+    async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, ProfileError> {
         let rows = sqlx::query!(
             "SELECT provider_type::text as provider_type FROM user_identities WHERE user_id = $1",
             user_id,
@@ -57,14 +89,14 @@ impl ProfileRepository {
 
         Ok(providers)
     }
-    pub async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, ProfileError> {
+    async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, ProfileError> {
         sqlx::query_scalar!("SELECT avatar_id FROM users WHERE id = $1", user_id)
             .fetch_optional(&self.db)
             .await
             .map_err(ProfileError::Database)
             .map(|r| r.flatten())
     }
-    pub async fn update_profile(
+    async fn update_profile(
         &self,
         id: Uuid,
         full_name: Option<&str>,
@@ -93,7 +125,7 @@ impl ProfileRepository {
         .await
         .map_err(ProfileError::Database)
     }
-    pub async fn is_following(
+    async fn is_following(
         &self,
         subscription_id: Uuid,
         subscriber_id: Uuid,
@@ -111,7 +143,7 @@ impl ProfileRepository {
         .map_err(ProfileError::Database)?;
         Ok(exists.unwrap_or(false))
     }
-    pub async fn search_profiles(
+    async fn search_profiles(
         &self,
         query: &ProfileSearchQuery,
         current_user_id: Uuid,

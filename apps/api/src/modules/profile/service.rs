@@ -1,30 +1,33 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::cache::ProfileCache;
+use crate::modules::profile::cache::{ProfileCache, ProfileRedisCache};
 use crate::modules::profile::dto::{
     AvatarUploadUrlResponse, MeResponse, ProfileSearchQuery, ProfileSearchResult,
     PublicProfileResponse, UpdateProfileRequest,
 };
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::GeneralSettings;
-use crate::modules::profile::repository::ProfileRepository;
+use crate::modules::profile::repository::{ProfileRepo, ProfileRepository};
 use crate::modules::profile::storage::ProfileStorage;
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ProfileService {
-    pub repo: ProfileRepository,
-    pub cache: ProfileCache,
+    pub repo: Arc<dyn ProfileRepo>,
+    pub cache: Arc<dyn ProfileCache>,
     pub storage: ProfileStorage,
 }
 impl ProfileService {
     pub fn new(db: sqlx::PgPool, redis: Redis, storage: StorageService) -> Self {
+        let repo: Arc<dyn ProfileRepo> = Arc::new(ProfileRepository::new(db));
+        let cache: Arc<dyn ProfileCache> = Arc::new(ProfileRedisCache::new(redis));
         Self {
-            repo: ProfileRepository::new(db),
-            cache: ProfileCache::new(redis),
+            repo: Arc::clone(&repo),
+            cache: Arc::clone(&cache),
             storage: ProfileStorage::new(storage),
         }
     }

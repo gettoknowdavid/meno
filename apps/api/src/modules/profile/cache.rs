@@ -8,36 +8,74 @@ use crate::shared::services::redis::keys::RedisKey;
 use uuid::Uuid;
 
 #[derive(Clone)]
-pub struct ProfileCache {
+pub struct ProfileRedisCache {
     redis: Redis,
 }
-impl ProfileCache {
+impl ProfileRedisCache {
+    #[must_use]
     pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
+}
 
-    pub async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError> {
+#[async_trait::async_trait]
+pub trait ProfileCache: Send + Sync + 'static {
+    async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError>;
+    async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError>;
+    async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError>;
+    async fn get_cached_profile(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<PublicProfileResponse>, ProfileError>;
+    async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError>;
+    async fn cache_providers(
+        &self,
+        user_id: Uuid,
+        providers: Vec<AuthProvider>,
+    ) -> Result<(), ProfileError>;
+    async fn get_cached_providers(
+        &self,
+        user_id: Uuid,
+    ) -> Result<Option<Vec<AuthProvider>>, ProfileError>;
+
+    async fn cache_search_results(
+        &self,
+        key: &RedisKey,
+        results: Vec<ProfileSearchResult>,
+    ) -> Result<(), ProfileError>;
+    async fn get_cached_search_results(
+        &self,
+        key: &RedisKey,
+    ) -> Result<Option<Vec<ProfileSearchResult>>, ProfileError>;
+}
+
+#[async_trait::async_trait]
+impl ProfileCache for ProfileRedisCache {
+    async fn cache_me(&self, value: MeResponse) -> Result<(), ProfileError> {
         let key = RedisKey::profile(value.id);
         self.redis
             .set(&key, &value, Some(TTL_60_SECS))
             .await
             .map_err(ProfileError::Redis)
     }
-    pub async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError> {
+
+    async fn cache_profile(&self, value: PublicProfileResponse) -> Result<(), ProfileError> {
         let key = RedisKey::profile(value.id);
         self.redis
             .set(&key, &value, Some(TTL_60_SECS))
             .await
             .map_err(ProfileError::Redis)
     }
-    pub async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError> {
+
+    async fn get_cached_me(&self, user_id: Uuid) -> Result<Option<MeResponse>, ProfileError> {
         let key = RedisKey::profile(user_id);
         self.redis
             .get::<MeResponse>(&key)
             .await
             .map_err(ProfileError::Redis)
     }
-    pub async fn get_cached_profile(
+
+    async fn get_cached_profile(
         &self,
         user_id: Uuid,
     ) -> Result<Option<PublicProfileResponse>, ProfileError> {
@@ -47,12 +85,14 @@ impl ProfileCache {
             .await
             .map_err(ProfileError::Redis)
     }
-    pub async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
+
+    async fn invalidate_cached_profile(&self, user_id: Uuid) -> Result<(), ProfileError> {
         let key = RedisKey::profile(user_id);
         let _ = self.redis.del(&key).await.map_err(ProfileError::Redis)?;
         Ok(())
     }
-    pub async fn cache_providers(
+
+    async fn cache_providers(
         &self,
         user_id: Uuid,
         providers: Vec<AuthProvider>,
@@ -63,7 +103,8 @@ impl ProfileCache {
             .await
             .map_err(ProfileError::Redis)
     }
-    pub async fn get_cached_providers(
+
+    async fn get_cached_providers(
         &self,
         user_id: Uuid,
     ) -> Result<Option<Vec<AuthProvider>>, ProfileError> {
@@ -74,7 +115,7 @@ impl ProfileCache {
             .map_err(ProfileError::Redis)
     }
 
-    pub async fn cache_search_results(
+    async fn cache_search_results(
         &self,
         key: &RedisKey,
         results: Vec<ProfileSearchResult>,
@@ -85,7 +126,8 @@ impl ProfileCache {
             .map_err(ProfileError::Redis)?;
         Ok(())
     }
-    pub async fn get_cached_search_results(
+
+    async fn get_cached_search_results(
         &self,
         key: &RedisKey,
     ) -> Result<Option<Vec<ProfileSearchResult>>, ProfileError> {
