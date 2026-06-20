@@ -11,7 +11,6 @@ use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::pubsub::WsPubSubBridge;
-use crate::state::MenoState;
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -37,12 +36,11 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.send_message",
-        skip(self, app, req),
+        skip(self, req),
         fields(broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_message(
         &self,
-        app: &MenoState,
         req: &SendMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (is_active_broadcast_result, is_participant_result) = tokio::join!(
@@ -71,7 +69,7 @@ impl ChatService {
         let response = ChatMessageResponse::from(row);
 
         let payload = WsPayload::new_message(response.clone());
-        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(
             broadcast_id = %req.broadcast_id,

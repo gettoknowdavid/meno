@@ -37,7 +37,7 @@ pub async fn handle_ws_send_message(app: &MenoState, req: dto::SendMessageReques
         handle_validation_error(app, req.sender_id, req.broadcast_id, e).await;
         return;
     }
-    if let Err(err) = app.chat.service.send_message(app, &req).await {
+    if let Err(err) = app.chat.service.send_message(&req).await {
         let code = match &err {
             ChatError::BroadcastNotLive => WsErrorCode::BroadcastForciblyEnded,
             ChatError::NotParticipant => WsErrorCode::KickedFromRoom,
