@@ -4,14 +4,14 @@ use crate::modules::notifications::dto::{
 };
 use crate::modules::notifications::error::NotificationError;
 use crate::modules::notifications::model::{NotificationTemplate, codes};
-use crate::modules::notifications::repository::NotificationRepository;
+use crate::modules::notifications::repository::{NotificationRepo, NotificationRepository};
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::push::PushNotificationService;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::WsPayload;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::shared::types::dto::UserSummary;
-use crate::state::MenoState;
 use fred::prelude::KeysInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,17 +28,26 @@ type TemplateCache = Arc<RwLock<HashMap<String, NotificationTemplate>>>;
 
 #[derive(Clone)]
 pub struct NotificationService {
-    repo: NotificationRepository,
-    redis: RedisService,
+    repo: Arc<dyn NotificationRepo>,
+    redis: Redis,
     push: PushNotificationService,
+    pubsub: Arc<WsPubSubBridge>,
     templates: TemplateCache,
 }
 impl NotificationService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, push: PushNotificationService) -> Self {
+    #[must_use]
+    pub fn new(
+        db: sqlx::PgPool,
+        redis: Redis,
+        push: PushNotificationService,
+        pubsub: Arc<WsPubSubBridge>,
+    ) -> Self {
+        let repo: Arc<dyn NotificationRepo> = Arc::new(NotificationRepository::new(db));
         Self {
-            repo: NotificationRepository::new(db),
+            repo: Arc::clone(&repo),
             redis,
             push,
+            pubsub,
             templates: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -69,12 +78,11 @@ impl NotificationService {
     ///
     /// This function is **fire-and-forget safe** — callers may `tokio::spawn` it.
     #[instrument(
-        skip(self, app, actor, broadcast_title),
+        skip(self,  actor, broadcast_title),
         fields(owner_id = %owner_id, type_code = %type_code)
     )]
     pub async fn notify(
         &self,
-        app: &MenoState,
         owner_id: Uuid,
         type_code: &str,
         actor: Option<&UserSummary>,
@@ -93,11 +101,11 @@ impl NotificationService {
             .await?;
 
         let ws_payload = WsPayload::notification(owner_id, &title, &body);
-        app.pubsub.publish_to_user(owner_id, ws_payload).await;
+        self.pubsub.publish_to_user(owner_id, ws_payload).await;
 
         // Handle Push notifications
         let push = self.push.clone();
-        let repo = self.repo.clone();
+        let repo = Arc::clone(&self.repo);
         let title_clone = title.clone();
         let body_clone = body.clone();
         let image_clone = image_url.clone();
@@ -111,7 +119,6 @@ impl NotificationService {
                 &body_clone,
                 image_clone,
                 &deep_link_clone,
-                None,
             )
             .await;
         });
@@ -223,7 +230,7 @@ impl NotificationService {
         let mut rows = self.repo.find_notifications(query, owner_id).await?;
 
         for item in &mut rows {
-            let vars = Self::build_item_vars(&item);
+            let vars = Self::build_item_vars(item);
             let interpolated_title = Self::interpolate(&item.title, &vars);
             let interpolated_body = Self::interpolate(&item.body, &vars);
 
@@ -346,6 +353,7 @@ impl NotificationService {
     }
 
     /// Replace `{actor}`, `{title}`, `{broadcast}` placeholders in a template string.
+    #[must_use]
     pub fn resolve_template(
         template: &NotificationTemplate,
         vars: &HashMap<&str, &str>,
@@ -364,7 +372,7 @@ impl NotificationService {
     fn interpolate(template: &str, vars: &HashMap<&str, &str>) -> String {
         let mut result = template.to_owned();
         for (key, value) in vars {
-            result = result.replace(&format!("{{{}}}", key), value);
+            result = result.replace(&format!("{{{key}}}"), value);
         }
         result
     }
@@ -406,10 +414,10 @@ impl NotificationService {
             | codes::LIVE_BROADCAST_STARTED
             | codes::SCHEDULED_BROADCAST
             | codes::BROADCAST_ENDED => broadcast_id
-                .map(|id| format!("meno://broadcasts/{}", id))
+                .map(|id| format!("meno://broadcasts/{id}"))
                 .unwrap_or_else(|| "meno://home".to_string()),
             codes::USER_SUBSCRIBED => actor_id
-                .map(|id| format!("meno://profile/{}", id))
+                .map(|id| format!("meno://profile/{id}"))
                 .unwrap_or_else(|| "meno://home".to_string()),
             _ => "meno://home".to_string(),
         }
@@ -420,14 +428,14 @@ impl NotificationService {
         let key = RedisKey::unread_count(owner_id);
 
         // Lua: decrement but never go below 0.
-        let script = r#"
+        let script = r"
             local v = redis.call('DECR', KEYS[1])
             if v < 0 then
                 redis.call('SET', KEYS[1], '0')
                 return 0
             end
             return v
-        "#;
+        ";
 
         let _ = self
             .redis

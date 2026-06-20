@@ -1,7 +1,7 @@
 use crate::shared::constants::RATE_LIMIT_PREFIX;
 use crate::state::MenoState;
 
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use anyhow::Result;
 use axum::http::StatusCode;
 use axum::{
@@ -51,7 +51,7 @@ static SCRIPT: &str = r#"
     end"#;
 
 async fn check_rate_limit(
-    redis: &RedisService,
+    redis: &Redis,
     base_key: &str,
     config: RateLimitConfig,
 ) -> Result<usize> {

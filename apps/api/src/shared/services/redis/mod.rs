@@ -21,6 +21,7 @@ pub struct RedisConfig {
     pub reconnect_max_delay_ms: u32,
 }
 impl RedisConfig {
+    #[must_use]
     pub fn from_url(url: String) -> Self {
         Self {
             url,
@@ -41,10 +42,10 @@ impl Default for RedisConfig {
 }
 
 #[derive(Clone)]
-pub struct RedisService {
+pub struct Redis {
     pool: Pool,
 }
-impl RedisService {
+impl Redis {
     pub async fn new(config: RedisConfig) -> anyhow::Result<Self> {
         let min_delay = config.reconnect_backoff_ms;
         let max_delay = config.reconnect_max_delay_ms;
@@ -57,6 +58,7 @@ impl RedisService {
         Ok(Self { pool })
     }
 
+    #[must_use]
     pub fn config(&self) -> Config {
         self.pool.client_config()
     }
@@ -75,7 +77,7 @@ impl RedisService {
         ex: Option<i64>,
     ) -> Result<(), Error> {
         let serialized = to_string(value)?;
-        let expire = ex.map(|e| Expiration::EX(e));
+        let expire = ex.map( Expiration::EX);
         self.pool
             .set::<(), _, _>(key.as_ref(), serialized, expire, None, false)
             .await?;
@@ -97,9 +99,12 @@ impl RedisService {
     }
 
     // Helper methods
+    #[must_use]
     pub fn client(&self) -> Pool {
         self.pool.clone()
     }
+
+    #[must_use]
     pub fn pipeline(&self) -> Pipeline<Client> {
         self.pool.next().pipeline().clone()
     }
@@ -111,7 +116,7 @@ impl RedisService {
         key: &RedisKey,
         ttl_seconds: i64,
     ) -> Result<u64, Error> {
-        let script = r#"
+        let script = r"
             local key = KEYS[1]
             local ttl = tonumber(ARGV[1])
 
@@ -122,7 +127,7 @@ impl RedisService {
             end
 
             return count
-        "#;
+        ";
 
         let count: u64 = self
             .pool
@@ -142,7 +147,7 @@ impl RedisService {
         self.pool.decr(key.as_ref()).await
     }
     pub async fn set_ex(&self, key: &RedisKey, value: &str, ttl_secs: u64) -> Result<(), Error> {
-        let ttl = Some(Expiration::EX(ttl_secs as i64));
+        let ttl = Some(Expiration::EX(ttl_secs.cast_signed()));
         self.pool
             .set::<(), _, _>(key.as_ref(), value, ttl, None, false)
             .await
@@ -211,7 +216,7 @@ impl RedisService {
 
     /// Invalidates all user-specific keys in the redis cache
     pub async fn invalidate_all_user_keys(&self, user_id: Uuid) -> Result<u64, Error> {
-        let pattern = format!("u:{}:*", user_id);
+        let pattern = format!("u:{user_id}:*");
 
         let mut cursor = "0".to_string();
         let mut total_deleted: u64 = 0;

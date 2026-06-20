@@ -1,5 +1,5 @@
 use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{HeaderMap, StatusCode};
@@ -39,7 +39,7 @@ pub fn extract_idempotency_key(headers: &HeaderMap) -> Option<Uuid> {
 /// but does not bloat Redis storage long-term.
 pub async fn idempotency_middleware(req: Request<Body>, next: Next) -> Response {
     // Get Redis from the extensions
-    let redis = match req.extensions().get::<Arc<RedisService>>() {
+    let redis = match req.extensions().get::<Arc<Redis>>() {
         Some(r) => Arc::clone(r),
         None => return next.run(req).await,
     };

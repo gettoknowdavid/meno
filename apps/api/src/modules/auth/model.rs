@@ -60,7 +60,7 @@ impl Display for OtpType {
             OtpType::ResetPassword => "reset_password",
         }
         .to_string();
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 

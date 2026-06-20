@@ -15,7 +15,7 @@ impl Display for LivekitRole {
             LivekitRole::Cohost => "cohost".to_string(),
             LivekitRole::Participant => "participant".to_string(),
         };
-        write!(f, "{}", str)
+        write!(f, "{str}")
     }
 }
 impl TryFrom<ParticipantRole> for LivekitRole {
@@ -30,7 +30,7 @@ impl TryFrom<ParticipantRole> for LivekitRole {
     }
 }
 
-/// Simple struct for live participant data from LiveKit
+/// Simple struct for live participant data from `LiveKit`
 #[derive(Debug, Clone)]
 pub struct LivekitParticipantInfo {
     pub id: uuid::Uuid,

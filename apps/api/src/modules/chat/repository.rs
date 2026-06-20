@@ -11,12 +11,66 @@ use uuid::Uuid;
 pub struct ChatRepository {
     db: sqlx::PgPool,
 }
+
 impl ChatRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
+}
 
-    pub async fn create_message(
+#[async_trait::async_trait]
+pub trait ChatRepo: Send + Sync + 'static {
+    async fn create_message(
+        &self,
+        broadcast_id: Uuid,
+        sender_id: Uuid,
+        content: &str,
+    ) -> Result<ChatMessageRow, ChatError>;
+
+    async fn update_message(
+        &self,
+        message_id: Uuid,
+        sender_id: Uuid,
+        content: &str,
+    ) -> Result<Option<ChatMessageRow>, ChatError>;
+
+    async fn find_messages(
+        &self,
+        broadcast_id: Uuid,
+        query: &ChatMessageQuery,
+    ) -> Result<Vec<ChatMessageResponse>, ChatError>;
+
+    async fn find_message_by_id(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<ChatMessageRow>, ChatError>;
+
+    async fn soft_delete_message(
+        &self,
+        message_id: Uuid,
+        sender_id: Uuid,
+    ) -> Result<bool, ChatError>;
+
+    async fn create_reaction(
+        &self,
+        broadcast_id: Uuid,
+        sender_id: Uuid,
+        content: &str,
+    ) -> Result<ChatReactionRow, ChatError>;
+
+    async fn is_broadcast_participant(
+        &self,
+        broadcast_id: Uuid,
+        participant_id: Uuid,
+    ) -> Result<bool, ChatError>;
+
+    async fn is_active_broadcast(&self, broadcast_id: Uuid) -> Result<bool, ChatError>;
+}
+
+#[async_trait::async_trait]
+impl ChatRepo for ChatRepository {
+    async fn create_message(
         &self,
         broadcast_id: Uuid,
         sender_id: Uuid,
@@ -45,86 +99,7 @@ impl ChatRepository {
         .map_err(ChatError::Database)
     }
 
-    pub async fn find_messages(
-        &self,
-        broadcast_id: Uuid,
-        query: &ChatMessageQuery,
-    ) -> Result<Vec<ChatMessageResponse>, ChatError> {
-        let (cursor_ts, cursor_id) = match query.cursor() {
-            None => (None, None),
-            Some(c) => {
-                let (ts, id) = c.to_timestamp_id()?;
-                (Some(ts), Some(id))
-            }
-        };
-
-        let mut qb = QueryBuilder::new(
-            r#"SELECT
-                        m.id,
-                        m.content,
-                        m.broadcast_id,
-                        m.created_at,
-                        m.updated_at,
-                        m.deleted_at,
-                        m.sender_id,
-                        u.full_name AS sender_name,
-                        u.bio AS sender_bio,
-                        u.avatar_id AS sender_avatar_id,
-                        u.avatar_url AS sender_avatar_url
-            FROM chat_messages m
-            JOIN users u ON u.id = m.sender_id AND u.deleted_at IS NULL
-            WHERE m.broadcast_id = "#,
-        );
-        qb.push_bind(broadcast_id)
-            .push(" AND m.deleted_at IS NULL ");
-
-        push_cursor_condition(
-            &mut qb,
-            "m.created_at",
-            "m.id",
-            cursor_ts,
-            cursor_id,
-            Order::Desc,
-        );
-
-        push_order_and_limit(
-            &mut qb,
-            "m.created_at",
-            "m.id",
-            Order::Desc,
-            query.limit_plus_one(),
-        );
-
-        let rows = qb
-            .build_query_as::<ChatMessageRow>()
-            .fetch_all(&self.db)
-            .await?;
-
-        Ok(rows.into_iter().map(ChatMessageResponse::from).collect())
-    }
-
-    pub async fn find_message_by_id(
-        &self,
-        message_id: Uuid,
-    ) -> Result<Option<ChatMessageRow>, ChatError> {
-        sqlx::query_as!(
-            ChatMessageRow,
-            r#"SELECT
-                    m.*,
-                    u.full_name AS sender_name,
-                    u.bio AS sender_bio,
-                    u.avatar_id AS sender_avatar_id,
-                    u.avatar_url AS sender_avatar_url
-            FROM chat_messages m
-            JOIN users u ON u.id = m.sender_id WHERE m.id = $1 AND m.deleted_at IS NULL"#,
-            message_id,
-        )
-        .fetch_optional(&self.db)
-        .await
-        .map_err(ChatError::Database)
-    }
-
-    pub async fn update_message(
+    async fn update_message(
         &self,
         message_id: Uuid,
         sender_id: Uuid,
@@ -154,7 +129,86 @@ impl ChatRepository {
         .map_err(ChatError::Database)
     }
 
-    pub async fn soft_delete_message(
+    async fn find_messages(
+        &self,
+        broadcast_id: Uuid,
+        query: &ChatMessageQuery,
+    ) -> Result<Vec<ChatMessageResponse>, ChatError> {
+        let (cursor_ts, cursor_id) = match query.cursor() {
+            None => (None, None),
+            Some(c) => {
+                let (ts, id) = c.to_timestamp_id()?;
+                (Some(ts), Some(id))
+            }
+        };
+
+        let mut qb = QueryBuilder::new(
+            r"SELECT
+                        m.id,
+                        m.content,
+                        m.broadcast_id,
+                        m.created_at,
+                        m.updated_at,
+                        m.deleted_at,
+                        m.sender_id,
+                        u.full_name AS sender_name,
+                        u.bio AS sender_bio,
+                        u.avatar_id AS sender_avatar_id,
+                        u.avatar_url AS sender_avatar_url
+            FROM chat_messages m
+            JOIN users u ON u.id = m.sender_id AND u.deleted_at IS NULL
+            WHERE m.broadcast_id = ",
+        );
+        qb.push_bind(broadcast_id)
+            .push(" AND m.deleted_at IS NULL ");
+
+        push_cursor_condition(
+            &mut qb,
+            "m.created_at",
+            "m.id",
+            cursor_ts,
+            cursor_id,
+            Order::Desc,
+        );
+
+        push_order_and_limit(
+            &mut qb,
+            "m.created_at",
+            "m.id",
+            Order::Desc,
+            query.limit_plus_one(),
+        );
+
+        let rows = qb
+            .build_query_as::<ChatMessageRow>()
+            .fetch_all(&self.db)
+            .await?;
+
+        Ok(rows.into_iter().map(ChatMessageResponse::from).collect())
+    }
+
+    async fn find_message_by_id(
+        &self,
+        message_id: Uuid,
+    ) -> Result<Option<ChatMessageRow>, ChatError> {
+        sqlx::query_as!(
+            ChatMessageRow,
+            r#"SELECT
+                    m.*,
+                    u.full_name AS sender_name,
+                    u.bio AS sender_bio,
+                    u.avatar_id AS sender_avatar_id,
+                    u.avatar_url AS sender_avatar_url
+            FROM chat_messages m
+            JOIN users u ON u.id = m.sender_id WHERE m.id = $1 AND m.deleted_at IS NULL"#,
+            message_id,
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(ChatError::Database)
+    }
+
+    async fn soft_delete_message(
         &self,
         message_id: Uuid,
         sender_id: Uuid,
@@ -173,7 +227,7 @@ impl ChatRepository {
         Ok(result.rows_affected() == 1)
     }
 
-    pub async fn create_reaction(
+    async fn create_reaction(
         &self,
         broadcast_id: Uuid,
         sender_id: Uuid,
@@ -193,7 +247,7 @@ impl ChatRepository {
         .map_err(ChatError::Database)
     }
 
-    pub async fn is_broadcast_participant(
+    async fn is_broadcast_participant(
         &self,
         broadcast_id: Uuid,
         participant_id: Uuid,
@@ -211,7 +265,7 @@ impl ChatRepository {
         .map_err(ChatError::Database)
     }
 
-    pub async fn is_active_broadcast(&self, broadcast_id: Uuid) -> Result<bool, ChatError> {
+    async fn is_active_broadcast(&self, broadcast_id: Uuid) -> Result<bool, ChatError> {
         sqlx::query_scalar!(
             r#"SELECT EXISTS(
                     SELECT 1 FROM broadcasts

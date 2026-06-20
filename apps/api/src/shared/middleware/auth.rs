@@ -1,6 +1,5 @@
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AuthProvider, UserRole};
-use crate::shared::services::redis::keys::RedisKey;
 use crate::state::MenoState;
 use axum::{extract::Request, extract::State, middleware::Next, response::Response};
 use serde::Serialize;
@@ -30,20 +29,23 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .ok_or(AuthError::MissingToken)?;
 
-    let claims = app.auth.jwt.decode_access(token)?;
+    // Fast path: pure JWT decode — no DB, no Redis
+    let claims = app.auth.tokens.decode_access(token)?;
 
-    let blocklist_key = RedisKey::block_list("ACCESS_TOKEN", claims.jti);
-    match app.redis.get::<String>(&blocklist_key).await {
-        Ok(Some(_)) => return Err(AuthError::InvalidToken),
-        Err(e) => return Err(AuthError::Redis(e)),
-        Ok(None) => {}
+    // Redis blocklist check — one network round trip
+    if app
+        .auth
+        .tokens
+        .is_access_token_blocked(claims.jti, claims.sub, claims.iat)
+        .await?
+    {
+        return Err(AuthError::InvalidToken);
     }
 
     if !claims.verified {
         return Err(AuthError::EmailNotVerified);
     }
 
-    // Record the authenticated user in the parent HTTP span
     tracing::Span::current().record("user_id", claims.sub.to_string().as_str());
 
     req.extensions_mut().insert(AuthUser {

@@ -1,30 +1,33 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::cache::ProfileCache;
+use crate::modules::profile::cache::{ProfileCache, ProfileRedisCache};
 use crate::modules::profile::dto::{
     AvatarUploadUrlResponse, MeResponse, ProfileSearchQuery, ProfileSearchResult,
     PublicProfileResponse, UpdateProfileRequest,
 };
 use crate::modules::profile::errors::ProfileError;
 use crate::modules::profile::model::GeneralSettings;
-use crate::modules::profile::repository::ProfileRepository;
+use crate::modules::profile::repository::{ProfileRepo, ProfileRepository};
 use crate::modules::profile::storage::ProfileStorage;
 use crate::shared::pagination::{Cursor, CursorPage};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::storage::StorageService;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ProfileService {
-    pub repo: ProfileRepository,
-    pub cache: ProfileCache,
+    pub repo: Arc<dyn ProfileRepo>,
+    pub cache: Arc<dyn ProfileCache>,
     pub storage: ProfileStorage,
 }
 impl ProfileService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService, storage: StorageService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: Redis, storage: StorageService) -> Self {
+        let repo: Arc<dyn ProfileRepo> = Arc::new(ProfileRepository::new(db));
+        let cache: Arc<dyn ProfileCache> = Arc::new(ProfileRedisCache::new(redis));
         Self {
-            repo: ProfileRepository::new(db),
-            cache: ProfileCache::new(redis),
+            repo: Arc::clone(&repo),
+            cache: Arc::clone(&cache),
             storage: ProfileStorage::new(storage),
         }
     }
@@ -91,7 +94,7 @@ impl ProfileService {
             return self.get_me(user_id).await;
         }
 
-        let _ = self.cache.invalidate_cached_profile(user_id).await?;
+        self.cache.invalidate_cached_profile(user_id).await?;
 
         let (new_avatar_key, new_avatar_url) = if let Some(ref avatar_key) = req.avatar_key {
             self.update_avatar_url(user_id, avatar_key).await?
@@ -164,7 +167,7 @@ impl ProfileService {
             created_at: user.created_at,
         };
 
-        let _ = self.cache.cache_profile(response.clone()).await?;
+        self.cache.cache_profile(response.clone()).await?;
 
         Ok(response)
     }
@@ -177,13 +180,13 @@ impl ProfileService {
         let q = &query.q.trim().to_lowercase();
 
         let limit = query.limit();
-        let cache_key = RedisKey::search_results(&q, 0, limit.clone());
+        let cache_key = RedisKey::search_results(q, 0, limit);
 
         if let Some(cached_results) = self.cache.get_cached_search_results(&cache_key).await? {
-            return self.apply_cursor(cached_results, limit.clone());
+            return self.apply_cursor(cached_results, limit);
         }
 
-        let results = self.repo.search_profiles(&query, current_user_id).await?;
+        let results = self.repo.search_profiles(query, current_user_id).await?;
 
         if query.cursor().is_none() && results.len() <= 100 {
             self.cache
@@ -199,13 +202,13 @@ impl ProfileService {
         user_id: Uuid,
         new_avatar_key: &str,
     ) -> Result<(Option<String>, Option<String>), ProfileError> {
-        if !self.storage.object_exists(&new_avatar_key).await? {
+        if !self.storage.object_exists(new_avatar_key).await? {
             return Err(ProfileError::AvatarNotUploaded);
         }
 
         self.delete_avatar(user_id).await?;
 
-        let public_url = self.storage.get_avatar_url(&new_avatar_key);
+        let public_url = self.storage.get_avatar_url(new_avatar_key);
         Ok((Some(new_avatar_key.to_string()), Some(public_url)))
     }
 

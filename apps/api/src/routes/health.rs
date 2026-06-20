@@ -1,4 +1,3 @@
-use crate::shared::services::livekit::circuit_breaker::CircuitState;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::state::MenoState;
 use axum::extract::State;
@@ -10,9 +9,7 @@ pub async fn health_handler(State(app): State<Arc<MenoState>>) -> impl IntoRespo
 
     let key = RedisKey::new_raw("__health__");
     let redis_ok = app.redis.exists(&key).await.is_ok();
-
-    let livekit_ok = app.livekit.breaker.state() != CircuitState::Open;
-
+    
     let code = if db_ok && redis_ok {
         StatusCode::OK
     } else {
@@ -27,7 +24,6 @@ pub async fn health_handler(State(app): State<Arc<MenoState>>) -> impl IntoRespo
             "status": status,
             "db": db_ok,
             "redis": redis_ok,
-            "livekit": livekit_ok,
         })),
     )
 }

@@ -1,5 +1,4 @@
 use crate::shared::errors::error_response;
-use crate::state::MenoState;
 use axum::{
     Json,
     extract::Query as AxumQuery,
@@ -10,7 +9,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use serde::de::DeserializeOwned;
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 // ========== EXTRACTORS ==========
 
@@ -38,13 +37,14 @@ pub struct UploadedFile {
     pub bytes: Vec<u8>,
 }
 
-impl<T> FromRequest<Arc<MenoState>> for MenoBody<T>
+impl<T, S> FromRequest<S> for MenoBody<T>
 where
     T: DeserializeOwned,
+    S: Send + Sync,
 {
     type Rejection = Response;
 
-    async fn from_request(req: Request, state: &Arc<MenoState>) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let content_type = req
             .headers()
             .get("content-type")
@@ -74,7 +74,7 @@ where
 
         // Multipart form (with potential files)
         if content_type.starts_with("multipart/form-data") {
-            return extract_multipart_to_body::<T>(req, state).await;
+            return extract_multipart_to_body::<T, S>(req, state).await;
         }
 
         Err(error_response(
@@ -85,13 +85,14 @@ where
     }
 }
 
-impl<T> FromRequest<Arc<MenoState>> for MenoJson<T>
+impl<T, S> FromRequest<S> for MenoJson<T>
 where
     T: DeserializeOwned,
+    S: Send + Sync,
 {
     type Rejection = Response;
 
-    async fn from_request(req: Request, state: &Arc<MenoState>) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let content_type = req
             .headers()
             .get("content-type")
@@ -113,13 +114,14 @@ where
     }
 }
 
-impl<T> FromRequest<Arc<MenoState>> for MenoForm<T>
+impl<T, S> FromRequest<S> for MenoForm<T>
 where
     T: DeserializeOwned,
+    S: Send + Sync,
 {
     type Rejection = Response;
 
-    async fn from_request(req: Request, state: &Arc<MenoState>) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let content_type = req
             .headers()
             .get("content-type")
@@ -140,7 +142,7 @@ where
         }
         // Also support multipart/form-data for form fields (without files)
         else if content_type.starts_with("multipart/form-data") {
-            extract_multipart_to_form::<T>(req, state).await
+            extract_multipart_to_form::<T, S>(req, state).await
         } else {
             Err(error_response(
                 StatusCode::UNSUPPORTED_MEDIA_TYPE,
@@ -151,13 +153,14 @@ where
     }
 }
 
-impl<T> FromRequest<Arc<MenoState>> for MenoMultipartForm<T>
+impl<T, S> FromRequest<S> for MenoMultipartForm<T>
 where
     T: DeserializeOwned,
+    S: Send + Sync,
 {
     type Rejection = Response;
 
-    async fn from_request(req: Request, state: &Arc<MenoState>) -> Result<Self, Self::Rejection> {
+    async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
         let content_type = req
             .headers()
             .get("content-type")
@@ -229,9 +232,9 @@ where
 // ========== HELPER FUNCTIONS ==========
 
 /// Extract multipart data into MenoBody (skip files)
-async fn extract_multipart_to_body<T: DeserializeOwned>(
+async fn extract_multipart_to_body<T: DeserializeOwned, S: Send + Sync>(
     req: Request,
-    state: &Arc<MenoState>,
+    state: &S,
 ) -> Result<MenoBody<T>, Response> {
     let mut multipart = Multipart::from_request(req, state)
         .await
@@ -269,9 +272,9 @@ async fn extract_multipart_to_body<T: DeserializeOwned>(
 }
 
 /// Extract multipart data into MenoForm (convert files to text representation)
-async fn extract_multipart_to_form<T: DeserializeOwned>(
+async fn extract_multipart_to_form<T: DeserializeOwned, S: Send + Sync>(
     req: Request,
-    state: &Arc<MenoState>,
+    state: &S,
 ) -> Result<MenoForm<T>, Response> {
     let mut multipart = Multipart::from_request(req, state)
         .await

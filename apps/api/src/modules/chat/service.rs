@@ -1,29 +1,37 @@
-use crate::modules::chat::cache::ChatCache;
+use crate::modules::chat::cache::{ChatCache, ChatRedisCache};
 use crate::modules::chat::dto::{
     ChatMessageQuery, ChatMessageResponse, ChatReactionResponse, DeleteMessageRequest,
     EditMessageRequest, SendMessageRequest, SendReactionRequest,
 };
 use crate::modules::chat::errors::ChatError;
-use crate::modules::chat::repository::ChatRepository;
+use crate::modules::chat::repository::{ChatRepo, ChatRepository};
 use crate::shared::constants::{TTL_10_SECS, TTL_60_SECS};
 use crate::shared::pagination::{Cursor, CursorPage};
-use crate::shared::services::redis::RedisService;
+use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::coalescing::coalesce_cache;
 use crate::shared::services::ws::dto::WsPayload;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::state::MenoState;
+use std::sync::Arc;
+use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct ChatService {
-    repo: ChatRepository,
-    redis: RedisService,
-    cache: ChatCache,
+    repo: Arc<dyn ChatRepo>,
+    cache: Arc<dyn ChatCache>,
+    redis: Redis,
+    pubsub: Arc<WsPubSubBridge>,
 }
 impl ChatService {
-    pub fn new(db: sqlx::PgPool, redis: RedisService) -> Self {
+    pub fn new(db: sqlx::PgPool, redis: Redis, pubsub: Arc<WsPubSubBridge>) -> Self {
+        let repo: Arc<dyn ChatRepo> = Arc::new(ChatRepository::new(db));
+        let cache: Arc<dyn ChatCache> = Arc::new(ChatRedisCache::new(redis.clone()));
+
         Self {
-            repo: ChatRepository::new(db),
-            cache: ChatCache::new(redis.clone()),
+            repo: Arc::clone(&repo),
+            cache: Arc::clone(&cache),
             redis,
+            pubsub,
         }
     }
 
@@ -87,7 +95,7 @@ impl ChatService {
 
         let limit = query.limit();
         let cursor_str = query.cursor().map(|c| c.0.as_str()).unwrap_or("");
-        let cache_key = ChatCache::chat_list_cache_key(broadcast_id, Some(cursor_str), limit);
+        let cache_key = Self::chat_list_cache_key(broadcast_id, Some(cursor_str), limit);
 
         let ttl = if self.cache.is_live(broadcast_id).await.unwrap_or(false) {
             TTL_10_SECS
@@ -96,7 +104,7 @@ impl ChatService {
         };
 
         coalesce_cache(&self.redis, &cache_key, ttl, || async {
-            let rows = self.repo.find_messages(broadcast_id, &query).await?;
+            let rows = self.repo.find_messages(broadcast_id, query).await?;
             Ok(CursorPage::from_rows(rows, limit, |r| {
                 Cursor::from_timestamp_id(r.created_at, r.id)
             }))
@@ -106,12 +114,11 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.edit_message",
-        skip(self, app, req),
+        skip(self, req),
         fields(message_id = %req.message_id, sender_id = %req.sender_id)
     )]
     pub async fn edit_message(
         &self,
-        app: &MenoState,
         req: &EditMessageRequest,
     ) -> Result<ChatMessageResponse, ChatError> {
         let (message_result, is_active_broadcast_result) = tokio::join!(
@@ -142,7 +149,7 @@ impl ChatService {
         self.cache.invalidate_chat(req.broadcast_id).await;
 
         let payload = WsPayload::edited_message(response.clone());
-        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(message_id = %req.message_id, "Chat message edited");
 
@@ -151,14 +158,10 @@ impl ChatService {
 
     #[tracing::instrument(
         name = "chat.delete_message",
-        skip(self, app, req),
+        skip(self, req),
         fields(broadcast_id = %req.broadcast_id, message_id = %req.message_id, sender_id = %req.sender_id)
     )]
-    pub async fn delete_message(
-        &self,
-        app: &MenoState,
-        req: &DeleteMessageRequest,
-    ) -> Result<(), ChatError> {
+    pub async fn delete_message(&self, req: &DeleteMessageRequest) -> Result<(), ChatError> {
         let deleted = self
             .repo
             .soft_delete_message(req.message_id, req.sender_id)
@@ -170,7 +173,7 @@ impl ChatService {
         self.cache.invalidate_chat(req.broadcast_id).await;
 
         let payload = WsPayload::deleted_message(req.broadcast_id, req.message_id);
-        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(message_id = %req.message_id, "Chat message deleted");
         Ok(())
@@ -178,12 +181,11 @@ impl ChatService {
 
     #[tracing::instrument(
         name   = "chat.send_reaction",
-        skip   (self, app),
+        skip   (self),
         fields (broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
     )]
     pub async fn send_reaction(
         &self,
-        app: &MenoState,
         req: &SendReactionRequest,
     ) -> Result<ChatReactionResponse, ChatError> {
         let (is_active_broadcast, is_participant_result) = tokio::join!(
@@ -206,7 +208,7 @@ impl ChatService {
         let response = ChatReactionResponse::from(row);
 
         let payload = WsPayload::new_reaction(response.clone());
-        app.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
 
         tracing::info!(
             broadcast_id = %req.broadcast_id,
@@ -215,5 +217,14 @@ impl ChatService {
         );
 
         Ok(response)
+    }
+
+    fn chat_list_cache_key(broadcast_id: Uuid, cursor: Option<&str>, limit: i64) -> String {
+        match cursor {
+            Some(c) if !c.is_empty() => {
+                format!("chat:{}:msgs:cur={}:lim={}", broadcast_id, c, limit)
+            }
+            _ => format!("chat:{}:msgs:cur=_start:lim={}", broadcast_id, limit),
+        }
     }
 }

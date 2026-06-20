@@ -1,3 +1,4 @@
+use crate::modules::auth::model::User;
 use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::shared::pagination::{CursorParams, Order};
@@ -11,12 +12,57 @@ pub struct SubscribersRepository {
     db: sqlx::PgPool,
 }
 impl SubscribersRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
+}
 
+#[async_trait::async_trait]
+pub trait SubscribersRepo: Send + Sync + 'static {
+    async fn create(
+        &self,
+        subscriber_id: Uuid,
+        subscription_id: Uuid,
+    ) -> Result<(), SubscribersError>;
+
+    async fn delete(
+        &self,
+        subscriber_id: Uuid,
+        subscription_id: Uuid,
+    ) -> Result<(), SubscribersError>;
+
+    async fn find_subscribers(
+        &self,
+        subscription_id: Uuid,
+        viewer_id: Option<Uuid>,
+        params: &CursorParams,
+    ) -> Result<Vec<SubscriberItem>, SubscribersError>;
+
+    async fn find_subscriptions(
+        &self,
+        subscriber_id: Uuid,
+        viewer_id: Option<Uuid>,
+        params: &CursorParams,
+    ) -> Result<Vec<SubscriberItem>, SubscribersError>;
+
+    async fn user_exists(&self, id: Uuid) -> Result<bool, SubscribersError>;
+
+    /// Returns a Set of user IDs that `viewer_id` follows, from `candidate_ids`.
+    /// Used to annotate list results with `is_following`.
+    async fn batch_is_subscribed(
+        &self,
+        viewer_id: Uuid,
+        candidate_ids: &[Uuid],
+    ) -> Result<std::collections::HashSet<Uuid>, SubscribersError>;
+
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, SubscribersError>;
+}
+
+#[async_trait::async_trait]
+impl SubscribersRepo for SubscribersRepository {
     #[instrument(skip(self), fields(subscriber_id = %subscriber_id, subscription_id = %subscription_id))]
-    pub async fn create(
+    async fn create(
         &self,
         subscriber_id: Uuid,
         subscription_id: Uuid,
@@ -37,7 +83,7 @@ impl SubscribersRepository {
     }
 
     #[instrument(skip(self), fields(subscriber_id = %subscriber_id, subscription_id = %subscription_id))]
-    pub async fn delete(
+    async fn delete(
         &self,
         subscriber_id: Uuid,
         subscription_id: Uuid,
@@ -56,7 +102,7 @@ impl SubscribersRepository {
     }
 
     #[instrument(skip(self, params, viewer_id), fields(subscription_id = %subscription_id, ?viewer_id, limit = params.limit))]
-    pub async fn find_subscribers(
+    async fn find_subscribers(
         &self,
         subscription_id: Uuid,
         viewer_id: Option<Uuid>,
@@ -73,7 +119,7 @@ impl SubscribersRepository {
         };
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -87,7 +133,7 @@ impl SubscribersRepository {
                 ON u.id = us.subscriber_id
                 AND u.deleted_at IS NULL
             WHERE us.subscription_id =
-            "#,
+            ",
         );
         qb.push_bind(subscription_id);
 
@@ -128,7 +174,7 @@ impl SubscribersRepository {
     }
 
     #[instrument(skip(self, params, viewer_id), fields(subscriber_id = %subscriber_id, ?viewer_id, limit = params.limit))]
-    pub async fn find_subscriptions(
+    async fn find_subscriptions(
         &self,
         subscriber_id: Uuid,
         viewer_id: Option<Uuid>,
@@ -143,7 +189,7 @@ impl SubscribersRepository {
         };
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -157,7 +203,7 @@ impl SubscribersRepository {
                 ON u.id = us.subscription_id
                 AND u.deleted_at IS NULL
             WHERE us.subscriber_id =
-            "#,
+            ",
         );
         qb.push_bind(subscriber_id);
 
@@ -195,7 +241,7 @@ impl SubscribersRepository {
         Ok(rows)
     }
 
-    pub async fn user_exists(&self, id: Uuid) -> Result<bool, SubscribersError> {
+    async fn user_exists(&self, id: Uuid) -> Result<bool, SubscribersError> {
         sqlx::query_scalar!(
             r#"SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)
             AS "exists!""#,
@@ -208,7 +254,7 @@ impl SubscribersRepository {
 
     /// Returns a Set of user IDs that `viewer_id` follows, from `candidate_ids`.
     /// Used to annotate list results with `is_following`.
-    pub async fn batch_is_subscribed(
+    async fn batch_is_subscribed(
         &self,
         viewer_id: Uuid,
         candidate_ids: &[Uuid],
@@ -225,5 +271,28 @@ impl SubscribersRepository {
         .fetch_all(&self.db)
         .await?;
         Ok(rows.into_iter().collect())
+    }
+
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, SubscribersError> {
+        sqlx::query_as!(
+            User,
+            r#"SELECT
+                    id,
+                    full_name,
+                    bio,
+                    email,
+                    avatar_id,
+                    avatar_url,
+                    verified,
+                    role,
+                    created_at,
+                    updated_at,
+                    deleted_at
+               FROM users WHERE id = $1"#,
+            id
+        )
+        .fetch_optional(&self.db)
+        .await
+        .map_err(SubscribersError::Database)
     }
 }

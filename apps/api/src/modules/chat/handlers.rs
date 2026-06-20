@@ -58,7 +58,7 @@ pub async fn handle_ws_edit_message(app: &MenoState, req: dto::EditMessageReques
         handle_validation_error(app, req.sender_id, req.broadcast_id, e).await;
         return;
     }
-    if let Err(err) = app.chat.service.edit_message(app, &req).await {
+    if let Err(err) = app.chat.service.edit_message(&req).await {
         let code = match &err {
             ChatError::NotFound => WsErrorCode::Unsupported,
             ChatError::NotSender => WsErrorCode::KickedFromRoom,
@@ -77,7 +77,7 @@ pub async fn handle_ws_edit_message(app: &MenoState, req: dto::EditMessageReques
 /// { "event": "deleteMessage", "data": { "broadcastId": "…", "messageId": "…" } }
 /// ```
 pub async fn handle_ws_delete_message(app: &MenoState, req: dto::DeleteMessageRequest) {
-    if let Err(err) = app.chat.service.delete_message(app, &req).await {
+    if let Err(err) = app.chat.service.delete_message(&req).await {
         let code = match &err {
             ChatError::NotSender => WsErrorCode::KickedFromRoom,
             _ => WsErrorCode::Unsupported,
@@ -98,7 +98,7 @@ pub async fn handle_ws_send_reaction(app: &MenoState, req: dto::SendReactionRequ
         return;
     }
 
-    if let Err(err) = app.chat.service.send_reaction(app, &req).await {
+    if let Err(err) = app.chat.service.send_reaction(&req).await {
         let code = match &err {
             ChatError::BroadcastNotLive => WsErrorCode::BroadcastForciblyEnded,
             ChatError::NotParticipant => WsErrorCode::KickedFromRoom,

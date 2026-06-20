@@ -4,7 +4,7 @@ use std::env::var;
 use std::fs::read_to_string;
 
 #[derive(Clone)]
-pub struct MenoConfig {
+pub struct Config {
     pub livekit_api_key: String,
     pub livekit_api_secret: String,
     pub livekit_host: String,
@@ -54,17 +54,94 @@ pub struct MenoConfig {
     pub storage_public_url: String,
 }
 
-impl MenoConfig {
-    pub fn from_env() -> Result<MenoConfig> {
+impl Config {
+    /// Attempts to load the configuration for the application environment variables and secrets.
+    ///
+    /// This function initializes environment variables using `dotenvy` and retrieves the required
+    /// configuration values from the environment or errors if they are not properly set or invalid.
+    ///
+    /// # Returns
+    ///
+    /// `Result<Config>` -
+    /// - On success, returns a `Config` struct containing all the necessary configuration values.
+    /// - On failure, returns an `anyhow::Error` describing the missing or invalid configuration.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any of the required environment variables are missing or contain invalid values:
+    /// - `FIREBASE_SERVICE_ACCOUNT_PATH` must point to a valid JSON file.
+    /// - Critical environment variables such as API keys, secrets, URLs, and token expiration settings must be present.
+    /// - Any value that requires a valid numeric format (e.g., `PORT`, `ACCESS_TOKEN_EXPIRATION`, etc.) must be parseable into the expected type.
+    ///
+    /// # Environment Variables
+    ///
+    /// The following environment variables are used in this function:
+    /// - `FIREBASE_SERVICE_ACCOUNT_PATH`: Path to the Firebase service account JSON file.
+    /// - `LIVEKIT_API_KEY`
+    /// - `LIVEKIT_API_SECRET`
+    /// - `LIVEKIT_HOST`
+    /// - `FIREBASE_PROJECT_ID`
+    /// - `GOOGLE_CLIENT_ID`
+    /// - `GOOGLE_CLIENT_SECRET`
+    /// - `GOOGLE_REDIRECT_URI`
+    /// - `GOOGLE_AUTH_URI`
+    /// - `GOOGLE_TOKEN_URI`
+    /// - `DATABASE_URL`
+    /// - `ENV`: Defaults to `"dev"` if not provided.
+    /// - `PORT`: Defaults to `8080` if not provided.
+    /// - `JWT_SECRET`
+    /// - `JWT_REFRESH_SECRET`
+    /// - `ACCESS_TOKEN_EXPIRATION`: Defaults to `900` seconds (15 minutes) if not provided.
+    /// - `REFRESH_TOKEN_EXPIRATION`: Defaults to `604800` seconds (7 days) if not provided.
+    /// - `REDIS_URL`
+    /// - `SMTP_HOST`
+    /// - `SMTP_PORT`: Defaults to `465` if not provided.
+    /// - `SMTP_USER`
+    /// - `SMTP_PASSWORD`
+    /// - `SMTP_FROM`
+    /// - `STORAGE_ENDPOINT`
+    /// - `STORAGE_ACCESS_KEY`
+    /// - `STORAGE_SECRET_KEY`
+    /// - `STORAGE_BUCKET`
+    /// - `STORAGE_REGION`
+    /// - `STORAGE_PUBLIC_URL`
+    ///
+    /// # Default Values
+    ///
+    /// Some environment variables provide default values if they are not explicitly set:
+    /// - `ENV`: `"dev"`
+    /// - `PORT`: `8080`
+    /// - `ACCESS_TOKEN_EXPIRATION`: `900` seconds
+    /// - `REFRESH_TOKEN_EXPIRATION`: `604800` seconds
+    /// - `SMTP_PORT`: `465`
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// match Config::from_env() {
+    ///     Ok(config) => {
+    ///         println!("Configuration successfully loaded!");
+    ///         // Use the configuration as needed
+    ///     }
+    ///     Err(e) => {
+    ///         eprintln!("Failed to load configuration: {}", e);
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// # Related
+    ///
+    /// See the `Config` struct for details on each configuration field.
+    pub fn from_env() -> Result<Config> {
         dotenvy::dotenv().ok();
 
         let service_account_json = if let Ok(p) = var("FIREBASE_SERVICE_ACCOUNT_PATH") {
-            read_to_string(&p).context(format!("Failed to read service account from {}", p))?
+            read_to_string(&p).context(format!("Failed to read service account from {p}"))?
         } else {
             return Err(anyhow!("FIREBASE_SERVICE_ACCOUNT_PATH is missing"));
         };
 
-        Ok(MenoConfig {
+        Ok(Config {
             livekit_api_key: var("LIVEKIT_API_KEY").context("LIVEKIT_API_KEY is missing")?,
             livekit_api_secret: var("LIVEKIT_API_SECRET")
                 .context("LIVEKIT_API_SECRET is missing")?,

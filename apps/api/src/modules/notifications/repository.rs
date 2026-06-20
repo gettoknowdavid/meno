@@ -15,13 +15,101 @@ pub struct NotificationRepository {
     db: sqlx::PgPool,
 }
 impl NotificationRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
+}
 
+#[async_trait::async_trait]
+pub trait NotificationRepo: Send + Sync + 'static {
     /// Insert a single notification row and return it.
+    async fn create(
+        &self,
+        owner_id: Uuid,
+        template_id: Uuid,
+        actor_id: Option<Uuid>,
+        broadcast_id: Option<Uuid>,
+        metadata: Option<Value>,
+    ) -> Result<Notification, NotificationError>;
+
+    /// Fan-out: insert one row per `owner_id` in a single statement.
+    /// `ON CONFLICT DO NOTHING` makes this safe to retry.
+    /// Returns the number of rows actually inserted.
+    async fn create_bulk(
+        &self,
+        owner_ids: &[Uuid],
+        template_id: Uuid,
+        actor_id: Option<Uuid>,
+        broadcast_id: Option<Uuid>,
+    ) -> Result<u64, NotificationError>;
+
+    /// Cursor-paginated list for `GET /notifications`.
+    /// Joins template + actor in one query; template variable substitution
+    /// is done in the service layer after fetch.
+    async fn find_notifications(
+        &self,
+        query: &NotificationQuery,
+        owner_id: Uuid,
+    ) -> Result<Vec<NotificationListItem>, NotificationError>;
+
+    /// Fast unread count. Used as Redis-fallback when the key is missing.
+    async fn count_unread(&self, owner_id: Uuid) -> Result<i64, NotificationError>;
+
+    /// Returns `true` if the notification exists, belongs to `owner_id`, and is unread.
+    /// Used before `delete` to decide whether to decrement the Redis unread counter.
+    async fn is_unread(
+        &self,
+        notification_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<bool, NotificationError>;
+
+    /// Marks a single notification as read. Returns `true` if a row was updated.
+    async fn mark_read(
+        &self,
+        notification_id: Uuid,
+        owner_id: Uuid,
+    ) -> Result<bool, NotificationError>;
+
+    /// Marks every unread notification for `owner_id` as read.
+    /// Returns the count of rows updated.
+    async fn mark_all_read(&self, owner_id: Uuid) -> Result<u64, NotificationError>;
+
+    /// Hard-deletes a notification. Only the owner can delete their own notifications.
+    async fn delete(&self, notification_id: Uuid, owner_id: Uuid) -> Result<(), NotificationError>;
+
+    /// Look up a template by its type code.
+    /// The service caches these at startup; this is the cold-path fallback.
+    async fn find_template_by_code(
+        &self,
+        code_type: &str,
+    ) -> Result<Option<NotificationTemplate>, NotificationError>;
+
+    /// Load every active template — called once at startup to warm the in-memory cache.
+    async fn find_all_templates(&self) -> Result<Vec<NotificationTemplate>, NotificationError>;
+
+    /// Get the FCM push token for a single user (used in single-notification paths).
+    async fn get_push_token(&self, user_id: Uuid) -> Result<Option<String>, NotificationError>;
+
+    /// Batch-fetch FCM tokens for fan-out sends.
+    /// Only returns tokens for users who have `push_notifications = true`.
+    async fn get_push_tokens_batch(
+        &self,
+        user_ids: &[Uuid],
+    ) -> Result<HashMap<Uuid, String>, NotificationError>;
+
+    /// Clears a stale FCM token (called when FCM returns a 404 / `TOKEN_NOT_REGISTERED`).
+    async fn clear_push_token(&self, user_id: Uuid) -> Result<(), NotificationError>;
+
+    /// Check whether a user has `app_notifications` enabled.
+    async fn has_app_notifications_enabled(&self, user_id: Uuid)
+    -> Result<bool, NotificationError>;
+}
+
+#[async_trait::async_trait]
+impl NotificationRepo for NotificationRepository {
     #[instrument(skip(self), fields(owner_id = %owner_id, template_id = %template_id))]
-    pub async fn create(
+    async fn create(
         &self,
         owner_id: Uuid,
         template_id: Uuid,
@@ -40,16 +128,13 @@ impl NotificationRepository {
             broadcast_id,
             metadata,
         )
-        .fetch_one(&self.db)
-        .await
-        .map_err(NotificationError::Database)
+            .fetch_one(&self.db)
+            .await
+            .map_err(NotificationError::Database)
     }
 
-    /// Fan-out: insert one row per `owner_id` in a single statement.
-    /// `ON CONFLICT DO NOTHING` makes this safe to retry.
-    /// Returns the number of rows actually inserted.
     #[instrument(skip(self), fields(count = owner_ids.len(), template_id = %template_id))]
-    pub async fn create_bulk(
+    async fn create_bulk(
         &self,
         owner_ids: &[Uuid],
         template_id: Uuid,
@@ -76,9 +161,6 @@ impl NotificationRepository {
         Ok(result.rows_affected())
     }
 
-    /// Cursor-paginated list for `GET /notifications`.
-    /// Joins template + actor in one query; template variable substitution
-    /// is done in the service layer after fetch.
     #[instrument(
         skip(self, query),
         fields(
@@ -87,7 +169,7 @@ impl NotificationRepository {
             limit = query.limit()
         )
     )]
-    pub async fn find_notifications(
+    async fn find_notifications(
         &self,
         query: &NotificationQuery,
         owner_id: Uuid,
@@ -101,7 +183,7 @@ impl NotificationRepository {
         };
 
         let mut qb = QueryBuilder::new(
-            r#"SELECT
+            r"SELECT
                     n.id,
                     n.read,
                     n.created_at,
@@ -119,7 +201,7 @@ impl NotificationRepository {
                JOIN  notification_templates ntpl ON ntpl.id = n.template_id
                JOIN  notification_types     nt   ON nt.code = ntpl.type
                LEFT  JOIN users u ON u.id = n.actor_id AND u.deleted_at IS NULL
-               WHERE n.owner_id = "#,
+               WHERE n.owner_id = ",
         );
 
         qb.push_bind(owner_id);
@@ -176,9 +258,8 @@ impl NotificationRepository {
         Ok(items)
     }
 
-    /// Fast unread count. Used as Redis-fallback when the key is missing.
     #[instrument(skip(self), fields(owner_id = %owner_id))]
-    pub async fn count_unread(&self, owner_id: Uuid) -> Result<i64, NotificationError> {
+    async fn count_unread(&self, owner_id: Uuid) -> Result<i64, NotificationError> {
         let count = sqlx::query_scalar!(
             r#"SELECT COUNT(*) AS count
                FROM notifications
@@ -191,10 +272,8 @@ impl NotificationRepository {
         Ok(count.unwrap_or(0))
     }
 
-    /// Returns `true` if the notification exists, belongs to `owner_id`, and is unread.
-    /// Used before `delete` to decide whether to decrement the Redis unread counter.
     #[instrument(skip(self))]
-    pub async fn is_unread(
+    async fn is_unread(
         &self,
         notification_id: Uuid,
         owner_id: Uuid,
@@ -210,9 +289,8 @@ impl NotificationRepository {
         Ok(result == Some(false))
     }
 
-    /// Marks a single notification as read. Returns `true` if a row was updated.
     #[instrument(skip(self))]
-    pub async fn mark_read(
+    async fn mark_read(
         &self,
         notification_id: Uuid,
         owner_id: Uuid,
@@ -232,10 +310,8 @@ impl NotificationRepository {
         Ok(result.is_some())
     }
 
-    /// Marks every unread notification for `owner_id` as read.
-    /// Returns the count of rows updated.
     #[instrument(skip(self), fields(owner_id = %owner_id))]
-    pub async fn mark_all_read(&self, owner_id: Uuid) -> Result<u64, NotificationError> {
+    async fn mark_all_read(&self, owner_id: Uuid) -> Result<u64, NotificationError> {
         let result = sqlx::query!(
             r#"UPDATE notifications
                SET read = true, read_at = NOW()
@@ -249,13 +325,8 @@ impl NotificationRepository {
         Ok(result.len() as u64)
     }
 
-    /// Hard-deletes a notification. Only the owner can delete their own notifications.
     #[instrument(skip(self))]
-    pub async fn delete(
-        &self,
-        notification_id: Uuid,
-        owner_id: Uuid,
-    ) -> Result<(), NotificationError> {
+    async fn delete(&self, notification_id: Uuid, owner_id: Uuid) -> Result<(), NotificationError> {
         sqlx::query!(
             r#"DELETE FROM notifications WHERE id = $1 AND owner_id = $2"#,
             notification_id,
@@ -268,10 +339,8 @@ impl NotificationRepository {
         Ok(())
     }
 
-    /// Look up a template by its type code.
-    /// The service caches these at startup; this is the cold-path fallback.
     #[instrument(skip(self), fields(code_type = %code_type))]
-    pub async fn find_template_by_code(
+    async fn find_template_by_code(
         &self,
         code_type: &str,
     ) -> Result<Option<NotificationTemplate>, NotificationError> {
@@ -287,9 +356,8 @@ impl NotificationRepository {
         .map_err(NotificationError::Database)
     }
 
-    /// Load every active template — called once at startup to warm the in-memory cache.
     #[instrument(skip(self))]
-    pub async fn find_all_templates(&self) -> Result<Vec<NotificationTemplate>, NotificationError> {
+    async fn find_all_templates(&self) -> Result<Vec<NotificationTemplate>, NotificationError> {
         sqlx::query_as!(
             NotificationTemplate,
             r#"SELECT * FROM notification_templates WHERE is_active = true ORDER BY type"#,
@@ -299,9 +367,8 @@ impl NotificationRepository {
         .map_err(NotificationError::Database)
     }
 
-    /// Get the FCM push token for a single user (used in single-notification paths).
     #[instrument(skip(self), fields(user_id = %user_id))]
-    pub async fn get_push_token(&self, user_id: Uuid) -> Result<Option<String>, NotificationError> {
+    async fn get_push_token(&self, user_id: Uuid) -> Result<Option<String>, NotificationError> {
         sqlx::query_scalar!(
             r#"SELECT push_notification_token FROM general_settings WHERE user_id = $1"#,
             user_id,
@@ -311,10 +378,8 @@ impl NotificationRepository {
         .map_err(NotificationError::Database)
     }
 
-    /// Batch-fetch FCM tokens for fan-out sends.
-    /// Only returns tokens for users who have `push_notifications = true`.
     #[instrument(skip(self), fields(count = user_ids.len()))]
-    pub async fn get_push_tokens_batch(
+    async fn get_push_tokens_batch(
         &self,
         user_ids: &[Uuid],
     ) -> Result<HashMap<Uuid, String>, NotificationError> {
@@ -341,8 +406,7 @@ impl NotificationRepository {
         Ok(tokens)
     }
 
-    /// Clears a stale FCM token (called when FCM returns a 404 / TOKEN_NOT_REGISTERED).
-    pub async fn clear_push_token(&self, user_id: Uuid) -> Result<(), NotificationError> {
+    async fn clear_push_token(&self, user_id: Uuid) -> Result<(), NotificationError> {
         sqlx::query!(
             r#"UPDATE general_settings SET push_notification_token = NULL WHERE user_id = $1"#,
             user_id,
@@ -354,8 +418,7 @@ impl NotificationRepository {
         Ok(())
     }
 
-    /// Check whether a user has `app_notifications` enabled.
-    pub async fn has_app_notifications_enabled(
+    async fn has_app_notifications_enabled(
         &self,
         user_id: Uuid,
     ) -> Result<bool, NotificationError> {

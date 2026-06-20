@@ -1,8 +1,8 @@
-/// Bind cursor parameters to a sqlx QueryBuilder.
+/// Bind cursor parameters to a sqlx `QueryBuilder`.
 ///
 /// Call after the main WHERE clause.  Appends:
-///   AND (ts_col, id_col) < ($N, $N+1) (for DESC)
-///   AND (ts_col, id_col) > ($N, $N+1) (for ASC)
+///   AND (`ts_col`, `id_col`) < ($N, $N+1) (for DESC)
+///   AND (`ts_col`, `id_col`) > ($N, $N+1) (for ASC)
 pub fn push_cursor_condition(
     qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
     ts_col: &str,
@@ -21,7 +21,7 @@ pub fn push_cursor_condition(
     }
 }
 
-/// Push ORDER BY + LIMIT to a QueryBuilder. Always call last.
+/// Push ORDER BY + LIMIT to a `QueryBuilder`. Always call last.
 pub fn push_order_and_limit(
     qb: &mut sqlx::QueryBuilder<'_, sqlx::Postgres>,
     ts_col: &str,

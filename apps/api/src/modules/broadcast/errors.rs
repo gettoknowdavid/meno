@@ -1,6 +1,6 @@
 use crate::modules::broadcast::dto::MAX_COHOSTS;
-use crate::shared::pagination::CursorError;
 use crate::shared::errors::{error_response, validation_error_response};
+use crate::shared::pagination::CursorError;
 use crate::shared::services::redis::coalescing::CacheError;
 use axum::http::StatusCode;
 use validator::ValidationErrors;
@@ -92,6 +92,9 @@ pub enum BroadcastError {
     LiveKitUnavailable,
 
     // 500 INTERNAL
+    #[error("Broadcast service configuration missing")]
+    ServiceConfigMissing,
+
     #[error("Cursor error: {0}")]
     Cursor(#[from] CursorError),
 
@@ -247,6 +250,20 @@ impl axum::response::IntoResponse for BroadcastError {
                 "BROADCAST_SERVICE_UNAVAILABLE",
                 &self.to_string(),
             ),
+            BroadcastError::ServiceConfigMissing => {
+                tracing::error!(
+                    error.kind = "service",
+                    // Don't log the full SQL error in prod (may contain data)
+                    // Use error chain for correlation
+                    error.message = %self.to_string(),
+                    "broadcast service configs missing"
+                );
+                error_response(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "INTERNAL_ERROR",
+                    "An internal error occurred",
+                )
+            }
             BroadcastError::Database(e) => {
                 tracing::error!(
                     error.kind = "database",

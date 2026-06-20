@@ -5,7 +5,7 @@ use serde::Serialize;
 
 /// The single response shape for every endpoint in the app.
 ///
-/// Matches the NestJS contract your clients (Flutter, Next.js) are built against:
+/// Matches the `NestJS` contract your clients (Flutter, Next.js) are built against:
 /// { code, message, status, data? }
 ///
 /// `data` is Option<T>, so endpoints that return nothing (logout, delete, mark-read)
@@ -48,7 +48,7 @@ impl<T: Serialize> MenoResponse<T> {
 
 impl MenoResponse<()> {
     /// Success with no payload — logout, delete, mark-read, leave broadcast, etc.
-    /// `data` is omitted entirely from the JSON (skip_serializing_if = None).
+    /// `data` is omitted entirely from the JSON (`skip_serializing_if` = None).
     pub fn no_content(message: impl Into<String>) -> Self {
         Self {
             status_code: StatusCode::OK.as_u16(),

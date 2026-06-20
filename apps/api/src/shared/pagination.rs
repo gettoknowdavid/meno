@@ -1,8 +1,8 @@
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::{Deserialize, Serialize};
+use serde_with::{DisplayFromStr, serde_as};
 use time::OffsetDateTime;
 use uuid::Uuid;
-use serde_with::{serde_as, DisplayFromStr};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CURSOR
@@ -16,13 +16,15 @@ pub struct Cursor(pub String);
 
 impl Cursor {
     /// Encode a (timestamp, uuid) pair — used by the vast majority of feeds.
+    #[must_use]
     pub fn from_timestamp_id(ts: OffsetDateTime, id: Uuid) -> Self {
         let raw = format!("{}|{}", ts.unix_timestamp_nanos(), id);
         Self(URL_SAFE_NO_PAD.encode(raw))
     }
 
-    /// Encode (primary_ts, secondary_ts, uuid) — used for composite sorts
-    /// such as notes (pinned + updated_at) and folders (pinned + created_at).
+    /// Encode (`primary_ts`, `secondary_ts`, `uuid`) — used for composite sorts
+    /// such as notes (`pinned` + `updated_at`) and folders (`pinned` + `created_at`).
+    #[must_use]
     pub fn from_two_timestamps_id(ts1: OffsetDateTime, ts2: OffsetDateTime, id: Uuid) -> Self {
         let raw = format!(
             "{}:{}|{}",
@@ -34,13 +36,14 @@ impl Cursor {
     }
 
     /// Encode (i64 score, uuid) — used for count-sorted queries such as
-    /// broadcasts sorted by total_listeners.
+    /// broadcasts sorted by `total_listeners`.
+    #[must_use]
     pub fn from_score_id(score: i64, id: Uuid) -> Self {
-        let raw = format!("score:{}|{}", score, id);
+        let raw = format!("score:{score}|{id}");
         Self(URL_SAFE_NO_PAD.encode(raw))
     }
 
-    /// Decode into (OffsetDateTime, Uuid).
+    /// Decode into (`OffsetDateTime`, Uuid).
     pub fn to_timestamp_id(&self) -> Result<(OffsetDateTime, Uuid), CursorError> {
         let bytes = URL_SAFE_NO_PAD
             .decode(&self.0)
@@ -57,7 +60,7 @@ impl Cursor {
         Ok((ts, id))
     }
 
-    /// Decode into (OffsetDateTime, OffsetDateTime, Uuid).
+    /// Decode into (`OffsetDateTime`, `OffsetDateTime`, `Uuid`).
     pub fn to_two_timestamps_id(
         &self,
     ) -> Result<(OffsetDateTime, OffsetDateTime, Uuid), CursorError> {
@@ -101,9 +104,10 @@ impl Cursor {
     }
 
     /// Encode (name, uuid) for name-based sorting
+    #[must_use]
     pub fn from_name_id(name: &str, id: Uuid) -> Self {
         // Names can have special chars, so we encode safely
-        let raw = format!("name:{}|{}", name, id);
+        let raw = format!("name:{name}|{id}");
         Self(URL_SAFE_NO_PAD.encode(raw))
     }
 
@@ -123,11 +127,12 @@ impl Cursor {
         Ok((name, id))
     }
 
-    /// Encode (rank_score, timestamp, uuid) for search result pagination
+    /// Encode (`rank_score`, `timestamp`, `uuid`) for search result pagination
     /// Rank is a float (ts_rank result), but we store as string to preserve precision
+    #[must_use]
     pub fn from_rank_timestamp_id(rank: f32, ts: OffsetDateTime, id: Uuid) -> Self {
         // Store rank with 6 decimal places for consistency
-        let raw = format!("rank:{}|{}|{}", rank, ts.unix_timestamp_nanos(), id);
+        let raw = format!("rank:{rank}|{}|{id}", ts.unix_timestamp_nanos());
         Self(URL_SAFE_NO_PAD.encode(raw))
     }
 
@@ -187,11 +192,13 @@ pub struct CursorParams {
 
 impl CursorParams {
     /// Validated limit, clamped to [1, 100].
+    #[must_use]
     pub fn limit(&self) -> i64 {
         self.limit.unwrap_or(20).clamp(1, 100)
     }
 
     /// limit + 1 — used for the "fetch one extra to detect next page" trick.
+    #[must_use]
     pub fn limit_plus_one(&self) -> i64 {
         self.limit() + 1
     }
@@ -230,7 +237,7 @@ impl<T: Serialize> CursorPage<T> {
             rows.truncate(limit as usize);
         }
         let next_cursor = if has_next {
-            rows.last().map(|r| encode_cursor(r))
+            rows.last().map(encode_cursor)
         } else {
             None
         };
@@ -258,6 +265,7 @@ pub enum Order {
 
 impl Order {
     /// SQL direction fragment, including NULLS handling.
+    #[must_use]
     pub fn sql(self) -> &'static str {
         match self {
             Order::Desc => "DESC NULLS LAST",
@@ -269,6 +277,7 @@ impl Order {
     ///
     /// For DESC (newest-first) the next page has rows *before* the cursor row,
     /// so we use `<`.  For ASC the next page has rows *after*, so we use `>`.
+    #[must_use]
     pub fn cursor_op(self) -> &'static str {
         match self {
             Order::Desc => "<",

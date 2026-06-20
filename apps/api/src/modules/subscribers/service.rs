@@ -1,29 +1,31 @@
 use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
-use crate::modules::subscribers::repository::SubscribersRepository;
+use crate::modules::subscribers::repository::{SubscribersRepo, SubscribersRepository};
 use crate::shared::middleware::auth::AuthUser;
 use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
 use crate::shared::services::ws::dto::WsPayload;
-use crate::state::MenoState;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use std::sync::Arc;
 use tracing::instrument;
 use uuid::Uuid;
 
 #[derive(Clone)]
 pub struct SubscribersService {
-    pub repo: SubscribersRepository,
+    repo: Arc<dyn SubscribersRepo>,
+    pubsub: Arc<WsPubSubBridge>,
 }
 impl SubscribersService {
-    pub fn new(db: sqlx::PgPool) -> Self {
+    pub fn new(db: sqlx::PgPool, pubsub: Arc<WsPubSubBridge>) -> Self {
+        let repo: Arc<dyn SubscribersRepo> = Arc::new(SubscribersRepository::new(db));
         Self {
-            repo: SubscribersRepository::new(db),
+            repo: Arc::clone(&repo),
+            pubsub,
         }
     }
 
-    #[instrument(skip(self, app, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
+    #[instrument(skip(self, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
     pub async fn subscribe(
         &self,
-        app: &MenoState,
         auth_user: AuthUser,
         subscription_id: Uuid,
     ) -> Result<(), SubscribersError> {
@@ -31,16 +33,15 @@ impl SubscribersService {
             return Err(SubscribersError::CannotSubscribeToSelf);
         }
 
-        app.auth
-            .service
-            .find_user_by_id(subscription_id)
-            .await
-            .map_err(|_| SubscribersError::SubscriptionNotFound)?
-            .ok_or(SubscribersError::SubscriptionNotFound)?;
+        let (user_result, create_result) = tokio::join!(
+            self.repo.find_user_by_id(subscription_id),
+            self.repo.create(auth_user.id, subscription_id),
+        );
 
-        self.repo.create(auth_user.id, subscription_id).await?;
+        user_result?;
+        create_result?;
 
-        let pubsub = Arc::clone(&app.pubsub);
+        let pubsub = Arc::clone(&self.pubsub);
         let subscriber_id = auth_user.id;
         let subscriber_name = auth_user.full_name.clone();
         tokio::spawn(async move {
@@ -55,10 +56,9 @@ impl SubscribersService {
         Ok(())
     }
 
-    #[instrument(skip(self, app, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
+    #[instrument(skip(self, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
     pub async fn unsubscribe(
         &self,
-        app: &MenoState,
         auth_user: AuthUser,
         subscription_id: Uuid,
     ) -> Result<(), SubscribersError> {
@@ -66,16 +66,15 @@ impl SubscribersService {
             return Err(SubscribersError::CannotSubscribeToSelf);
         }
 
-        app.auth
-            .service
-            .find_user_by_id(subscription_id)
-            .await
-            .map_err(|_| SubscribersError::SubscriptionNotFound)?
-            .ok_or(SubscribersError::SubscriptionNotFound)?;
+        let (user_result, delete_result) = tokio::join!(
+            self.repo.find_user_by_id(subscription_id),
+            self.repo.delete(auth_user.id, subscription_id)
+        );
 
-        self.repo.delete(auth_user.id, subscription_id).await?;
+        user_result?;
+        delete_result?;
 
-        let pubsub = Arc::clone(&app.pubsub);
+        let pubsub = Arc::clone(&self.pubsub);
         let subscriber_id = auth_user.id;
         let subscriber_name = auth_user.full_name.clone();
         tokio::spawn(async move {
@@ -102,7 +101,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscribers(auth_id, Some(auth_id), &params)
+            .find_subscribers(auth_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -122,7 +121,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscriptions(auth_id, Some(auth_id), &params)
+            .find_subscriptions(auth_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -143,7 +142,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscribers(user_id, Some(auth_id), &params)
+            .find_subscribers(user_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -164,7 +163,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscriptions(user_id, Some(auth_id), &params)
+            .find_subscriptions(user_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {

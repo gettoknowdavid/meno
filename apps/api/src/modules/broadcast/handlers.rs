@@ -17,7 +17,7 @@ pub async fn create_broadcast(
     MenoBody(body): MenoBody<dto::CreateBroadcastRequest>,
 ) -> Result<MenoResponse<dto::BroadcastResponse>, BroadcastError> {
     body.validate()?;
-    let broadcast = app.broadcast.service.create(&app, body, auth.id).await?;
+    let broadcast = app.broadcast.service.create(body, auth.id).await?;
     Ok(MenoResponse::created("Broadcast created", broadcast))
 }
 
@@ -31,11 +31,7 @@ pub async fn update_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    let broadcast = app
-        .broadcast
-        .service
-        .update(&app, body, id, auth.id)
-        .await?;
+    let broadcast = app.broadcast.service.update(body, id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast updated", broadcast))
 }
 
@@ -47,7 +43,7 @@ pub async fn delete_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    app.broadcast.service.delete(&app, id, auth.id).await?;
+    app.broadcast.service.delete(id, auth.id).await?;
     Ok(MenoResponse::no_content("Broadcast deleted successfully"))
 }
 
@@ -56,7 +52,7 @@ pub async fn go_live(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::BroadcastSessionResponse>, BroadcastError> {
-    let session = app.broadcast.service.start(&app, id, auth.id).await?;
+    let session = app.broadcast.service.start(id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast started", session))
 }
 
@@ -65,7 +61,7 @@ pub async fn end_broadcast(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<dto::EndBroadcastResponse>, BroadcastError> {
-    let response = app.broadcast.service.end(&app, id, auth.id).await?;
+    let response = app.broadcast.service.end(id, auth.id).await?;
     Ok(MenoResponse::created("Broadcast ended", response))
 }
 
@@ -77,7 +73,7 @@ pub async fn join_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    let response = app.broadcast.service.join(&app, id, auth.id).await?;
+    let response = app.broadcast.service.join(id, auth.id).await?;
     Ok(MenoResponse::ok("Broadcast joined", response))
 }
 
@@ -89,7 +85,7 @@ pub async fn leave_broadcast(
     if id.is_nil() {
         return Err(BroadcastError::InvalidId);
     }
-    let response = app.broadcast.service.leave(&app, id, auth.id).await?;
+    let response = app.broadcast.service.leave(id, auth.id).await?;
     Ok(MenoResponse::ok("Broadcast left", response))
 }
 
@@ -102,7 +98,7 @@ pub async fn add_cohost(
     let response = app
         .broadcast
         .service
-        .add_cohost(&app, id, auth.id, body.cohost)
+        .add_cohost(id, auth.id, body.cohost)
         .await?;
     Ok(MenoResponse::ok("Cohost added successfully", response))
 }
@@ -116,7 +112,7 @@ pub async fn remove_cohost(
     let remove_from_room = body.remove_from_room.unwrap_or(false);
     app.broadcast
         .service
-        .remove_cohost(&app, id, cohost_id, auth.id, remove_from_room)
+        .remove_cohost(id, cohost_id, auth.id, remove_from_room)
         .await?;
     Ok(MenoResponse::no_content("Cohost removed successfully"))
 }
