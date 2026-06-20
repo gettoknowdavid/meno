@@ -286,19 +286,19 @@ impl AuthService {
                 self.repo
                     .link_provider(user.id, &AuthProvider::Google, &info.sub)
                     .await?;
-               
+
                 user
             } else {
                 let user = self.repo.create_user(&info.name, &info.email).await?;
-                
+
                 self.repo
                     .create_identity(user.id, &AuthProvider::Google, &user.email, None)
                     .await?;
-                
+
                 if info.email_verified {
                     self.repo.set_verified(&info.email).await?;
                 }
-                
+
                 self.repo
                     .find_by_id(user.id)
                     .await?

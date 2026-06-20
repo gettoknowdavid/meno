@@ -83,7 +83,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         ws.clone(),
         jobs.clone(),
     );
-    let subscribers = SubscribersState::new(db.clone());
+    let subscribers = SubscribersState::new(db.clone(), pubsub.clone());
     let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
 

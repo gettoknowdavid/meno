@@ -15,7 +15,7 @@ pub async fn subscribe(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<()>, SubscribersError> {
-    app.subscribers.service.subscribe(&app, auth, id).await?;
+    app.subscribers.service.subscribe(auth, id).await?;
     Ok(MenoResponse::no_content("Subscribed to user successfully"))
 }
 
@@ -24,7 +24,7 @@ pub async fn unsubscribe(
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
 ) -> Result<MenoResponse<()>, SubscribersError> {
-    app.subscribers.service.unsubscribe(&app, auth, id).await?;
+    app.subscribers.service.unsubscribe(auth, id).await?;
     Ok(MenoResponse::no_content("Unsubscribed successfully"))
 }
 
