@@ -84,7 +84,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         jobs.clone(),
     );
     let subscribers = SubscribersState::new(db.clone());
-    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone());
+    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
 
     let state = Arc::new(MenoState {

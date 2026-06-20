@@ -4,14 +4,14 @@ use crate::modules::notifications::dto::{
 };
 use crate::modules::notifications::error::NotificationError;
 use crate::modules::notifications::model::{NotificationTemplate, codes};
-use crate::modules::notifications::repository::NotificationRepository;
+use crate::modules::notifications::repository::{NotificationRepo, NotificationRepository};
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::push::PushNotificationService;
 use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
 use crate::shared::services::ws::dto::WsPayload;
+use crate::shared::services::ws::pubsub::WsPubSubBridge;
 use crate::shared::types::dto::UserSummary;
-use crate::state::MenoState;
 use fred::prelude::KeysInterface;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -28,18 +28,26 @@ type TemplateCache = Arc<RwLock<HashMap<String, NotificationTemplate>>>;
 
 #[derive(Clone)]
 pub struct NotificationService {
-    repo: NotificationRepository,
+    repo: Arc<dyn NotificationRepo>,
     redis: Redis,
     push: PushNotificationService,
+    pubsub: Arc<WsPubSubBridge>,
     templates: TemplateCache,
 }
 impl NotificationService {
     #[must_use]
-    pub fn new(db: sqlx::PgPool, redis: Redis, push: PushNotificationService) -> Self {
+    pub fn new(
+        db: sqlx::PgPool,
+        redis: Redis,
+        push: PushNotificationService,
+        pubsub: Arc<WsPubSubBridge>,
+    ) -> Self {
+        let repo: Arc<dyn NotificationRepo> = Arc::new(NotificationRepository::new(db));
         Self {
-            repo: NotificationRepository::new(db),
+            repo: Arc::clone(&repo),
             redis,
             push,
+            pubsub,
             templates: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -70,12 +78,11 @@ impl NotificationService {
     ///
     /// This function is **fire-and-forget safe** — callers may `tokio::spawn` it.
     #[instrument(
-        skip(self, app, actor, broadcast_title),
+        skip(self,  actor, broadcast_title),
         fields(owner_id = %owner_id, type_code = %type_code)
     )]
     pub async fn notify(
         &self,
-        app: &MenoState,
         owner_id: Uuid,
         type_code: &str,
         actor: Option<&UserSummary>,
@@ -94,11 +101,11 @@ impl NotificationService {
             .await?;
 
         let ws_payload = WsPayload::notification(owner_id, &title, &body);
-        app.pubsub.publish_to_user(owner_id, ws_payload).await;
+        self.pubsub.publish_to_user(owner_id, ws_payload).await;
 
         // Handle Push notifications
         let push = self.push.clone();
-        let repo = self.repo.clone();
+        let repo = Arc::clone(&self.repo);
         let title_clone = title.clone();
         let body_clone = body.clone();
         let image_clone = image_url.clone();

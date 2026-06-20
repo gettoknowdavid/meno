@@ -20,7 +20,7 @@ mod dto;
 pub mod error;
 
 use crate::config::Config;
-use crate::modules::notifications::repository::NotificationRepository;
+use crate::modules::notifications::repository::NotificationRepo;
 use crate::shared::services::livekit::circuit_breaker::CircuitBreaker;
 use crate::shared::services::push::dto::{
     FcmAndroidConfig, FcmAndroidNotification, FcmApnsAlert, FcmApnsAps, FcmApnsConfig,
@@ -210,7 +210,7 @@ impl PushNotificationService {
     pub async fn send_to_user_if_enabled(
         &self,
         user_id: Uuid,
-        repo: &NotificationRepository,
+        repo: &Arc<dyn NotificationRepo>,
         title: &str,
         body: &str,
         image: Option<String>,
@@ -219,7 +219,9 @@ impl PushNotificationService {
         // Fetch push token (also acts as the push_notifications guard —
         // `get_push_token` only returns tokens when `push_notifications = true`
         // in the batch query, but for single sends we check the column directly).
-        let Ok(Some(token)) = repo.get_push_token(user_id).await else { return };
+        let Ok(Some(token)) = repo.get_push_token(user_id).await else {
+            return;
+        };
 
         let mut data = HashMap::new();
         data.insert("deep_link".to_string(), deep_link.to_owned());
