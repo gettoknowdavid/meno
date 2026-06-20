@@ -36,6 +36,8 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use crate::modules::auth::repository::AuthRepository;
+use crate::shared::identity::IdentityReader;
 
 /// Top-level application state.
 ///
@@ -73,6 +75,8 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
     let bridge = build_ws_pubsub_bridge(&config, ws.clone(), redis.clone()).await;
     let pubsub = Arc::new(bridge);
 
+    let id_reader: Arc<dyn IdentityReader> = Arc::new(AuthRepository::new(db.clone()));
+
     let auth = AuthState::new(db.clone(), redis.clone(), &config, jobs.clone());
     let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
     let broadcast = BroadcastState::new(
@@ -83,7 +87,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         ws.clone(),
         jobs.clone(),
     );
-    let subscribers = SubscribersState::new(db.clone(), pubsub.clone());
+    let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), pubsub.clone());
     let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
 
