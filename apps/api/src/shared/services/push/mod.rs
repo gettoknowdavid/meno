@@ -2,11 +2,11 @@
 //!
 //! ## Why no dedicated FCM crate?
 //! The FCM v1 API is a single JSON POST per message. A `reqwest` client +
-//! a Google OAuth2 token request is all that is needed — no wrapper crate
+//! a Google `OAuth2` token request is all that is needed — no wrapper crate
 //! required and no additional dependency surface area.
 //!
 //! ## Token lifecycle
-//! Google OAuth2 access tokens expire after 1 hour. We cache the token in
+//! Google `OAuth2` access tokens expire after 1 hour. We cache the token in
 //! memory and refresh it ~60 seconds before expiry. The service-account
 //! JSON is expected either as a file path in `FIREBASE_SERVICE_ACCOUNT_PATH`
 //! or inline JSON in `FIREBASE_SERVICE_ACCOUNT_JSON`.
@@ -40,7 +40,7 @@ use uuid::Uuid;
 /// Summary returned by `send_multicast`.
 #[derive(Debug, Default)]
 pub struct MulticastResult {
-    /// (user_id, error) pairs for deliveries that failed.
+    /// (`user_id`, error) pairs for deliveries that failed.
     /// Callers should queue a cleanup job for `TokenInvalid` entries.
     pub failed: Vec<(Uuid, PushError)>,
 
@@ -64,6 +64,7 @@ pub struct PushNotificationService {
     breaker: Arc<CircuitBreaker>,
 }
 impl PushNotificationService {
+    #[must_use]
     pub fn new(config: &Config) -> Self {
         let client = Client::builder()
             .timeout(Duration::from_secs(10))
@@ -92,7 +93,6 @@ impl PushNotificationService {
         body: &str,
         image: Option<String>,
         data: HashMap<String, String>,
-        badge: Option<i64>,
     ) -> Result<(), PushError> {
         self.breaker
             .check()
@@ -106,14 +106,7 @@ impl PushNotificationService {
         );
 
         let envelope = FcmEnvelope {
-            message: Self::build_message(
-                Some(device_token.to_owned()),
-                title,
-                body,
-                image,
-                data,
-                badge,
-            ),
+            message: Self::build_message(Some(device_token.to_owned()), title, body, image, data),
         };
 
         let resp = self
@@ -169,7 +162,7 @@ impl PushNotificationService {
         // (which would require lifetime annotations on the stream).
         let title_owned = title.to_owned();
         let body_owned = body.to_owned();
-        let image_owned = image.to_owned();
+        let image_owned = image.clone();
         let deep_link_owned = deep_link.to_owned();
 
         let result_stream = stream::iter(tokens).map(|(user_id, token)| {
@@ -183,7 +176,7 @@ impl PushNotificationService {
                 let mut data = HashMap::new();
                 data.insert("deep_link".to_string(), deep_link);
 
-                let result = svc.send(&token, &title, &body, image, data, None).await;
+                let result = svc.send(&token, &title, &body, image, data).await;
                 (user_id, result)
             }
         });
@@ -222,21 +215,17 @@ impl PushNotificationService {
         body: &str,
         image: Option<String>,
         deep_link: &str,
-        badge: Option<i64>,
     ) {
         // Fetch push token (also acts as the push_notifications guard —
         // `get_push_token` only returns tokens when `push_notifications = true`
         // in the batch query, but for single sends we check the column directly).
-        let token = match repo.get_push_token(user_id).await {
-            Ok(Some(t)) => t,
-            _ => return, // no token or DB error — skip silently
-        };
+        let Ok(Some(token)) = repo.get_push_token(user_id).await else { return };
 
         let mut data = HashMap::new();
         data.insert("deep_link".to_string(), deep_link.to_owned());
         data.insert("user_id".to_string(), user_id.to_string());
 
-        match self.send(&token, title, body, image, data, badge).await {
+        match self.send(&token, title, body, image, data).await {
             Ok(()) => {}
             Err(PushError::TokenInvalid) => {
                 // Token rotated — clean it up asynchronously.
@@ -255,15 +244,15 @@ impl PushNotificationService {
         }
     }
 
-    /// Returns a valid Google OAuth2 bearer token, refreshing if needed.
+    /// Returns a valid Google `OAuth2` bearer token, refreshing if needed.
     async fn get_access_token(&self) -> Result<String, PushError> {
         let mut cache = self.token_cache.lock().await;
 
         // Return cached token if it has more than 60 s remaining.
-        if let Some(ref cached) = *cache {
-            if cached.expires_at > Instant::now() + Duration::from_secs(60) {
-                return Ok(cached.access_token.clone());
-            }
+        if let Some(ref cached) = *cache
+            && cached.expires_at > Instant::now() + Duration::from_mins(1)
+        {
+            return Ok(cached.access_token.clone());
         }
 
         let token = self.fetch_google_token().await?;
@@ -344,7 +333,6 @@ impl PushNotificationService {
         body: &str,
         image: Option<String>,
         data: HashMap<String, String>,
-        badge: Option<i64>,
     ) -> FcmMessage {
         let mut apns_headers = HashMap::new();
         apns_headers.insert("apns-priority".to_string(), "10".to_string());
@@ -354,7 +342,7 @@ impl PushNotificationService {
             notification: FcmNotification {
                 title: title.to_owned(),
                 body: body.to_owned(),
-                image: image.to_owned(),
+                image: image.clone(),
             },
             data,
             android: FcmAndroidConfig {
@@ -372,7 +360,7 @@ impl PushNotificationService {
                             title: title.to_owned(),
                             body: body.to_owned(),
                         },
-                        badge,
+                        badge: None,
                         sound: "default".to_string(),
                         content_available: 1,
                     },
@@ -383,7 +371,7 @@ impl PushNotificationService {
 }
 
 // ==================== JWT HELPER ====================
-/// Build an RS256-signed JWT assertion for the Google service-account OAuth2 flow.
+/// Build an RS256-signed JWT assertion for the Google service-account `OAuth2` flow.
 ///
 /// Requires the `jsonwebtoken` crate which is already in your dependency tree.
 fn build_service_account_jwt(

@@ -18,9 +18,9 @@ pub fn hash_password(password: &str) -> Result<String, Error> {
     Ok(hash.to_string())
 }
 
+#[must_use]
 pub fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
         .ok()
-        .map(|h| argon2().verify_password(password.as_bytes(), &h).is_ok())
-        .unwrap_or(false)
+        .is_some_and(|h| argon2().verify_password(password.as_bytes(), &h).is_ok())
 }

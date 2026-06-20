@@ -85,7 +85,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
     );
     let subscribers = SubscribersState::new(db.clone());
     let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone());
-    let chat = ChatState::new(db.clone(), redis.clone());
+    let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
 
     let state = Arc::new(MenoState {
         auth,
@@ -103,12 +103,12 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         db: db.clone(),
     });
 
-    start_background_workers(&state.db, Arc::clone(&state));
+    start_background_workers(&state.db, &state);
     build_middleware_stack(state)
 }
 
 async fn build_ws_pubsub_bridge(config: &Config, ws: WsService, redis: Redis) -> WsPubSubBridge {
-    let bridge = WsPubSubBridge::build(&config, ws, redis)
+    let bridge = WsPubSubBridge::build(config, ws, redis)
         .await
         .expect("WsPubSubBridge failed to initialise");
     bridge.spawn_subscriber_loop();
@@ -152,9 +152,9 @@ fn build_cors(config: &Config) -> CorsLayer {
         ]))
 }
 
-fn build_middleware_stack(state: Arc<MenoState>) -> Router {
+fn build_middleware_stack(app: Arc<MenoState>) -> Router {
     let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-    let cors = build_cors(&state.config);
+    let cors = build_cors(&app.config);
     let x_req_id = HeaderName::from_static("x-request-id");
 
     Router::<Arc<MenoState>>::new()
@@ -168,7 +168,7 @@ fn build_middleware_stack(state: Arc<MenoState>) -> Router {
             get(crate::shared::services::ws::handlers::ws_upgrade),
         )
         .layer(prometheus_layer)
-        .merge(build_meno_routes(state.clone()))
+        .merge(build_meno_routes(app.clone()))
         .layer(from_fn(timing_middleware))
         .layer(
             ServiceBuilder::new()
@@ -194,14 +194,14 @@ fn build_middleware_stack(state: Arc<MenoState>) -> Router {
                 ))
                 .layer(cors),
         )
-        .with_state(state)
+        .with_state(app)
 }
 
-fn start_background_workers(db: &PgPool, state: Arc<MenoState>) {
+fn start_background_workers(db: &PgPool, app: &Arc<MenoState>) {
     let pool = db.clone();
-    let s = Arc::clone(&state);
+    let a = Arc::clone(app);
     tokio::spawn(async move {
-        if let Err(e) = crate::jobs::monitor::run_monitor(pool, s).await {
+        if let Err(e) = crate::jobs::monitor::run_monitor(pool, a).await {
             tracing::error!(error = %e, "Apalis monitor exited unexpectedly");
         }
     });

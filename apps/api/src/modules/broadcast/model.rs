@@ -42,7 +42,7 @@ impl Broadcast {
                     BroadcastState::Ended
                 } else if self
                     .start_time
-                    .map_or(false, |st| st > OffsetDateTime::now_utc())
+                    .is_some_and(|st| st > OffsetDateTime::now_utc())
                 {
                     BroadcastState::Scheduled
                 } else {
@@ -112,7 +112,7 @@ pub struct BroadcastBookmark {
 /// Context passed into `broadcast_to_response()` from the service layer.
 /// Bundles all the participant-specific and Redis-sourced data that cannot be
 /// derived from the DB row alone.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct BroadcastContext {
     /// The authenticated participant's ID, if present.
     pub participant_id: Option<Uuid>,
@@ -143,22 +143,6 @@ pub struct BroadcastContext {
 
     /// When the participant last joined this broadcast.
     pub last_listened_at: Option<OffsetDateTime>,
-}
-impl Default for BroadcastContext {
-    fn default() -> Self {
-        BroadcastContext {
-            participant_id: None,
-            is_reconnecting: false,
-            live_count: 0,
-            total_count: 0,
-            participant_role: Default::default(),
-            participant_is_in_room: false,
-            is_subscribed_to_creator: false,
-            is_bookmarked: false,
-            time_remaining_seconds: None,
-            last_listened_at: None,
-        }
-    }
 }
 
 // ==================== ENUMS ====================
@@ -291,7 +275,7 @@ impl Type<Postgres> for EndReason {
 impl<'r> Decode<'r, Postgres> for EndReason {
     fn decode(value: <Postgres as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
         let s: String = Decode::<Postgres>::decode(value)?;
-        Self::try_from(s).map_err(|e| BoxDynError::from(e))
+        Ok(EndReason::from(s))
     }
 }
 impl<'q> Encode<'q, Postgres> for EndReason {

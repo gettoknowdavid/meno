@@ -10,6 +10,48 @@ pub struct SendEmailJob {
     pub html: String,
 }
 
+///
+/// Sends an email asynchronously using the provided `SendEmailJob` and application state.
+///
+/// # Arguments
+///
+/// * `job` - A `SendEmailJob` struct containing the recipient's email address, subject, and HTML content of the email.
+/// * `state` - An `Arc` wrapped `MenoState` structure containing the application's shared state, including SMTP transport and configuration.
+///
+/// # Returns
+///
+/// A `Result` indicating success (`Ok(())`) or error (`Err(BoxDynError)`) if the email could not be sent.
+///
+/// # Behavior
+///
+/// * Clones the SMTP transport and sender email address from the shared application state.
+/// * Initializes an `EmailService` with the transport and sender email address.
+/// * Sends an email to the recipient address specified in the job with the provided subject and HTML content.
+/// * Logs an info message using `tracing` once the email is successfully sent, with the `to` field indicating the recipient.
+///
+/// # Errors
+///
+/// This function will return an error if:
+/// * There is an issue initializing or cloning the SMTP transport.
+/// * The email fails to be sent by the `EmailService`.
+///
+/// # Example
+///
+/// ```rust
+/// use std::sync::Arc;
+/// use actix_web::web::Data;
+///
+/// let state = Data::new(Arc::new(MenoState::new()));
+/// let job = SendEmailJob {
+///     to: "user@example.com".to_string(),
+///     subject: "Welcome".to_string(),
+///     html: "<h1>Welcome to our service</h1>".to_string(),
+/// };
+///
+/// if let Err(e) = send_email(job, state).await {
+///     eprintln!("Failed to send email: {:?}", e);
+/// }
+/// ```
 pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Result<(), BoxDynError> {
     let transport = state.smtp.clone();
     let from = state.config.smtp_from.clone();
@@ -21,6 +63,7 @@ pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Resul
 
 // HTML
 /// Returns a Tuple (subject, html)
+#[must_use]
 pub fn verify_email_html(full_name: &str, otp: &str) -> (String, String) {
     let html = format!(
         r#"
@@ -37,14 +80,13 @@ pub fn verify_email_html(full_name: &str, otp: &str) -> (String, String) {
               </div>
             </body>
             </html>
-            "#,
-        full_name = full_name,
-        otp = otp
+            "#
     );
     ("Verify your Meno account".to_string(), html)
 }
 
 /// Returns a Tuple (subject, html)
+#[must_use]
 pub fn reset_pwd_email_html(full_name: &str, otp: &str) -> (String, String) {
     let html = format!(
         r#"
@@ -75,8 +117,6 @@ pub fn reset_pwd_email_html(full_name: &str, otp: &str) -> (String, String) {
             </body>
             </html>
             "#,
-        full_name = full_name,
-        otp = otp
     );
     ("Reset your password".to_string(), html)
 }

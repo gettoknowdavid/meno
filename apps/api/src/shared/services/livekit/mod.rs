@@ -24,6 +24,7 @@ pub struct LivekitService {
     pub breaker: Arc<CircuitBreaker>,
 }
 impl LivekitService {
+    #[must_use]
     pub fn new(config: &Config, room: Arc<RoomClient>) -> Self {
         let api_key = config.livekit_api_key.clone();
         let api_secret = config.livekit_api_secret.clone();
@@ -38,12 +39,12 @@ impl LivekitService {
         }
     }
 
-    pub async fn mint_token(
+    pub fn mint_token(
         &self,
         user_id: Uuid,
         user_name: &str,
         broadcast_id: Uuid,
-        role: LivekitRole,
+        role: &LivekitRole,
     ) -> Result<String, AccessTokenError> {
         let room_name = broadcast_id.to_string();
         let identity = user_id.to_string();
@@ -52,31 +53,29 @@ impl LivekitService {
 
         AccessToken::with_api_key(&self.api_key, &self.api_secret)
             .with_identity(&identity)
-            .with_name(&user_name)
+            .with_name(user_name)
             .with_grants(grant)
             .with_ttl(Duration::from_secs(LIVEKIT_ACCESS_TOKEN_TTL as u64))
             .to_jwt()
     }
 
-    pub async fn mint_host_token(
+    pub fn mint_host_token(
         &self,
         host: &UserSummary,
         broadcast_id: Uuid,
     ) -> Result<String, AccessTokenError> {
-        self.mint_token(host.id, &host.full_name, broadcast_id, LivekitRole::Host)
-            .await
+        self.mint_token(host.id, &host.full_name, broadcast_id, &LivekitRole::Host)
     }
 
-    pub async fn mint_cohost_token(
+    pub fn mint_cohost_token(
         &self,
         host: &UserSummary,
         broadcast_id: Uuid,
     ) -> Result<String, AccessTokenError> {
-        self.mint_token(host.id, &host.full_name, broadcast_id, LivekitRole::Cohost)
-            .await
+        self.mint_token(host.id, &host.full_name, broadcast_id, &LivekitRole::Cohost)
     }
 
-    pub async fn mint_participant_token(
+    pub fn mint_participant_token(
         &self,
         host: &UserSummary,
         broadcast_id: Uuid,
@@ -85,20 +84,19 @@ impl LivekitService {
             host.id,
             &host.full_name,
             broadcast_id,
-            LivekitRole::Participant,
+            &LivekitRole::Participant,
         )
-        .await
     }
 
-    /// Like mint_token but also embeds participant_attributes into the JWT.
-    /// These attributes are visible to LiveKit agents, egress, and other
+    /// Like `mint_token` but also embeds `participant_attributes` into the JWT.
+    /// These attributes are visible to `LiveKit` agents, egress, and other
     /// participants via the SDK.
-    pub async fn mint_token_with_attributes(
+    pub fn mint_token_with_attributes(
         &self,
         user_id: Uuid,
         user_name: &str,
         broadcast_id: Uuid,
-        role: LivekitRole,
+        role: &LivekitRole,
         attributes: std::collections::HashMap<String, String>,
     ) -> Result<String, AccessTokenError> {
         let room_name = broadcast_id.to_string();
@@ -171,7 +169,7 @@ impl LivekitService {
                     id,
                     joined_at: OffsetDateTime::from_unix_timestamp(participant.joined_at)
                         .unwrap_or(OffsetDateTime::now_utc()),
-                })
+                });
             }
         }
         Ok(result)
@@ -226,7 +224,7 @@ impl LivekitService {
         Ok(())
     }
 
-    fn get_grant(role: LivekitRole, room_name: String) -> VideoGrants {
+    fn get_grant(role: &LivekitRole, room_name: String) -> VideoGrants {
         match role {
             LivekitRole::Host => VideoGrants {
                 room: room_name,

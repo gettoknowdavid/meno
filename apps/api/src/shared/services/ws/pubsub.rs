@@ -67,14 +67,17 @@ pub enum WsPubSubEnvelope {
 }
 
 impl WsPubSubEnvelope {
+    #[must_use]
     pub fn room(room_id: Uuid, payload: WsPayload) -> Self {
         Self::Room(WsRoomEnvelope { room_id, payload })
     }
 
+    #[must_use]
     pub fn user(user_id: Uuid, payload: WsPayload) -> Self {
         Self::User(WsUserEnvelope { user_id, payload })
     }
 
+    #[must_use]
     pub fn broadcast(payload: WsPayload) -> Self {
         Self::Broadcast(WsBroadcastEnvelope { payload })
     }
@@ -95,7 +98,7 @@ impl WsPubSubEnvelope {
 /// ## Scaling
 /// Any number of API instances can run simultaneously. Each instance:
 /// 1. Subscribes to `WS_MAIN_CHANNEL` for user-targeted messages.
-/// 2. PSubscribes to `WS_ROOM_PATTERN` for room messages.
+/// 2. `PSubscribes` to `WS_ROOM_PATTERN` for room messages.
 /// 3. On receiving a message, `deliver_locally` sends it only to clients
 ///    connected *on that instance* — no cross-instance coordination needed.
 #[derive(Clone)]
@@ -308,7 +311,7 @@ impl WsPubSubBridge {
         let key = room_member_key(broadcast_id);
         let ids: Vec<String> = initial_participant_ids
             .iter()
-            .map(|id| id.to_string())
+            .map(std::string::ToString::to_string)
             .collect();
 
         let _: i64 = self.redis.sadd(&key, ids).await?;
@@ -481,7 +484,7 @@ async fn run_subscriber_loop(subscriber: Arc<SubscriberClient>, bridge: WsPubSub
         match rx.recv().await {
             Ok(msg) => {
                 let json = match msg.value.as_str() {
-                    Some(s) => s.to_owned(),
+                    Some(s) => s.clone(),
                     None => {
                         tracing::warn!(channel = %msg.channel, "Non-string pub/sub message — skipping");
                         continue;

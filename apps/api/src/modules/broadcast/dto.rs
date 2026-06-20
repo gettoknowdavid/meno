@@ -137,18 +137,18 @@ pub struct BroadcastResponse {
     pub cohosts: Vec<UserSummary>,
 }
 
-/// Returned by go-live and join endpoints. The only place a LiveKit token
+/// Returned by go-live and join endpoints. The only place a `LiveKit` token
 /// is ever sent to the client.
 #[derive(Clone, Debug, Serialize)]
 pub struct BroadcastSessionResponse {
     pub broadcast: BroadcastResponse,
 
-    /// Short-lived LiveKit JWT. TTL configured in constants (default 6 h).
+    /// Short-lived `LiveKit` JWT. TTL configured in constants (default 6 h).
     pub token: String,
 }
 
 /// Cohost-specific response after accepting an invitation while a broadcast
-/// is already live. Carries the token needed to join the LiveKit room.
+/// is already live. Carries the token needed to join the `LiveKit` room.
 #[derive(Clone, Debug, Serialize)]
 pub struct CohostSessionResponse {
     pub user: UserSummary,
@@ -181,6 +181,7 @@ pub struct BroadcastEndedPayload {
     pub reason: EndReason,
 }
 impl BroadcastEndedPayload {
+    #[must_use]
     pub fn normal_for(broadcast_id: Uuid) -> Self {
         Self {
             broadcast_id,
@@ -300,19 +301,24 @@ pub struct BroadcastQuery {
     pub pagination: CursorParams,
 }
 impl BroadcastQuery {
-    /// Convenience: forward to the embedded CursorParams.
+    /// Convenience: forward to the embedded `CursorParams`.
+     #[must_use]
     pub fn limit(&self) -> i64 {
         self.pagination.limit()
     }
+     #[must_use]
     pub fn limit_plus_one(&self) -> i64 {
         self.pagination.limit_plus_one()
     }
+     #[must_use]
     pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
         self.pagination.cursor.as_ref()
     }
+     #[must_use]
     pub fn effective_order(&self) -> Order {
         self.order.unwrap_or_default()
     }
+     #[must_use]
     pub fn effective_sort(&self) -> BroadcastSortBy {
         self.sort_by.unwrap_or_default()
     }
@@ -369,6 +375,7 @@ impl BroadcastListCacheKey {
     /// (currently: viewer-specific `only_subscriptions=true` queries, because
     /// the result set differs per user and caching would require per-user keys
     /// which defeat the purpose of a shared broadcast-list cache).
+    #[must_use]
     pub fn build(query: &BroadcastQuery) -> Option<String> {
         // Don't cache personalized feeds — they'd need a per-user key
         if query.only_subscriptions == Some(true) {

@@ -14,7 +14,7 @@ use tracing::{debug, warn};
 /// 3. All requests receive the same cached result
 ///
 /// # Type Parameters:
-/// - `T`: The cached value type (must be Serialize + DeserializeOwned)
+/// - `T`: The cached value type (must be `Serialize` + `DeserializeOwned`)
 /// - `E`: The error type (must implement From<CacheError> + ...)
 /// - `F`: A future that returns Result<T, E>
 ///
@@ -118,13 +118,13 @@ async fn try_acquire_lock(redis: &Redis, cache_key: &str, ttl_secs: u64) -> bool
     let lock_key = RedisKey::lock(cache_key);
 
     // Use a Lua script for atomic NX+EXPIRE (avoids race on older Redis):
-    let script = r#"
+    let script = r"
             if redis.call('SET', KEYS[1], '1', 'NX', 'EX', ARGV[1]) then
                 return 1
             else
                 return 0
             end
-        "#;
+        ";
 
     let keys = vec![lock_key.as_ref()];
     let args = vec![ttl_secs.to_string()];

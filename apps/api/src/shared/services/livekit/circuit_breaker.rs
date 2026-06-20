@@ -61,15 +61,16 @@ impl CircuitBreaker {
             CircuitState::Open => {
                 // Check if we should transition to HalfOpen
                 let last = self.last_failure_at.lock().await;
-                if let Some(t) = *last {
-                    if t.elapsed() >= self.open_duration {
-                        drop(last);
-                        self.state.store(CircuitState::HalfOpen as u8, Ordering::Release);
-                        tracing::info!("LiveKit circuit breaker → HalfOpen");
+                if let Some(t) = *last
+                    && t.elapsed() >= self.open_duration
+                {
+                    drop(last);
+                    self.state
+                        .store(CircuitState::HalfOpen as u8, Ordering::Release);
+                    tracing::info!("LiveKit circuit breaker → HalfOpen");
 
-                        // allow one probe request
-                        return Ok(());
-                    }
+                    // allow one probe request
+                    return Ok(());
                 }
                 Err("LiveKit circuit breaker is Open — failing fast")
             }
@@ -85,7 +86,8 @@ impl CircuitBreaker {
             CircuitState::HalfOpen => {
                 let successes = self.success_count.fetch_add(1, Ordering::Relaxed) + 1;
                 if successes >= self.success_threshold {
-                    self.state.store(CircuitState::Closed as u8, Ordering::Release);
+                    self.state
+                        .store(CircuitState::Closed as u8, Ordering::Release);
                     self.failure_count.store(0, Ordering::Relaxed);
                     self.success_count.store(0, Ordering::Relaxed);
                     tracing::info!("LiveKit circuit breaker → Closed (recovered)");
@@ -104,7 +106,8 @@ impl CircuitBreaker {
         *self.last_failure_at.lock().await = Some(Instant::now());
 
         if failures >= self.failure_threshold || self.state() == CircuitState::HalfOpen {
-            self.state.store(CircuitState::Open as u8, Ordering::Release);
+            self.state
+                .store(CircuitState::Open as u8, Ordering::Release);
             self.success_count.store(0, Ordering::Relaxed);
             tracing::error!(failures = failures, "LiveKit circuit breaker → Open");
         }

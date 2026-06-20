@@ -47,10 +47,10 @@ pub struct ConnectionSender {
 /// instances must go through the bridge, not this service.
 #[derive(Clone)]
 pub struct WsService {
-    /// user_id → all active connections for that user on this instance.
+    /// `user_id` → all active connections for that user on this instance.
     clients: Arc<DashMap<Uuid, Vec<ConnectionSender>>>,
 
-    /// `broadcast_id` → set of user_ids currently in that room on this instance.
+    /// `broadcast_id` → set of `user_id`s currently in that room on this instance.
     /// Mirrors the Redis membership set for local fast-path delivery.
     rooms: Arc<DashMap<Uuid, DashSet<Uuid>>>,
 
@@ -61,6 +61,7 @@ pub struct WsService {
 }
 
 impl WsService {
+    #[must_use]
     pub fn new(redis: Redis) -> Self {
         Self {
             clients: Arc::new(DashMap::new()),
@@ -75,7 +76,7 @@ impl WsService {
     /// Returns the unique `conn_id` for later unregistration, or `None` if
     /// the per-user connection limit has been reached.
     pub fn register(&self, user_id: Uuid, sender: mpsc::Sender<Arc<WsPayload>>) -> Option<usize> {
-        let mut entry = self.clients.entry(user_id).or_insert_with(Vec::new);
+        let mut entry = self.clients.entry(user_id).or_default();
 
         if entry.len() >= MAX_WS_CONNECTIONS_PER_USER {
             tracing::warn!(
@@ -115,14 +116,11 @@ impl WsService {
     /// 2. `ws/handlers::handle_socket` — when a user reconnects via WebSocket
     ///    while they are still an active participant.
     ///
-    /// It is safe to call multiple times; Redis SADD and the local DashSet are
+    /// It is safe to call multiple times; Redis SADD and the local `DashSet` are
     /// both idempotent.
     pub async fn join_room(&self, user_id: Uuid, broadcast_id: Uuid, bridge: &WsPubSubBridge) {
         // Update the local room map.
-        self.rooms
-            .entry(broadcast_id)
-            .or_insert_with(DashSet::new)
-            .insert(user_id);
+        self.rooms.entry(broadcast_id).or_default().insert(user_id);
 
         // Update Redis and subscribe this instance to the room channel.
         if let Err(e) = bridge.join_room(user_id, broadcast_id).await {
@@ -163,13 +161,12 @@ impl WsService {
     /// Deliver a payload to all local connections in a room.
     ///
     /// This is called by `deliver_locally` in `pubsub.rs` after a message
-    /// arrives from Redis.  It only touches the local `rooms` DashMap and
+    /// arrives from Redis.  It only touches the local `rooms` `DashMap` and
     /// never calls Redis itself — the bridge already handled cross-instance
     /// routing.
     pub async fn send_to_room(&self, broadcast_id: Uuid, payload: WsPayload) {
-        let room = match self.rooms.get(&broadcast_id) {
-            Some(r) => r,
-            None => return, // No local listeners for this room in this instance.
+        let Some(room) = self.rooms.get(&broadcast_id) else {
+            return;
         };
 
         let arc_payload = Arc::new(payload);
@@ -184,8 +181,9 @@ impl WsService {
 
     /// Returns `true` if this was the *first* local member of the room
     /// (i.e. this instance needs to subscribe to the room channel).
+    #[must_use]
     pub fn add_local_room_member(&self, broadcast_id: Uuid, user_id: Uuid) -> bool {
-        let room = self.rooms.entry(broadcast_id).or_insert_with(DashSet::new);
+        let room = self.rooms.entry(broadcast_id).or_default();
         let was_empty = room.is_empty();
         room.insert(user_id);
         was_empty
@@ -193,6 +191,7 @@ impl WsService {
 
     /// Returns `true` if this was the *last* local member (this instance
     /// should unsubscribe from the room channel).
+    #[must_use]
     pub fn remove_local_room_member(&self, broadcast_id: Uuid, user_id: Uuid) -> bool {
         let mut became_empty = false;
         if let Some(room) = self.rooms.get(&broadcast_id) {
@@ -207,6 +206,7 @@ impl WsService {
 
     /// Drops every local member of a room at once — used when this instance
     /// learns the broadcast has ended.
+    #[must_use]
     pub fn clear_local_room(&self, broadcast_id: Uuid) -> Vec<Uuid> {
         self.rooms
             .remove(&broadcast_id)
@@ -253,7 +253,7 @@ impl WsService {
     pub async fn broadcast_all(&self, payload: WsPayload) {
         let arc = Arc::new(payload);
         for entry in self.clients.iter() {
-            for s in entry.value().iter() {
+            for s in entry.value() {
                 let _ = s.sender.send(Arc::clone(&arc)).await;
             }
         }
@@ -273,7 +273,7 @@ impl WsService {
 
     pub async fn send_unsupported_error(&self, user_id: Uuid, message: String) {
         self.send_error(user_id, Uuid::nil(), WsErrorCode::Unsupported, message)
-            .await
+            .await;
     }
 
     /// Store a message for an offline user in a Redis ring-buffer.
@@ -303,11 +303,11 @@ impl WsService {
     pub async fn drain_message_buffer(&self, user_id: Uuid) -> Vec<WsPayload> {
         let key = RedisKey::ws_buffer(user_id).to_string();
 
-        let script = r#"
+        let script = r"
             local items = redis.call('LRANGE', KEYS[1], 0, -1)
             redis.call('DEL', KEYS[1])
             return items
-        "#;
+        ";
 
         let items: Vec<String> = match self
             .redis
@@ -329,17 +329,20 @@ impl WsService {
             .collect()
     }
 
+    #[must_use]
     pub fn is_online(&self, user_id: Uuid) -> bool {
         self.clients.contains_key(&user_id)
     }
 
+    #[must_use]
     pub fn connection_count(&self, user_id: Uuid) -> usize {
-        self.clients.get(&user_id).map(|v| v.len()).unwrap_or(0)
+        self.clients.get(&user_id).map_or(0, |v| v.len())
     }
 
     /// Return all user IDs that have at least one active connection on this
     /// instance.  Used for "now-live" fan-outs where the caller wants to
     /// notify every online user.
+    #[must_use]
     pub fn get_online_users(&self) -> Vec<Uuid> {
         self.clients.iter().map(|e| *e.key()).collect()
     }

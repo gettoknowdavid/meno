@@ -15,6 +15,7 @@ pub struct AuthState {
 }
 
 impl AuthState {
+    #[must_use]
     pub fn new(db: sqlx::PgPool, redis: Redis, config: &Config, jobs: crate::jobs::Jobs) -> Self {
         let repo: Arc<dyn AuthRepo> = Arc::new(AuthRepository::new(db));
         let cache: Arc<dyn AuthCache> = Arc::new(AuthRedisCache::new(redis));

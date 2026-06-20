@@ -102,7 +102,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscribers(auth_id, Some(auth_id), &params)
+            .find_subscribers(auth_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -122,7 +122,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscriptions(auth_id, Some(auth_id), &params)
+            .find_subscriptions(auth_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -143,7 +143,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscribers(user_id, Some(auth_id), &params)
+            .find_subscribers(user_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {
@@ -164,7 +164,7 @@ impl SubscribersService {
 
         let rows = self
             .repo
-            .find_subscriptions(user_id, Some(auth_id), &params)
+            .find_subscriptions(user_id, Some(auth_id), params)
             .await?;
 
         Ok(CursorPage::from_rows(rows, params.limit(), |r| {

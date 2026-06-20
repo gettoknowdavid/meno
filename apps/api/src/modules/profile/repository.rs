@@ -12,6 +12,7 @@ pub struct ProfileRepository {
     db: sqlx::PgPool,
 }
 impl ProfileRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
@@ -52,7 +53,6 @@ impl ProfileRepository {
         let providers = rows
             .iter()
             .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
-            .map(|s| AuthProvider::from(s))
             .collect();
 
         Ok(providers)
@@ -125,7 +125,7 @@ impl ProfileRepository {
         };
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -138,7 +138,7 @@ impl ProfileRepository {
                 EXISTS(
                     SELECT 1 FROM user_subscribers us
                     WHERE us.subscriber_id =
-            "#,
+            ",
         );
 
         qb.push_bind(current_user_id);
@@ -151,11 +151,11 @@ impl ProfileRepository {
 
         qb.push_bind(&query.q)
             .push(
-                r#")) AS rank
+                r")) AS rank
                     FROM users
                     WHERE deleted_at IS NULL
                     AND to_tsvector('english', full_name) @@ plainto_tsquery('english',
-                    "#,
+                    ",
             )
             .push_bind(&query.q)
             .push(")");

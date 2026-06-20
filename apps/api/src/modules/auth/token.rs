@@ -38,7 +38,7 @@ pub struct TokenConfig {
     /// Seconds until access token expires (e.g. 900)
     pub access_ttl_secs: i64,
 
-    /// Seconds until refresh token expires (e.g. 2_592_000 = 30 days)
+    /// Seconds until refresh token expires (e.g. `2_592_000` = 30 days)
     pub refresh_ttl_secs: i64,
 }
 
@@ -296,6 +296,7 @@ impl TokenService {
         Ok(jti_blocked || user_blocked)
     }
 
+    #[must_use]
     pub fn access_ttl_secs(&self) -> i64 {
         self.config.access_ttl_secs
     }
@@ -305,10 +306,12 @@ fn now_unix() -> i64 {
     time::OffsetDateTime::now_utc().unix_timestamp()
 }
 
+#[must_use]
 pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
+#[must_use]
 pub fn verify_token_hash(token: &str, stored_hash: &str) -> bool {
     hash_token(token) == stored_hash
 }

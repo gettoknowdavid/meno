@@ -34,6 +34,7 @@ pub struct NotificationService {
     templates: TemplateCache,
 }
 impl NotificationService {
+    #[must_use]
     pub fn new(db: sqlx::PgPool, redis: Redis, push: PushNotificationService) -> Self {
         Self {
             repo: NotificationRepository::new(db),
@@ -111,7 +112,6 @@ impl NotificationService {
                 &body_clone,
                 image_clone,
                 &deep_link_clone,
-                None,
             )
             .await;
         });
@@ -223,7 +223,7 @@ impl NotificationService {
         let mut rows = self.repo.find_notifications(query, owner_id).await?;
 
         for item in &mut rows {
-            let vars = Self::build_item_vars(&item);
+            let vars = Self::build_item_vars(item);
             let interpolated_title = Self::interpolate(&item.title, &vars);
             let interpolated_body = Self::interpolate(&item.body, &vars);
 
@@ -346,6 +346,7 @@ impl NotificationService {
     }
 
     /// Replace `{actor}`, `{title}`, `{broadcast}` placeholders in a template string.
+    #[must_use]
     pub fn resolve_template(
         template: &NotificationTemplate,
         vars: &HashMap<&str, &str>,
@@ -364,7 +365,7 @@ impl NotificationService {
     fn interpolate(template: &str, vars: &HashMap<&str, &str>) -> String {
         let mut result = template.to_owned();
         for (key, value) in vars {
-            result = result.replace(&format!("{{{}}}", key), value);
+            result = result.replace(&format!("{{{key}}}"), value);
         }
         result
     }
@@ -406,10 +407,10 @@ impl NotificationService {
             | codes::LIVE_BROADCAST_STARTED
             | codes::SCHEDULED_BROADCAST
             | codes::BROADCAST_ENDED => broadcast_id
-                .map(|id| format!("meno://broadcasts/{}", id))
+                .map(|id| format!("meno://broadcasts/{id}"))
                 .unwrap_or_else(|| "meno://home".to_string()),
             codes::USER_SUBSCRIBED => actor_id
-                .map(|id| format!("meno://profile/{}", id))
+                .map(|id| format!("meno://profile/{id}"))
                 .unwrap_or_else(|| "meno://home".to_string()),
             _ => "meno://home".to_string(),
         }
@@ -420,14 +421,14 @@ impl NotificationService {
         let key = RedisKey::unread_count(owner_id);
 
         // Lua: decrement but never go below 0.
-        let script = r#"
+        let script = r"
             local v = redis.call('DECR', KEYS[1])
             if v < 0 then
                 redis.call('SET', KEYS[1], '0')
                 return 0
             end
             return v
-        "#;
+        ";
 
         let _ = self
             .redis

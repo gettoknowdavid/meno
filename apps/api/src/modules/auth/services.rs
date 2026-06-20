@@ -107,9 +107,8 @@ impl AuthService {
 
     pub async fn resend_otp(&self, req: &ResendOtpRequest) -> Result<(), AuthError> {
         // Return Ok even if user not found (don't leak email existence)
-        let user = match self.repo.find_by_email(&req.email).await? {
-            Some(u) => u,
-            None => return Ok(()),
+        let Some(user) = self.repo.find_by_email(&req.email).await? else {
+            return Ok(());
         };
 
         if matches!(req.otp_type, OtpType::VerifyEmail) && user.verified {
@@ -187,9 +186,8 @@ impl AuthService {
     }
 
     pub async fn forgot_password(&self, req: &ForgotPasswordRequest) -> Result<(), AuthError> {
-        let user = match self.repo.find_by_email(&req.email).await? {
-            Some(u) => u,
-            None => return Ok(()), // Never reveal whether email exists
+        let Some(user) = self.repo.find_by_email(&req.email).await? else {
+            return Ok(());
         };
 
         let otp = generate_otp();
@@ -201,9 +199,8 @@ impl AuthService {
     }
 
     pub async fn reset_password(&self, req: &ResetPasswordRequest) -> Result<(), AuthError> {
-        let user = match self.repo.find_by_email(&req.email).await? {
-            Some(u) => u,
-            None => return Ok(()),
+        let Some(user) = self.repo.find_by_email(&req.email).await? else {
+            return Ok(());
         };
 
         if !self
@@ -285,26 +282,27 @@ impl AuthService {
                 .await?
                 .ok_or(AuthError::UserNotFound)?
         } else {
-            match self.repo.find_by_email(&info.email).await? {
-                Some(user) => {
-                    self.repo
-                        .link_provider(user.id, &AuthProvider::Google, &info.sub)
-                        .await?;
-                    user
+            if let Some(user) = self.repo.find_by_email(&info.email).await? {
+                self.repo
+                    .link_provider(user.id, &AuthProvider::Google, &info.sub)
+                    .await?;
+               
+                user
+            } else {
+                let user = self.repo.create_user(&info.name, &info.email).await?;
+                
+                self.repo
+                    .create_identity(user.id, &AuthProvider::Google, &user.email, None)
+                    .await?;
+                
+                if info.email_verified {
+                    self.repo.set_verified(&info.email).await?;
                 }
-                None => {
-                    let user = self.repo.create_user(&info.name, &info.email).await?;
-                    self.repo
-                        .create_identity(user.id, &AuthProvider::Google, &user.email, None)
-                        .await?;
-                    if info.email_verified {
-                        self.repo.set_verified(&info.email).await?;
-                    }
-                    self.repo
-                        .find_by_id(user.id)
-                        .await?
-                        .ok_or(AuthError::UserNotFound)?
-                }
+                
+                self.repo
+                    .find_by_id(user.id)
+                    .await?
+                    .ok_or(AuthError::UserNotFound)?
             }
         };
 

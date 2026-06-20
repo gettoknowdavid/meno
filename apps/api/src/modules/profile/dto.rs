@@ -103,15 +103,15 @@ pub struct GeneralSettingsResponse {
     pub language: String,
     pub notification_preferences: serde_json::Value,
 }
-impl Into<GeneralSettingsResponse> for GeneralSettings {
-    fn into(self) -> GeneralSettingsResponse {
+impl From<GeneralSettings> for GeneralSettingsResponse {
+    fn from(val: GeneralSettings) -> Self {
         GeneralSettingsResponse {
-            push_notifications: self.push_notifications,
-            app_notifications: self.app_notifications,
-            email_notifications: self.email_notifications,
-            display: self.display,
-            language: self.language,
-            notification_preferences: self.notification_preferences,
+            push_notifications: val.push_notifications,
+            app_notifications: val.app_notifications,
+            email_notifications: val.email_notifications,
+            display: val.display,
+            language: val.language,
+            notification_preferences: val.notification_preferences,
         }
     }
 }

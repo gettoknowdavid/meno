@@ -17,6 +17,7 @@ pub struct BroadcastRepository {
 }
 
 impl BroadcastRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
@@ -386,42 +387,39 @@ impl BroadcastRepo for BroadcastRepository {
         let cursor_score: Option<i64>;
         let cursor_id: Option<Uuid>;
 
-        match sort {
-            BroadcastSortBy::TotalParticipants => {
-                cursor_ts1 = None;
-                cursor_ts2 = None;
-                match query.cursor() {
-                    None => {
-                        cursor_id = None;
-                        cursor_score = None;
-                    }
-                    Some(c) => {
-                        let (score, id) = c.to_score_id().map_err(BroadcastError::Cursor)?;
-                        cursor_score = Some(score);
-                        cursor_id = Some(id);
-                    }
+        if sort == BroadcastSortBy::TotalParticipants {
+            cursor_ts1 = None;
+            cursor_ts2 = None;
+            match query.cursor() {
+                None => {
+                    cursor_id = None;
+                    cursor_score = None;
+                }
+                Some(c) => {
+                    let (score, id) = c.to_score_id().map_err(BroadcastError::Cursor)?;
+                    cursor_score = Some(score);
+                    cursor_id = Some(id);
                 }
             }
-            _ => {
-                cursor_score = None;
-                match query.cursor() {
-                    None => {
-                        cursor_ts1 = None;
-                        cursor_ts2 = None;
-                        cursor_id = None;
-                    }
-                    Some(c) => {
-                        let (ts, id) = c.to_timestamp_id().map_err(BroadcastError::Cursor)?;
-                        cursor_ts1 = Some(ts);
-                        cursor_ts2 = Some(ts);
-                        cursor_id = Some(id);
-                    }
+        } else {
+            cursor_score = None;
+            match query.cursor() {
+                None => {
+                    cursor_ts1 = None;
+                    cursor_ts2 = None;
+                    cursor_id = None;
+                }
+                Some(c) => {
+                    let (ts, id) = c.to_timestamp_id().map_err(BroadcastError::Cursor)?;
+                    cursor_ts1 = Some(ts);
+                    cursor_ts2 = Some(ts);
+                    cursor_id = Some(id);
                 }
             }
         }
 
         let mut qb = sqlx::QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 b.id,
                 b.title,
@@ -444,7 +442,7 @@ impl BroadcastRepo for BroadcastRepository {
             FROM broadcasts b
             LEFT JOIN users u ON  u.id = b.creator_id AND u.deleted_at IS NULL
             WHERE b.deleted_at IS NULL
-            "#,
+            ",
         );
 
         // Filters
@@ -454,22 +452,22 @@ impl BroadcastRepo for BroadcastRepository {
         if let Some(status) = &query.status {
             qb.push(" AND b.status = ").push_bind(status);
         }
-        if query.only_subscriptions.unwrap_or(false) {
-            if let Some(vid) = requester_id {
-                qb.push(
-                    " AND b.creator_id IN (
+        if query.only_subscriptions.unwrap_or(false)
+            && let Some(vid) = requester_id
+        {
+            qb.push(
+                " AND b.creator_id IN (
                         SELECT subscription_id
                         FROM user_subscribers
                         WHERE subscriber_id = ",
-                )
-                .push_bind(vid)
-                .push(")");
-            }
+            )
+            .push_bind(vid)
+            .push(")");
         }
         if let Some(ref kw) = query.keywords {
             qb.push(
-                r#" AND to_tsvector('english', b.title || ' ' || b.description)
-                    @@ plainto_tsquery('english', "#,
+                r" AND to_tsvector('english', b.title || ' ' || b.description)
+                    @@ plainto_tsquery('english', ",
             )
             .push_bind(kw.trim())
             .push(")");
@@ -520,17 +518,7 @@ impl BroadcastRepo for BroadcastRepository {
         // Each sort field has a corresponding cursor column.  The cursor
         // condition must use the EXACT same expression as ORDER BY.
         match sort {
-            BroadcastSortBy::CreatedAt => {
-                push_cursor_condition(
-                    &mut qb,
-                    "b.created_at",
-                    "b.id",
-                    cursor_ts1,
-                    cursor_id,
-                    order,
-                );
-            }
-            BroadcastSortBy::Title => {
+            BroadcastSortBy::CreatedAt | BroadcastSortBy::Title => {
                 push_cursor_condition(
                     &mut qb,
                     "b.created_at",
@@ -657,7 +645,7 @@ impl BroadcastRepo for BroadcastRepository {
         };
 
         let mut qb = sqlx::QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -670,26 +658,26 @@ impl BroadcastRepo for BroadcastRepository {
                 ON u.id = bp.participant_id
                 AND u.deleted_at IS NULL
             WHERE bp.broadcast_id =
-            "#,
+            ",
         );
         qb.push_bind(broadcast_id);
 
         if let Some(role) = &query.role {
             qb.push(" AND bp.role = ").push_bind(role);
         }
-        if let Some(ref kw) = query.keywords {
-            if !kw.is_empty() {
-                qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
-                    .push_bind(kw.clone())
-                    .push(")");
-            }
+        if let Some(ref kw) = query.keywords
+            && !kw.is_empty()
+        {
+            qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
+                .push_bind(kw.clone())
+                .push(")");
         }
 
         // Cursor condition based on the sort field
         match sort {
             ParticipantSortBy::Role => {
                 if let (Some(r), Some(id)) = (cursor_role, cursor_id) {
-                    qb.push(format!(" AND (bp.role, bp.participant_id) {} (", op))
+                    qb.push(format!(" AND (bp.role, bp.participant_id) {op} ("))
                         .push_bind(r)
                         .push(", ")
                         .push_bind(id)
@@ -769,7 +757,7 @@ impl BroadcastRepo for BroadcastRepository {
         };
 
         let mut qb = sqlx::QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -787,19 +775,19 @@ impl BroadcastRepo for BroadcastRepository {
                 AND end_time IS NULL
                 AND deleted_at IS NULL
             WHERE bp.broadcast_id =
-            "#,
+            ",
         );
         qb.push_bind(broadcast_id);
 
         if let Some(role) = &query.role {
             qb.push(" AND bp.role = ").push_bind(role);
         }
-        if let Some(ref kw) = query.keywords {
-            if !kw.is_empty() {
-                qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
-                    .push_bind(kw.clone())
-                    .push(")");
-            }
+        if let Some(ref kw) = query.keywords
+            && !kw.is_empty()
+        {
+            qb.push(" AND to_tsvector('english', u.full_name) @@ plainto_tsquery('english', ")
+                .push_bind(kw.clone())
+                .push(")");
         }
 
         push_cursor_condition(

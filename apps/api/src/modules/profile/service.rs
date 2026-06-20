@@ -91,7 +91,7 @@ impl ProfileService {
             return self.get_me(user_id).await;
         }
 
-        let _ = self.cache.invalidate_cached_profile(user_id).await?;
+        self.cache.invalidate_cached_profile(user_id).await?;
 
         let (new_avatar_key, new_avatar_url) = if let Some(ref avatar_key) = req.avatar_key {
             self.update_avatar_url(user_id, avatar_key).await?
@@ -164,7 +164,7 @@ impl ProfileService {
             created_at: user.created_at,
         };
 
-        let _ = self.cache.cache_profile(response.clone()).await?;
+        self.cache.cache_profile(response.clone()).await?;
 
         Ok(response)
     }
@@ -177,13 +177,13 @@ impl ProfileService {
         let q = &query.q.trim().to_lowercase();
 
         let limit = query.limit();
-        let cache_key = RedisKey::search_results(&q, 0, limit.clone());
+        let cache_key = RedisKey::search_results(q, 0, limit);
 
         if let Some(cached_results) = self.cache.get_cached_search_results(&cache_key).await? {
-            return self.apply_cursor(cached_results, limit.clone());
+            return self.apply_cursor(cached_results, limit);
         }
 
-        let results = self.repo.search_profiles(&query, current_user_id).await?;
+        let results = self.repo.search_profiles(query, current_user_id).await?;
 
         if query.cursor().is_none() && results.len() <= 100 {
             self.cache
@@ -199,13 +199,13 @@ impl ProfileService {
         user_id: Uuid,
         new_avatar_key: &str,
     ) -> Result<(Option<String>, Option<String>), ProfileError> {
-        if !self.storage.object_exists(&new_avatar_key).await? {
+        if !self.storage.object_exists(new_avatar_key).await? {
             return Err(ProfileError::AvatarNotUploaded);
         }
 
         self.delete_avatar(user_id).await?;
 
-        let public_url = self.storage.get_avatar_url(&new_avatar_key);
+        let public_url = self.storage.get_avatar_url(new_avatar_key);
         Ok((Some(new_avatar_key.to_string()), Some(public_url)))
     }
 

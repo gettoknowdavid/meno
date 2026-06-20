@@ -11,6 +11,7 @@ pub struct SubscribersRepository {
     db: sqlx::PgPool,
 }
 impl SubscribersRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
@@ -73,7 +74,7 @@ impl SubscribersRepository {
         };
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -87,7 +88,7 @@ impl SubscribersRepository {
                 ON u.id = us.subscriber_id
                 AND u.deleted_at IS NULL
             WHERE us.subscription_id =
-            "#,
+            ",
         );
         qb.push_bind(subscription_id);
 
@@ -143,7 +144,7 @@ impl SubscribersRepository {
         };
 
         let mut qb: QueryBuilder<Postgres> = QueryBuilder::new(
-            r#"
+            r"
             SELECT
                 u.id,
                 u.full_name,
@@ -157,7 +158,7 @@ impl SubscribersRepository {
                 ON u.id = us.subscription_id
                 AND u.deleted_at IS NULL
             WHERE us.subscriber_id =
-            "#,
+            ",
         );
         qb.push_bind(subscriber_id);
 

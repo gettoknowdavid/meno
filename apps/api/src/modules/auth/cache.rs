@@ -18,6 +18,14 @@ pub struct AuthRedisCache {
 }
 
 impl AuthRedisCache {
+    /// Creates a new instance of `AuthRedisCache`.
+    ///
+    /// # Parameters
+    /// - `redis`: The Redis client instance used for caching.
+    ///
+    /// # Returns
+    /// - A new `AuthRedisCache` instance.
+    #[must_use]
     pub fn new(redis: Redis) -> Self {
         Self { redis }
     }
@@ -25,27 +33,189 @@ impl AuthRedisCache {
 
 #[async_trait::async_trait]
 pub trait AuthCache: Send + Sync + 'static {
+    /// Stores a one-time password (OTP) in the cache with a predefined TTL.
+    ///
+    /// # Parameters
+    /// - `email`: The email address associated with the OTP.
+    /// - `otp`: The generated OTP string.
+    /// - `otp_type`: The type of OTP (e.g., email verification, password reset).
+    ///
+    /// # Returns
+    /// - `Ok(())` if the OTP was successfully stored.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn store_otp(&self, email: &str, otp: &str, otp_type: &OtpType) -> Result<(), AuthError>;
+
+    /// Verifies a provided OTP against the stored value in the cache.
+    ///
+    /// If the OTP matches, it is automatically revoked (deleted) from the cache.
+    ///
+    /// # Parameters
+    /// - `email`: The email address associated with the OTP.
+    /// - `code`: The OTP code provided by the user.
+    /// - `otp_type`: The type of OTP being verified.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the OTP is valid and was deleted.
+    /// - `Ok(false)` if the OTP does not match.
+    ///
+    /// # Errors
+    /// - `AuthError::InvalidOtp` if no OTP is found for the given email and type.
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn verify_otp(
         &self,
         email: &str,
         code: &str,
         otp_type: &OtpType,
     ) -> Result<bool, AuthError>;
+
+    /// Revokes (deletes) an OTP from the cache.
+    ///
+    /// # Parameters
+    /// - `email`: The email address associated with the OTP.
+    /// - `otp_type`: The type of OTP to revoke.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the operation completes successfully.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn revoke_otp(&self, email: &str, otp_type: OtpType) -> Result<(), AuthError>;
+
+    /// Checks if a new OTP can be sent to the specified email (rate limiting).
+    ///
+    /// # Parameters
+    /// - `email`: The email address to check.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if an OTP can be sent.
+    /// - `Ok(false)` if the user is currently in a cooldown period.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn can_resend_otp(&self, email: &str) -> Result<bool, AuthError>;
+
+    /// Sets a cooldown period during which no new OTPs can be sent to the email.
+    ///
+    /// # Parameters
+    /// - `email`: The email address to set the cooldown for.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the cooldown was successfully set.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn set_resend_cooldown(&self, email: &str) -> Result<(), AuthError>;
+
+    /// Stores the OAuth2 state and PKCE code verifier.
+    ///
+    /// # Parameters
+    /// - `state`: The CSRF state token.
+    /// - `verifier`: The PKCE code verifier.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the state was successfully stored.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn store_oauth_state(&self, state: &str, verifier: &str) -> Result<(), AuthError>;
+
+    /// Consumes (retrieves and deletes) the PKCE code verifier for a given OAuth2 state.
+    ///
+    /// # Parameters
+    /// - `state`: The CSRF state token to consume.
+    ///
+    /// # Returns
+    /// - `Ok(String)` containing the PKCE code verifier.
+    ///
+    /// # Errors
+    /// - `AuthError::InvalidToken` if the state is missing or invalid.
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn consume_oauth_state(&self, state: &str) -> Result<String, AuthError>;
+
+    /// Increments and checks the login rate limit for an email.
+    ///
+    /// # Parameters
+    /// - `email`: The email address attempting to login.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the attempt is within limits.
+    ///
+    /// # Errors
+    /// - `AuthError::TooManyRequests` if the rate limit is exceeded.
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn check_login_rate_limit(&self, email: &str) -> Result<(), AuthError>;
+
+    /// Clears the login rate limit for an email (usually after a successful login).
+    ///
+    /// # Parameters
+    /// - `email`: The email address to clear the limit for.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the limit was cleared.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn clear_login_rate_limit(&self, email: &str) -> Result<(), AuthError>;
+
+    /// Blocks an access token JTI for a specified duration.
+    ///
+    /// # Parameters
+    /// - `jti`: The Unique ID of the token to block.
+    /// - `remaining_secs`: The number of seconds until the token naturally expires.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the token was successfully blocked.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn block_access_token(&self, jti: Uuid, remaining_secs: i64) -> Result<(), AuthError>;
+
+    /// Checks if an access token JTI is currently blocked.
+    ///
+    /// # Parameters
+    /// - `jti`: The Unique ID of the token to check.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the token is blocked.
+    /// - `Ok(false)` otherwise.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn is_token_blocked(&self, jti: Uuid) -> Result<bool, AuthError>;
+
+    /// Checks if all tokens for a user issued before a certain timestamp are blocked.
+    ///
+    /// # Parameters
+    /// - `user_id`: The ID of the user.
+    /// - `issued_at`: The timestamp the token was issued at.
+    ///
+    /// # Returns
+    /// - `Ok(true)` if the tokens are blocked.
+    /// - `Ok(false)` otherwise.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn is_user_tokens_blocked(
         &self,
         user_id: Uuid,
         issued_at: i64,
     ) -> Result<bool, AuthError>;
+
+    /// Blocks all current access tokens for a user.
+    ///
+    /// Typically used during password resets or security breaches.
+    ///
+    /// # Parameters
+    /// - `user_id`: The ID of the user.
+    /// - `ttl`: The duration (in seconds) to keep the block active.
+    ///
+    /// # Returns
+    /// - `Ok(())` if the block was successfully applied.
+    ///
+    /// # Errors
+    /// - `AuthError::Redis` if the cache operation fails.
     async fn block_all_user_tokens(&self, user_id: Uuid, ttl: i64) -> Result<(), AuthError>;
 }
 

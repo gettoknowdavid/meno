@@ -10,6 +10,7 @@ pub struct AuthRepository {
 }
 
 impl AuthRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
@@ -217,7 +218,6 @@ impl AuthRepo for AuthRepository {
         Ok(rows
             .iter()
             .filter_map(|r| AuthProvider::from_str(&r.provider_type).ok())
-            .map(|s| AuthProvider::from(s))
             .collect())
     }
 
@@ -349,6 +349,90 @@ impl AuthRepo for AuthRepository {
         Ok(())
     }
 
+    /// Deletes expired refresh tokens from the database in batched operations.
+    ///
+    /// This method performs a batched deletion of refresh tokens that have passed their expiration time.
+    /// To prevent long-running queries and potential table locks, it processes records in chunks of 5,000
+    /// tokens per transaction. The deletion continues until all expired tokens are removed, yielding
+    /// control back to the async runtime between batches to ensure fair scheduling with other concurrent
+    /// operations.
+    ///
+    /// The method automatically handles the transaction lifecycle for each batch, committing the
+    /// deletion for each chunk independently. This approach provides several advantages:
+    /// - Prevents transaction bloat from accumulating too many changes
+    /// - Minimizes lock contention on the refresh_tokens table
+    /// - Allows the database to reclaim storage incrementally
+    /// - Provides predictable performance regardless of the total number of expired tokens
+    ///
+    /// # Parameters
+    ///
+    /// - `&self`: Immutable reference to the repository instance.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Result<u64, AuthError>` where the `u64` represents the total number of refresh tokens
+    /// successfully deleted from the database. If no expired tokens exist, returns `Ok(0)`.
+    ///
+    /// # Errors
+    ///
+    /// Returns `AuthError::Database` if:
+    /// - A database connection error occurs
+    /// - The deletion query fails (e.g., syntax error, constraint violation)
+    /// - Transaction management fails (e.g., transaction begin or commit fails)
+    ///
+    /// # Performance Notes
+    ///
+    /// This implementation uses a cursor-based deletion strategy with a fixed batch size of 5,000 records.
+    /// The batch size strikes a balance between efficiency and resource usage:
+    /// - Large enough to minimize round-trips to the database
+    /// - Small enough to avoid excessive memory usage and lock contention
+    ///
+    /// Each batch executes within its own implicit transaction through the `DELETE` statement, ensuring
+    /// that partial deletions are persisted and don't cause long-held locks. The `yield_now()` call
+    /// between batches prevents blocking the async runtime during large deletion operations.
+    ///
+    /// For optimal performance, ensure the `expires_at` column is indexed. Consider running this
+    /// operation during off-peak hours to minimize impact on read operations. The method uses the
+    /// database's `NOW()` function for time comparison, ensuring consistent behavior across time zones
+    /// and server clocks.
+    ///
+    /// # Example
+    ///
+    /// ```rust
+    /// use auth::repository::AuthRepository;
+    /// use time::OffsetDateTime;
+    ///
+    /// # async fn example(repo: &AuthRepository) -> Result<(), AuthError> {
+    /// // Periodically clean up expired tokens, e.g., in a scheduled job
+    /// let deleted_count = repo.cleanup_expired_refresh_tokens().await?;
+    /// tracing::info!("Cleaned up {} expired refresh tokens", deleted_count);
+    ///
+    /// // If you need to monitor the operation's progress
+    /// if deleted_count > 0 {
+    ///     // Log the cleanup metrics
+    ///     metrics::counter!("auth.refresh_tokens.cleaned", deleted_count as u64);
+    /// }
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # See Also
+    ///
+    /// - [`revoke_refresh_token()`](method@Self::revoke_refresh_token) for revoking a specific token
+    /// - [`revoke_all_refresh_tokens()`](method@Self::revoke_all_refresh_tokens) for revoking all tokens for a user
+    /// - [`rotate_refresh_token()`](method@Self::rotate_refresh_token) for token rotation operations
+    /// - The `refresh_tokens` table structure in the database schema documentation
+    ///
+    /// # Notes
+    ///
+    /// This method should be called periodically (e.g., via a cron job or scheduled task)
+    /// to prevent the `refresh_tokens` table from growing indefinitely. Failure to clean
+    /// up expired tokens can lead to:
+    /// - Increased storage costs
+    /// - Slower query performance on token lookups
+    /// - Potential security risks from retaining expired tokens
+    ///
+    /// The method is idempotent and safe to call multiple times concurrently.
     async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError> {
         let mut total_deleted: u64 = 0;
         loop {
@@ -368,7 +452,7 @@ impl AuthRepo for AuthRepository {
             .await
             .map_err(AuthError::Database)?;
 
-            let n = chunk.unwrap_or(0) as u64;
+            let n = chunk.unwrap_or(0).cast_unsigned();
             total_deleted += n;
             if n < 5000 {
                 break;

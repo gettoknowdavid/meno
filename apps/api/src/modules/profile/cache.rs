@@ -80,7 +80,7 @@ impl ProfileCache {
         results: Vec<ProfileSearchResult>,
     ) -> Result<(), ProfileError> {
         self.redis
-            .set(&key, &results, Some(TTL_60_SECS))
+            .set(key, &results, Some(TTL_60_SECS))
             .await
             .map_err(ProfileError::Redis)?;
         Ok(())
@@ -90,7 +90,7 @@ impl ProfileCache {
         key: &RedisKey,
     ) -> Result<Option<Vec<ProfileSearchResult>>, ProfileError> {
         self.redis
-            .get::<Vec<ProfileSearchResult>>(&key)
+            .get::<Vec<ProfileSearchResult>>(key)
             .await
             .map_err(ProfileError::Redis)
     }

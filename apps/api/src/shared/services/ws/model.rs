@@ -89,7 +89,7 @@ impl FromStr for WsEvent {
             "editMessage" => Ok(WsEvent::EditMessage),
             "deleteMessage" => Ok(WsEvent::DeleteMessage),
             "sendReaction" => Ok(WsEvent::SendReaction),
-            _ => Err(format!("Unknown WebSocket event: {}", s)),
+            _ => Err(format!("Unknown WebSocket event: {s}")),
         }
     }
 }
@@ -127,7 +127,7 @@ impl fmt::Display for WsEvent {
             WsEvent::DeleteMessage => "deleteMessage",
             WsEvent::SendReaction => "sendReaction",
         };
-        write!(f, "{}", s)
+        write!(f, "{s}")
     }
 }
 
@@ -180,6 +180,7 @@ impl Default for GracePeriodConfig {
     }
 }
 impl GracePeriodConfig {
+    #[must_use]
     pub fn get_grace_seconds(&self, disconnect_count: u64) -> u64 {
         match disconnect_count {
             1 => self.tier1_secs,

@@ -367,17 +367,14 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             return Err(BroadcastError::AlreadyLive);
         }
 
-        // Create new LiveKit room and generate a `broadcast_token` concurrently.
-        let (room_result, broadcast_token_result) = tokio::join!(
-            self.livekit.create_room(broadcast_id),
-            self.livekit.mint_host_token(&creator, broadcast_id),
-        );
-
-        room_result?;
+        self.livekit.create_room(broadcast_id).await?;
         span.record("room_created", true);
         tracing::debug!(broadcast_id = %broadcast_id, "LiveKit room created");
 
-        let broadcast_token = broadcast_token_result.map_err(BroadcastError::LiveKitAccess)?;
+        let broadcast_token = self
+            .livekit
+            .mint_host_token(&creator, broadcast_id)
+            .map_err(BroadcastError::LiveKitAccess)?;
         span.record("token_minted", true);
         tracing::debug!(broadcast_id = %broadcast_id, "HOST token minted");
 
@@ -651,8 +648,7 @@ impl<R: BroadcastRepo> BroadcastService<R> {
 
         let broadcast_token = self
             .livekit
-            .mint_token(user_id, &user.full_name, broadcast_id, livekit_role)
-            .await
+            .mint_token(user_id, &user.full_name, broadcast_id, &livekit_role)
             .map_err(BroadcastError::LiveKitAccess)?;
 
         let now = OffsetDateTime::now_utc();
@@ -796,7 +792,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
     )]
     pub async fn add_cohost(
         &self,
-
         broadcast_id: Uuid,
         requester_id: Uuid,
         cohost_id: Uuid,
@@ -835,7 +830,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         let broadcast_token = self
             .livekit
             .mint_cohost_token(&cohost, broadcast_id)
-            .await
             .map_err(BroadcastError::LiveKitAccess)?;
 
         let now = OffsetDateTime::now_utc();
@@ -970,7 +964,6 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             let new_token = self
                 .livekit
                 .mint_participant_token(&cohost_user, broadcast_id)
-                .await
                 .map_err(BroadcastError::LiveKitAccess)?;
 
             // Send token via WebSocket
@@ -1359,13 +1352,12 @@ impl<R: BroadcastRepo> BroadcastService<R> {
                 user_id,
                 &user.full_name,
                 broadcast_id,
-                livekit_role,
+                &livekit_role,
                 HashMap::from([
                     ("meno_role".to_string(), role.to_string()),
                     ("meno_broadcast_id".to_string(), broadcast_id.to_string()),
                 ]),
             )
-            .await
             .map_err(BroadcastError::LiveKitAccess)?;
 
         // Token TTL is 6 hours from now

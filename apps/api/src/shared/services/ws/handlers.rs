@@ -27,7 +27,7 @@ use tokio::{
 };
 use uuid::Uuid;
 
-/// GET /ws?token=<access_jwt>
+/// GET /ws?token=<`access_jwt`>
 pub async fn ws_upgrade(
     ws: WebSocketUpgrade,
     Query(query): Query<WsQuery>,
@@ -44,9 +44,7 @@ pub async fn ws_upgrade(
     }
 
     // Check reconnect rate limit before upgrading
-    if let Err(e) = check_reconnect_rate(&app, claims.sub).await {
-        return Err(e);
-    }
+    check_reconnect_rate(&app, claims.sub).await?;
 
     let user = app
         .auth
@@ -86,12 +84,11 @@ async fn handle_socket(socket: WebSocket, user: User, app: Arc<MenoState>) {
     let ws_sender = Arc::new(Mutex::new(ws_sender));
 
     let (hub_tx, hub_rx) = mpsc::channel::<Arc<WsPayload>>(128);
-    let conn_id = match app.ws.register(user.id, hub_tx) {
-        Some(id) => id,
-        None => {
-            tracing::warn!(user_id = %user.id, "Race condition on connection limit");
-            return;
-        }
+    let conn_id = if let Some(id) = app.ws.register(user.id, hub_tx) {
+        id
+    } else {
+        tracing::warn!(user_id = %user.id, "Race condition on connection limit");
+        return;
     };
 
     span.record("conn_id", conn_id);
@@ -240,7 +237,7 @@ async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
                 app.ws.send_unsupported_error(user_id, message).await;
             }
             Ok(data) => {
-                crate::modules::chat::handlers::handle_ws_send_message(&app, data).await;
+                crate::modules::chat::handlers::handle_ws_send_message(app, data).await;
             }
         },
         WsEvent::EditMessage => match serde_json::from_value::<EditMessageRequest>(msg.data) {
@@ -249,7 +246,7 @@ async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
                 app.ws.send_unsupported_error(user_id, message).await;
             }
             Ok(data) => {
-                crate::modules::chat::handlers::handle_ws_edit_message(&app, data).await;
+                crate::modules::chat::handlers::handle_ws_edit_message(app, data).await;
             }
         },
         WsEvent::DeleteMessage => match serde_json::from_value::<DeleteMessageRequest>(msg.data) {
@@ -258,7 +255,7 @@ async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
                 app.ws.send_unsupported_error(user_id, message).await;
             }
             Ok(data) => {
-                crate::modules::chat::handlers::handle_ws_delete_message(&app, data).await;
+                crate::modules::chat::handlers::handle_ws_delete_message(app, data).await;
             }
         },
         WsEvent::SendReaction => match serde_json::from_value::<SendReactionRequest>(msg.data) {
@@ -267,7 +264,7 @@ async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
                 app.ws.send_unsupported_error(user_id, message).await;
             }
             Ok(data) => {
-                crate::modules::chat::handlers::handle_ws_send_reaction(&app, data).await;
+                crate::modules::chat::handlers::handle_ws_send_reaction(app, data).await;
             }
         },
         _ => {
@@ -278,7 +275,7 @@ async fn handle_client_message(app: &MenoState, user_id: Uuid, raw_text: &str) {
             );
 
             let message = format!("Unsupported event: {}", msg.event);
-            let _ = app.ws.send_unsupported_error(user_id, message).await;
+            let () = app.ws.send_unsupported_error(user_id, message).await;
         }
     }
 }
@@ -301,7 +298,7 @@ async fn handle_disconnect(app: &MenoState, user_id: Uuid, is_host: bool) {
         // Get disconnect count for tiered grace period
         let count_key = RedisKey::disconnect_count(broadcast.id);
         let disconnect_count: u64 = match app.redis.incr(&count_key).await {
-            Ok(c) => c as u64,
+            Ok(c) => c.cast_unsigned(),
             Err(_) => 1,
         };
         let _ = app.redis.expire(&count_key, TTL_3600_SECS).await;
@@ -412,7 +409,7 @@ pub async fn handle_reconnect(app: &MenoState, user_id: Uuid) {
     app.pubsub.publish_to_room(broadcast.id, payload).await;
 }
 
-/// Check reconnect rate limit to prevent DoS and crash loops
+/// Check reconnect rate limit to prevent `DoS` and crash loops
 ///
 /// Sometimes, networks can cause rapid reconnect storms when the signal fluctuates.
 /// This rate limiter prevents a single user from overwhelming the server.

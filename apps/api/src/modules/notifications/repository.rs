@@ -15,6 +15,7 @@ pub struct NotificationRepository {
     db: sqlx::PgPool,
 }
 impl NotificationRepository {
+    #[must_use]
     pub fn new(db: sqlx::PgPool) -> Self {
         Self { db }
     }
@@ -101,7 +102,7 @@ impl NotificationRepository {
         };
 
         let mut qb = QueryBuilder::new(
-            r#"SELECT
+            r"SELECT
                     n.id,
                     n.read,
                     n.created_at,
@@ -119,7 +120,7 @@ impl NotificationRepository {
                JOIN  notification_templates ntpl ON ntpl.id = n.template_id
                JOIN  notification_types     nt   ON nt.code = ntpl.type
                LEFT  JOIN users u ON u.id = n.actor_id AND u.deleted_at IS NULL
-               WHERE n.owner_id = "#,
+               WHERE n.owner_id = ",
         );
 
         qb.push_bind(owner_id);
@@ -341,7 +342,7 @@ impl NotificationRepository {
         Ok(tokens)
     }
 
-    /// Clears a stale FCM token (called when FCM returns a 404 / TOKEN_NOT_REGISTERED).
+    /// Clears a stale FCM token (called when FCM returns a 404 / `TOKEN_NOT_REGISTERED`).
     pub async fn clear_push_token(&self, user_id: Uuid) -> Result<(), NotificationError> {
         sqlx::query!(
             r#"UPDATE general_settings SET push_notification_token = NULL WHERE user_id = $1"#,

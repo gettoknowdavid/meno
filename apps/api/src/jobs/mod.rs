@@ -26,6 +26,7 @@ pub struct Jobs {
 impl Jobs {
     /// Build all storage instances.
     /// Call once at startup, after `PostgresStorage::setup()` has run migrations.
+    #[must_use]
     pub fn new(pool: &sqlx::PgPool) -> Self {
         Self {
             email: Arc::new(Mutex::new(PostgresStorage::new(pool))),

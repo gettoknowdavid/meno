@@ -1,16 +1,15 @@
-use once_cell::sync::Lazy;
 use validator::ValidationError;
 
-static EMAIL_REGEX: Lazy<regex::Regex> = Lazy::new(|| {
+static EMAIL_REGEX: std::sync::LazyLock<regex::Regex> = std::sync::LazyLock::new(|| {
     regex::Regex::new(r"\A[a-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[a-z0-9!#$%&'*+/=?^_`{|}~-]+)*@(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\z").unwrap()
 });
 
 pub fn validate_email(s: &str) -> Result<(), ValidationError> {
-    if !EMAIL_REGEX.is_match(s) {
+    if EMAIL_REGEX.is_match(s) {
+        Ok(())
+    } else {
         let message = std::borrow::Cow::Borrowed("Invalid email format");
         Err(ValidationError::new("email").with_message(message))
-    } else {
-        Ok(())
     }
 }
 
@@ -25,11 +24,11 @@ pub fn validate_password(password: &str) -> Result<(), ValidationError> {
         errors.push("Password is too long");
     }
 
-    if !password.chars().any(|c| c.is_lowercase()) {
+    if !password.chars().any(char::is_lowercase) {
         errors.push("Password must contain at least one lowercase letter");
     }
 
-    if !password.chars().any(|c| c.is_uppercase()) {
+    if !password.chars().any(char::is_uppercase) {
         errors.push("Password must contain at least one uppercase letter");
     }
 
