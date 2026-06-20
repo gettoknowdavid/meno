@@ -1,8 +1,3 @@
-use crate::shared::email::EmailService;
-use crate::state::MenoState;
-use apalis::prelude::{BoxDynError, Data};
-use std::sync::Arc;
-
 #[derive(Clone, Debug, serde::Deserialize, serde::Serialize)]
 pub struct SendEmailJob {
     pub to: String,
@@ -52,10 +47,13 @@ pub struct SendEmailJob {
 ///     eprintln!("Failed to send email: {:?}", e);
 /// }
 /// ```
-pub async fn send_email(job: SendEmailJob, state: Data<Arc<MenoState>>) -> Result<(), BoxDynError> {
+pub async fn send_email(
+    job: SendEmailJob,
+    state: apalis::prelude::Data<std::sync::Arc<crate::state::MenoState>>,
+) -> Result<(), apalis::prelude::BoxDynError> {
     let transport = state.smtp.clone();
     let from = state.config.smtp_from.clone();
-    let email = EmailService::new(transport, from);
+    let email = crate::shared::email::EmailService::new(transport, from);
     email.send(&job.to, &job.subject, &job.html).await?;
     tracing::info!(to = %job.to, "Verification email sent");
     Ok(())

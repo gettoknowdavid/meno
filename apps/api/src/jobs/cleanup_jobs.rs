@@ -1,12 +1,6 @@
-use crate::modules::auth::repository::{AuthRepo, AuthRepository};
-use crate::state::MenoState;
-use apalis::prelude::{BoxDynError, Data};
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-
 /// Periodic job: delete expired refresh tokens in batches.
 /// Scheduled via apalis-cron (see monitor.rs).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct CleanupExpiredTokensJob;
 
 /// Asynchronous function to clean up expired refresh tokens from the database.
@@ -21,7 +15,7 @@ pub struct CleanupExpiredTokensJob;
 /// * `_job` - A `CleanupExpiredTokensJob` instance representing the context for the cleanup job.
 ///   It is unused in this function but may contain metadata or context in broader usage scenarios.
 ///
-/// * `state` - Shared application state of type `Data<Arc<MenoState>>` that provides access to
+/// * `app` - Shared application state of type `Data<Arc<MenoState>>` that provides access to
 ///   the necessary resources, including the database connection.
 ///
 /// # Returns
@@ -44,10 +38,9 @@ pub struct CleanupExpiredTokensJob;
 /// ```
 pub async fn cleanup_expired_tokens(
     _job: CleanupExpiredTokensJob,
-    state: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
-    let repo = AuthRepository::new(state.db.clone());
-    let deleted = repo.cleanup_expired_refresh_tokens().await?;
+    app: apalis::prelude::Data<std::sync::Arc<crate::state::MenoState>>,
+) -> Result<(), apalis::prelude::BoxDynError> {
+    let deleted = app.auth.service.cleanup_expired_refresh_tokens().await?;
     if deleted > 0 {
         tracing::info!(deleted, "Cleaned up expired refresh tokens");
     }

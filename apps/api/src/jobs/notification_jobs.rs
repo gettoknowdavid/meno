@@ -1,33 +1,23 @@
-use crate::modules::broadcast::repository::{BroadcastRepo, BroadcastRepository};
-use crate::shared::services::ws::dto::WsPayload;
-use crate::shared::services::ws::model::WsEvent;
-use crate::state::MenoState;
-use apalis::prelude::*;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use time::{OffsetDateTime, serde::rfc3339};
-use uuid::Uuid;
-
 /// This job notifies all those subscribed to the creator, and for now, every online user via
 /// WebSocket, that a new broadcast has just gone live or has started.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BroadcastStartedFanOutJob {
-    pub broadcast_id: Uuid,
-    pub creator_id: Uuid,
+    pub broadcast_id: uuid::Uuid,
+    pub creator_id: uuid::Uuid,
     pub title: String,
     pub image_url: Option<String>,
 }
 
 /// This job is emitted when a broadcast is scheduled.
 /// The notification is sent to all those subscribed to the creator.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct BroadcastScheduledFanOutJob {
-    pub broadcast_id: Uuid,
-    pub creator_id: Uuid,
+    pub broadcast_id: uuid::Uuid,
+    pub creator_id: uuid::Uuid,
     pub title: String,
     pub image_url: Option<String>,
-    #[serde(with = "rfc3339")]
-    pub start_time: OffsetDateTime,
+    #[serde(with = "time::serde::rfc3339")]
+    pub start_time: time::OffsetDateTime,
 }
 
 /// Asynchronously handles the fan-out operation for notifying subscribers about a started broadcast.
@@ -64,16 +54,19 @@ pub struct BroadcastScheduledFanOutJob {
 /// ```
 pub async fn broadcast_started_fanout(
     job: BroadcastStartedFanOutJob,
-    app: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
-    let repo = BroadcastRepository::new(app.db.clone());
-    let ids = repo.get_subscriber_ids(job.creator_id).await?;
+    app: apalis::prelude::Data<std::sync::Arc<crate::state::MenoState>>,
+) -> Result<(), apalis::prelude::BoxDynError> {
+    let ids = app
+        .broadcast
+        .service
+        .get_subscriber_ids(job.creator_id)
+        .await?;
     if ids.is_empty() {
         return Ok(());
     }
 
-    let payload = WsPayload::new(
-        WsEvent::NewBroadcast,
+    let payload = crate::shared::services::ws::dto::WsPayload::new(
+        crate::shared::services::ws::model::WsEvent::NewBroadcast,
         serde_json::json!({
             "broadcast_id": job.broadcast_id,
             "title": job.title,
@@ -154,16 +147,19 @@ pub async fn broadcast_started_fanout(
 /// ```
 pub async fn broadcast_scheduled_fanout(
     job: BroadcastScheduledFanOutJob,
-    app: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
-    let repo = BroadcastRepository::new(app.db.clone());
-    let ids = repo.get_subscriber_ids(job.creator_id).await?;
+    app: apalis::prelude::Data<std::sync::Arc<crate::state::MenoState>>,
+) -> Result<(), apalis::prelude::BoxDynError> {
+    let ids = app
+        .broadcast
+        .service
+        .get_subscriber_ids(job.creator_id)
+        .await?;
     if ids.is_empty() {
         return Ok(());
     }
 
-    let payload = WsPayload::new(
-        WsEvent::ScheduledBroadcast,
+    let payload = crate::shared::services::ws::dto::WsPayload::new(
+        crate::shared::services::ws::model::WsEvent::ScheduledBroadcast,
         serde_json::json!({
             "broadcastId": job.broadcast_id,
             "title": job.title,

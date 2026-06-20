@@ -1,11 +1,7 @@
 use super::{broadcast_jobs, cleanup_jobs, email_jobs, notification_jobs};
 use crate::jobs::cleanup_jobs::CleanupExpiredTokensJob;
-use crate::state::MenoState;
-use apalis::{layers::retry::RetryPolicy, prelude::*};
+use apalis::prelude::*;
 use apalis_postgres::PostgresStorage;
-use apalis_postgres::shared::SharedPostgresStorage;
-use std::sync::Arc;
-use tower::retry::RetryLayer;
 
 /// Runs the job monitoring system using the Apalis job framework.
 ///
@@ -24,7 +20,7 @@ use tower::retry::RetryLayer;
 ///
 /// ### Parameters:
 /// - `pool`: A `sqlx::PgPool` instance representing the connection pool for PostgreSQL.
-/// - `state`: Shared application state wrapped in an `Arc<MenoState>`. This state is passed
+/// - `state`: Shared application state wrapped in an `std::sync::Arc<MenoState>`. This state is passed
 ///   to the workers for processing jobs.
 ///
 /// ### Returns:
@@ -36,7 +32,7 @@ use tower::retry::RetryLayer;
 /// - Sets up shared storage via `SharedPostgresStorage`, which provides backend storage
 ///   for job workers.
 /// - Configures workers with the `WorkerBuilder`:
-///   - Each worker uses specific layers, like `RetryLayer` for retry policies.
+///   - Each worker uses specific layers, like `tower::retry::RetryLayer` for retry policies.
 ///   - Each worker has a concurrency limit of 20 jobs.
 /// - Registers event logging for monitoring job execution.
 /// - Handles shutdown signals with a 30-second timeout grace period.
@@ -44,10 +40,10 @@ use tower::retry::RetryLayer;
 /// ### Example:
 /// ```rust
 /// use sqlx::PgPool;
-/// use std::sync::Arc;
+/// use std::sync::std::sync::Arc;
 ///
 /// let pool = PgPool::connect("postgres://example_db_url").await.unwrap();
-/// let state = Arc::new(MenoState::new());
+/// let state = std::sync::Arc::new(MenoState::new());
 ///
 /// run_monitor(pool, state).await.unwrap();
 /// ```
@@ -57,11 +53,14 @@ use tower::retry::RetryLayer;
 /// - Database connection or migration failure.
 /// - Job setup or worker initialization issues.
 /// - Errors during runtime signal handling or job processing.
-pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::Result<()> {
+pub async fn run_monitor(
+    pool: sqlx::PgPool,
+    state: std::sync::Arc<crate::state::MenoState>,
+) -> anyhow::Result<()> {
     PostgresStorage::setup(&pool).await?;
     tracing::info!("Apalis Postgres migrations applied");
 
-    let mut store = SharedPostgresStorage::new(pool);
+    let mut store = apalis_postgres::shared::SharedPostgresStorage::new(pool);
 
     let email = store.make_shared()?;
     let broadcast_started = store.make_shared()?;
@@ -69,11 +68,11 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
     let cleanup_storage = store.make_shared()?;
     let broadcast_end = store.make_shared()?;
 
-    let state_email = Arc::clone(&state);
-    let state_started = Arc::clone(&state);
-    let state_scheduled = Arc::clone(&state);
-    let state_cleanup = Arc::clone(&state);
-    let state_end = Arc::clone(&state);
+    let state_email = std::sync::Arc::clone(&state);
+    let state_started = std::sync::Arc::clone(&state);
+    let state_scheduled = std::sync::Arc::clone(&state);
+    let state_cleanup = std::sync::Arc::clone(&state);
+    let state_end = std::sync::Arc::clone(&state);
 
     Monitor::new()
         .register(move |_| {
@@ -81,7 +80,9 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
                 .backend(email.clone())
                 .data(state_email.clone())
                 .concurrency(20)
-                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .layer(tower::retry::RetryLayer::new(
+                    apalis::layers::retry::RetryPolicy::retries(3),
+                ))
                 .build(email_jobs::send_email)
         })
         .register(move |_| {
@@ -89,7 +90,9 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
                 .backend(broadcast_started.clone())
                 .data(state_started.clone())
                 .concurrency(20)
-                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .layer(tower::retry::RetryLayer::new(
+                    apalis::layers::retry::RetryPolicy::retries(3),
+                ))
                 .build(notification_jobs::broadcast_started_fanout)
         })
         .register(move |_| {
@@ -97,7 +100,9 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
                 .backend(broadcast_scheduled.clone())
                 .data(state_scheduled.clone())
                 .concurrency(20)
-                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .layer(tower::retry::RetryLayer::new(
+                    apalis::layers::retry::RetryPolicy::retries(3),
+                ))
                 .build(notification_jobs::broadcast_scheduled_fanout)
         })
         .register(move |_| {
@@ -105,14 +110,18 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
                 .backend(cleanup_storage.clone())
                 .data(state_cleanup.clone())
                 .concurrency(20)
-                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .layer(tower::retry::RetryLayer::new(
+                    apalis::layers::retry::RetryPolicy::retries(3),
+                ))
                 .build(cleanup_jobs::cleanup_expired_tokens)
         })
         .register(move |_| {
             WorkerBuilder::new("meno-broadcast-end")
                 .backend(broadcast_end.clone())
                 .concurrency(20)
-                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .layer(tower::retry::RetryLayer::new(
+                    apalis::layers::retry::RetryPolicy::retries(3),
+                ))
                 .data(state_end.clone())
                 .build(broadcast_jobs::end_broadcast)
         })
@@ -135,6 +144,7 @@ pub async fn schedule_cleanup_job(pool: sqlx::PgPool) {
     loop {
         interval.tick().await;
         let mut storage: PostgresStorage<CleanupExpiredTokensJob> = PostgresStorage::new(&pool);
+
         if let Err(e) = storage.push(CleanupExpiredTokensJob).await {
             tracing::warn!(error = %e, "Failed to schedule cleanup job");
         } else {
