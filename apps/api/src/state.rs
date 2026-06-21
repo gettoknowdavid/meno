@@ -1,3 +1,6 @@
+use crate::modules::auth::repository::AuthRepository;
+use crate::modules::notes::state::NotesState;
+use crate::shared::identity::IdentityReader;
 use crate::{
     config::Config,
     jobs::Jobs,
@@ -36,8 +39,6 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
-use crate::modules::auth::repository::AuthRepository;
-use crate::shared::identity::IdentityReader;
 
 /// Top-level application state.
 ///
@@ -56,6 +57,7 @@ pub struct MenoState {
     pub subscribers: SubscribersState,
     pub notifications: NotificationState,
     pub chat: ChatState,
+    pub notes: NotesState,
     pub ws: WsService,
     pub pubsub: Arc<WsPubSubBridge>,
     pub jobs: Jobs,
@@ -88,8 +90,10 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         jobs.clone(),
     );
     let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), pubsub.clone());
-    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
+    let notifications =
+        NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
+    let notes = NotesState::new(db.clone(), jobs.clone());
 
     let state = Arc::new(MenoState {
         auth,
@@ -98,6 +102,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         subscribers,
         notifications,
         chat,
+        notes,
         ws,
         pubsub,
         jobs,

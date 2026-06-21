@@ -22,12 +22,9 @@ pub trait NotesRepo: Send + Sync + 'static {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>;
 
-    async fn update_note<'e, E>(
+    async fn update_note_by_version<'e, E>(
         &self,
         executor: E,
-        id: uuid::Uuid,
-        creator_id: uuid::Uuid,
-        base_version: i32,
         input: &UpdateNoteInput<'e>,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -247,12 +244,10 @@ impl NotesRepo for NotesRepository {
         .await
         .map_err(NotesError::Database)
     }
-    async fn update_note<'e, E>(
+    async fn update_note_by_version<'e, E>(
         &self,
         executor: E,
-        id: uuid::Uuid,
-        creator_id: uuid::Uuid,
-        base_version: i32,
+
         input: &UpdateNoteInput<'e>,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -273,9 +268,9 @@ impl NotesRepo for NotesRepository {
             input.content,
             input.pinned,
             input.folder_id,
-            id,
-            creator_id,
-            base_version,
+            input.note_id,
+            input.creator_id,
+            input.base_version,
         )
         .fetch_optional(executor)
         .await
@@ -955,6 +950,9 @@ pub struct UpdateNoteInput<'e> {
     pub content: Option<&'e str>,
     pub pinned: Option<bool>,
     pub folder_id: Option<uuid::Uuid>,
+    pub note_id: uuid::Uuid,
+    pub creator_id: uuid::Uuid,
+    pub base_version: i32,
 }
 pub struct UpdateFolderInput<'e> {
     pub title: Option<&'e str>,
