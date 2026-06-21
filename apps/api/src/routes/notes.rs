@@ -8,11 +8,14 @@ use axum::routing::{delete, get, patch, post};
 use std::sync::Arc;
 
 pub fn router(app: Arc<MenoState>) -> Router<Arc<MenoState>> {
-    let normal = Router::new().layer(from_fn_with_state(app.clone(), auth_middleware));
+    let normal = Router::new()
+        .route("/", get(h::get_notes))
+        .layer(from_fn_with_state(app.clone(), auth_middleware));
 
     let idempotent = Router::new()
         .route("/", post(h::create_note))
         .route("/{id}", patch(h::update_note))
+        .route("/{id}", delete(h::delete_note))
         .layer(from_fn(idempotency_middleware))
         .layer(from_fn_with_state(app.clone(), auth_middleware));
 

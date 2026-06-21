@@ -39,6 +39,11 @@ pub struct UpdateFolderRequest {
 }
 
 #[derive(Debug, serde::Deserialize)]
+pub struct DeleteNoteRequest {
+    pub base_version: i32,
+}
+
+#[derive(Debug, serde::Deserialize)]
 pub struct DeleteFolderRequest {
     pub should_delete_notes: Option<bool>,
 }
