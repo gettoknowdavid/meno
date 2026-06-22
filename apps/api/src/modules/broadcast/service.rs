@@ -1178,7 +1178,13 @@ impl<R: BroadcastRepo> BroadcastService<R> {
             return Err(BroadcastError::NotLive);
         }
 
-        let lk_participants = self.livekit.list_participants(broadcast_id).await?;
+        let lk_participants = coalesce_cache(
+            &self.redis,
+            &format!("bc:live_participants:{broadcast_id}"),
+            5,
+            || async { self.livekit.list_participants(broadcast_id).await },
+        )
+        .await?;
 
         if lk_participants.is_empty() {
             return Ok(CursorPage {

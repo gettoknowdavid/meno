@@ -1,5 +1,6 @@
 use crate::modules::broadcast::errors::BroadcastError;
 use crate::modules::broadcast::model::ParticipantRole;
+use serde::{Deserialize, Serialize};
 use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -31,7 +32,7 @@ impl TryFrom<ParticipantRole> for LivekitRole {
 }
 
 /// Simple struct for live participant data from `LiveKit`
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct LivekitParticipantInfo {
     pub id: uuid::Uuid,
     pub joined_at: time::OffsetDateTime,
