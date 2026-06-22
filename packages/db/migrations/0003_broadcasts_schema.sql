@@ -14,7 +14,7 @@ CREATE TABLE public.broadcasts
 
     creator_id         UUID        NOT NULL REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,
 
-    total_participants BIGINT      NOT NULL DEFAULT 0,
+    total_participants BIGINT               DEFAULT 0,
 
     recording_enabled  BOOLEAN     NOT NULL DEFAULT false,
     recording_key      TEXT,
