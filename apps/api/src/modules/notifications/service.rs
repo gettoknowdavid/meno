@@ -100,8 +100,15 @@ impl NotificationService {
             .create(owner_id, template.id, actor_id, broadcast_id, None)
             .await?;
 
-        let ws_payload = WsPayload::notification(owner_id, &title, &body);
-        self.pubsub.publish_to_user(owner_id, ws_payload).await;
+        if self
+            .repo
+            .has_app_notifications_enabled(owner_id)
+            .await
+            .unwrap_or(true)
+        {
+            let ws_payload = WsPayload::notification(owner_id, &title, &body);
+            self.pubsub.publish_to_user(owner_id, ws_payload).await;
+        }
 
         // Handle Push notifications
         let push = self.push.clone();

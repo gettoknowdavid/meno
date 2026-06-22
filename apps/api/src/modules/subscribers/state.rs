@@ -1,17 +1,20 @@
+use crate::modules::notifications::state::NotificationState;
+use crate::modules::subscribers::service::SubscribersService;
+use crate::shared::identity::IdentityReader;
+use std::sync::Arc;
+
 #[derive(Clone)]
 pub struct SubscribersState {
-    pub service: crate::modules::subscribers::service::SubscribersService,
+    pub service: SubscribersService,
 }
 impl SubscribersState {
     pub fn new(
         db: sqlx::PgPool,
-        identity: std::sync::Arc<dyn crate::shared::identity::IdentityReader>,
-        pubsub: std::sync::Arc<crate::shared::services::ws::pubsub::WsPubSubBridge>,
+        identity: Arc<dyn IdentityReader>,
+        notifications: NotificationState,
     ) -> Self {
         Self {
-            service: crate::modules::subscribers::service::SubscribersService::new(
-                db, identity, pubsub,
-            ),
+            service: SubscribersService::new(db, identity, notifications.service),
         }
     }
 }
