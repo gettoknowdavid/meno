@@ -3,7 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pg_trgm;
 ALTER TABLE public.users
     ADD COLUMN search_vector tsvector
         GENERATED ALWAYS AS (
-            to_tsvector('english', COALESCE(full_name, '') || '' || COALESCE(bio, ''))
+            to_tsvector('english', COALESCE(full_name, '') || ' ' || COALESCE(bio, ''))
             ) STORED;
 
 CREATE INDEX idx_users_search_vector ON public.users USING GIN (search_vector);

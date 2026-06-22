@@ -32,10 +32,6 @@ CREATE INDEX idx_broadcasts_status ON public.broadcasts (status);
 CREATE INDEX idx_broadcasts_start_time ON public.broadcasts (start_time) WHERE start_time IS NOT NULL;
 CREATE INDEX idx_broadcasts_end_time ON public.broadcasts (end_time) WHERE end_time IS NOT NULL;
 
--- Full-text search on title + description
-CREATE INDEX idx_broadcasts_fts_title_description ON broadcasTS
-    USING GIN (to_tsvector('english', title || '' || description));
-
 SELECT setup_updated_at_triggers();
 
 CREATE OR REPLACE FUNCTION update_broadcast_participant_count() RETURNS TRIGGER AS

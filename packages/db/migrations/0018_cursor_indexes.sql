@@ -29,7 +29,7 @@ CREATE INDEX IF NOT EXISTS idx_broadcasts_cursor_scheduled
 
 -- Full-text search (GIN — already in 0002, kept here for completeness)
 CREATE INDEX IF NOT EXISTS idx_broadcasts_fts
-    ON broadcasts USING GIN (to_tsvector('english', title || ' ' || description))
+    ON broadcasts USING GIN (to_tsvector('english', title || ' ' || COALESCE(description, '')))
     WHERE deleted_at IS NULL;
 
 -- ─────────────────────────────────────────────────────────────────

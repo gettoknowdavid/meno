@@ -463,7 +463,7 @@ impl BroadcastRepo for BroadcastRepository {
         }
         if let Some(ref kw) = query.keywords {
             qb.push(
-                r" AND to_tsvector('english', b.title || ' ' || b.description)
+                r" AND to_tsvector('english', b.title || ' ' || COALESCE(b.description, ''))
                     @@ plainto_tsquery('english', ",
             )
             .push_bind(kw.trim())
