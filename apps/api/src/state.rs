@@ -90,7 +90,8 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         jobs.clone(),
     );
     let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), pubsub.clone());
-    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
+    let notifications =
+        NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
     let notes = NotesState::new(db.clone());
 
@@ -214,6 +215,8 @@ fn start_background_workers(db: &PgPool, app: &Arc<MenoState>) {
         }
     });
 
-    let pool = db.clone();
-    tokio::spawn(crate::jobs::monitor::schedule_cleanup_job(pool));
+    let pool_1 = db.clone();
+    let pool_2 = db.clone();
+    tokio::spawn(crate::jobs::monitor::schedule_cleanup_job(pool_1));
+    tokio::spawn(crate::jobs::monitor::schedule_notes_cleanup_job(pool_2));
 }

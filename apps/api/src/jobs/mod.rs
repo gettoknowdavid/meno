@@ -5,6 +5,7 @@ pub mod broadcast_jobs;
 pub mod cleanup_jobs;
 pub mod email_jobs;
 pub mod monitor;
+pub mod note_jobs;
 pub mod notification_jobs;
 
 #[derive(Clone)]
@@ -14,6 +15,7 @@ pub struct Jobs {
     pub broadcast_scheduled: PostgresStorage<notification_jobs::BroadcastScheduledFanOutJob>,
     pub cleanup: PostgresStorage<cleanup_jobs::CleanupExpiredTokensJob>,
     pub broadcast_end: PostgresStorage<broadcast_jobs::EndBroadcastJob>,
+    pub notes_cleanup: PostgresStorage<note_jobs::PurgeStaleNotesJob>,
 }
 impl Jobs {
     /// Build all storage instances.
@@ -26,6 +28,7 @@ impl Jobs {
             broadcast_scheduled: PostgresStorage::new(pool),
             cleanup: PostgresStorage::new(pool),
             broadcast_end: PostgresStorage::new(pool),
+            notes_cleanup: PostgresStorage::new(pool),
         }
     }
 
@@ -59,6 +62,14 @@ impl Jobs {
         job: cleanup_jobs::CleanupExpiredTokensJob,
     ) -> anyhow::Result<()> {
         self.cleanup.clone().push(job).await?;
+        Ok(())
+    }
+
+    pub async fn push_notes_cleanup(
+        &self,
+        job: note_jobs::PurgeStaleNotesJob,
+    ) -> anyhow::Result<()> {
+        self.notes_cleanup.clone().push(job).await?;
         Ok(())
     }
 }

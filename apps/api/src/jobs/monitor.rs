@@ -1,7 +1,9 @@
-use super::{broadcast_jobs, cleanup_jobs, email_jobs, notification_jobs};
+use super::{broadcast_jobs, cleanup_jobs, email_jobs, note_jobs, notification_jobs};
 use crate::jobs::cleanup_jobs::CleanupExpiredTokensJob;
+use apalis::layers::retry::RetryPolicy;
 use apalis::prelude::*;
 use apalis_postgres::PostgresStorage;
+use tower::retry::RetryLayer;
 
 /// Runs the job monitoring system using the Apalis job framework.
 ///
@@ -67,12 +69,14 @@ pub async fn run_monitor(
     let broadcast_scheduled = store.make_shared()?;
     let cleanup_storage = store.make_shared()?;
     let broadcast_end = store.make_shared()?;
+    let notes_cleanup = store.make_shared()?;
 
     let state_email = std::sync::Arc::clone(&state);
     let state_started = std::sync::Arc::clone(&state);
     let state_scheduled = std::sync::Arc::clone(&state);
     let state_cleanup = std::sync::Arc::clone(&state);
     let state_end = std::sync::Arc::clone(&state);
+    let state_notes_cleanup = std::sync::Arc::clone(&state);
 
     Monitor::new()
         .register(move |_| {
@@ -80,9 +84,7 @@ pub async fn run_monitor(
                 .backend(email.clone())
                 .data(state_email.clone())
                 .concurrency(20)
-                .layer(tower::retry::RetryLayer::new(
-                    apalis::layers::retry::RetryPolicy::retries(3),
-                ))
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(email_jobs::send_email)
         })
         .register(move |_| {
@@ -90,9 +92,7 @@ pub async fn run_monitor(
                 .backend(broadcast_started.clone())
                 .data(state_started.clone())
                 .concurrency(20)
-                .layer(tower::retry::RetryLayer::new(
-                    apalis::layers::retry::RetryPolicy::retries(3),
-                ))
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(notification_jobs::broadcast_started_fanout)
         })
         .register(move |_| {
@@ -100,9 +100,7 @@ pub async fn run_monitor(
                 .backend(broadcast_scheduled.clone())
                 .data(state_scheduled.clone())
                 .concurrency(20)
-                .layer(tower::retry::RetryLayer::new(
-                    apalis::layers::retry::RetryPolicy::retries(3),
-                ))
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(notification_jobs::broadcast_scheduled_fanout)
         })
         .register(move |_| {
@@ -110,20 +108,24 @@ pub async fn run_monitor(
                 .backend(cleanup_storage.clone())
                 .data(state_cleanup.clone())
                 .concurrency(20)
-                .layer(tower::retry::RetryLayer::new(
-                    apalis::layers::retry::RetryPolicy::retries(3),
-                ))
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .build(cleanup_jobs::cleanup_expired_tokens)
         })
         .register(move |_| {
             WorkerBuilder::new("meno-broadcast-end")
                 .backend(broadcast_end.clone())
                 .concurrency(20)
-                .layer(tower::retry::RetryLayer::new(
-                    apalis::layers::retry::RetryPolicy::retries(3),
-                ))
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
                 .data(state_end.clone())
                 .build(broadcast_jobs::end_broadcast)
+        })
+        .register(move |_| {
+            WorkerBuilder::new("meno-notes-cleanup")
+                .backend(notes_cleanup.clone())
+                .data(state_notes_cleanup.clone())
+                .concurrency(5) // cheap batched deletes, no need for 20 here
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .build(note_jobs::purge_stale_notes)
         })
         .on_event(|_, e| tracing::info!(event = ?e, "Apalis monitor event"))
         .shutdown_timeout(std::time::Duration::from_secs(30))
@@ -149,6 +151,23 @@ pub async fn schedule_cleanup_job(pool: sqlx::PgPool) {
             tracing::warn!(error = %e, "Failed to schedule cleanup job");
         } else {
             tracing::debug!("CleanupExpiredTokensJob scheduled");
+        }
+    }
+}
+
+pub async fn schedule_notes_cleanup_job(pool: sqlx::PgPool) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_hours(24));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+        let mut storage: PostgresStorage<note_jobs::PurgeStaleNotesJob> =
+            PostgresStorage::new(&pool);
+        if let Err(e) = storage.push(note_jobs::PurgeStaleNotesJob).await {
+            tracing::warn!(error = %e, "Failed to schedule notes cleanup job");
+        } else {
+            tracing::debug!("PurgeStaleNotesJob scheduled");
         }
     }
 }
