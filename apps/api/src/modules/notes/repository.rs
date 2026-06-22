@@ -871,14 +871,27 @@ impl NotesRepo for NotesRepository {
         &self,
         cutoff: time::OffsetDateTime,
     ) -> Result<u64, NotesError> {
-        purge_batched(&self.db, "notes", cutoff).await
+        purge_batched(&self.db, PurgeTable::Notes, cutoff).await
     }
 
     async fn purge_deleted_folders_older_than(
         &self,
         cutoff: time::OffsetDateTime,
     ) -> Result<u64, NotesError> {
-        purge_batched(&self.db, "folders", cutoff).await
+        purge_batched(&self.db, PurgeTable::Folders, cutoff).await
+    }
+}
+
+pub enum PurgeTable {
+    Notes,
+    Folders,
+}
+impl PurgeTable {
+    const fn as_str(&self) -> &'static str {
+        match self {
+            Self::Notes => "notes",
+            Self::Folders => "folders",
+        }
     }
 }
 
@@ -887,10 +900,11 @@ impl NotesRepo for NotesRepository {
 /// here carries no injection risk.
 async fn purge_batched(
     db: &sqlx::PgPool,
-    table: &str,
+    table: PurgeTable,
     cutoff: time::OffsetDateTime,
 ) -> Result<u64, NotesError> {
     let mut total: u64 = 0;
+    let table = table.as_str();
 
     loop {
         let sql = format!(
