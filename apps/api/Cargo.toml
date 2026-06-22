@@ -34,7 +34,7 @@ rand = "0.10.1"
 sha2 = "0.11.0"
 hex = "0.4.3"
 oauth2 = { version = "5.0.0", features = ["reqwest", "reqwest-blocking"] }
-reqwest = { version = "0.13.3", features = ["json", "blocking", "form"] }
+reqwest = { version = "0.13.3", features = ["json", "blocking", "form", "query"] }
 object_store = { version = "0.13.2", features = ["aws"] }
 livekit-api = "0.5.0"
 dashmap = "6.2.1"

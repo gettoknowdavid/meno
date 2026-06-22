@@ -98,15 +98,9 @@ impl GoogleAuth {
     }
 
     pub async fn verify_id_token(&self, id_token: &str) -> Result<GoogleUserInfo> {
-        // Google's token info endpoint — validates the id_token and returns claims
-        // Used for mobile flow where Firebase already handled the OAuth dance
-        let url = format!(
-            "https://oauth2.googleapis.com/tokeninfo?id_token={}",
-            id_token
-        );
-
         let info: GoogleUserInfo = reqwest::Client::new()
-            .get(&url)
+            .get("https://oauth2.googleapis.com/tokeninfo")
+            .query(&[("id_token", id_token)])
             .send()
             .await?
             .json()
