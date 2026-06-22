@@ -63,6 +63,7 @@ pub async fn send_email(
 /// Returns a Tuple (subject, html)
 #[must_use]
 pub fn verify_email_html(full_name: &str, otp: &str) -> (String, String) {
+    let full_name = crate::shared::utils::escape_html(full_name);
     let html = format!(
         r#"
             <!DOCTYPE html>
@@ -86,6 +87,7 @@ pub fn verify_email_html(full_name: &str, otp: &str) -> (String, String) {
 /// Returns a Tuple (subject, html)
 #[must_use]
 pub fn reset_pwd_email_html(full_name: &str, otp: &str) -> (String, String) {
+    let full_name = crate::shared::utils::escape_html(full_name);
     let html = format!(
         r#"
         <!DOCTYPE html>
