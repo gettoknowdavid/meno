@@ -8,6 +8,7 @@ use crate::modules::auth::dto::{
 };
 use crate::modules::auth::errors::AuthError;
 use crate::modules::auth::model::{AuthProvider, OtpType, User};
+use crate::modules::auth::password::verify_password_async;
 use crate::modules::auth::repository::AuthRepo;
 use crate::modules::auth::token::{IssuedTokenPair, TokenService};
 use crate::shared::integrations::google::GoogleAuth;
@@ -112,7 +113,7 @@ impl AuthService {
         };
 
         if matches!(req.otp_type, OtpType::VerifyEmail) && user.verified {
-            return Err(AuthError::EmailAlreadyVerified);
+            return Ok(());
         }
 
         if !self.cache.can_resend_otp(&req.email).await? {
@@ -132,21 +133,29 @@ impl AuthService {
     }
 
     pub async fn login(&self, req: &LoginRequest) -> Result<AuthResponse, AuthError> {
+        // Throttle the login request before any look up
+        self.cache.check_login_rate_limit(&req.email).await?;
+
         let identity = self
             .repo
             .find_identity(&AuthProvider::Email, &req.email)
-            .await?
-            .ok_or(AuthError::InvalidCredentials)?;
+            .await?;
 
-        self.cache.check_login_rate_limit(&req.email).await?;
-
+        // Performs a (possibly dummy) Argon2 verify off-thread so timing
+        // is identical whether or not the account exists.
         let hash = identity
-            .password_hash
-            .as_deref()
-            .ok_or(AuthError::InvalidCredentials)?;
+            .as_ref()
+            .and_then(|i| i.password_hash.clone())
+            .unwrap_or_else(|| crate::modules::auth::password::DUMMY_HASH.clone());
 
-        if !verify_password_sync(&req.password, hash) {
-            tracing::warn!(email = %req.email, "login.invalid_credentials");
+        let password_ok = verify_password_async(req.password.clone(), hash).await;
+
+        let Some(identity) = identity else {
+            tracing::warn!(email = %req.email, "login.unknown_email");
+            return Err(AuthError::InvalidCredentials);
+        };
+
+        if identity.password_hash.is_none() || !password_ok {
             return Err(AuthError::InvalidCredentials);
         }
 
@@ -161,11 +170,10 @@ impl AuthService {
         }
 
         let _ = self.cache.clear_login_rate_limit(&req.email).await;
-        tracing::info!(user_id = %user.id, "login.success");
-
-        // Fetch all linked providers for the access token claims
         let providers = self.get_providers(user.id).await?;
         let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
+
+        tracing::info!(user_id = %user.id, "login.success");
         Ok(build_auth_response(user, pair, providers))
     }
 
@@ -356,10 +364,6 @@ async fn hash_password_async(password: String) -> Result<String, AuthError> {
         .await
         .map_err(|e| AuthError::Internal(e.into()))?
         .map_err(|_| AuthError::PasswordHash)
-}
-
-fn verify_password_sync(password: &str, hash: &str) -> bool {
-    crate::modules::auth::password::verify_password(password, hash)
 }
 
 fn build_auth_response(

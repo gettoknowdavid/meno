@@ -235,11 +235,28 @@ impl AuthCache for AuthRedisCache {
         code: &str,
         otp_type: &OtpType,
     ) -> Result<bool, AuthError> {
+        let attempts_key = RedisKey::rate_limit("OTP_ATTEMPTS", &format!("{email}:{otp_type}"));
+        let attempts: i64 = self
+            .redis
+            .incr(&attempts_key)
+            .await
+            .map_err(AuthError::Redis)?;
+        if attempts == 1 {
+            self.redis
+                .expire(&attempts_key, TTL_OTP_SECS)
+                .await
+                .map_err(AuthError::Redis)?;
+        }
+        if attempts > 5 {
+            return Err(AuthError::TooManyRequests);
+        }
+
         let key = RedisKey::otp(email, otp_type.as_ref());
         let stored: Option<String> = self.redis.get(&key).await.map_err(AuthError::Redis)?;
         match stored {
             Some(ref s) if s == code => {
-                self.redis.del(&key).await.map_err(AuthError::Redis)?;
+                let _ = self.redis.del(&attempts_key).await;
+                let _ = self.redis.del(&key).await;
                 Ok(true)
             }
             Some(_) => Ok(false),
