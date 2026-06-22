@@ -33,7 +33,7 @@ pub struct UpdateNoteRequest {
 #[derive(Debug, serde::Deserialize, validator::Validate)]
 pub struct UpdateFolderRequest {
     #[validate(length(max = 100, message = "Title cannot exceed 100 characters"))]
-    pub title: String,
+    pub title: Option<String>,
     pub pinned: Option<bool>,
     pub base_version: i32,
 }
@@ -45,6 +45,7 @@ pub struct DeleteNoteRequest {
 
 #[derive(Debug, serde::Deserialize)]
 pub struct DeleteFolderRequest {
+    pub base_version: i32,
     pub should_delete_notes: Option<bool>,
 }
 

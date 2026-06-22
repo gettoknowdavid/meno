@@ -1,3 +1,4 @@
+use crate::modules::notes::dto::MoveNotesToFolderRequest;
 use crate::modules::notes::errors::NotesError;
 use crate::modules::notes::model::{Folder, Note};
 
@@ -55,8 +56,8 @@ pub trait NotesRepo: Send + Sync + 'static {
     async fn add_note_to_folder<'e, E>(
         &self,
         executor: E,
-        note_id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        note_id: uuid::Uuid,
         folder_id: uuid::Uuid,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -65,8 +66,8 @@ pub trait NotesRepo: Send + Sync + 'static {
     async fn remove_note_from_folder<'e, E>(
         &self,
         executor: E,
-        note_id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        note_id: uuid::Uuid,
         folder_id: uuid::Uuid,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -74,9 +75,8 @@ pub trait NotesRepo: Send + Sync + 'static {
 
     async fn move_notes_to_folder(
         &self,
-        note_ids: &[uuid::Uuid],
         creator_id: uuid::Uuid,
-        folder_id: Option<uuid::Uuid>,
+        req: &MoveNotesToFolderRequest,
     ) -> Result<Vec<Note>, NotesError>;
 
     async fn orphan_notes_in_folder<'e, E>(
@@ -102,12 +102,9 @@ pub trait NotesRepo: Send + Sync + 'static {
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>;
 
-    async fn update_folder<'e, E>(
+    async fn update_folder_by_version<'e, E>(
         &self,
         executor: E,
-        id: uuid::Uuid,
-        creator_id: uuid::Uuid,
-        base_version: i32,
         input: &UpdateFolderInput<'e>,
     ) -> Result<Option<Folder>, NotesError>
     where
@@ -118,6 +115,7 @@ pub trait NotesRepo: Send + Sync + 'static {
         executor: E,
         id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        base_version: i32,
     ) -> Result<Option<Folder>, NotesError>
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>;
@@ -374,8 +372,8 @@ impl NotesRepo for NotesRepository {
     async fn add_note_to_folder<'e, E>(
         &self,
         executor: E,
-        note_id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        note_id: uuid::Uuid,
         folder_id: uuid::Uuid,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -399,8 +397,8 @@ impl NotesRepo for NotesRepository {
     async fn remove_note_from_folder<'e, E>(
         &self,
         executor: E,
-        note_id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        note_id: uuid::Uuid,
         folder_id: uuid::Uuid,
     ) -> Result<Option<Note>, NotesError>
     where
@@ -423,9 +421,8 @@ impl NotesRepo for NotesRepository {
 
     async fn move_notes_to_folder(
         &self,
-        note_ids: &[uuid::Uuid],
         creator_id: uuid::Uuid,
-        folder_id: Option<uuid::Uuid>,
+        req: &MoveNotesToFolderRequest,
     ) -> Result<Vec<Note>, NotesError> {
         sqlx::query_as!(
             Note,
@@ -433,8 +430,8 @@ impl NotesRepo for NotesRepository {
             SET folder_id = $1, version = version + 1, updated_at = NOW()
             WHERE ID = ANY($2) AND creator_id = $3 AND deleted_at IS NULL
             RETURNING *",
-            folder_id,
-            note_ids,
+            req.folder_id,
+            &req.note_ids,
             creator_id,
         )
         .fetch_all(&self.db)
@@ -507,12 +504,9 @@ impl NotesRepo for NotesRepository {
         .map_err(NotesError::Database)
     }
 
-    async fn update_folder<'e, E>(
+    async fn update_folder_by_version<'e, E>(
         &self,
         executor: E,
-        id: uuid::Uuid,
-        creator_id: uuid::Uuid,
-        base_version: i32,
         input: &UpdateFolderInput<'e>,
     ) -> Result<Option<Folder>, NotesError>
     where
@@ -529,9 +523,9 @@ impl NotesRepo for NotesRepository {
             RETURNING *",
             input.title,
             input.pinned,
-            id,
-            creator_id,
-            base_version,
+            input.folder_id,
+            input.creator_id,
+            input.base_version,
         )
         .fetch_optional(executor)
         .await
@@ -543,6 +537,7 @@ impl NotesRepo for NotesRepository {
         executor: E,
         id: uuid::Uuid,
         creator_id: uuid::Uuid,
+        base_version: i32,
     ) -> Result<Option<Folder>, NotesError>
     where
         E: sqlx::Executor<'e, Database = sqlx::Postgres>,
@@ -551,10 +546,11 @@ impl NotesRepo for NotesRepository {
             Folder,
             r"UPDATE folders
             SET deleted_at = NOW(), version = version + 1, updated_at = NOW()
-            WHERE id = $1 AND creator_id = $2 AND deleted_at IS NULL
+            WHERE id = $1 AND creator_id = $2 AND version = $3 AND deleted_at IS NULL
             RETURNING *",
             id,
             creator_id,
+            base_version
         )
         .fetch_optional(executor)
         .await
@@ -942,7 +938,7 @@ pub struct CreateNoteInput<'e> {
 pub struct CreateFolderInput<'e> {
     pub id: uuid::Uuid,
     pub title: &'e str,
-    pub pinned: bool,
+    pub pinned: Option<bool>,
     pub creator_id: uuid::Uuid,
 }
 pub struct UpdateNoteInput<'e> {
@@ -957,6 +953,9 @@ pub struct UpdateNoteInput<'e> {
 pub struct UpdateFolderInput<'e> {
     pub title: Option<&'e str>,
     pub pinned: Option<bool>,
+    pub folder_id: uuid::Uuid,
+    pub creator_id: uuid::Uuid,
+    pub base_version: i32,
 }
 
 /// Full-replacement semantics — used only by sync. Never `COALESCE'd`.
