@@ -409,7 +409,7 @@ impl IntoResponse for MenoQueryRejection {
         (
             StatusCode::BAD_REQUEST,
             Json(serde_json::json!({
-                "statusCode": 400,
+                "status_code": 400,
                 "code":    "INVALID_QUERY_PARAMS",
                 "message": msg,
                 "error":   "Bad Request",

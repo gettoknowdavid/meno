@@ -37,8 +37,8 @@ impl<T: Serialize> MenoResponse<T> {
 
     pub fn created(message: impl Into<String>, data: T) -> Self {
         Self {
-            status_code: StatusCode::OK.as_u16(),
-            code: StatusCode::OK.to_string(),
+            status_code: StatusCode::CREATED.as_u16(),
+            code: StatusCode::CREATED.to_string(),
             message: message.into(),
             data: Some(data),
             status: true,
