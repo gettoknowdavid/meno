@@ -87,22 +87,27 @@ impl ChatService {
     )]
     pub async fn get_messages(
         &self,
+        user_id: Uuid,
         query: &ChatMessageQuery,
     ) -> Result<CursorPage<ChatMessageResponse>, ChatError> {
-        let broadcast_id = query.broadcast_id;
+        let b_id = query.broadcast_id;
+
+        if !self.repo.is_broadcast_participant(b_id, user_id).await? {
+            return Err(ChatError::NotParticipant);
+        }
 
         let limit = query.limit();
         let cursor_str = query.cursor().map(|c| c.0.as_str()).unwrap_or("");
-        let cache_key = Self::chat_list_cache_key(broadcast_id, Some(cursor_str), limit);
+        let cache_key = Self::chat_list_cache_key(b_id, Some(cursor_str), limit);
 
-        let ttl = if self.cache.is_live(broadcast_id).await.unwrap_or(false) {
+        let ttl = if self.cache.is_live(b_id).await.unwrap_or(false) {
             TTL_10_SECS
         } else {
             TTL_60_SECS
         };
 
         coalesce_cache(&self.redis, &cache_key, ttl, || async {
-            let rows = self.repo.find_messages(broadcast_id, query).await?;
+            let rows = self.repo.find_messages(b_id, query).await?;
             Ok(CursorPage::from_rows(rows, limit, |r| {
                 Cursor::from_timestamp_id(r.created_at, r.id)
             }))
