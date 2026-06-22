@@ -1,16 +1,9 @@
-use crate::shared::services::redis::keys::RedisKey;
-use crate::state::MenoState;
-use apalis::prelude::*;
-use serde::{Deserialize, Serialize};
-use std::sync::Arc;
-use uuid::Uuid;
-
 /// Scheduled at go-live time; fires when the host's grace period expires.
 /// If the host reconnected, the grace key was deleted and this job is a no-op.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct EndBroadcastJob {
-    pub broadcast_id: Uuid,
-    pub host_id: Uuid,
+    pub broadcast_id: uuid::Uuid,
+    pub host_id: uuid::Uuid,
     pub reason: String,
 }
 
@@ -64,10 +57,10 @@ pub struct EndBroadcastJob {
 /// ```
 pub async fn end_broadcast(
     job: EndBroadcastJob,
-    state: Data<Arc<MenoState>>,
-) -> Result<(), BoxDynError> {
+    state: apalis::prelude::Data<std::sync::Arc<crate::state::MenoState>>,
+) -> Result<(), apalis::prelude::BoxDynError> {
     // Check grace key — if missing, host reconnected: nothing to do
-    let grace_key = RedisKey::host_grace(job.broadcast_id);
+    let grace_key = crate::shared::services::redis::keys::RedisKey::host_grace(job.broadcast_id);
     let still_in_grace = state.redis.exists(&grace_key).await.unwrap_or(false);
 
     if !still_in_grace {

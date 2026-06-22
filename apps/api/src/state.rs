@@ -1,3 +1,6 @@
+use crate::modules::auth::repository::AuthRepository;
+use crate::modules::notes::state::NotesState;
+use crate::shared::identity::IdentityReader;
 use crate::{
     config::Config,
     jobs::Jobs,
@@ -54,6 +57,7 @@ pub struct MenoState {
     pub subscribers: SubscribersState,
     pub notifications: NotificationState,
     pub chat: ChatState,
+    pub notes: NotesState,
     pub ws: WsService,
     pub pubsub: Arc<WsPubSubBridge>,
     pub jobs: Jobs,
@@ -73,6 +77,8 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
     let bridge = build_ws_pubsub_bridge(&config, ws.clone(), redis.clone()).await;
     let pubsub = Arc::new(bridge);
 
+    let id_reader: Arc<dyn IdentityReader> = Arc::new(AuthRepository::new(db.clone()));
+
     let auth = AuthState::new(db.clone(), redis.clone(), &config, jobs.clone());
     let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
     let broadcast = BroadcastState::new(
@@ -83,9 +89,11 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         ws.clone(),
         jobs.clone(),
     );
-    let subscribers = SubscribersState::new(db.clone(), pubsub.clone());
-    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
+    let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), pubsub.clone());
+    let notifications =
+        NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
+    let notes = NotesState::new(db.clone());
 
     let state = Arc::new(MenoState {
         auth,
@@ -94,6 +102,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         subscribers,
         notifications,
         chat,
+        notes,
         ws,
         pubsub,
         jobs,
@@ -206,6 +215,8 @@ fn start_background_workers(db: &PgPool, app: &Arc<MenoState>) {
         }
     });
 
-    let pool = db.clone();
-    tokio::spawn(crate::jobs::monitor::schedule_cleanup_job(pool));
+    let pool_1 = db.clone();
+    let pool_2 = db.clone();
+    tokio::spawn(crate::jobs::monitor::schedule_cleanup_job(pool_1));
+    tokio::spawn(crate::jobs::monitor::schedule_notes_cleanup_job(pool_2));
 }

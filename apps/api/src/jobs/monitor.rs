@@ -1,10 +1,8 @@
-use super::{broadcast_jobs, cleanup_jobs, email_jobs, notification_jobs};
+use super::{broadcast_jobs, cleanup_jobs, email_jobs, note_jobs, notification_jobs};
 use crate::jobs::cleanup_jobs::CleanupExpiredTokensJob;
-use crate::state::MenoState;
-use apalis::{layers::retry::RetryPolicy, prelude::*};
+use apalis::layers::retry::RetryPolicy;
+use apalis::prelude::*;
 use apalis_postgres::PostgresStorage;
-use apalis_postgres::shared::SharedPostgresStorage;
-use std::sync::Arc;
 use tower::retry::RetryLayer;
 
 /// Runs the job monitoring system using the Apalis job framework.
@@ -24,7 +22,7 @@ use tower::retry::RetryLayer;
 ///
 /// ### Parameters:
 /// - `pool`: A `sqlx::PgPool` instance representing the connection pool for PostgreSQL.
-/// - `state`: Shared application state wrapped in an `Arc<MenoState>`. This state is passed
+/// - `state`: Shared application state wrapped in an `std::sync::Arc<MenoState>`. This state is passed
 ///   to the workers for processing jobs.
 ///
 /// ### Returns:
@@ -36,7 +34,7 @@ use tower::retry::RetryLayer;
 /// - Sets up shared storage via `SharedPostgresStorage`, which provides backend storage
 ///   for job workers.
 /// - Configures workers with the `WorkerBuilder`:
-///   - Each worker uses specific layers, like `RetryLayer` for retry policies.
+///   - Each worker uses specific layers, like `tower::retry::RetryLayer` for retry policies.
 ///   - Each worker has a concurrency limit of 20 jobs.
 /// - Registers event logging for monitoring job execution.
 /// - Handles shutdown signals with a 30-second timeout grace period.
@@ -44,10 +42,10 @@ use tower::retry::RetryLayer;
 /// ### Example:
 /// ```rust
 /// use sqlx::PgPool;
-/// use std::sync::Arc;
+/// use std::sync::std::sync::Arc;
 ///
 /// let pool = PgPool::connect("postgres://example_db_url").await.unwrap();
-/// let state = Arc::new(MenoState::new());
+/// let state = std::sync::Arc::new(MenoState::new());
 ///
 /// run_monitor(pool, state).await.unwrap();
 /// ```
@@ -57,23 +55,28 @@ use tower::retry::RetryLayer;
 /// - Database connection or migration failure.
 /// - Job setup or worker initialization issues.
 /// - Errors during runtime signal handling or job processing.
-pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::Result<()> {
+pub async fn run_monitor(
+    pool: sqlx::PgPool,
+    state: std::sync::Arc<crate::state::MenoState>,
+) -> anyhow::Result<()> {
     PostgresStorage::setup(&pool).await?;
     tracing::info!("Apalis Postgres migrations applied");
 
-    let mut store = SharedPostgresStorage::new(pool);
+    let mut store = apalis_postgres::shared::SharedPostgresStorage::new(pool);
 
     let email = store.make_shared()?;
     let broadcast_started = store.make_shared()?;
     let broadcast_scheduled = store.make_shared()?;
     let cleanup_storage = store.make_shared()?;
     let broadcast_end = store.make_shared()?;
+    let notes_cleanup = store.make_shared()?;
 
-    let state_email = Arc::clone(&state);
-    let state_started = Arc::clone(&state);
-    let state_scheduled = Arc::clone(&state);
-    let state_cleanup = Arc::clone(&state);
-    let state_end = Arc::clone(&state);
+    let state_email = std::sync::Arc::clone(&state);
+    let state_started = std::sync::Arc::clone(&state);
+    let state_scheduled = std::sync::Arc::clone(&state);
+    let state_cleanup = std::sync::Arc::clone(&state);
+    let state_end = std::sync::Arc::clone(&state);
+    let state_notes_cleanup = std::sync::Arc::clone(&state);
 
     Monitor::new()
         .register(move |_| {
@@ -116,6 +119,14 @@ pub async fn run_monitor(pool: sqlx::PgPool, state: Arc<MenoState>) -> anyhow::R
                 .data(state_end.clone())
                 .build(broadcast_jobs::end_broadcast)
         })
+        .register(move |_| {
+            WorkerBuilder::new("meno-notes-cleanup")
+                .backend(notes_cleanup.clone())
+                .data(state_notes_cleanup.clone())
+                .concurrency(5) // cheap batched deletes, no need for 20 here
+                .layer(RetryLayer::new(RetryPolicy::retries(3)))
+                .build(note_jobs::purge_stale_notes)
+        })
         .on_event(|_, e| tracing::info!(event = ?e, "Apalis monitor event"))
         .shutdown_timeout(std::time::Duration::from_secs(30))
         .run_with_signal(shutdown_signal())
@@ -135,10 +146,28 @@ pub async fn schedule_cleanup_job(pool: sqlx::PgPool) {
     loop {
         interval.tick().await;
         let mut storage: PostgresStorage<CleanupExpiredTokensJob> = PostgresStorage::new(&pool);
+
         if let Err(e) = storage.push(CleanupExpiredTokensJob).await {
             tracing::warn!(error = %e, "Failed to schedule cleanup job");
         } else {
             tracing::debug!("CleanupExpiredTokensJob scheduled");
+        }
+    }
+}
+
+pub async fn schedule_notes_cleanup_job(pool: sqlx::PgPool) {
+    let mut interval = tokio::time::interval(std::time::Duration::from_hours(24));
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    interval.tick().await;
+
+    loop {
+        interval.tick().await;
+        let mut storage: PostgresStorage<note_jobs::PurgeStaleNotesJob> =
+            PostgresStorage::new(&pool);
+        if let Err(e) = storage.push(note_jobs::PurgeStaleNotesJob).await {
+            tracing::warn!(error = %e, "Failed to schedule notes cleanup job");
+        } else {
+            tracing::debug!("PurgeStaleNotesJob scheduled");
         }
     }
 }

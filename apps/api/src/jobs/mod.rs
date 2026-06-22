@@ -1,27 +1,21 @@
-use cleanup_jobs::CleanupExpiredTokensJob;
-use email_jobs::SendEmailJob;
-use notification_jobs::{BroadcastScheduledFanOutJob, BroadcastStartedFanOutJob};
-
-use crate::jobs::broadcast_jobs::EndBroadcastJob;
-use anyhow::Result;
 use apalis::prelude::TaskSink;
 use apalis_postgres::PostgresStorage;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 pub mod broadcast_jobs;
 pub mod cleanup_jobs;
 pub mod email_jobs;
 pub mod monitor;
+pub mod note_jobs;
 pub mod notification_jobs;
 
 #[derive(Clone)]
 pub struct Jobs {
-    pub email: Arc<Mutex<PostgresStorage<SendEmailJob>>>,
-    pub broadcast_started: Arc<Mutex<PostgresStorage<BroadcastStartedFanOutJob>>>,
-    pub broadcast_scheduled: Arc<Mutex<PostgresStorage<BroadcastScheduledFanOutJob>>>,
-    pub cleanup: Arc<Mutex<PostgresStorage<CleanupExpiredTokensJob>>>,
-    pub broadcast_end: Arc<Mutex<PostgresStorage<EndBroadcastJob>>>,
+    pub email: PostgresStorage<email_jobs::SendEmailJob>,
+    pub broadcast_started: PostgresStorage<notification_jobs::BroadcastStartedFanOutJob>,
+    pub broadcast_scheduled: PostgresStorage<notification_jobs::BroadcastScheduledFanOutJob>,
+    pub cleanup: PostgresStorage<cleanup_jobs::CleanupExpiredTokensJob>,
+    pub broadcast_end: PostgresStorage<broadcast_jobs::EndBroadcastJob>,
+    pub notes_cleanup: PostgresStorage<note_jobs::PurgeStaleNotesJob>,
 }
 impl Jobs {
     /// Build all storage instances.
@@ -29,38 +23,53 @@ impl Jobs {
     #[must_use]
     pub fn new(pool: &sqlx::PgPool) -> Self {
         Self {
-            email: Arc::new(Mutex::new(PostgresStorage::new(pool))),
-            broadcast_started: Arc::new(Mutex::new(PostgresStorage::new(pool))),
-            broadcast_scheduled: Arc::new(Mutex::new(PostgresStorage::new(pool))),
-            cleanup: Arc::new(Mutex::new(PostgresStorage::new(pool))),
-            broadcast_end: Arc::new(Mutex::new(PostgresStorage::new(pool))),
+            email: PostgresStorage::new(pool),
+            broadcast_started: PostgresStorage::new(pool),
+            broadcast_scheduled: PostgresStorage::new(pool),
+            cleanup: PostgresStorage::new(pool),
+            broadcast_end: PostgresStorage::new(pool),
+            notes_cleanup: PostgresStorage::new(pool),
         }
     }
 
-    pub async fn push_email(&self, job: SendEmailJob) -> Result<()> {
-        self.email.lock().await.push(job).await?;
+    pub async fn push_email(&self, job: email_jobs::SendEmailJob) -> anyhow::Result<()> {
+        self.email.clone().push(job).await?;
         Ok(())
     }
     pub async fn push_broadcast_started_fanout(
         &self,
-        job: BroadcastStartedFanOutJob,
-    ) -> Result<()> {
-        self.broadcast_started.lock().await.push(job).await?;
+        job: notification_jobs::BroadcastStartedFanOutJob,
+    ) -> anyhow::Result<()> {
+        self.broadcast_started.clone().push(job).await?;
         Ok(())
     }
     pub async fn push_broadcast_scheduled_fanout(
         &self,
-        job: BroadcastScheduledFanOutJob,
-    ) -> Result<()> {
-        self.broadcast_scheduled.lock().await.push(job).await?;
+        job: notification_jobs::BroadcastScheduledFanOutJob,
+    ) -> anyhow::Result<()> {
+        self.broadcast_scheduled.clone().push(job).await?;
         Ok(())
     }
-    pub async fn push_broadcast_end(&self, job: EndBroadcastJob) -> Result<()> {
-        self.broadcast_end.lock().await.push(job).await?;
+    pub async fn push_broadcast_end(
+        &self,
+        job: broadcast_jobs::EndBroadcastJob,
+    ) -> anyhow::Result<()> {
+        self.broadcast_end.clone().push(job).await?;
         Ok(())
     }
-    pub async fn push_cleanup(&self, job: CleanupExpiredTokensJob) -> Result<()> {
-        self.cleanup.lock().await.push(job).await?;
+    pub async fn push_cleanup(
+        &self,
+        job: cleanup_jobs::CleanupExpiredTokensJob,
+    ) -> anyhow::Result<()> {
+        self.cleanup.clone().push(job).await?;
+        Ok(())
+    }
+
+    pub async fn push_notes_cleanup(
+        &self,
+        job: note_jobs::PurgeStaleNotesJob,
+    ) -> anyhow::Result<()> {
+        self.notes_cleanup.clone().push(job).await?;
         Ok(())
     }
 }

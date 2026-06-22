@@ -1,10 +1,12 @@
 use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::modules::subscribers::repository::{SubscribersRepo, SubscribersRepository};
+use crate::shared::identity::IdentityReader;
 use crate::shared::middleware::auth::AuthUser;
 use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
 use crate::shared::services::ws::dto::WsPayload;
 use crate::shared::services::ws::pubsub::WsPubSubBridge;
+use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::instrument;
 use uuid::Uuid;
@@ -12,13 +14,15 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct SubscribersService {
     repo: Arc<dyn SubscribersRepo>,
+    identity: Arc<dyn IdentityReader>,
     pubsub: Arc<WsPubSubBridge>,
 }
 impl SubscribersService {
-    pub fn new(db: sqlx::PgPool, pubsub: Arc<WsPubSubBridge>) -> Self {
+    pub fn new(db: PgPool, identity: Arc<dyn IdentityReader>, pubsub: Arc<WsPubSubBridge>) -> Self {
         let repo: Arc<dyn SubscribersRepo> = Arc::new(SubscribersRepository::new(db));
         Self {
             repo: Arc::clone(&repo),
+            identity,
             pubsub,
         }
     }
@@ -33,13 +37,13 @@ impl SubscribersService {
             return Err(SubscribersError::CannotSubscribeToSelf);
         }
 
-        let (user_result, create_result) = tokio::join!(
-            self.repo.find_user_by_id(subscription_id),
-            self.repo.create(auth_user.id, subscription_id),
-        );
+        self.identity
+            .find_user_by_id(subscription_id)
+            .await
+            .map_err(SubscribersError::Database)?
+            .ok_or(SubscribersError::SubscriberNotFound)?;
 
-        user_result?;
-        create_result?;
+        self.repo.create(auth_user.id, subscription_id).await?;
 
         let pubsub = Arc::clone(&self.pubsub);
         let subscriber_id = auth_user.id;
@@ -66,13 +70,13 @@ impl SubscribersService {
             return Err(SubscribersError::CannotSubscribeToSelf);
         }
 
-        let (user_result, delete_result) = tokio::join!(
-            self.repo.find_user_by_id(subscription_id),
-            self.repo.delete(auth_user.id, subscription_id)
-        );
+        self.identity
+            .find_user_by_id(subscription_id)
+            .await
+            .map_err(SubscribersError::Database)?
+            .ok_or(SubscribersError::SubscriberNotFound)?;
 
-        user_result?;
-        delete_result?;
+        self.repo.delete(auth_user.id, subscription_id).await?;
 
         let pubsub = Arc::clone(&self.pubsub);
         let subscriber_id = auth_user.id;

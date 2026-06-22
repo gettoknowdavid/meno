@@ -270,6 +270,10 @@ impl AuthService {
         self.repo.find_by_id(id).await
     }
 
+    pub async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError> {
+        self.repo.cleanup_expired_refresh_tokens().await
+    }
+
     async fn upsert_google_user(&self, info: &GoogleUserInfo) -> Result<AuthResponse, AuthError> {
         let existing = self
             .repo

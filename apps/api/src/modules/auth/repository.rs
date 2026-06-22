@@ -462,3 +462,28 @@ impl AuthRepo for AuthRepository {
         Ok(total_deleted)
     }
 }
+
+#[async_trait::async_trait]
+impl crate::shared::identity::IdentityReader for AuthRepository {
+    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            r"SELECT
+                    id,
+                    full_name,
+                    bio,
+                    email,
+                    avatar_id,
+                    avatar_url,
+                    verified,
+                    role,
+                    created_at,
+                    updated_at,
+                    deleted_at
+               FROM users WHERE id = $1",
+            id
+        )
+        .fetch_optional(&self.db)
+        .await
+    }
+}

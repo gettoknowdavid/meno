@@ -1410,6 +1410,10 @@ impl<R: BroadcastRepo> BroadcastService<R> {
         self.repo.get_participant_ids(broadcast_id).await
     }
 
+    pub async fn get_subscriber_ids(&self, creator_id: Uuid) -> Result<Vec<Uuid>, BroadcastError> {
+        self.repo.get_subscriber_ids(creator_id).await
+    }
+
     pub async fn find_by_id(
         &self,
         broadcast_id: Uuid,

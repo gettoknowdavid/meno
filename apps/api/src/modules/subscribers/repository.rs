@@ -1,4 +1,3 @@
-use crate::modules::auth::model::User;
 use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::shared::pagination::{CursorParams, Order};
@@ -55,8 +54,6 @@ pub trait SubscribersRepo: Send + Sync + 'static {
         viewer_id: Uuid,
         candidate_ids: &[Uuid],
     ) -> Result<std::collections::HashSet<Uuid>, SubscribersError>;
-
-    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, SubscribersError>;
 }
 
 #[async_trait::async_trait]
@@ -271,28 +268,5 @@ impl SubscribersRepo for SubscribersRepository {
         .fetch_all(&self.db)
         .await?;
         Ok(rows.into_iter().collect())
-    }
-
-    async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, SubscribersError> {
-        sqlx::query_as!(
-            User,
-            r#"SELECT
-                    id,
-                    full_name,
-                    bio,
-                    email,
-                    avatar_id,
-                    avatar_url,
-                    verified,
-                    role,
-                    created_at,
-                    updated_at,
-                    deleted_at
-               FROM users WHERE id = $1"#,
-            id
-        )
-        .fetch_optional(&self.db)
-        .await
-        .map_err(SubscribersError::Database)
     }
 }
