@@ -16,6 +16,7 @@ pub struct Broadcast {
     pub image_url: Option<String>,
     pub image_id: Option<String>,
     pub broadcast_token: Option<String>,
+    pub total_participants: i64,
     pub start_time: Option<OffsetDateTime>,
     pub end_time: Option<OffsetDateTime>,
     pub recording_enabled: bool,

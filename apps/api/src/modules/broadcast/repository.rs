@@ -432,10 +432,7 @@ impl BroadcastRepo for BroadcastRepository {
                 b.start_time,
                 b.end_time,
                 b.creator_id,
-                (
-                    SELECT COUNT(*) FROM broadcast_participants bp
-                    WHERE bp.broadcast_id = b.id
-                ) AS total_participants,
+                b.total_participants,
                 COALESCE(u.full_name, 'Unknown') AS creator_name,
                 u.avatar_url AS creator_avatar_url,
                 u.avatar_id AS creator_avatar_id
@@ -555,17 +552,11 @@ impl BroadcastRepo for BroadcastRepository {
             BroadcastSortBy::TotalParticipants => {
                 if let (Some(score), Some(id)) = (cursor_score, cursor_id) {
                     let op_str = op;
-                    qb.push(format!(
-                        " AND (
-                            (SELECT COUNT(*)::BIGINT FROM broadcast_participants bp2
-                             WHERE bp2.broadcast_id = b.id),
-                            b.id
-                        ) {op_str} ("
-                    ))
-                    .push_bind(score)
-                    .push(", ")
-                    .push_bind(id)
-                    .push(")");
+                    qb.push(format!(" AND (b.total_participants, b.id) {op_str} ("))
+                        .push_bind(score)
+                        .push(", ")
+                        .push_bind(id)
+                        .push(")");
                 }
             }
         }
