@@ -10,6 +10,7 @@ use std::sync::Arc;
 pub fn router(app: Arc<MenoState>) -> Router<Arc<MenoState>> {
     let normal = Router::new()
         .route("/", get(h::get_notes))
+        .route("/sync", get(h::sync_pull))
         .layer(from_fn_with_state(app.clone(), auth_middleware));
 
     let idempotent = Router::new()
@@ -19,6 +20,7 @@ pub fn router(app: Arc<MenoState>) -> Router<Arc<MenoState>> {
         .route("/{n_id}/folders/{f_id}", put(h::add_note_to_folder))
         .route("/{n_id}/folders/{f_id}", delete(h::remove_note_from_folder))
         .route("/", put(h::move_notes_to_folder))
+        .route("/sync", post(h::sync_push)) // Idempotency-Key here matters most of all
         .layer(from_fn(idempotency_middleware))
         .layer(from_fn_with_state(app.clone(), auth_middleware));
 

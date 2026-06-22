@@ -1,20 +1,16 @@
+use crate::modules::notes::repository::NotesRepository;
+use crate::modules::notes::service::{DynNotesService, NotesService};
+use std::sync::Arc;
+
 #[derive(Clone)]
 pub struct NotesState {
-    pub service: crate::modules::notes::service::DynNotesService,
+    pub service: DynNotesService,
 }
 
 impl NotesState {
-    pub fn new(db: sqlx::PgPool, jobs: crate::jobs::Jobs) -> Self {
-        let repo = std::sync::Arc::new(crate::modules::notes::repository::NotesRepository::new(
-            db.clone(),
-        ));
-
-        let service = crate::modules::notes::service::NotesService::new(
-            std::sync::Arc::clone(&repo),
-            db,
-            jobs,
-        );
-
+    pub fn new(db: sqlx::PgPool) -> Self {
+        let repo = Arc::new(NotesRepository::new(db.clone()));
+        let service = NotesService::new(Arc::clone(&repo), db);
         Self { service }
     }
 }

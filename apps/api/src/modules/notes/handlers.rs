@@ -136,3 +136,21 @@ pub async fn move_notes_to_folder(
         .await?;
     Ok(MenoResponse::ok("Notes moved", response))
 }
+
+pub async fn sync_pull(
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    MenoQuery(query): MenoQuery<dto::NotesSyncQuery>,
+) -> Result<MenoResponse<dto::NotesSyncResponse>, NotesError> {
+    let response = app.notes.service.sync_pull(auth.id, &query).await?;
+    Ok(MenoResponse::ok("Sync data retrieved", response))
+}
+
+pub async fn sync_push(
+    State(app): State<Arc<MenoState>>,
+    Extension(auth): Extension<AuthUser>,
+    axum::Json(body): axum::Json<dto::NotesSyncPushRequest>,
+) -> Result<MenoResponse<dto::NotesSyncPushResponse>, NotesError> {
+    let response = app.notes.service.sync_push(auth.id, body).await?;
+    Ok(MenoResponse::ok("Mutations processed", response))
+}
