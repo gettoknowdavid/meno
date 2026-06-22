@@ -369,13 +369,15 @@ impl NotificationRepo for NotificationRepository {
 
     #[instrument(skip(self), fields(user_id = %user_id))]
     async fn get_push_token(&self, user_id: Uuid) -> Result<Option<String>, NotificationError> {
-        sqlx::query_scalar!(
-            "SELECT push_notification_token FROM settings WHERE user_id = $1",
+        let row = sqlx::query_scalar!(
+            r"SELECT push_notification_token FROM settings
+            WHERE user_id = $1 AND push_notifications = true AND push_notification_token IS NOT NULL",
             user_id,
         )
-        .fetch_one(&self.db)
+        .fetch_optional(&self.db)
         .await
-        .map_err(NotificationError::Database)
+        .map_err(NotificationError::Database)?;
+        Ok(row.flatten())
     }
 
     #[instrument(skip(self), fields(count = user_ids.len()))]
