@@ -1,11 +1,11 @@
 use crate::modules::auth::model::AuthProvider;
 use crate::modules::profile::dto::{ProfileSearchQuery, ProfileSearchResult};
 use crate::modules::profile::errors::ProfileError;
-use crate::modules::profile::model::{GeneralSettings, Profile};
-
+use crate::modules::profile::model::Profile;
 use sqlx::{Postgres, QueryBuilder};
 use std::str::FromStr;
 use uuid::Uuid;
+
 #[derive(Clone)]
 pub struct ProfileRepository {
     db: sqlx::PgPool,
@@ -20,10 +20,6 @@ impl ProfileRepository {
 #[async_trait::async_trait]
 pub trait ProfileRepo: Send + Sync + 'static {
     async fn find_by_id(&self, user_id: Uuid) -> Result<Option<Profile>, ProfileError>;
-    async fn find_user_settings(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Option<GeneralSettings>, ProfileError>;
     async fn find_providers(&self, user_id: Uuid) -> Result<Vec<AuthProvider>, ProfileError>;
     async fn find_avatar_key(&self, user_id: Uuid) -> Result<Option<String>, ProfileError>;
     async fn update_profile(
@@ -54,19 +50,6 @@ impl ProfileRepo for ProfileRepository {
             r#"SELECT id, full_name, bio, email, avatar_id, avatar_url,
                       verified, followers, following, broadcasts, created_at
                FROM users WHERE id = $1 AND deleted_at IS NULL"#,
-            user_id
-        )
-        .fetch_optional(&self.db)
-        .await
-        .map_err(ProfileError::Database)
-    }
-    async fn find_user_settings(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Option<GeneralSettings>, ProfileError> {
-        sqlx::query_as!(
-            GeneralSettings,
-            r#"SELECT * FROM general_settings WHERE user_id = $1"#,
             user_id
         )
         .fetch_optional(&self.db)

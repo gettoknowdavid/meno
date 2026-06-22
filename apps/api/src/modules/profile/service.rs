@@ -5,9 +5,10 @@ use crate::modules::profile::dto::{
     PublicProfileResponse, UpdateProfileRequest,
 };
 use crate::modules::profile::errors::ProfileError;
-use crate::modules::profile::model::GeneralSettings;
 use crate::modules::profile::repository::{ProfileRepo, ProfileRepository};
 use crate::modules::profile::storage::ProfileStorage;
+use crate::modules::settings::model::Settings;
+use crate::modules::settings::repository::{SettingsRepo, SettingsRepository};
 use crate::shared::pagination::{Cursor, CursorPage};
 use crate::shared::services::redis::Redis;
 use crate::shared::services::redis::keys::RedisKey;
@@ -18,15 +19,18 @@ use uuid::Uuid;
 #[derive(Clone)]
 pub struct ProfileService {
     pub repo: Arc<dyn ProfileRepo>,
+    pub settings_repo: Arc<dyn SettingsRepo>,
     pub cache: Arc<dyn ProfileCache>,
     pub storage: ProfileStorage,
 }
 impl ProfileService {
     pub fn new(db: sqlx::PgPool, redis: Redis, storage: StorageService) -> Self {
-        let repo: Arc<dyn ProfileRepo> = Arc::new(ProfileRepository::new(db));
+        let repo: Arc<dyn ProfileRepo> = Arc::new(ProfileRepository::new(db.clone()));
+        let settings_repo: Arc<dyn SettingsRepo> = Arc::new(SettingsRepository::new(db));
         let cache: Arc<dyn ProfileCache> = Arc::new(ProfileRedisCache::new(redis));
         Self {
             repo: Arc::clone(&repo),
+            settings_repo: Arc::clone(&settings_repo),
             cache: Arc::clone(&cache),
             storage: ProfileStorage::new(storage),
         }
@@ -44,10 +48,11 @@ impl ProfileService {
             .ok_or(ProfileError::NotFound)?;
 
         let settings = self
-            .repo
-            .find_user_settings(user_id)
-            .await?
-            .unwrap_or_else(|| GeneralSettings::new(user_id));
+            .settings_repo
+            .find_by_user_id(user_id)
+            .await
+            .map_err(|e| ProfileError::Internal(e.into()))?
+            .unwrap_or_else(|| Settings::new(user_id));
 
         let providers = self.repo.find_providers(user_id).await?;
 

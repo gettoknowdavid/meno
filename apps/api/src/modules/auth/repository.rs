@@ -110,7 +110,7 @@ impl AuthRepo for AuthRepository {
         .map_err(AuthError::Database)?;
 
         sqlx::query!(
-            r#"INSERT INTO general_settings (user_id) VALUES ($1)"#,
+            r#"INSERT INTO settings (user_id) VALUES ($1)"#,
             user.id
         )
         .execute(&mut *tx)

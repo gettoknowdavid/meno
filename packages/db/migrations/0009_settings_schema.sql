@@ -1,4 +1,4 @@
-CREATE TABLE public.general_settings
+CREATE TABLE public.settings
 (
     id                       UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id                  UUID    NOT NULL UNIQUE REFERENCES users (id) ON UPDATE CASCADE ON DELETE CASCADE,

@@ -1,5 +1,4 @@
 use crate::modules::auth::model::AuthProvider;
-use crate::modules::profile::model::{Display, GeneralSettings};
 use crate::shared::pagination::CursorParams;
 use serde::{Deserialize, Serialize};
 use sqlx::FromRow;
@@ -57,7 +56,7 @@ pub struct MeResponse {
     #[serde(with = "rfc3339")]
     pub created_at: OffsetDateTime,
     pub providers: Vec<AuthProvider>,
-    pub settings: GeneralSettingsResponse,
+    pub settings: crate::modules::settings::dto::SettingsResponse,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -92,26 +91,4 @@ pub struct ProfileSearchResult {
 pub struct AvatarUploadUrlResponse {
     pub avatar_id: String,
     pub avatar_url: String,
-}
-
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct GeneralSettingsResponse {
-    pub push_notifications: bool,
-    pub app_notifications: bool,
-    pub email_notifications: bool,
-    pub display: Display,
-    pub language: String,
-    pub notification_preferences: serde_json::Value,
-}
-impl From<GeneralSettings> for GeneralSettingsResponse {
-    fn from(val: GeneralSettings) -> Self {
-        GeneralSettingsResponse {
-            push_notifications: val.push_notifications,
-            app_notifications: val.app_notifications,
-            email_notifications: val.email_notifications,
-            display: val.display,
-            language: val.language,
-            notification_preferences: val.notification_preferences,
-        }
-    }
 }
