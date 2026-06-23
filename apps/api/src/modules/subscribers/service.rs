@@ -1,11 +1,12 @@
+use crate::modules::notifications::model::codes;
+use crate::modules::notifications::service::NotificationService;
 use crate::modules::subscribers::dto::SubscriberItem;
 use crate::modules::subscribers::errors::SubscribersError;
 use crate::modules::subscribers::repository::{SubscribersRepo, SubscribersRepository};
 use crate::shared::identity::IdentityReader;
 use crate::shared::middleware::auth::AuthUser;
 use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
-use crate::shared::services::ws::dto::WsPayload;
-use crate::shared::services::ws::pubsub::WsPubSubBridge;
+use crate::shared::types::dto::UserSummary;
 use sqlx::PgPool;
 use std::sync::Arc;
 use tracing::instrument;
@@ -15,15 +16,20 @@ use uuid::Uuid;
 pub struct SubscribersService {
     repo: Arc<dyn SubscribersRepo>,
     identity: Arc<dyn IdentityReader>,
-    pubsub: Arc<WsPubSubBridge>,
+    notifications: Arc<NotificationService>,
 }
 impl SubscribersService {
-    pub fn new(db: PgPool, identity: Arc<dyn IdentityReader>, pubsub: Arc<WsPubSubBridge>) -> Self {
+    pub fn new(
+        db: PgPool,
+        identity: Arc<dyn IdentityReader>,
+        notifications: NotificationService,
+    ) -> Self {
         let repo: Arc<dyn SubscribersRepo> = Arc::new(SubscribersRepository::new(db));
+        let notifications = Arc::new(notifications);
         Self {
             repo: Arc::clone(&repo),
             identity,
-            pubsub,
+            notifications,
         }
     }
 
@@ -37,7 +43,8 @@ impl SubscribersService {
             return Err(SubscribersError::CannotSubscribeToSelf);
         }
 
-        self.identity
+        let user = self
+            .identity
             .find_user_by_id(subscription_id)
             .await
             .map_err(SubscribersError::Database)?
@@ -45,17 +52,19 @@ impl SubscribersService {
 
         self.repo.create(auth_user.id, subscription_id).await?;
 
-        let pubsub = Arc::clone(&self.pubsub);
-        let subscriber_id = auth_user.id;
-        let subscriber_name = auth_user.full_name.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::notification(
-                subscriber_id,
-                "You've got a new subscription",
-                format!("{} is now subscribed to you.", subscriber_name),
-            );
-            pubsub.publish_to_user(subscription_id, payload).await;
-        });
+        self.notifications
+            .notify(
+                subscription_id,
+                codes::USER_SUBSCRIBED,
+                Some(&UserSummary::from(user)),
+                None,
+                None,
+            )
+            .await
+            .unwrap_or_else(|e| {
+                tracing::warn!(error=%e, "Failed to send subscribe notification");
+            });
+
         tracing::info!("Subscription created successfully");
         Ok(())
     }
@@ -77,19 +86,6 @@ impl SubscribersService {
             .ok_or(SubscribersError::SubscriberNotFound)?;
 
         self.repo.delete(auth_user.id, subscription_id).await?;
-
-        let pubsub = Arc::clone(&self.pubsub);
-        let subscriber_id = auth_user.id;
-        let subscriber_name = auth_user.full_name.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::notification(
-                subscriber_id,
-                "Someone unsubscribed",
-                format!("{} is no longer subscribed to you", subscriber_name),
-            );
-            pubsub.publish_to_user(subscription_id, payload).await;
-        });
-
         Ok(())
     }
 

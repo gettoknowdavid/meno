@@ -119,9 +119,9 @@ impl NotificationRepo for NotificationRepository {
     ) -> Result<Notification, NotificationError> {
         sqlx::query_as!(
             Notification,
-            r#"INSERT INTO notifications (owner_id, template_id, actor_id, broadcast_id, custom_metadata)
+            r"INSERT INTO notifications (owner_id, template_id, actor_id, broadcast_id, custom_metadata)
                VALUES ($1, $2, $3, $4, $5)
-               RETURNING *"#,
+               RETURNING *",
             owner_id,
             template_id,
             actor_id,
@@ -146,9 +146,9 @@ impl NotificationRepo for NotificationRepository {
         }
 
         let result = sqlx::query!(
-            r#"INSERT INTO notifications (owner_id, template_id, actor_id, broadcast_id)
+            r"INSERT INTO notifications (owner_id, template_id, actor_id, broadcast_id)
                SELECT unnest($1::uuid[]), $2, $3, $4
-               ON CONFLICT DO NOTHING"#,
+               ON CONFLICT DO NOTHING",
             owner_ids,
             template_id,
             actor_id,
@@ -261,9 +261,9 @@ impl NotificationRepo for NotificationRepository {
     #[instrument(skip(self), fields(owner_id = %owner_id))]
     async fn count_unread(&self, owner_id: Uuid) -> Result<i64, NotificationError> {
         let count = sqlx::query_scalar!(
-            r#"SELECT COUNT(*) AS count
+            r"SELECT COUNT(*) AS count
                FROM notifications
-               WHERE owner_id = $1 AND read = false AND archived_at IS NULL"#,
+               WHERE owner_id = $1 AND read = false AND archived_at IS NULL",
             owner_id,
         )
         .fetch_one(&self.db)
@@ -279,7 +279,7 @@ impl NotificationRepo for NotificationRepository {
         owner_id: Uuid,
     ) -> Result<bool, NotificationError> {
         let result = sqlx::query_scalar!(
-            r#"SELECT read FROM notifications WHERE id = $1 AND owner_id = $2"#,
+            "SELECT read FROM notifications WHERE id = $1 AND owner_id = $2",
             notification_id,
             owner_id,
         )
@@ -296,10 +296,10 @@ impl NotificationRepo for NotificationRepository {
         owner_id: Uuid,
     ) -> Result<bool, NotificationError> {
         let result = sqlx::query!(
-            r#"UPDATE notifications
+            r"UPDATE notifications
                SET read = true, read_at = NOW()
                WHERE id = $1 AND owner_id = $2 AND read = false
-               RETURNING id"#,
+               RETURNING id",
             notification_id,
             owner_id,
         )
@@ -313,10 +313,10 @@ impl NotificationRepo for NotificationRepository {
     #[instrument(skip(self), fields(owner_id = %owner_id))]
     async fn mark_all_read(&self, owner_id: Uuid) -> Result<u64, NotificationError> {
         let result = sqlx::query!(
-            r#"UPDATE notifications
+            r"UPDATE notifications
                SET read = true, read_at = NOW()
                WHERE owner_id = $1 AND read = false AND archived_at IS NULL
-               RETURNING id"#,
+               RETURNING id",
             owner_id,
         )
         .fetch_all(&self.db)
@@ -328,7 +328,7 @@ impl NotificationRepo for NotificationRepository {
     #[instrument(skip(self))]
     async fn delete(&self, notification_id: Uuid, owner_id: Uuid) -> Result<(), NotificationError> {
         sqlx::query!(
-            r#"DELETE FROM notifications WHERE id = $1 AND owner_id = $2"#,
+            r"DELETE FROM notifications WHERE id = $1 AND owner_id = $2",
             notification_id,
             owner_id,
         )
@@ -346,9 +346,9 @@ impl NotificationRepo for NotificationRepository {
     ) -> Result<Option<NotificationTemplate>, NotificationError> {
         sqlx::query_as!(
             NotificationTemplate,
-            r#"SELECT *
+            r"SELECT *
                FROM notification_templates
-               WHERE type = $1 AND is_active = true AND deleted_at IS NULL"#,
+               WHERE type = $1 AND is_active = true AND deleted_at IS NULL",
             code_type,
         )
         .fetch_optional(&self.db)
@@ -360,7 +360,7 @@ impl NotificationRepo for NotificationRepository {
     async fn find_all_templates(&self) -> Result<Vec<NotificationTemplate>, NotificationError> {
         sqlx::query_as!(
             NotificationTemplate,
-            r#"SELECT * FROM notification_templates WHERE is_active = true ORDER BY type"#,
+            r"SELECT * FROM notification_templates WHERE is_active = true ORDER BY type",
         )
         .fetch_all(&self.db)
         .await
@@ -369,13 +369,15 @@ impl NotificationRepo for NotificationRepository {
 
     #[instrument(skip(self), fields(user_id = %user_id))]
     async fn get_push_token(&self, user_id: Uuid) -> Result<Option<String>, NotificationError> {
-        sqlx::query_scalar!(
-            r#"SELECT push_notification_token FROM general_settings WHERE user_id = $1"#,
+        let row = sqlx::query_scalar!(
+            r"SELECT push_notification_token FROM settings
+            WHERE user_id = $1 AND push_notifications = true AND push_notification_token IS NOT NULL",
             user_id,
         )
-        .fetch_one(&self.db)
+        .fetch_optional(&self.db)
         .await
-        .map_err(NotificationError::Database)
+        .map_err(NotificationError::Database)?;
+        Ok(row.flatten())
     }
 
     #[instrument(skip(self), fields(count = user_ids.len()))]
@@ -388,11 +390,11 @@ impl NotificationRepo for NotificationRepository {
         }
 
         let rows = sqlx::query!(
-            r#"SELECT user_id, push_notification_token
-               FROM general_settings
+            r"SELECT user_id, push_notification_token
+               FROM settings
                WHERE user_id = ANY($1)
                  AND push_notification_token IS NOT NULL
-                 AND push_notifications = true"#,
+                 AND push_notifications = true",
             user_ids,
         )
         .fetch_all(&self.db)
@@ -408,7 +410,7 @@ impl NotificationRepo for NotificationRepository {
 
     async fn clear_push_token(&self, user_id: Uuid) -> Result<(), NotificationError> {
         sqlx::query!(
-            r#"UPDATE general_settings SET push_notification_token = NULL WHERE user_id = $1"#,
+            "UPDATE settings SET push_notification_token = NULL WHERE user_id = $1",
             user_id,
         )
         .execute(&self.db)
@@ -423,7 +425,7 @@ impl NotificationRepo for NotificationRepository {
         user_id: Uuid,
     ) -> Result<bool, NotificationError> {
         let result = sqlx::query_scalar!(
-            r#"SELECT app_notifications FROM general_settings WHERE user_id = $1"#,
+            "SELECT app_notifications FROM settings WHERE user_id = $1",
             user_id,
         )
         .fetch_optional(&self.db)

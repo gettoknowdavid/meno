@@ -39,6 +39,7 @@ use tower_http::{
     timeout::TimeoutLayer,
     trace::TraceLayer,
 };
+use crate::modules::settings::state::SettingsState;
 
 /// Top-level application state.
 ///
@@ -58,6 +59,7 @@ pub struct MenoState {
     pub notifications: NotificationState,
     pub chat: ChatState,
     pub notes: NotesState,
+    pub settings: SettingsState,
     pub ws: WsService,
     pub pubsub: Arc<WsPubSubBridge>,
     pub jobs: Jobs,
@@ -89,11 +91,11 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         ws.clone(),
         jobs.clone(),
     );
-    let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), pubsub.clone());
-    let notifications =
-        NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
+    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
+    let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), notifications.clone());
     let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
     let notes = NotesState::new(db.clone());
+    let settings = SettingsState::new(db.clone(), redis.clone());
 
     let state = Arc::new(MenoState {
         auth,
@@ -103,6 +105,7 @@ pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Rout
         notifications,
         chat,
         notes,
+        settings,
         ws,
         pubsub,
         jobs,

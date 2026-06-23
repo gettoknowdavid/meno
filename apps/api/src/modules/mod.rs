@@ -5,3 +5,4 @@ pub mod notes;
 pub mod notifications;
 pub mod profile;
 pub mod subscribers;
+pub mod settings;
