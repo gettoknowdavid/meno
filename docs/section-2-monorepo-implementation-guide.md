@@ -8,6 +8,41 @@ carried over as-is and tracked (see [What is deliberately carried over as broken
 
 ---
 
+## Shell conventions
+
+Every command here works on **Windows (PowerShell)** and **macOS / Linux (bash)**. Where
+the two differ you get both, labelled:
+
+- **Windows (PowerShell)** — fenced `powershell`
+- **macOS / Linux (bash)** — fenced `bash`
+- An **unlabelled** block is shell-agnostic: no continuation characters, no pipes into
+  shell builtins, no redirection. `cargo`, `git`, `docker` and `sqlx` behave identically.
+
+Five things bite on Windows, so read this once:
+
+1. **`||` and `&&` need PowerShell 7.** Windows PowerShell 5.1 (still the default `powershell.exe`)
+   rejects them: *"The token '||' is not a valid statement separator in this version."*
+   Every example below that needs conditional flow uses `$LASTEXITCODE` instead, which
+   works on both. Check your version with `$PSVersionTable.PSVersion`; `pwsh` is the 7+ binary.
+2. **Line continuation is a backtick in PowerShell**, not a backslash. A trailing
+   backslash does not continue the line — it escapes the next character. In PowerShell,
+   prefer keeping a command on **one line** over breaking it.
+3. **`curl` is not curl.** In PowerShell 5.1, `curl` is an alias for `Invoke-WebRequest`
+   and rejects the flags below. Always type `curl.exe`.
+4. **`sed`, `awk`, `head`, `tail`, `grep`, `wc` and `less` are not commands.** Use
+   `git grep` (works identically in both shells), `Select-Object -First/-Last`, and
+   `(Get-Content f).Count`.
+5. **Never pipe binary data through PowerShell.** `git archive … | tar -x` corrupts the
+   stream, because PowerShell re-encodes piped objects as text. Write the archive to a
+   temp file with `-o` and extract from the file — that is what the Windows examples do.
+
+Optional tools that are absent from a stock Windows box: `make`
+(`winget install GnuWin32.Make`), `jq` (the PowerShell examples use `ConvertFrom-Json`
+instead), and `openssl` (Step 1.7 gives a .NET one-liner). Git for Windows is assumed —
+it supplies `git`, `bash` and `tar`.
+
+---
+
 ## What changed from the previous version of this guide
 
 The earlier draft assumed you would restructure the existing checkout in place. You are
@@ -33,7 +68,21 @@ Because `master` is intact, you have a recovery primitive that did not exist bef
 ```bash
 # Pull any file from the old tree into the new one, any time, with no commit required.
 git checkout master -- apps/api/src/modules/broadcast/service.rs
+```
 
+**Windows (PowerShell)** — `less` does not exist; write it to a file or send it to the editor:
+
+```powershell
+git checkout master -- apps/api/src/modules/broadcast/service.rs
+
+# Or just look at it without touching your tree.
+git show master:apps/api/src/modules/broadcast/service.rs > "$env:TEMP\service.rs"
+notepad "$env:TEMP\service.rs"
+```
+
+**macOS / Linux (bash)**
+
+```bash
 # Or just look at it without touching your tree.
 git show master:apps/api/src/modules/broadcast/service.rs | less
 ```
@@ -129,6 +178,15 @@ compiler and makes review impossible to scope."
 
 You now have an empty branch with full access to the old tree:
 
+**Windows (PowerShell)**
+
+```powershell
+Get-ChildItem apps              # gone
+(git show master:apps/api/src/modules/broadcast/service.rs | Measure-Object -Line).Lines   # 1605
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 ls apps/            # gone
 git show master:apps/api/src/modules/broadcast/service.rs | wc -l   # 1605
@@ -183,11 +241,30 @@ failed to connect to the docker API at npipe:////./pipe/dockerDesktopLinuxEngine
 
 That is the expected symptom of a stopped daemon, not a broken install. Start it:
 
+**Windows (PowerShell)**
+
+```powershell
+# Start the GUI and wait for the whale icon to settle on "running".
+Start-Process "$env:ProgramFiles\Docker\Docker\Docker Desktop.exe"
+
+# Or poll until the daemon answers. This takes 20-40s on first launch.
+while ($true) {
+    docker info *> $null
+    if ($LASTEXITCODE -eq 0) { break }
+    Write-Host -NoNewline '.'
+    Start-Sleep -Seconds 2
+}
+Write-Host ''
+docker info --format 'Server {{.ServerVersion}} · {{.OSType}} · {{.NCPU}} CPUs · {{.MemTotal}} bytes RAM'
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 # Start the GUI and wait for the whale icon to settle on "running".
 docker-desktop &
 
-# Or poll until the daemon answers. This takes 20–40s on first launch.
+# Or poll until the daemon answers. This takes 20-40s on first launch.
 until docker info >/dev/null 2>&1; do
   printf '.'
   sleep 2
@@ -447,8 +524,25 @@ db-up: ## Start Postgres, Redis and the object store
 
 ### Step 1.3 — First run
 
+**Windows (PowerShell)**
+
+```powershell
+Set-Location F:\projects\work\meno   # or your clone of it
+
+# Pull images explicitly first, so you see which ones are slow and which fail.
+docker compose -f ops/docker-compose.yml pull postgres redis storage
+
+# Start the three services the port needs.
+docker compose -f ops/docker-compose.yml up -d postgres redis storage
+
+# Watch until healthy.
+docker compose -f ops/docker-compose.yml ps
+```
+
+**macOS / Linux (bash)**
+
 ```bash
-cd /f/projects/personal/meno   # or your clone of it
+cd /home/you/projects/meno   # or your clone of it
 
 # Pull images explicitly first, so you see which ones are slow and which fail.
 docker compose -f ops/docker-compose.yml pull postgres redis storage
@@ -490,6 +584,33 @@ meno-storage    rustfs/rustfs    "/entrypoint.sh rust…"   storage    20 second
 
 Never assume `Up (healthy)` means reachable. Prove it.
 
+**Windows (PowerShell)** — keep each command on one line; the backtick continuation is easy to get wrong.
+
+```powershell
+# ── Postgres ────────────────────────────────────────────────────────────────
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d meno_dev -c "SELECT version();"
+# expect: PostgreSQL 18.x
+
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d meno_dev -c "SELECT current_user, current_database();"
+# expect: meno | meno_dev
+
+# ── Redis ───────────────────────────────────────────────────────────────────
+docker compose -f ops/docker-compose.yml exec redis redis-cli ping
+# expect: PONG
+
+docker compose -f ops/docker-compose.yml exec redis redis-cli config get maxmemory-policy
+# expect: 1) "maxmemory-policy"  2) "allkeys-lru"
+#       ^ if this says "noeviction" your command override did not apply
+
+# ── Object storage (RustFS) ─────────────────────────────────────────────────
+# curl.exe, not curl: PowerShell aliases curl to Invoke-WebRequest.
+curl.exe -sf http://localhost:9000/health
+if ($LASTEXITCODE -eq 0) { Write-Host "storage live OK" } else { Write-Host "storage DOWN" }
+# expect: storage live OK   (RustFS serves /health; there is no /minio/health/live)
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 # ── Postgres ────────────────────────────────────────────────────────────────
 docker compose -f ops/docker-compose.yml exec postgres \
@@ -528,10 +649,11 @@ docker compose -f ops/docker-compose.yml run --rm storage-init
 Confirm:
 
 ```bash
-docker compose -f ops/docker-compose.yml run --rm --entrypoint sh storage-init -c \
-  "aws --endpoint-url http://storage:9000 s3api list-buckets --output text"
+docker compose -f ops/docker-compose.yml run --rm --entrypoint sh storage-init -c "aws --endpoint-url http://storage:9000 s3api list-buckets --output text"
 # expect: 2026/..  meno-uploads
 ```
+
+(On Windows this is the same one-line command — do not add a `\` continuation.)
 
 You can also create it by hand in the console at <http://localhost:9001>
 (`rustfsadmin` / `rustfsadmin`) if you prefer a UI.
@@ -546,15 +668,13 @@ earlier attempt, the database may already exist with the wrong owner. Verify rat
 than assume:
 
 ```bash
-docker compose -f ops/docker-compose.yml exec postgres \
-  psql -U meno -d postgres -c "\l meno_dev"
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d postgres -c "\l meno_dev"
 ```
 
 If that errors, create it explicitly:
 
 ```bash
-docker compose -f ops/docker-compose.yml exec postgres \
-  psql -U meno -d postgres -c "CREATE DATABASE meno_dev OWNER meno;"
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d postgres -c "CREATE DATABASE meno_dev OWNER meno;"
 ```
 
 > **This is the defect in `master`'s `.docker/postgres/init.sql`**, which ran
@@ -566,6 +686,8 @@ docker compose -f ops/docker-compose.yml exec postgres \
 
 ### Step 1.7 — Generate secrets and write `.env`
 
+**macOS / Linux (bash)**
+
 ```bash
 # Two DIFFERENT secrets. Reusing one for access and refresh tokens is a real
 # vulnerability: compromising one then lets an attacker mint the other.
@@ -573,7 +695,31 @@ echo "JWT_SECRET=$(openssl rand -hex 64)"
 echo "JWT_REFRESH_SECRET=$(openssl rand -hex 64)"
 ```
 
+**Windows (PowerShell)** — no `openssl` on a stock box; .NET's RNG is cryptographically
+secure and needs no install. Run it **twice** for two different secrets.
+
+```powershell
+function New-HexSecret {
+    $rng  = [System.Security.Cryptography.RandomNumberGenerator]::Create()
+    $bytes = New-Object byte[] 64
+    $rng.GetBytes($bytes)
+    -join ($bytes | ForEach-Object { $_.ToString('x2') })
+}
+
+"JWT_SECRET=$((New-HexSecret))"
+"JWT_REFRESH_SECRET=$((New-HexSecret))"
+```
+
 On Windows without `openssl`, use Rust — you already have the toolchain:
+
+**Windows (PowerShell)**
+
+```powershell
+cargo run --quiet --bin gen-secret
+if ($LASTEXITCODE -ne 0) { python -c "import secrets;print(secrets.token_hex(64))" }
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cargo run --quiet --bin gen-secret 2>/dev/null || python -c "import secrets;print(secrets.token_hex(64))"
@@ -712,6 +858,15 @@ docker compose -f ops/docker-compose.yml logs --tail=100 redis
 make db-reset
 ```
 
+> `make` is not installed on Windows by default. Either `winget install GnuWin32.Make`, or
+> call the compose commands directly — the targets expand to:
+>
+> ```powershell
+> docker compose -f ops/docker-compose.yml up -d postgres redis storage   # db-up
+> docker compose -f ops/docker-compose.yml down                            # db-down
+> docker compose -f ops/docker-compose.yml down -v                        # db-reset (adds -v to drop volumes)
+> ```
+
 **Use `db-reset` more often than you think.** "The API 500s and I don't know why" is
 usually stale schema, and a 20-second reset beats 20 minutes of bisecting.
 
@@ -749,24 +904,54 @@ sqlx --version
 
 Copy the migrations from the reference — this is the first time `master` earns its keep:
 
+**Windows (PowerShell)** — archive to a temp file first; piping binary through PowerShell corrupts it.
+
+```powershell
+New-Item -ItemType Directory -Force crates/db/migrations | Out-Null
+git archive --format=tar -o "$env:TEMP\db.tar" master packages/db/migrations
+tar -xf "$env:TEMP\db.tar" --strip-components=3 -C crates/db/migrations
+(Get-ChildItem crates/db/migrations -Filter *.sql).Count    # 15
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 mkdir -p crates/db/migrations
 git archive master packages/db/migrations | tar -x --strip-components=3 -C crates/db/migrations
-ls crates/db/migrations | wc -l    # 18
+ls crates/db/migrations | wc -l    # 15
 ```
 
 Apply them:
 
+**Windows (PowerShell)** — `|| true` is PowerShell 7+ only. On 5.1 test `$LASTEXITCODE`:
+
+```powershell
+sqlx database create
+if ($LASTEXITCODE -ne 0) { Write-Host "database already exists via POSTGRES_DB - continuing" }
+sqlx migrate run
+sqlx migrate info              # expect 15 applied, 0 pending
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 sqlx database create || true   # already exists via POSTGRES_DB; harmless
 sqlx migrate run
-sqlx migrate info              # expect 18 applied, 0 pending
+sqlx migrate info              # expect 15 applied, 0 pending
 ```
 
 ### Step 1.12 — Verify the schema, and prove the known defects
 
-The 18 migrations have **never been run against a fresh database** in this project's
+The migrations have **never been run against a fresh database** in this project's
 history — which is exactly how three dead triggers survived. Now they run, so check:
+
+**Windows (PowerShell)**
+
+```powershell
+psql $env:DATABASE_URL -c "\dt" | Select-Object -First 30
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 psql "$DATABASE_URL" -c "\dt" | head -30
@@ -775,30 +960,20 @@ psql "$DATABASE_URL" -c "\dt" | head -30
 If `psql` is not installed on Windows, use the container — it has the client:
 
 ```bash
-docker compose -f ops/docker-compose.yml exec postgres \
-  psql -U meno -d meno_dev -c "\dt"
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d meno_dev -c "\dt"
 ```
 
 Then prove the trigger defect rather than assuming it:
 
 ```bash
-docker compose -f ops/docker-compose.yml exec postgres \
-  psql -U meno -d meno_dev -c "
-  SELECT tgname, pg_get_triggerdef(oid)
-  FROM pg_trigger
-  WHERE NOT tgisinternal AND tgrelid::regclass::text LIKE 'users%';"
+docker compose -f ops/docker-compose.yml exec postgres psql -U meno -d meno_dev -c "SELECT tgname, pg_get_triggerdef(oid) FROM pg_trigger WHERE NOT tgisinternal AND tgrelid::regclass::text LIKE 'users%';"
 ```
 
-Expect a body containing `'TG_OP' = 'INSERT'`. That is a **string literal**, not the
-`TG_OP` variable, so the body is unreachable — and `users.followers`, `users.following`
-and `users.broadcasts` have never once updated in any environment. Migration `0003`
-shows the correct pattern (`IF TG_OP = 'INSERT'`, no quotes); copy that style when the
-fixing phase comes.
-
-**This defect is carried over, not fixed, on this branch.** See
-[What is deliberately carried over as broken](#what-is-deliberately-carried-over-as-broken).
-Checking now means you _know_ the behaviour is wrong rather than suspecting it, and the
-tracking issue is written against a verified fact.
+Both counter triggers are fixed in the current migrations, so this query now returns
+`users_set_updated_at` with a body of `IF TG_OP = 'INSERT'`-style logic that is actually
+reachable. If you see `'TG_OP'` **in quotes** anywhere, you are running the pre-rewrite
+migrations and `users.followers`, `users.following` and `users.broadcasts` will never
+update — every branch of the function is dead code.
 
 ### Step 1.13 — Marker for later
 
@@ -818,7 +993,7 @@ echo "TODO: sqlx prepare — Step 5.4"
 - [ ] `redis-cli ping` → `PONG`, and `maxmemory-policy` is `allkeys-lru`
 - [ ] the storage health endpoint returns 200, and `meno-uploads` exists
 - [ ] `SELECT version()` returns PostgreSQL 18
-- [ ] `sqlx migrate info` shows 18 applied, 0 pending
+- [ ] `sqlx migrate info` shows 15 applied, 0 pending
 - [ ] `.env` exists with two different JWT secrets
 
 ---
@@ -834,7 +1009,7 @@ Total to port: **133 Rust files, 19,860 lines.** You are copying, not retyping.
 
 | New location                                                  | From `master`                                       | Files | Lines | Action                               |
 | ------------------------------------------------------------- | --------------------------------------------------- | ----- | ----- | ------------------------------------ |
-| `crates/db/migrations/`                                       | `packages/db/migrations/`                           | 18    | —     | copy                                 |
+| `crates/db/migrations/`                                       | `packages/db/migrations/`                           | 15    | —     | copy                                 |
 | `crates/core/src/pagination.rs`                               | `apps/api/src/shared/pagination.rs`                 | 1     | 287   | copy + edit (drop 1 impl, add tests) |
 | `crates/core/src/{error,ids,time}.rs`                         | —                                                   | 3     | new   | write (Step 4)                       |
 | `apps/api/src/infrastructure/redis/`                          | `shared/services/redis/`                            | 3     | 647   | copy                                 |
@@ -877,6 +1052,24 @@ Total to port: **133 Rust files, 19,860 lines.** You are copying, not retyping.
 
 Do not hand-copy 133 files. Extract from the reference:
 
+**Windows (PowerShell)**
+
+```powershell
+New-Item -ItemType Directory -Force apps/api/src, crates/core/src | Out-Null
+
+# Every Rust source file, preserving structure.
+git archive --format=tar -o "$env:TEMP\src.tar" master apps/api/src
+tar -xf "$env:TEMP\src.tar"
+# -> creates apps/api/src/... exactly as it was
+
+# Migrations.
+New-Item -ItemType Directory -Force crates/db/migrations | Out-Null
+git archive --format=tar -o "$env:TEMP\db.tar" master packages/db/migrations
+tar -xf "$env:TEMP\db.tar" -C crates/db/migrations
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 mkdir -p apps/api/src crates/core/src
 
@@ -894,6 +1087,42 @@ history" semantics you want. History is preserved on `master` anyway.
 
 Now apply the moves. These are `git mv` because the branch is a git repo and you want
 `git log --follow` to work:
+
+**Windows (PowerShell)**
+
+```powershell
+Set-Location apps/api/src
+
+# ── shared/ → three destinations ──────────────────────────────────────────
+git mv shared/middleware                middleware
+New-Item -ItemType Directory -Force infrastructure | Out-Null
+git mv shared/services/redis            infrastructure/redis
+git mv shared/services/livekit          infrastructure/livekit
+git mv shared/services/push             infrastructure/push
+git mv shared/services/ws               infrastructure/ws
+git mv shared/services/storage.rs       infrastructure/storage/mod.rs
+git mv shared/integrations              infrastructure/oauth
+git mv shared/email.rs                  infrastructure/mail/mod.rs
+git mv shared/repository.rs             infrastructure/query.rs
+git mv shared/constants.rs              infrastructure/constants.rs
+# database.rs may not exist — tolerate that one failure, as bash does.
+git mv shared/database.rs               infrastructure/database.rs 2>$null
+git mv shared/signals.rs                infrastructure/signals.rs
+git mv shared/telemetry.rs              infrastructure/telemetry.rs
+git mv shared/types                     types
+
+# IdentityReader returns auth::model::User — it belongs next to it, not in shared/.
+git mv shared/identity.rs               modules/auth/identity.rs
+
+# pagination goes to the pure crate.
+New-Item -ItemType Directory -Force ../../../crates/core/src | Out-Null
+git mv shared/pagination.rs             ../../../crates/core/src/pagination.rs
+
+Remove-Item shared/mod.rs
+if (Test-Path shared) { Write-Host "NOT EMPTY - something is still in shared/" } else { Write-Host "shared/ fully dissolved" }
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cd apps/api/src
@@ -927,14 +1156,63 @@ ls shared 2>/dev/null && echo "NOT EMPTY — something is still in shared/" || e
 ```
 
 > `shared/database.rs` does not exist — `database.rs` sits at `src/` root, not under
-> `shared/`. The `2>/dev/null || true` is there because this is exactly the kind of thing
-> that will differ if the reference has moved on. **Always confirm your reference commit:**
+> `shared/`. The error suppression (`2>/dev/null || true` in bash, `2>$null` in
+> PowerShell) is there because this is exactly the kind of thing that will differ if the
+> reference has moved on. **Always confirm your reference commit:**
 > `git log -1 --oneline master` and compare against `903c3ba` before porting.
 
 ### Step 2.4 — The single import rewrite
 
 Every reference to the old paths becomes the new ones. This is the only mechanical edit
-the port requires, and it is one `sed` pass over 133 files:
+the port requires, and it is one pass over 133 files:
+
+**Windows (PowerShell)** — no `sed -i`, so use `.Replace()` on a raw string. `[ordered]`
+matters: the mapping must be applied longest-path-first, exactly as the `sed` list is
+ordered, or `crate::shared::services::redis` gets eaten by the `crate::shared::services`
+rule before it can be rewritten.
+
+```powershell
+Set-Location apps/api
+
+# Dry run first — see the blast radius before changing anything.
+git grep -c 'crate::shared::' -- src | Sort-Object { [int]($_ -split ':')[-1] } -Descending | Select-Object -First 20
+
+# Apply. Order matters: longest/most specific first, so a short pattern cannot
+# consume a longer one.
+$map = [ordered]@{
+    'crate::shared::middleware'         = 'crate::middleware'
+    'crate::shared::services::redis'    = 'crate::infrastructure::redis'
+    'crate::shared::services::livekit'  = 'crate::infrastructure::livekit'
+    'crate::shared::services::push'     = 'crate::infrastructure::push'
+    'crate::shared::services::ws'       = 'crate::infrastructure::ws'
+    'crate::shared::services::storage'  = 'crate::infrastructure::storage'
+    'crate::shared::services'           = 'crate::infrastructure'
+    'crate::shared::integrations'       = 'crate::infrastructure::oauth'
+    'crate::shared::email'              = 'crate::infrastructure::mail'
+    'crate::shared::repository'         = 'crate::infrastructure::query'
+    'crate::shared::constants'          = 'crate::infrastructure::constants'
+    'crate::shared::signals'            = 'crate::infrastructure::signals'
+    'crate::shared::telemetry'          = 'crate::infrastructure::telemetry'
+    'crate::shared::types'              = 'crate::types'
+    'crate::shared::identity'           = 'crate::modules::auth::identity'
+    'crate::shared::pagination'         = 'crate::meno_core::pagination'
+    'crate::database'                   = 'crate::infrastructure::database'
+    'crate::signals'                    = 'crate::infrastructure::signals'
+}
+
+Get-ChildItem -Recurse -Path src -Filter *.rs | ForEach-Object {
+    $before = Get-Content $_.FullName -Raw
+    $after  = $before
+    foreach ($k in $map.Keys) { $after = $after.Replace($k, $map[$k]) }
+    if ($after -ne $before) { Set-Content -Path $_.FullName -Value $after -NoNewline -Encoding utf8 }
+}
+
+# Then prove nothing was missed. This must print nothing.
+$stale = git grep -n 'shared::' -- src
+if ($LASTEXITCODE -ne 0) { Write-Host "no stale shared:: references" } else { $stale }
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cd apps/api
@@ -967,6 +1245,10 @@ find src -name '*.rs' -print0 | xargs -0 sed -i \
 # Then prove nothing was missed. This must print nothing.
 grep -rn 'shared::' src/ || echo "no stale shared:: references ✅"
 ```
+
+> Note that the final verification differs between shells: `grep -rn … || echo` only works
+> because `grep` exits non-zero when it finds nothing, and `||` needs PowerShell 7. The
+> PowerShell form tests `$LASTEXITCODE` explicitly.
 
 Note that pagination resolves to `crate::meno_core::pagination`, i.e. `meno_core` is
 declared as a **dependency of `apps/api`** in Step 3. The port cannot compile until it is.
@@ -1212,7 +1494,7 @@ workspace = true
 //!
 //! A migrations-only crate cannot acquire business logic, so the schema stays a single
 //! versioned source of truth that the API, the CI migration smoke test, and
-//! `sqlx migrate run` all resolve to the same files. On `master` these 18 migrations
+//! `sqlx migrate run` all resolve to the same files. On `master` these 15 migrations
 //! lived in `packages/db/` — a directory with no manifest that nothing referenced,
 //! which is precisely why no migration runner was ever written.
 //!
@@ -1555,6 +1837,13 @@ files too — `tests/mod.rs`, `tests/auth/mod.rs` and `tests/auth/repository_tes
 
 ```bash
 cargo metadata --format-version 1 --no-deps >/dev/null && echo "manifests resolve ✅"
+```
+
+**Windows (PowerShell)**
+
+```powershell
+cargo metadata --format-version 1 --no-deps *> $null
+if ($LASTEXITCODE -eq 0) { Write-Host "manifests resolve OK" }
 ```
 
 ---
@@ -1957,6 +2246,18 @@ this is where 133 copied files either work or tell you what's wrong.
 `[[bin]] meno-worker` points at a file that does not exist and the error will bury the
 real ones. Write the minimal `worker.rs` stub first if you want to check early:
 
+**Windows (PowerShell)** — the heredoc is `@' … '@`, and the closing delimiter must
+start at column 0.
+
+```powershell
+@'
+// placeholder - replaced in Step 7
+fn main() {}
+'@ | Set-Content -Encoding utf8 apps/api/src/worker.rs
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 cat > apps/api/src/worker.rs <<'EOF'
 // placeholder — replaced in Step 7
@@ -1965,6 +2266,14 @@ EOF
 ```
 
 ### Step 5.1 — First compile, expect noise
+
+**Windows (PowerShell)**
+
+```powershell
+cargo check --workspace --all-targets 2>&1 | Select-Object -Last 60
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cargo check --workspace --all-targets 2>&1 | tail -60
@@ -2026,6 +2335,16 @@ The workspace table omits `reqwest`'s `blocking` feature and `oauth2`'s
 source file references `reqwest::blocking` at all** — the Google OAuth integration uses
 the async client throughout:
 
+**Windows (PowerShell)**
+
+```powershell
+# Must print nothing before you drop the features.
+$blocking = git grep -n 'reqwest::blocking\|oauth2::blocking' -- apps/api/src
+if ($LASTEXITCODE -eq 0) { Write-Host "BLOCKING IN USE - do not drop the feature"; $blocking }
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 # Must print nothing before you drop the features.
 grep -rn 'reqwest::blocking\|oauth2::blocking' apps/api/src/ && echo "BLOCKING IN USE — do not drop the feature"
@@ -2060,6 +2379,16 @@ You never reproduced them, because you never built the old tree — and you do n
 reproduce them now, because you generate the cache against the migrated database from
 Step 1:
 
+**Windows (PowerShell)**
+
+```powershell
+# essential: sqlx must talk to the real DB to prepare
+Remove-Item Env:SQLX_OFFLINE -ErrorAction SilentlyContinue
+cargo sqlx prepare --workspace -- --all-targets
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 unset SQLX_OFFLINE   # essential: sqlx must talk to the real DB to prepare
 cargo sqlx prepare --workspace -- --all-targets
@@ -2085,7 +2414,7 @@ git commit -m "refactor: port API into the monorepo layout
 
 Moves the existing implementation into the §2 target tree: apps/api with
 infrastructure/, middleware/ and types/ replacing shared/; crates/db holding the
-18 migrations; crates/core holding Cursor/CursorPage/Order plus the canonical
+15 migrations; crates/core holding Cursor/CursorPage/Order plus the canonical
 Error taxonomy.
 
 This is a port, not a rewrite. Domain logic is copied unchanged from 903c3ba.
@@ -2260,8 +2589,8 @@ Generate it from the config definition rather than hand-maintaining it. On `mast
 `.env.example` declares `FIREBASE_SERVICE_ACCOUNT_URL`, `AWS_REGION`, `EMAIL_URL` and
 `CLOUDINARY_URL` — **none of which the code reads**. It is a fiction.
 
-```bash
-# Generated by scripts/gen-env-example.sh — do not edit by hand.
+```dotenv
+# Generated by scripts/gen-env-example — do not edit by hand.
 # ── REQUIRED ──────────────────────────────────────────────────────────────
 DATABASE_URL=postgres://meno:password@localhost:5432/meno_dev
 REDIS_URL=redis://localhost:6379
@@ -2332,6 +2661,17 @@ Note the signature change to `Result` — no `.expect`. That is one of the three
 panics removed here.
 
 **Verify / commit:**
+
+**Windows (PowerShell)** — `cmd /c "set … && …"` is the reliable way to run with a
+near-empty environment; `Remove-Item Env:` on every variable is impractical.
+
+```powershell
+cargo check --workspace --all-targets
+# start with a deliberately incomplete env - the error must list everything at once
+cmd /c 'set "DATABASE_URL=x" && cargo run --bin meno-api' 2>&1 | Select-Object -First 20
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cargo check --workspace --all-targets
@@ -2578,6 +2918,23 @@ async fn build_ws_pubsub_bridge(
 
 **Verify — this is the check that proves the split works:**
 
+**Windows (PowerShell)** — PowerShell has no `&` job control, so backgrounding is
+`Start-Process -PassThru` and stopping is `Stop-Process`.
+
+```powershell
+cargo build --bin meno-api --bin meno-worker
+git grep -n 'run_jobs' -- apps/api/src/main.rs    # expect: only a comment, no call
+
+# The real test: with only the API running, nothing may be picked up.
+$api = Start-Process cargo -ArgumentList 'run','--bin','meno-api' -PassThru -NoNewWindow
+Start-Sleep -Seconds 8
+psql $env:DATABASE_URL -c "SELECT job_type, run_at, attempts FROM apalis_jobs ORDER BY run_at DESC LIMIT 5;"
+# expect: no attempt counters increment
+Stop-Process -Id $api.Id
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 cargo build --bin meno-api --bin meno-worker
 grep -n 'run_jobs' apps/api/src/main.rs    # expect: only a comment, no call
@@ -2777,6 +3134,16 @@ which is what lets Step 9 build the service against `FakeLiveKit::new()`.
 
 **Verify / commit:**
 
+**Windows (PowerShell)**
+
+```powershell
+cargo check --workspace --all-targets
+git grep -n 'RoomClient' -- 'apps/api/src/*.rs' ':!apps/api/src/infrastructure/livekit/'
+# expect: no hits - the SDK must not be reachable from service code
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 cargo check --workspace --all-targets
 grep -rn 'RoomClient' apps/api/src/ --include='*.rs' | grep -v 'infrastructure/livekit/'
@@ -2888,6 +3255,15 @@ Do not start writing before you know where everything goes. The compiler gives y
 list. The copied file has **41 functions** in total: **11 builder functions that
 disappear entirely** with Step 9.1, **24 public service methods**, and **6 private
 helpers**.
+
+**Windows (PowerShell)**
+
+```powershell
+Select-String -Path apps/api/src/modules/broadcast/service.rs -Pattern '^\s+(pub )?(async )?fn ' |
+    ForEach-Object { "$($_.LineNumber):$($_.Line -replace '\(.*','')" }
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 grep -nE '^\s+(pub )?(async )?fn ' apps/api/src/modules/broadcast/service.rs | sed 's/(.*//'
@@ -3081,6 +3457,16 @@ The builder is gone and the unwrap is gone, so the workspace policy can now appl
 # panic       = "allow"
 ```
 
+**Windows (PowerShell)**
+
+```powershell
+cargo clippy --workspace --all-targets 2>&1 |
+    Select-String -Pattern '^(error|warning)' |
+    Select-Object -First 30
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 cargo clippy --workspace --all-targets 2>&1 | grep -E '^(error|warning)' | head -30
 ```
@@ -3089,6 +3475,19 @@ Expect hits in the still-unported code. Fix each with a real error return; **do 
 re-add the `allow`.
 
 **Verify / commit:**
+
+**Windows (PowerShell)**
+
+```powershell
+cargo check --workspace --all-targets
+cargo test --workspace           # cursor + core + error tests still green
+Get-ChildItem apps/api/src/modules/broadcast/*.rs |
+    ForEach-Object { [pscustomobject]@{ Lines = (Get-Content $_.FullName).Count; File = $_.Name } } |
+    Sort-Object Lines -Descending |
+    Select-Object -First 10
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cargo check --workspace --all-targets
@@ -3158,6 +3557,19 @@ file is plural.
 
 Nine `#[from]` variants make a blanket `sed` unsafe, so migrate one module at a time,
 starting with `settings` (4 variants) and ending with `broadcast` (35).
+
+**Windows (PowerShell)**
+
+```powershell
+# Safe because the enums are file-local.
+foreach ($m in 'settings','subscribers','notes','chat','profile','auth','notifications','broadcast') {
+  $f = "apps/api/src/modules/$m/errors.rs"
+  if (-not (Test-Path $f)) { $f = "apps/api/src/modules/$m/error.rs" }
+  git grep -l "\b$($m.TrimEnd('?'))Error\b" -- "apps/api/src/modules/$m"
+}
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 # Safe because the enums are file-local.
@@ -3238,6 +3650,29 @@ Handlers then return `Result<Json<MenoResponse<T>>, Error>` and `?` works with n
 
 **Verify — the real test of the gate:**
 
+**Windows (PowerShell)**
+
+```powershell
+$hits = git grep -n 'MenoError\|AuthError\|BroadcastError\|ChatError\|NotesError\|ProfileError\|SettingsError\|SubscribersError\|NotificationError' -- apps/api/src |
+    Select-String -NotMatch 'INTERNAL_ERROR'
+$hits
+# expect: zero hits
+
+cargo check --workspace --all-targets
+$api = Start-Process cargo -ArgumentList 'run','--bin','meno-api' -PassThru -NoNewWindow
+
+# curl.exe, not curl. ConvertFrom-Json pretty-prints like jq.
+curl.exe -s localhost:8080/api/v1/broadcasts | ConvertFrom-Json | Format-List
+# expect 401 with code "UNAUTHORIZED" - a stable code, not "401 Unauthorized"
+
+curl.exe -s localhost:8080/api/v1/broadcasts/00000000-0000-0000-0000-000000000000 -H "Authorization: Bearer $env:TOKEN" | ConvertFrom-Json | Format-List
+# expect 404 with code "NOT_FOUND"
+
+Stop-Process -Id $api.Id
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 grep -rn 'MenoError\|AuthError\|BroadcastError\|ChatError\|NotesError\|ProfileError\|SettingsError\|SubscribersError\|NotificationError' \
   apps/api/src/ | grep -v INTERNAL_ERROR
@@ -3283,9 +3718,18 @@ fix this, because you have a known-good reference to compare against.
 
 ### Step 11.1 — Fix the layout
 
+**macOS / Linux (bash)**
+
 ```bash
 rm -rf apps/api/tests
 mkdir -p apps/api/tests/contract
+```
+
+**Windows (PowerShell)**
+
+```powershell
+Remove-Item -Recurse -Force apps/api/tests -ErrorAction SilentlyContinue
+New-Item -ItemType Directory -Force apps/api/tests/contract | Out-Null
 ```
 
 Cargo treats each top-level `tests/*.rs` as a separate binary, and `tests/<dir>/mod.rs`
@@ -3421,7 +3865,7 @@ async fn subscribing_increments_the_followers_counter(pool: PgPool) {
 ```
 
 > The `#[sqlx::test(migrations = "...")]` path is relative to the **workspace root**,
-> not to `apps/api`. That trips everyone once. It also applies all 18 migrations per
+> not to `apps/api`. That trips everyone once. It also applies all 15 migrations per
 > test and rolls back, so tests are isolated and order-independent.
 >
 > **This test fails today, by design.** That is the point — it converts a code-reading
@@ -3462,6 +3906,14 @@ pub async fn create_subscription(pool: &PgPool, subscriber: Uuid, creator: Uuid)
 ```
 
 **Verify:**
+
+**Windows (PowerShell)**
+
+```powershell
+cargo test --workspace 2>&1 | Select-Object -Last 30
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 cargo test --workspace 2>&1 | tail -30
@@ -3510,8 +3962,18 @@ finishes it**: add the observability config files, then add the `api` service.
 Start the config files from `master` rather than from memory, so you inherit anything
 still correct, then fix them:
 
+**macOS / Linux (bash)**
+
 ```bash
 mkdir -p ops/prometheus ops/promtail
+git show master:resources/prometheus/prometheus.yml > ops/prometheus/prometheus.yml
+git show master:resources/promtail/promtail-config.yml > ops/promtail/promtail.yml
+```
+
+**Windows (PowerShell)**
+
+```powershell
+New-Item -ItemType Directory -Force ops/prometheus, ops/promtail | Out-Null
 git show master:resources/prometheus/prometheus.yml > ops/prometheus/prometheus.yml
 git show master:resources/promtail/promtail-config.yml > ops/promtail/promtail.yml
 ```
@@ -3649,6 +4111,25 @@ you cannot accidentally collide with the native `cargo run` on port 8080. Reachi
 requires typing `--profile verify` deliberately.
 
 **Verify / commit:**
+
+**Windows (PowerShell)**
+
+```powershell
+docker compose -f ops/docker-compose.yml config *> $null
+if ($LASTEXITCODE -eq 0) { Write-Host "compose valid OK" }
+
+# Full stack except the api service.
+docker compose -f ops/docker-compose.yml up -d
+docker compose -f ops/docker-compose.yml ps
+# expect: postgres, redis, storage, mailpit, prometheus, loki, promtail, grafana healthy
+
+# The API, natively - the actual dev loop. Use `make run` if you installed make.
+$api = Start-Process cargo -ArgumentList 'run','--bin','meno-api' -PassThru -NoNewWindow
+(curl.exe -s localhost:8080/health | ConvertFrom-Json) | Format-List
+# expect: {"status":"ok","db":true,"redis":true}
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 docker compose -f ops/docker-compose.yml config >/dev/null && echo "compose valid ✅"
@@ -3971,6 +4452,8 @@ verify: fmt-check clippy check-sqlx file-size test ## Everything CI runs
 
 ### Step 14.2 — Scripts and `deny.toml`
 
+**macOS / Linux (bash)** — `scripts/bootstrap.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # scripts/bootstrap.sh — one-shot setup on a clean machine.
@@ -4017,6 +4500,61 @@ sqlx migrate info
 echo "==> Done. Run: make run"
 ```
 
+**Windows (PowerShell)** — `scripts/bootstrap.ps1`. Identical logic, no Bash and no
+extra tooling:
+
+```powershell
+# scripts/bootstrap.ps1 — one-shot setup on a clean machine.
+# Run with:  powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1
+$ErrorActionPreference = 'Stop'
+
+Write-Host '==> Checking the Docker daemon'
+# Fails fast and legibly, because "failed to connect to the docker API" is the single
+# most common first-run failure and the raw message does not say what to do.
+docker info *> $null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host 'ERROR: the Docker daemon is not responding.'
+    Write-Host '       Start Docker Desktop and re-run. See Step 1.1 of the guide.'
+    exit 1
+}
+
+Write-Host '==> Checking the toolchain'
+rustup show
+
+Write-Host '==> Installing sqlx-cli'
+cargo install sqlx-cli --no-default-features --features rustls,postgres --locked
+if ($LASTEXITCODE -ne 0) { Write-Host '       skipped (probably already installed)' }
+
+Write-Host '==> Fetching dependencies'
+cargo fetch
+
+if (-not (Test-Path .env)) {
+    Copy-Item .env.example .env
+    Write-Host '==> Created .env - fill in the two JWT secrets before starting the API:'
+    Write-Host '      run the New-HexSecret snippet from Step 1.7 twice; they must differ'
+}
+
+Write-Host '==> Starting infrastructure'
+make db-up
+
+Write-Host '==> Creating the storage bucket'
+docker compose -f ops/docker-compose.yml run --rm storage-init *> $null
+
+Write-Host '==> Applying migrations'
+sqlx database create
+if ($LASTEXITCODE -ne 0) { Write-Host '       database already exists - continuing' }
+sqlx migrate run
+sqlx migrate info
+
+Write-Host '==> Done. Run: make run'
+```
+
+> `make bootstrap` should dispatch on `OSTYPE` and run `bootstrap.ps1` on Windows, so the
+> definition of done — *"make bootstrap && make run works on a clean machine"* — holds on
+> both without the reader choosing.
+
+**macOS / Linux (bash)** — `scripts/sqlx-prepare.sh`:
+
 ```bash
 #!/usr/bin/env bash
 # scripts/sqlx-prepare.sh — regenerate the offline cache against a migrated database.
@@ -4026,6 +4564,21 @@ set -euo pipefail
 unset SQLX_OFFLINE || true
 cargo sqlx prepare --workspace -- --all-targets
 echo "==> .sqlx regenerated — commit it."
+```
+
+**Windows (PowerShell)** — `scripts/sqlx-prepare.ps1`:
+
+```powershell
+# scripts/sqlx-prepare.ps1 — regenerate the offline cache against a migrated database.
+# Run after ANY change to a query! macro. CI runs the --check form.
+$ErrorActionPreference = 'Stop'
+if (-not $env:DATABASE_URL) {
+    Write-Error 'DATABASE_URL must be set and point at a migrated database'
+    exit 1
+}
+Remove-Item Env:SQLX_OFFLINE -ErrorAction SilentlyContinue
+cargo sqlx prepare --workspace -- --all-targets
+Write-Host '==> .sqlx regenerated - commit it.'
 ```
 
 ```toml
@@ -4144,8 +4697,16 @@ conflicting feature set.
 
 Per §14 question 3, these are placeholders only. Do not scaffold:
 
+**macOS / Linux (bash)**
+
 ```bash
 mkdir -p apps/web apps/mobile
+```
+
+**Windows (PowerShell)**
+
+```powershell
+New-Item -ItemType Directory -Force apps/web, apps/mobile | Out-Null
 ```
 
 ```markdown
@@ -4214,6 +4775,58 @@ apps/mobile/.flutter-plugins-dependencies
 
 ## The whole guide, end to end
 
+**Windows (PowerShell)**
+
+```powershell
+# 0. Infrastructure is up and healthy (Step 1)
+docker info *> $null
+if ($LASTEXITCODE -eq 0) { Write-Host "daemon OK" }
+docker compose -f ops/docker-compose.yml ps --format '{{.Service}} {{.Health}}'
+# expect: postgres healthy, redis healthy, storage healthy
+
+# 1. One project, one lockfile, three crates
+((cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).workspace_members).Count   # 3
+cargo tree -d                              # duplicates, each explainable
+
+# 2. Everything compiles
+cargo check --workspace --all-targets
+
+# 3. The pure crate is genuinely pure
+$leak = git grep -nE '\b(sqlx|axum|fred|tokio)::' -- crates/core/src
+if ($LASTEXITCODE -ne 0) { Write-Host "core is pure OK" } else { Write-Host "LEAK"; $leak }
+
+# 4. The offline cache matches the schema
+cargo sqlx prepare --workspace --check
+
+# 5. The pure tests pass with NO infrastructure running
+docker compose -f ops/docker-compose.yml stop
+cargo test -p meno-core
+# must pass with Postgres and Redis down. If not, something leaked in.
+docker compose -f ops/docker-compose.yml up -d postgres redis storage
+
+# 6. Both binaries exist; the web one cannot run jobs
+cargo build --bin meno-api --bin meno-worker
+git grep -n 'run_jobs' -- apps/api/src/main.rs    # expect: only a comment, no call
+
+# 7. No file over the budget
+make file-size
+
+# 8. The nine error enums are gone
+$still = git grep -n 'MenoError\|BroadcastError\|AuthError' -- apps/api/src
+if ($LASTEXITCODE -ne 0) { Write-Host "consolidated OK" } else { Write-Host "present"; $still }
+
+# 9. shared/ no longer exists
+if (Test-Path apps/api/src/shared) { Write-Host "still there" } else { Write-Host "restructured OK" }
+
+# 10. Both binaries boot against one schema
+$api = Start-Process cargo -ArgumentList 'run','--bin','meno-api' -PassThru -NoNewWindow
+(curl.exe -s localhost:8080/health | ConvertFrom-Json) | Select-Object status, db, redis
+Start-Process cargo -ArgumentList 'run','--bin','meno-worker' -NoNewWindow   # then confirm no duplicate execution
+Stop-Process -Id $api.Id
+```
+
+**macOS / Linux (bash)**
+
 ```bash
 # 0. Infrastructure is up and healthy (Step 1)
 docker info >/dev/null && echo "daemon ✅"
@@ -4279,6 +4892,21 @@ make worker &     # then confirm no duplicate execution
 ## The diff against the reference
 
 The single most useful review tool, and only available because `master` is intact:
+
+**Windows (PowerShell)**
+
+```powershell
+# Everything that changed, by size of change.
+git diff master --stat
+
+# Files whose logic changed at all - this should be a SHORT list.
+git diff master --numstat | ForEach-Object {
+    $p = $_ -split '\s+'
+    if ([int]$p[0] + [int]$p[1] -gt 0) { $_ }
+}
+```
+
+**macOS / Linux (bash)**
 
 ```bash
 # Everything that changed, by size of change.
