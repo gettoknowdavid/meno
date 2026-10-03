@@ -18,5 +18,5 @@ pub mod ids;
 pub mod pagination;
 pub mod time;
 
-pub use error::{Error, ErrorBody, ErrorCode, to_body};
+pub use error::{Error, ErrorBody, ErrorCode, Meta, to_body};
 pub use pagination::{Cursor, CursorPage, CursorParams, Order};

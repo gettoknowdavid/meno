@@ -461,7 +461,7 @@ mod tests {
         // as one predictable code, whatever its internal cause.
         let err: Error = CursorError::InvalidShape.into();
         let body = crate::error::to_body(&err);
-        assert_eq!(body.status_code, 400);
+        assert_eq!(body.http_status, 400);
         assert_eq!(body.code, "INVALID_CURSOR");
         assert!(body.data.is_none());
     }

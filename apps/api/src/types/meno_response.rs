@@ -1,7 +1,7 @@
 //! The single response envelope for every endpoint.
 //!
 //! Copied from `apps/api/src/shared/types/meno_response.rs` on `master` (`903c3ba`) with
-//! one behavioural change, recorded below.
+//! three deliberate changes, all recorded below.
 //!
 //! # Why this lives in `apps/api`, not `crates/core`
 //!
@@ -18,18 +18,24 @@
 //! # Wire contract
 //!
 //! ```json
-//! { "status_code": 200, "code": "OK", "message": "…", "status": true, "data": { } }
+//! { "code": "OK", "message": "…", "status": true, "data": { } }
 //! ```
 //!
-//! Field names are snake_case and are **not** renamed here. Flutter and Next.js parse
-//! this exact shape; `data` nests payloads that *do* use camelCase (`CursorPage` emits
-//! `nextCursor`/`hasNextPage`), so the two conventions apply at different levels and
-//! neither is a mistake.
+//! Four keys. `data` is omitted when there is no payload — never sent as `null`.
+//! Nested payloads *inside* `data` carry their own casing, applied per struct
+//! (`CursorPage` emits `nextCursor`/`hasNextPage`).
 
+use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use axum::Json;
+use meno_core::error::Meta;
 use serde::Serialize;
+
+/// Stable code for a 200 response.
+pub const CODE_OK: &str = "OK";
+
+/// Stable code for a 201 response.
+pub const CODE_CREATED: &str = "CREATED";
 
 /// The single response shape for every endpoint in the app.
 ///
@@ -39,15 +45,34 @@ use serde::Serialize;
 /// `data` is `Option<T>`, so endpoints that return nothing (logout, delete, mark-read)
 /// can use [`MenoResponse::no_content`] and `data` will be omitted from the JSON.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct MenoResponse<T: Serialize> {
-    /// The HTTP status, duplicated in the body so a client reading JSON only still sees
-    /// it. Mirrors [`meno_core::ErrorBody::status_code`].
-    pub status_code: u16,
+    /// HTTP status for the response line. Never serialised.
+    ///
+    /// # Why this is not on the wire
+    ///
+    /// The status already travels in the HTTP status line, so repeating it in the body
+    /// is pure redundancy. Stripe, GitHub and Google AIP-193 all omit it and send only
+    /// a stable `code` string plus a message. This field exists solely so
+    /// [`IntoResponse`] can set the status line; `#[serde(skip)]` keeps it off the wire.
+    #[serde(skip)]
+    pub http_status: u16,
 
-    /// Stable, machine-readable code. See [the stability note below](#code-stability).
+    /// Stable, machine-readable code. This is what clients branch on.
+    ///
+    /// # Code stability
+    ///
+    /// On `master` the success paths set this to `StatusCode::OK.to_string()` — the
+    /// string `"200 OK"` — while the error paths already used stable codes like
+    /// `"BAD_REQUEST"`. So one field carried two conventions depending on whether the
+    /// request succeeded, and a client could not branch on it uniformly.
+    ///
+    /// Plan §4.2 requires *"a stable machine-readable `code` so the Flutter and Next.js
+    /// clients never string-match on human-readable messages"*, so success uses `"OK"`
+    /// and `"CREATED"`. A code may not be renamed or removed without an API version bump.
     pub code: String,
 
-    /// Human-readable message. May be reworded at any time; clients must not match on it.
+    /// Human-readable message. May be reworded at any time; clients must not match it.
     pub message: String,
 
     /// `true` on success. Always `false` in [`meno_core::ErrorBody`].
@@ -56,34 +81,23 @@ pub struct MenoResponse<T: Serialize> {
     /// The payload. Omitted entirely from the JSON when `None`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<T>,
+
+    /// Correlation metadata. Omitted when the transport layer supplies none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Meta>,
 }
-
-/// # Code stability
-///
-/// On `master` the success paths set `code` to `StatusCode::OK.to_string()` — the string
-/// `"200 OK"` — while the error paths already use stable codes like `"BAD_REQUEST"`. So
-/// the same field carried two different conventions depending on whether the request
-/// succeeded, and a client could not branch on it uniformly.
-///
-/// Plan §4.2 requires *"a stable machine-readable `code` so the Flutter and Next.js
-/// clients never string-match on human-readable messages"*, so success now uses `"OK"`
-/// and `"CREATED"`. These match the HTTP reason phrases, but unlike `"200 OK"` they are
-/// a deliberate, versioned contract rather than a rendering of the status line.
-pub const CODE_OK: &str = "OK";
-
-/// Stable code returned by [`MenoResponse::created`].
-pub const CODE_CREATED: &str = "CREATED";
 
 impl<T: Serialize> MenoResponse<T> {
     /// 200 with a payload.
     #[must_use]
     pub fn ok(message: impl Into<String>, data: T) -> Self {
         Self {
-            status_code: StatusCode::OK.as_u16(),
+            http_status: StatusCode::OK.as_u16(),
             code: CODE_OK.to_string(),
             message: message.into(),
             status: true,
             data: Some(data),
+            meta: None,
         }
     }
 
@@ -91,12 +105,74 @@ impl<T: Serialize> MenoResponse<T> {
     #[must_use]
     pub fn created(message: impl Into<String>, data: T) -> Self {
         Self {
-            status_code: StatusCode::CREATED.as_u16(),
+            http_status: StatusCode::CREATED.as_u16(),
             code: CODE_CREATED.to_string(),
             message: message.into(),
             status: true,
             data: Some(data),
+            meta: None,
         }
+    }
+
+    /// 200 with an arbitrary status — used when a handler needs a non-standard 2xx,
+    /// such as `202 Accepted` for work that continues in the background.
+    #[must_use]
+    pub fn with_status(
+        http_status: StatusCode,
+        code: &'static str,
+        message: impl Into<String>,
+        data: T,
+    ) -> Self {
+        Self {
+            http_status: http_status.as_u16(),
+            code: code.to_string(),
+            message: message.into(),
+            status: true,
+            data: Some(data),
+            meta: None,
+        }
+    }
+
+    /// Attach correlation metadata — the request id, so a user reporting a failure
+    /// gives you something to grep the logs for.
+    ///
+    /// The constructors cannot fill this in themselves: only the transport layer knows
+    /// the request context. Kept consistent with [`meno_core::ErrorBody::with_meta`], so
+    /// a handler that decorates both envelopes does it the same way for each.
+    #[must_use]
+    pub fn with_meta(mut self, meta: Meta) -> Self {
+        self.meta = Some(meta);
+        self
+    }
+
+    /// Serialise to a WebSocket text frame.
+    ///
+    /// # WebSocket use
+    ///
+    /// Yes — this envelope can be sent over a socket, and after the `http_status` field
+    /// became `#[serde(skip)]` nothing in the serialised form is HTTP-specific. It is
+    /// already a plain `Serialize`, so this is a convenience, not a requirement:
+    ///
+    /// ```ignore
+    /// let frame = Message::Text(response.into_frame().into());
+    /// ```
+    ///
+    /// **Caveat.** Prefer this for *responses* to a client command sent over the socket
+    /// (an ACK, a result, a rejection), where `status`/`code` mean what they mean over
+    /// HTTP. For **server-pushed events**, `infrastructure/ws::WsPayload` is the better
+    /// frame: it carries an `event` discriminant plus opaque `data`, which is what a
+    /// client switches on for routing. Reusing this envelope for pushed events would
+    /// force every broadcast to be shaped like a successful request-response.
+    #[must_use]
+    pub fn into_frame(self) -> String {
+        // Serialising this type cannot fail: every field is a string, a bool, a u16 or
+        // an already-`Serialize` payload.
+        serde_json::to_string(&self).unwrap_or_else(|_| {
+            format!(
+                r#"{{"code":"{}","message":"Response serialisation failed","status":false}}"#,
+                CODE_OK
+            )
+        })
     }
 }
 
@@ -106,11 +182,12 @@ impl MenoResponse<()> {
     #[must_use]
     pub fn no_content(message: impl Into<String>) -> Self {
         Self {
-            status_code: StatusCode::OK.as_u16(),
+            http_status: StatusCode::OK.as_u16(),
             code: CODE_OK.to_string(),
             message: message.into(),
             status: true,
             data: None,
+            meta: None,
         }
     }
 }
@@ -118,7 +195,7 @@ impl MenoResponse<()> {
 impl<T: Serialize> IntoResponse for MenoResponse<T> {
     fn into_response(self) -> Response {
         (
-            StatusCode::from_u16(self.status_code).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+            StatusCode::from_u16(self.http_status).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
             Json(self),
         )
             .into_response()

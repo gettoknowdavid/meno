@@ -231,18 +231,28 @@ impl Error {
 /// The status/code/message triple sent to the client. Pure data — no `axum`, no
 /// `http::StatusCode`. `apps/api` renders it.
 ///
-/// **No `rename_all` here, deliberately.** `ErrorBody` *is* the response envelope for
-/// errors, so its field names are the wire contract that Flutter and Next.js are built
-/// against: `status_code`, not `statusCode`. `MenoResponse` on `master` carries no
-/// `rename_all` and therefore serialises `status_code`; applying `camelCase` here would
-/// make errors and successes use different field names for the same concept, and the
-/// camelCase convention would apply only to the nested payload inside `data`.
+/// # Why the HTTP status is not in the body
+///
+/// The status already travels in the HTTP status line. Repeating it as a `statusCode`
+/// body field is what Stripe, GitHub and Google AIP-193 all decline to do — and it is
+/// the redundancy this type removes. [`ErrorBody::http_status`] exists so the transport
+/// layer can set the status line; `#[serde(skip)]` keeps it off the wire.
+///
+/// # Why `camelCase`
+///
+/// Flutter (Dart) and Next.js (TypeScript) both use lowerCamelCase, and the WebSocket
+/// layer on `master` is *already* camelCase — `ws/dto.rs` hand-writes `"userId"`,
+/// `"broadcastId"` and `"gracePeriodInSecs"` into `serde_json::json!` literals. The
+/// snake_case HTTP DTOs were the outlier, so this consolidates on the convention the
+/// clients and the socket layer already assume.
 #[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ErrorBody {
-    /// The HTTP status code, duplicated in the body so clients reading JSON only still
-    /// see it.
-    pub status_code: u16,
-    /// The stable wire code from [`ErrorCode::as_str`].
+    /// HTTP status for the response line. Never serialised.
+    #[serde(skip)]
+    pub http_status: u16,
+    /// The stable wire code from [`ErrorCode::as_str`]. This is the field clients
+    /// branch on — never `message`.
     pub code: &'static str,
     /// Human-readable message. Always generic for non-client-safe errors.
     pub message: String,
@@ -251,6 +261,41 @@ pub struct ErrorBody {
     /// Per-field detail. Present only for [`Error::Validation`].
     #[serde(skip_serializing_if = "Option::is_none")]
     pub data: Option<HashMap<String, Vec<String>>>,
+    /// Correlation metadata. Filled in by `apps/api`, which owns the request context.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub meta: Option<Meta>,
+}
+
+/// Metadata common to both response envelopes.
+///
+/// Lives here rather than in a module of its own because `ErrorBody` is one half of the
+/// envelope contract and `MenoResponse` is the other; `Meta` is the shared part. It is
+/// pure serde data, so `crates/core` is the right home for it under the §2.1 purity
+/// rule — `apps/api/src/types/meno_response.rs` imports it from here.
+///
+/// # Deliberately no `timestamp`
+///
+/// The client has its own clock, and the HTTP `Date` header already carries server time.
+/// A body field would only add drift to debug. `request_id` earns its place because it
+/// is the one value the server has and the client does not.
+#[derive(Debug, Clone, Default, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Meta {
+    /// Correlates this response with the server-side log lines that produced it.
+    ///
+    /// The guide requires 500s to be logged "correlated by request id", but nothing
+    /// emits one into the response today — so a user reporting a failure gives you
+    /// nothing to grep for. `tower-http`'s `request-id` middleware is already enabled
+    /// in the workspace manifest; this is where its value surfaces.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request_id: Option<String>,
+
+    /// Build identifier, read from an env var at startup.
+    ///
+    /// Hardcoding this would make it silently lie, so it is omitted when unset rather
+    /// than defaulted to something plausible.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_version: Option<String>,
 }
 
 /// Map an `Error` to its HTTP status, wire code and client-safe body.
@@ -286,11 +331,25 @@ pub fn to_body(err: &Error) -> ErrorBody {
     };
 
     ErrorBody {
-        status_code,
+        http_status: status_code,
         code: err.code().as_str(),
         message,
         status: false,
         data,
+        meta: None,
+    }
+}
+
+impl ErrorBody {
+    /// Attach correlation metadata.
+    ///
+    /// [`to_body`] cannot populate this itself: `crates/core` has no request context by
+    /// design, so only the transport layer in `apps/api` knows the request id. Keeping
+    /// it out of `to_body` is what preserves that separation.
+    #[must_use]
+    pub fn with_meta(mut self, meta: Meta) -> Self {
+        self.meta = Some(meta);
+        self
     }
 }
 
@@ -308,7 +367,7 @@ mod tests {
                 .to_string(),
         };
         let body = to_body(&err);
-        assert_eq!(body.status_code, 500);
+        assert_eq!(body.http_status, 500);
         assert_eq!(body.code, "INTERNAL_ERROR");
         assert_eq!(body.message, "An internal error occurred");
         assert!(
@@ -325,7 +384,7 @@ mod tests {
             detail: "401 from https://livekit.internal:7880/admin".to_string(),
         };
         let body = to_body(&err);
-        assert_eq!(body.status_code, 503);
+        assert_eq!(body.http_status, 503);
         assert_eq!(body.code, "UPSTREAM_UNAVAILABLE");
         assert!(
             !body.message.contains("livekit.internal"),
@@ -371,7 +430,7 @@ mod tests {
         ];
         for (err, status, code) in cases {
             let body = to_body(&err);
-            assert_eq!(body.status_code, status);
+            assert_eq!(body.http_status, status);
             assert_eq!(body.code, code);
             assert!(!body.status, "every error body sets status:false");
         }
@@ -382,7 +441,7 @@ mod tests {
         let mut fields = HashMap::new();
         fields.insert("email".to_string(), vec!["invalid format".to_string()]);
         let body = to_body(&Error::Validation { fields });
-        assert_eq!(body.status_code, 422);
+        assert_eq!(body.http_status, 422);
         let data = body.data.expect("validation carries per-field detail");
         assert_eq!(data["email"], vec!["invalid format".to_string()]);
     }
@@ -414,30 +473,117 @@ mod tests {
             ErrorCode::RateLimited,
             ErrorCode::UpstreamUnavailable,
             ErrorCode::Internal,
-        ];let mut seen = std::collections::HashSet::new();
+        ];
+        let mut seen = std::collections::HashSet::new();
         for code in all {
-            assert!(seen.insert(code.as_str()), "duplicate wire string for {code:?}");
+            assert!(
+                seen.insert(code.as_str()),
+                "duplicate wire string for {code:?}"
+            );
         }
         assert_eq!(seen.len(), all.len());
     }
 
     #[test]
-    fn error_envelope_uses_snake_case_like_the_success_envelope() {
-        // `MenoResponse` on master carries no `rename_all`, so it serialises
-        // `status_code`. If this type ever gains `rename_all = "camelCase"`, errors and
-        // successes stop agreeing on the field name and both clients break at once.
+    fn the_wire_envelope_carries_only_the_documented_keys() {
+        // This is the whole contract for both the error and success envelopes, and the
+        // test is here so nobody quietly re-adds a redundant field.
         let body = to_body(&Error::NotFound {
             resource: "broadcast",
             code: ErrorCode::NotFound,
         });
-        let json = serde_json::to_string(&body).expect("serialises");
-        assert!(
-            json.contains("\"status_code\""),
-            "clients parse status_code, got {json}"
+        let json: serde_json::Value = serde_json::to_value(&body).expect("serialises");
+
+        let keys: Vec<&String> = json.as_object().expect("object").keys().collect();
+        assert_eq!(
+            keys,
+            vec!["code", "message", "status"],
+            "unexpected envelope shape: {json}"
         );
+        // The HTTP status belongs in the status line, not the body.
         assert!(
-            !json.contains("statusCode"),
-            "must not diverge from MenoResponse"
+            !json.to_string().contains("http_status"),
+            "the redundant status field must not reach the wire"
+        );
+        // Every key is already lowerCamelCase-safe; the attribute guarantees that stays
+        // true when a multi-word field is added.
+        for key in keys {
+            assert!(
+                !key.contains('_'),
+                "{key} is snake_case; the wire is camelCase"
+            );
+        }
+    }
+
+    #[test]
+    fn meta_is_camel_case_and_is_omitted_when_absent() {
+        // Absent by default, so the common response stays lean.
+        let plain = serde_json::to_value(to_body(&Error::RateLimited {
+            retry_after_secs: 30,
+        }))
+        .expect("serialises");
+        assert!(
+            !plain.to_string().contains("meta"),
+            "meta must be omitted, not sent as null: {plain}"
+        );
+
+        let with = serde_json::to_value(
+            to_body(&Error::NotFound {
+                resource: "broadcast",
+                code: ErrorCode::NotFound,
+            })
+            .with_meta(Meta {
+                request_id: Some("9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d".to_string()),
+                api_version: Some("1.4.2".to_string()),
+            }),
+        )
+        .expect("serialises");
+        let meta = &with["meta"];
+        assert_eq!(meta["requestId"], "9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d");
+        assert_eq!(meta["apiVersion"], "1.4.2");
+        assert!(
+            !meta.to_string().contains("request_id"),
+            "meta keys are camelCase like the rest of the envelope"
+        );
+
+        // An unset api_version is dropped, not nulled - the client should be able to
+        // treat "absent" as "this deployment did not report a version".
+        let partial = serde_json::to_value(
+            to_body(&Error::Internal {
+                context: "ctx",
+                detail: "d".to_string(),
+            })
+            .with_meta(Meta {
+                request_id: Some("r".to_string()),
+                api_version: None,
+            }),
+        )
+        .expect("serialises");
+        assert!(partial["meta"].get("apiVersion").is_none(), "{partial}");
+    }
+
+    #[test]
+    fn validation_is_the_only_error_that_carries_data() {
+        // Everything else omits `data` entirely via skip_serializing_if — never `null`,
+        // which would force a null-check on a field that is conceptually optional.
+        let mut fields = HashMap::new();
+        fields.insert("email".to_string(), vec!["invalid format".to_string()]);
+        let with =
+            serde_json::to_value(to_body(&Error::Validation { fields })).expect("serialises");
+        let keys: Vec<&String> = with.as_object().expect("object").keys().collect();
+        assert_eq!(
+            keys,
+            vec!["code", "data", "message", "status"],
+            "validation is the one envelope with a fourth key: {with}"
+        );
+
+        let without = serde_json::to_string(&to_body(&Error::RateLimited {
+            retry_after_secs: 1,
+        }))
+        .expect("serialises");
+        assert!(
+            !without.contains("\"data\""),
+            "skip_serializing_if must omit data entirely, not send null"
         );
     }
 }
