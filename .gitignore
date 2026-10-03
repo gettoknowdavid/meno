@@ -1,33 +1,221 @@
-# Rust
-target/
+# ------------------------------------------------------------------------------
+# Rust / Cargo workspace
+# ------------------------------------------------------------------------------
+
+# Anchored to the repo root. Cargo builds every workspace member into ./target, so
+# an unanchored pattern would also hide a legitimately-tracked nested `target/`.
+/target/
 **/*.rs.bk
 
-# Node / Next.js
+# Local cargo overrides — machine-specific (linker paths, registry mirrors).
+# Note: a *shared* .cargo/config.toml is usually worth committing; only ignore it
+# if yours contains absolute paths.
+/.cargo/config.toml
+/.cargo/config
+
+# Rust analyzer / rust-analyzer scratch
+/rust-analyzer/
+
+# Coverage and profiling artifacts
+*.profraw
+*.profdata
+lcov.info
+
+# ------------------------------------------------------------------------------
+# Next.js / Node (apps/web)
+# ------------------------------------------------------------------------------
+
 node_modules/
+.pnpm-store/
+
+# Build output
 .next/
 out/
-.env*.local
+.turbo/
+.vercel/
+**/.next/standalone/
 
-# Flutter
-mobile/.dart_tool/
-mobile/build/
-mobile/.flutter-plugins
-mobile/.flutter-plugins-dependencies
-mobile/pubspec.lock  # optional: commit this for reproducibility
+# Next regenerates this on every run; it is safe to keep it out of the repo.
+# (Unlike next-env.d.ts, which SHOULD be committed.)
+*.tsbuildinfo
 
-# Environment files (all projects)
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Caches
+.eslintcache
+.stylelintcache
+.prettiercache
+
+# ------------------------------------------------------------------------------
+# Flutter / Dart (apps/mobile)
+# ------------------------------------------------------------------------------
+
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+
+# Build output — Flutter's, not the app's source
+build/
+
+# Generated Dart code — produced by `dart run build_runner build`, never hand-edited.
+#
+# None of these patterns contain a slash, so they already match at any depth
+# (no `**/` prefix needed, unlike the android/ios rules further down).
+#
+# gitignore has NO inline comments: a trailing `# ...` on a pattern line becomes
+# part of the pattern itself and silently matches nothing. Hence one comment
+# per line below.
+*.g.dart
+*.freezed.dart
+*.freezed.json
+*.gr.dart
+*.gen.dart
+*.gql.dart
+*.mocks.dart
+*.config.dart
+*.pb.dart
+*.pbenum.dart
+*.pbjson.dart
+*.pbserver.dart
+*.pbservice.dart
+*.pbgrpc.dart
+generated_plugin_registrant.dart
+generated_plugins.cmake
+GeneratedPluginRegistrant.java
+GeneratedPluginRegistrant.macos.dart
+
+# IDE files Flutter generates inside the platform folders
+.idea/
+*.iml
+*.iws
+
+# Android / iOS — these MUST be prefixed with `**/`.
+#
+# gitignore anchors any pattern containing a slash at the beginning OR MIDDLE to the
+# directory of the .gitignore itself. So `android/local.properties` matches only
+# `/android/local.properties` at the repo root and silently matches nothing under
+# apps/mobile/. `**/` forces a match at any depth. Patterns with no slash at all
+# (`.dart_tool/`, `build/`, `*.jks`) already match at any depth.
+**/android/local.properties
+**/android/.gradle/
+**/android/app/debug/
+**/android/app/profile/
+**/android/app/release/
+**/android/key.properties
+**/*.jks
+**/*.keystore
+
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/Flutter/ephemeral/
+
+# Coverage
+coverage/
+
+# NOTE: pubspec.lock is deliberately NOT ignored. For an application (as opposed to
+# a published Dart package) the lockfile must be committed so every machine and CI
+# run resolves identical package versions.
+
+# ------------------------------------------------------------------------------
+# Environment files and secrets
+# ------------------------------------------------------------------------------
+
 .env
 .env.local
 .env.development
+.env.development.local
 .env.production
+.env.production.local
+.env.test.local
+.env.*.local
+
+# Firebase service accounts and any other real credentials
+secrets/
+*.pem
+*.key
+!apps/web/**/*.public.pem
+
+# ------------------------------------------------------------------------------
+# Local infrastructure state
+# ------------------------------------------------------------------------------
+
+# Prometheus / Grafana / Loki data that ends up in the repo by accident
+ops/prometheus/data/
+ops/grafana/data/
+*.db
+*.sqlite
+*.sqlite3
+
+# Tooling state (per-developer)
+/.freebuff/
+/.opencode/
+
+# ------------------------------------------------------------------------------
+# Logs, temp files, coverage
+# ------------------------------------------------------------------------------
+
+*.log
+logs/
+tmp/
+temp/
+.cache/
 
 # OS
 .DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
 Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
 
-# IDEs
-.vscode/
+# Editors
+**/.vscode/*
+!**/.vscode/extensions.json
 .idea/
 *.swp
-*.iml
-secrets/**
+*.swo
+*~
+*.orig
+*.rej
+
+# Merge / patch leftovers
+*.patch
+*.diff
+
+# The sqlx offline query cache. CI runs `cargo sqlx prepare --check`, which fails
+# if this is missing or stale. Ignoring it is how the 43-compile-error incident
+# stayed hidden for weeks.
+!.sqlx/
+
+# Rust lockfile — one workspace, one resolved dependency graph.
+!Cargo.lock
+
+# The template developers copy to .env. Must stay tracked or a fresh clone cannot
+# bootstrap, since '.env' patterns above do not cover it but '.env*' patterns in
+# other branches have.
+!.env.example
+!apps/web/.env.example
+
+# Next.js type shim — generated, but expected in the repo by the framework.
+!apps/web/next-env.d.ts
+
+# Migration files. `crates/db/` is a crate, and its only contents are SQL that
+# must be versioned; a broad pattern must never hide it.
+!crates/db/migrations/
+
+# Compose and infrastructure config, in case a broad pattern above would catch it.
+!ops/docker-compose.yml
+!ops/*.yaml
+!ops/*.yml
