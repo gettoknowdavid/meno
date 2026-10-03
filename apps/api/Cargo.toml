@@ -31,6 +31,7 @@ meno-core = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
+bytes = { workspace = true }
 dashmap = { workspace = true }
 # `config` is required by §4.6 ("replace `env::var` + `Context` chains with a typed,
 # layered config ... with a single aggregated error"). It is declared in the workspace
@@ -42,6 +43,7 @@ fred = { workspace = true }
 jsonwebtoken = { workspace = true }
 livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
+object_store = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }

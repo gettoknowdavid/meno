@@ -27,14 +27,15 @@ use meno_api::config::Config;
 use meno_api::infrastructure::push::{PushSender, sender_from_config};
 use meno_api::infrastructure::redis::{Redis, RedisConfig};
 use meno_api::infrastructure::signals::shutdown_signal;
+use meno_api::infrastructure::storage::{ObjectStore, store_from_config};
 use meno_api::infrastructure::telemetry;
 
 /// The HTTP server entry point.
 ///
 /// # Errors
 ///
-/// Returns an error if the config is invalid, Redis cannot be reached, the push
-/// credentials are unusable, or the port cannot be bound. Each is returned with context rather than panicking — plan §4.3
+/// Returns an error if the config is invalid, Redis cannot be reached, the push or
+/// storage credentials are unusable, or the port cannot be bound. Each is returned with context rather than panicking — plan §4.3
 /// requires the process to log clearly and exit, never to abort mid-write.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -66,7 +67,17 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("push is enabled but unusable: {e}"))
         .context("check PUSH_ENABLED and FIREBASE_SERVICE_ACCOUNT_JSON")?;
 
-    let app = build_router(&config, redis, push);
+    // Storage follows the same optional-integration rule as push (§4.6). With
+    // `STORAGE_ENABLED` unset it yields the no-op store, and an upload through it is
+    // refused with `StorageError::Disabled` rather than silently dropped. With it set,
+    // a broken `STORAGE_ENDPOINT` is fatal here — an enabled adapter that cannot build
+    // would fail one upload at a time, and the first symptom would be a user reporting
+    // their avatar is broken.
+    let storage = store_from_config(&config)
+        .map_err(|e| anyhow::anyhow!("storage is enabled but unusable: {e}"))
+        .context("check STORAGE_ENABLED, STORAGE_ENDPOINT and STORAGE_BUCKET")?;
+
+    let app = build_router(&config, redis, push, storage);
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
     let listener = TcpListener::bind(address)
@@ -87,9 +98,15 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// Serves the health endpoints until `bootstrap`/`state`/`routes` land; those replace
 /// this body. The signature already takes the pieces they will need — the config, the
-/// Redis handle and the [`PushSender`] the notification jobs will be handed — so the
-/// swap is a change to this function only.
-fn build_router(_config: &Config, _redis: Redis, _push: Arc<dyn PushSender>) -> Router {
+/// Redis handle, the [`PushSender`] the notification jobs will be handed and the
+/// [`ObjectStore`] the upload routes write through — so the swap is a change to this
+/// function only.
+fn build_router(
+    _config: &Config,
+    _redis: Redis,
+    _push: Arc<dyn PushSender>,
+    _storage: Arc<dyn ObjectStore>,
+) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/health/ready", get(|| async { "ready" }))
