@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core"]
+members = ["apps/api", "crates/core"]
 
 [workspace.package]
 version = "0.2.0"
@@ -44,14 +44,19 @@ sqlx = {
   ]
 }
 
+# `default-features = false` is deliberately NOT set: fred's defaults supply the DNS
+# resolver and TLS plumbing that `Config::from_url` needs, and stripping them turns a
+# connection URL into a runtime failure instead of a compile error.
+# `subscriber-client` is required by the WebSocket pub/sub path (Step 8).
 fred = {
   version = "10.1.0",
-  default-features = false,
   features = [
+    "dns",
+    "dynamic-pool",
     "i-pubsub",
     "i-scripts",
-    "replication",
     "serde-json",
+    "subscriber-client",
     "tokio-rustls",
   ]
 }

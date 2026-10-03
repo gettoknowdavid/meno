@@ -69,3 +69,33 @@ pub const LOCK_RETRY_MS: u64 = 50;
 
 /// ~2s total wait before falling back to a direct fetch.
 pub const LOCK_MAX_RETRIES: u32 = 40;
+
+// ========== WEBSOCKET CONSTANTS ==========
+
+/// How many concurrent connections one user may hold on a single instance.
+///
+/// A user typically has two (web + mobile), so this is headroom rather than a hard
+/// product limit — its job is to stop one misbehaving client from pinning thousands
+/// of `mpsc` channels and a slice of the 25 MB Redis budget (§3.2).
+pub const MAX_WS_CONNECTIONS_PER_USER: usize = 5;
+
+/// Depth of the per-connection outbound channel.
+///
+/// Bounded so a client that stops reading its socket cannot make the server buffer
+/// without limit; once full, sends are dropped rather than awaited (§9.4's "back
+/// pressure is a correctness concern, not a performance one").
+pub const MESSAGE_BUFFER_SIZE: usize = 128;
+
+/// How many offline messages are retained per user in the Redis ring buffer.
+///
+/// Bounded because the buffer lives in the same ephemeral, memory-capped instance as
+/// everything else. A user who is away longer than this reconnects to a gap, which
+/// the client reconciles by refetching — an unbounded buffer would instead evict
+/// live keys belonging to everyone else.
+pub const OFFLINE_MESSAGE_HISTORY: usize = 50;
+
+/// TTL on a user's offline message ring buffer, in seconds.
+///
+/// Must exceed the grace period a disconnected client is expected to be back
+/// within, or the replay-on-reconnect path finds nothing waiting.
+pub const MESSAGE_BUFFER_TTL_SECS: i64 = 300;

@@ -12,3 +12,4 @@
 
 pub mod constants;
 pub mod redis;
+pub mod ws;

@@ -3,13 +3,13 @@ name = "meno-api"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-license.workspace = true
 description = "Meno HTTP API and background worker."
+license.workspace = true
 
 # TEMPORARY: lib-only, and declaring only what the modules that exist *today* need
-# (`infrastructure/redis` and `types`). Step 3.6 replaces this file with the full
-# manifest — the two `[[bin]]` targets, all ~40 dependencies, and the Step 9 lint
-# escape hatch. Declaring the full set now would not compile: `modules/`, `routes/`,
+# (`infrastructure/redis`, `infrastructure/ws` and `types`). Step 3.6 replaces this file
+# with the full manifest — the two `[[bin]]` targets, all ~40 dependencies, and the Step 9
+# lint escape hatch. Declaring the full set now would not compile: `modules/`, `routes/`,
 # `jobs/` and friends do not exist yet.
 [lib]
 name = "meno_api"
@@ -23,8 +23,11 @@ fred = { workspace = true }
 tokio = { workspace = true }
 
 anyhow = { workspace = true }
+dashmap = { workspace = true }
 thiserror = { workspace = true }
+time = { workspace = true }
 tracing = { workspace = true }
+validator = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
