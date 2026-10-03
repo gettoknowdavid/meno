@@ -43,6 +43,7 @@ fred = { workspace = true }
 jsonwebtoken = { workspace = true }
 livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
+oauth2 = { workspace = true }
 object_store = { workspace = true }
 reqwest = { workspace = true }
 thiserror = { workspace = true }
@@ -53,6 +54,7 @@ tracing-subscriber = { workspace = true }
 validator = { workspace = true }
 
 serde = { workspace = true }
+sqlx = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 

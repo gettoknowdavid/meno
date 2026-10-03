@@ -12,7 +12,9 @@
 
 pub mod constants;
 pub mod livekit;
+pub mod oauth;
 pub mod push;
+pub mod query;
 pub mod redis;
 pub mod signals;
 pub mod storage;

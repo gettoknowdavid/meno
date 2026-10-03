@@ -56,6 +56,10 @@ pub enum ErrorCode {
     NotOwner,
     /// Caller has not joined the room.
     NotParticipant,
+    /// The OAuth provider has not verified ownership of the email address.
+    EmailNotVerified,
+    /// The OAuth provider is switched off for this deployment.
+    ProviderDisabled,
     // 404
     /// The resource does not exist, or is soft-deleted.
     NotFound,
@@ -97,6 +101,8 @@ impl ErrorCode {
             Self::TokenExpired => "TOKEN_EXPIRED",
             Self::RefreshTokenExpired => "REFRESH_TOKEN_EXPIRED",
             Self::Forbidden => "FORBIDDEN",
+            Self::EmailNotVerified => "EMAIL_NOT_VERIFIED",
+            Self::ProviderDisabled => "PROVIDER_DISABLED",
             Self::NotCreator => "NOT_CREATOR",
             Self::NotOwner => "NOT_OWNER",
             Self::NotParticipant => "NOT_PARTICIPANT",

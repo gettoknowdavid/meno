@@ -89,7 +89,8 @@ apalis-postgres = { version = "1.0.0-rc.9", features = ["time"] }
 oauth2 = { version = "5.0.0-rc.1", features = ["reqwest"] }
 
 # `form` is required by the push adapter's OAuth2 token exchange; `json` by every
-# adapter body; `gzip` because FCM and the Google token endpoint both compress.
+# adapter body; `gzip` because FCM and the Google token endpoint both compress;
+# `query` because the Google adapter inspects an ID token via `?id_token=`.
 # reqwest 0.13 renamed `rustls-tls` to `rustls`.
 reqwest = {
   version = "0.13.5",
@@ -98,6 +99,7 @@ reqwest = {
     "form",
     "gzip",
     "json",
+    "query",
     "rustls",
   ]
 }

@@ -218,6 +218,54 @@ pub struct PushSettings {
     pub service_account_json: Secret,
 }
 
+/// Google OAuth settings. Present only when Google sign-in is enabled.
+///
+/// Optional per §4.6: a deployment that authenticates by email and password alone must
+/// not be blocked by five unset `GOOGLE_*` variables. Gated on `GOOGLE_ENABLED`, or —
+/// like storage — on the presence of `GOOGLE_CLIENT_ID` when the flag is absent, because
+/// `.env.example` declares the variables without a flag.
+#[derive(Clone, Debug)]
+pub struct GoogleSettings {
+    /// OAuth client id.
+    pub client_id: String,
+
+    /// OAuth client secret.
+    ///
+    /// A [`Secret`] because `GoogleSettings` is `Debug` and this lands in adapter state
+    /// that may be logged (§9.5). A derived `Debug` would print it.
+    pub client_secret: Secret,
+
+    /// Where the provider sends the user back after consent.
+    pub redirect_uri: String,
+
+    /// The consent endpoint. Overridable so tests can point at a local server.
+    pub auth_uri: String,
+
+    /// The token endpoint. Overridable for the same reason.
+    pub token_uri: String,
+
+    /// The OpenID Connect userinfo endpoint.
+    pub userinfo_uri: String,
+
+    /// Google's post-hoc ID-token inspection endpoint.
+    pub tokeninfo_uri: String,
+}
+
+impl GoogleSettings {
+    /// Google's production consent endpoint.
+    pub const DEFAULT_AUTH_URI: &'static str = "https://accounts.google.com/o/oauth2/v2/auth";
+
+    /// Google's production token endpoint.
+    pub const DEFAULT_TOKEN_URI: &'static str = "https://oauth2.googleapis.com/token";
+
+    /// Google's production userinfo endpoint.
+    pub const DEFAULT_USERINFO_URI: &'static str =
+        "https://openidconnect.googleapis.com/v1/userinfo";
+
+    /// Google's production token-introspection endpoint.
+    pub const DEFAULT_TOKENINFO_URI: &'static str = "https://oauth2.googleapis.com/tokeninfo";
+}
+
 /// SMTP/transactional-email settings. Present only when email is enabled.
 #[derive(Clone, Debug)]
 pub struct EmailSettings {
@@ -288,6 +336,8 @@ pub struct Config {
     pub email: Option<EmailSettings>,
     /// Storage settings, when `STORAGE_ENABLED=true`.
     pub storage: Option<StorageSettings>,
+    /// Google OAuth settings, when `GOOGLE_ENABLED=true`.
+    pub google: Option<GoogleSettings>,
 
     // ── operational ──
     /// `tracing` filter directive, from `RUST_LOG`.
@@ -502,6 +552,39 @@ impl Config {
             None
         };
 
+        // Google OAuth is an optional integration (§4.6) for the same reason storage is:
+        // `.env.example` lists five `GOOGLE_*` variables and no `GOOGLE_ENABLED`, so a
+        // populated deployment must keep working without setting one. The flag stays
+        // authoritative in both directions — an explicit `false` must beat the variables.
+        let google_enabled = match source.get("GOOGLE_ENABLED") {
+            Some(raw) => matches!(
+                raw.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            ),
+            None => source.get("GOOGLE_CLIENT_ID").is_some(),
+        };
+        let google = if google_enabled {
+            Some(GoogleSettings {
+                client_id: required_str(source, "GOOGLE_CLIENT_ID", &mut errors),
+                client_secret: required_secret(source, "GOOGLE_CLIENT_SECRET", &mut errors),
+                redirect_uri: required_str(source, "GOOGLE_REDIRECT_URI", &mut errors),
+                // The endpoints default rather than being required. They are constants in
+                // production, and only a test needs to redirect them — making them
+                // required would put five more variables in the startup failure path for
+                // no operational benefit.
+                auth_uri: optional_str(source, "GOOGLE_AUTH_URI")
+                    .unwrap_or_else(|| GoogleSettings::DEFAULT_AUTH_URI.to_owned()),
+                token_uri: optional_str(source, "GOOGLE_TOKEN_URI")
+                    .unwrap_or_else(|| GoogleSettings::DEFAULT_TOKEN_URI.to_owned()),
+                userinfo_uri: optional_str(source, "GOOGLE_USERINFO_URI")
+                    .unwrap_or_else(|| GoogleSettings::DEFAULT_USERINFO_URI.to_owned()),
+                tokeninfo_uri: optional_str(source, "GOOGLE_TOKENINFO_URI")
+                    .unwrap_or_else(|| GoogleSettings::DEFAULT_TOKENINFO_URI.to_owned()),
+            })
+        } else {
+            None
+        };
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -520,6 +603,7 @@ impl Config {
             push,
             email,
             storage,
+            google,
             log_filter: source
                 .get("RUST_LOG")
                 .unwrap_or_else(|| "info,sqlx=warn".to_owned()),
@@ -545,6 +629,7 @@ impl Config {
             ("push", self.push.is_some()),
             ("email", self.email.is_some()),
             ("storage", self.storage.is_some()),
+            ("google", self.google.is_some()),
         ]
         .into_iter()
         .map(|(name, on)| format!("{name}={}", if on { "on" } else { "off" }))
@@ -558,6 +643,20 @@ impl Config {
             self.origins.len()
         )
     }
+}
+
+/// A variable with a fallback: absent *or* blank falls back to `None`.
+///
+/// Blank counts as absent because `.env` files carry `GOOGLE_AUTH_URI=` as an empty
+/// assignment very often, and treating that as "set to the empty string" produces a
+/// request to a relative URL that fails on every login.
+fn optional_str(source: &impl ConfigSource, key: &str) -> Option<String> {
+    source
+        .get(key)
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }
 
 fn required_str(source: &impl ConfigSource, key: &str, errors: &mut ConfigErrors) -> String {
