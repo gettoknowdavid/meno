@@ -3,35 +3,56 @@ name = "meno-api"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
-description = "Meno HTTP API and background worker."
 license.workspace = true
+description = "Meno HTTP API and background worker."
 
-# TEMPORARY: lib-only, and declaring only what the modules that exist *today* need
-# (`infrastructure/redis`, `infrastructure/ws` and `types`). Step 3.6 replaces this file
-# with the full manifest — the two `[[bin]]` targets, all ~40 dependencies, and the Step 9
-# lint escape hatch. Declaring the full set now would not compile: `modules/`, `routes/`,
-# `jobs/` and friends do not exist yet.
+# Two binaries from one crate (Step 3.6): the web server and the job worker. Same
+# image, same dependencies, different entry point — see src/main.rs and src/worker.rs.
+[[bin]]
+name = "meno-api"
+path = "src/main.rs"
+
+[[bin]]
+name = "meno-worker"
+path = "src/worker.rs"
+
 [lib]
 name = "meno_api"
 path = "src/lib.rs"
 
+# TEMPORARY: declaring only what the modules that exist *today* need (`config`,
+# `infrastructure/{redis,ws,livekit,signals,telemetry}` and `types`). Step 3.6's final
+# manifest adds the rest — sqlx, apalis, reqwest, storage, mail and the LiveKit
+# service-client features — once `modules/`, `routes/` and `jobs/` exist to use them.
+# Declaring the full set now would not compile.
 [dependencies]
 meno-core = { workspace = true }
 
-axum = { workspace = true }
-fred = { workspace = true }
-tokio = { workspace = true }
-
 anyhow = { workspace = true }
+axum = { workspace = true }
 dashmap = { workspace = true }
+# `config` is required by §4.6 ("replace `env::var` + `Context` chains with a typed,
+# layered config ... with a single aggregated error"). It is declared in the workspace
+# manifest and used by `config.rs` via the `ConfigSource` trait, which keeps the
+# parsing testable without mutating the process environment.
+config = { workspace = true }
+dotenvy = { workspace = true }
+fred = { workspace = true }
+livekit-api = { workspace = true }
+livekit-protocol = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
+tokio = { workspace = true }
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 validator = { workspace = true }
 
 serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
+
+# No `[dev-dependencies]`: the `#[ignore]`d live-LiveKit tests compile against the
+# normal dependencies, and every other test in the crate is infrastructure-free.
 
 [lints]
 workspace = true

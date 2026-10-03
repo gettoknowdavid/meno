@@ -100,7 +100,10 @@ reqwest = {
 
 object_store = { version = "0.14.2", features = ["aws"] }
 
-livekit-api = "0.8.1"
+# The `services` feature brings in the Twirp HTTP client (room administration) and
+# `access-token` the JWT minting. TLS via rustls rather than native-tls, matching the
+# rest of the workspace — `native-tls` would add an OpenSSL build dependency.
+livekit-api = { version = "0.8.1", features = ["rustls-tls-webpki-roots"] }
 livekit-protocol = "0.8.0"
 
 async-trait = "0.1.92"
