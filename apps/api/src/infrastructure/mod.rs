@@ -11,6 +11,7 @@
 //! `infrastructure::redis` is where a `fred::error::Error` is logged and erased.
 
 pub mod constants;
+pub mod database;
 pub mod livekit;
 pub mod oauth;
 pub mod push;

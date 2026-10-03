@@ -21,9 +21,11 @@ use anyhow::Context;
 
 use axum::Router;
 use axum::routing::get;
+use sqlx::PgPool;
 use tokio::net::TcpListener;
 
 use meno_api::config::Config;
+use meno_api::infrastructure::database::{create_postgres_pool, log_pool_capacity, run_migrations};
 use meno_api::infrastructure::oauth::{IdentityProvider, provider_from_config};
 use meno_api::infrastructure::push::{PushSender, sender_from_config};
 use meno_api::infrastructure::redis::{Redis, RedisConfig};
@@ -35,8 +37,9 @@ use meno_api::infrastructure::telemetry;
 ///
 /// # Errors
 ///
-/// Returns an error if the config is invalid, Redis cannot be reached, the push, storage
-/// or Google credentials are unusable, or the port cannot be bound. Each is returned with context rather than panicking — plan §4.3
+/// Returns an error if the config is invalid, Postgres cannot be reached or migrated,
+/// Redis cannot be reached, the push, storage or Google credentials are unusable, or the
+/// port cannot be bound. Each is returned with context rather than panicking — plan §4.3
 /// requires the process to log clearly and exit, never to abort mid-write.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -52,6 +55,18 @@ async fn main() -> anyhow::Result<()> {
     // The context matters: fred's own error is a bare `IO Error` with no indication of
     // which URL it was trying, and `REDIS_URL` is the single most common thing to get
     // wrong on a fresh deployment.
+    // Postgres before Redis, and both before anything that needs them. §4.3 is explicit:
+    // "Refuse to serve traffic until migrations succeed - but log clearly and exit, never
+    // panic!". A `?` here is that exit: `main` returns a non-zero code with a readable
+    // message, which is what §7.11 asks for in place of the old `.expect`.
+    //
+    // §7.2 is the reason this is not optional: the 15 migrations were never applied on
+    // `master`, so a fresh Neon database has no schema and every request fails in a way
+    // that looks like an application bug.
+    let pool = create_postgres_pool(&config).await?;
+    run_migrations(&pool, &config).await?;
+    log_pool_capacity(&pool);
+
     let redis_url = config.redis_url.expose().to_owned();
     let redis = Redis::new(RedisConfig::from_url(redis_url.clone()))
         .await
@@ -86,7 +101,7 @@ async fn main() -> anyhow::Result<()> {
         .map_err(|e| anyhow::anyhow!("Google sign-in is enabled but unusable: {e}"))
         .context("check GOOGLE_ENABLED, GOOGLE_CLIENT_ID and GOOGLE_REDIRECT_URI")?;
 
-    let app = build_router(&config, redis, push, storage, identity);
+    let app = build_router(&config, redis, pool, push, storage, identity);
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
     let listener = TcpListener::bind(address)
@@ -107,12 +122,14 @@ async fn main() -> anyhow::Result<()> {
 ///
 /// Serves the health endpoints until `bootstrap`/`state`/`routes` land; those replace
 /// this body. The signature already takes the pieces they will need — the config, the
-/// Redis handle, the [`PushSender`] the notification jobs will be handed, the
+/// Postgres pool, the Redis handle, the [`PushSender`] the notification jobs will be
+/// handed, the
 /// [`ObjectStore`] the upload routes write through and the [`IdentityProvider`] the
 /// sign-in routes verify against — so the swap is a change to this function only.
 fn build_router(
     _config: &Config,
     _redis: Redis,
+    _pool: PgPool,
     _push: Arc<dyn PushSender>,
     _storage: Arc<dyn ObjectStore>,
     _identity: Arc<dyn IdentityProvider>,
