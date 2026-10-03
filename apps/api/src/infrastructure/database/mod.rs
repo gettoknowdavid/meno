@@ -15,12 +15,14 @@
 //!   trace." [`create_postgres_pool`] now returns [`DatabaseError`].
 //!
 //! - **Migrations actually run** (§4.3, §7.2). §7.2 is a P0: the 15 migrations in
-//!   `crates/db/migrations` were *never applied*, so a fresh Neon branch has no schema at
-//!   all. [`run_migrations`] embeds them with `sqlx::migrate!` and refuses to serve traffic
+//!   `crates/db/migrations` were *never applied*, so a fresh database has no schema at all.
+//!   [`run_migrations`] embeds them with `sqlx::migrate!` and refuses to serve traffic
 //!   until they succeed.
 //!
-//! - **Pool sized for Neon** (§3.5). `master` used 20 connections with a 30-minute
-//!   lifetime, which §3.5 calls out by name as wrong behind PgBouncer. See [`PoolSettings`].
+//! - **Pool sized for a pooled endpoint** (§3.5). `master` used 20 connections with a
+//!   30-minute lifetime, which §3.5 calls out by name as wrong behind a connection
+//!   pooler. See [`PoolSettings`] — the sizing describes the endpoint, not the vendor, so
+//!   moving between managed Postgres providers is a `DATABASE_URL` change alone.
 //!
 //! - **One boundary for driver errors** (§5.5). [`db_err`] is the single place a
 //!   `sqlx::Error` becomes a `meno_core::Error`; see the `infrastructure` module docs,
@@ -75,7 +77,7 @@ pub const EMBEDDED_MIGRATION_COUNT: usize = 15;
 /// Note this is a *connection* check only. [`run_migrations`] is what guarantees the
 /// schema exists, and `bootstrap` must call both before serving.
 pub async fn create_postgres_pool(config: &Config) -> Result<PgPool, DatabaseError> {
-    create_pool_with(config, PoolSettings::for_neon()).await
+    create_pool_with(config, PoolSettings::pooled()).await
 }
 
 /// Open a connection pool with explicit sizing.
@@ -204,17 +206,17 @@ fn redact_migration(error: &sqlx::migrate::MigrateError) -> String {
 /// endpoint yet — `routes/` does not exist — so there is nowhere to scrape a gauge from,
 /// and this is the interim answer: a single structured line at boot.
 ///
-/// It is worth having *because* §3.5 deliberately made the pool small. A pool capped at 10
-/// is the right setting for Neon and also the setting most likely to saturate, so
-/// "connections=10 idle=8" at boot and a rising wait time afterwards is the pair of
-/// numbers an operator needs to correlate.
+/// It is worth having *because* §3.5 deliberately made the pool small. A pool capped at
+/// 10 is the right setting for a pooled endpoint and also the setting most likely to
+/// saturate, so "connections=10 idle=8" at boot and a rising wait time afterwards is the
+/// pair of numbers an operator needs to correlate.
 ///
 /// ```text
 /// db_connections = 10   // the cap
 /// db_idle = 8// open now
 /// ```
 pub fn log_pool_capacity(pool: &PgPool) {
-    let settings = PoolSettings::for_neon();
+    let settings = PoolSettings::pooled();
     tracing::info!(
         db_connections = settings.max_connections,
         db_idle = pool.num_idle(),
@@ -430,7 +432,7 @@ mod tests {
     /// Tests that need a real Postgres.
     ///
     /// These are the tests §4.3 and §7.2 actually call for: "Verify by creating a
-    /// brand-new Neon branch and confirming the schema builds from zero." No Postgres is
+    /// brand-new database and confirming the schema builds from zero." No Postgres is
     /// available here, so everything is `#[ignore]`d.
     ///
     /// Run with `cargo test -p meno-api -- --ignored database::tests::live` against a

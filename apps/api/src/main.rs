@@ -61,8 +61,8 @@ async fn main() -> anyhow::Result<()> {
     // message, which is what §7.11 asks for in place of the old `.expect`.
     //
     // §7.2 is the reason this is not optional: the 15 migrations were never applied on
-    // `master`, so a fresh Neon database has no schema and every request fails in a way
-    // that looks like an application bug.
+    // `master`, so a fresh database has no schema and every request fails in a way that
+    // looks like an application bug.
     let pool = create_postgres_pool(&config).await?;
     run_migrations(&pool, &config).await?;
     log_pool_capacity(&pool);

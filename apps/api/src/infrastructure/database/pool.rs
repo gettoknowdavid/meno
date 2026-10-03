@@ -1,36 +1,42 @@
-//! Connection-pool sizing, and why the old numbers were wrong (§3.5).
+//! Connection-pool sizing, and why the old numbers were wrong.
 //!
-//! # The defect
+//! # The defect this fixes
 //!
-//! `master`'s [`create_postgres_pool`] hard-coded:
+//! `master`'s pool was hard-coded to `max_connections: 20` with a `max_lifetime` of 30
+//! minutes. Both are wrong for *any* managed Postgres reached through a **connection
+//! pooler** — Neon, RDS Proxy, Cloud SQL Auth Proxy, Supabase's pooler, or a PgBouncer in
+//! front of a container. Plan §3.5 names the numbers and the reason:
 //!
-//! ```text
-//! max_connections: 20, max_lifetime: 30 min
-//! ```
-//!
-//! §3.5 calls that out by name:
-//!
-//! > Consequence: the pool config in `database.rs` (`max_connections: 20`,
-//! > `max_lifetime: 30 min`) is wrong for Neon. With PgBouncer, use `max_connections:
-//! > 5–10` and a *short* `max_lifetime` (~5 min) so the pooler can recycle connections.
+//! > With PgBouncer, use `max_connections: 5–10` and a *short* `max_lifetime` (~5 min) so
+//! > the pooler can recycle connections.
 //!
 //! Both halves matter, and for opposite reasons:
 //!
-//! - **`max_connections` too high** — Neon is reached through PgBouncer, which multiplexes
-//!   client connections onto a small number of real ones. A client pool of 20 in front of
-//!   it is not 20 connections' worth of throughput; it is 20 contenders for the pooler's
-//!   server-side queue, and on the free tier that queue is what returns "too many
-//!   connections".
-//! - **`max_lifetime` too long** — a 30-minute connection is held open across PgBouncer's
-//!   own recycling window and across Neon's idle disconnects, so the pool keeps handing out
-//!   connections the pooler has already discarded. The symptom is an intermittent error on
-//!   the first query after a quiet period, which is exactly the kind of bug that gets
-//!   filed as "the API randomly 500s".
+//! - **`max_connections` too high** — a pooler multiplexes many client connections onto a
+//!   small number of real ones. A client pool of 20 in front of it is not 20 connections'
+//!   worth of throughput; it is 20 contenders for the pooler's server-side queue, and on a
+//!   small plan that queue is what returns "too many connections".
+//! - **`max_lifetime` too long** — a 30-minute connection is held open across the pooler's
+//!   own recycling window, so the pool keeps handing out connections the pooler has
+//!   already discarded. The symptom is an intermittent error on the first query after a
+//!   quiet period, which is exactly the kind of bug that gets filed as "the API randomly
+//!   500s".
 //!
-//! [`PoolSettings`] makes both explicit and testable rather than three magic numbers in a
-//! chain of builder calls.
+//! # Why this is vendor-agnostic on purpose
 //!
-//! [`create_postgres_pool`]: super::create_postgres_pool
+//! The sizing is a property of **the endpoint in front of the pooler**, not of who
+//! operates it. Nothing here names a provider, and the connection string — including which
+//! host, port and pooler it points at — comes from `DATABASE_URL` alone. Moving to a
+//! different managed Postgres is a change to one environment variable, with no code
+//! change, which is the property that makes the constants safe to hard-code.
+//!
+//! That is why these are constants and not environment variables: they describe the shape
+//! of the endpoint, not this installation. A self-hosted Postgres reached **directly**
+//! (no pooler in the path) would want a larger pool and a longer lifetime — and that is a
+//! genuinely different deployment shape, which is why [`PoolSettings`] is a struct with a
+//! public constructor rather than a pile of `const`s scattered through the connector.
+//!
+//! [`PoolSettings::pooled`] is the default. The alternative is one line at the call site.
 
 use std::time::Duration;
 
@@ -38,9 +44,8 @@ use sqlx::postgres::PgPoolOptions;
 
 /// How the pool is sized.
 ///
-/// Every value is a constant rather than an environment variable: they are properties of
-/// the deployment target, not of this installation, and §3.5 fixes them for Neon. Making
-/// them configurable would invite a value that works locally and starves production.
+/// The fields mirror the underlying `PgPoolOptions` knobs one-for-one; this type exists to
+/// give them a name, a home, and an invariant.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct PoolSettings {
     /// Upper bound on client-side connections.
@@ -56,6 +61,9 @@ pub struct PoolSettings {
     pub idle_timeout: Duration,
 
     /// Maximum age of a connection before it is replaced.
+    ///
+    /// Kept short so the pooler underneath can recycle connections without the client
+    /// pool holding one open across that window.
     pub max_lifetime: Duration,
 
     /// Whether a connection is verified with a ping before being handed out.
@@ -63,48 +71,77 @@ pub struct PoolSettings {
 }
 
 impl PoolSettings {
-    /// §3.5's ceiling for Neon behind PgBouncer.
+    /// The largest `max_connections` that suits a pooler-backed endpoint.
     ///
-    /// Named so the test can assert the invariant without repeating the number.
+    /// §3.5's 5–10 band, named so the invariant below can state it without repeating the
+    /// number.
     pub const MAX_CONNECTIONS_LIMIT: u32 = 10;
 
-    /// §3.5's target maximum lifetime.
-    pub const TARGET_MAX_LIFETIME: Duration = Duration::from_secs(300);
+    /// The longest `max_lifetime` that suits a pooler-backed endpoint.
+    ///
+    /// §3.5's "~5 min".
+    pub const MAX_LIFETIME_TARGET: Duration = Duration::from_secs(300);
 
-    /// The values this deployment uses.
+    /// Sizing for a Postgres endpoint behind a connection pooler.
+    ///
+    /// This is the default and the right answer for every managed Postgres that hands out
+    /// a pooled connection string — which is the normal way to deploy one.
     ///
     /// `max_connections` sits at the top of §3.5's 5–10 band rather than the middle: the
-    /// worker binary runs fan-out jobs that would otherwise queue behind a small pool,
-    /// and 10 is still comfortably inside the pooler's budget.
+    /// worker binary runs fan-out jobs that would otherwise queue behind a small pool, and
+    /// 10 is still comfortably inside a pooler's budget.
     ///
     /// `acquire_timeout` is 5 seconds rather than `master`'s 3. With a deliberately small
     /// pool, 3 seconds is short enough that a burst of concurrency fails requests that
     /// would have been served a moment later — the pool is small by design, so waiting is
     /// the correct behaviour, not a fault.
     #[must_use]
-    pub const fn for_neon() -> Self {
+    pub const fn pooled() -> Self {
         Self {
             max_connections: 10,
             min_connections: 2,
             acquire_timeout: Duration::from_secs(5),
             idle_timeout: Duration::from_secs(600),
-            max_lifetime: Self::TARGET_MAX_LIFETIME,
+            max_lifetime: Self::MAX_LIFETIME_TARGET,
             // Kept on. `master` had it and it is the difference between a stale pooled
-            // connection failing a request and being discarded first; §3.5's short
+            // connection failing a request and being discarded first; the short
             // `max_lifetime` is what keeps that check cheap.
             test_before_acquire: true,
         }
     }
 
-    /// Whether these settings fit inside the Neon/PgBouncer budget.
+    /// Sizing for a Postgres endpoint reached directly, with no pooler in the path.
     ///
-    /// Exposed so the invariant is asserted in a test rather than trusted to a comment that
-    /// nobody re-reads when the number changes.
+    /// Offered so the default is a choice rather than an assumption. A direct connection
+    /// *is* the connection, so there is nothing to multiplex and the pool may be as large
+    /// as the server tolerates; `max_lifetime` can also be longer, because there is no
+    /// intermediary recycling connections out from under us.
+    ///
+    /// Use this only when `DATABASE_URL` points at the database itself. If you are not
+    /// sure, you are probably on [`Self::pooled`].
     #[must_use]
-    pub fn fits_neon(&self) -> bool {
+    pub const fn direct() -> Self {
+        Self {
+            max_connections: 20,
+            min_connections: 2,
+            acquire_timeout: Duration::from_secs(5),
+            idle_timeout: Duration::from_secs(600),
+            max_lifetime: Duration::from_secs(1800),
+            test_before_acquire: true,
+        }
+    }
+
+    /// Whether these settings are consistent and within the pooler budget.
+    ///
+    /// Exposed so the invariant is asserted in a test rather than trusted to a comment
+    /// that nobody re-reads when a number changes. Note this is deliberately a property of
+    /// the *settings*, not of a provider: [`Self::direct`] is a legitimate configuration
+    /// and is expected to fail it, because it sits outside the pooler budget on purpose.
+    #[must_use]
+    pub fn fits_pooler(&self) -> bool {
         self.max_connections <= Self::MAX_CONNECTIONS_LIMIT
-            && self.max_connections >= self.min_connections
-            && self.max_lifetime <= Self::TARGET_MAX_LIFETIME
+            && self.min_connections <= self.max_connections
+            && self.max_lifetime <= Self::MAX_LIFETIME_TARGET
     }
 
     /// Apply these settings to a pool builder.
@@ -121,35 +158,35 @@ impl PoolSettings {
 }
 
 impl Default for PoolSettings {
-    /// [`Self::for_neon`], so `PoolSettings::default()` is never accidentally the old
-    /// too-large pool.
+    /// [`Self::pooled`], so a bare `PoolSettings::default()` cannot quietly resurrect the
+    /// oversized pool.
     fn default() -> Self {
-        Self::for_neon()
+        Self::pooled()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    //! Tests for the pool sizing. These are the tests that keep §3.5's correction from
-    //! being undone by someone "restoring" `master`'s numbers.
+    //! Tests for the pool sizing. These are what stop §3.5's correction being undone by
+    //! someone "restoring" `master`'s numbers.
 
     use super::*;
 
     #[test]
-    fn the_pool_fits_the_neon_budget() {
+    fn the_default_profile_fits_a_pooler() {
         assert!(
-            PoolSettings::for_neon().fits_neon(),
-            "§3.5 requires max_connections of 5-10 and a max_lifetime of ~5 min"
+            PoolSettings::default().fits_pooler(),
+            "the default must be safe for a pooled endpoint"
         );
     }
 
     #[test]
     fn max_connections_is_inside_the_documented_band() {
-        let settings = PoolSettings::for_neon();
+        let settings = PoolSettings::pooled();
 
         assert!(
             (5..=10).contains(&settings.max_connections),
-            "§3.5 says 5-10, got {}",
+            "5-10 connections for a pooled endpoint, got {}",
             settings.max_connections
         );
         assert!(settings.max_connections <= PoolSettings::MAX_CONNECTIONS_LIMIT);
@@ -158,43 +195,54 @@ mod tests {
     #[test]
     fn max_lifetime_is_five_minutes_not_thirty() {
         // The regression this file exists to prevent: `master`'s 30 minutes kept
-        // connections alive across PgBouncer's recycling window.
-        let settings = PoolSettings::for_neon();
+        // connections alive across the pooler's recycling window.
+        let settings = PoolSettings::pooled();
 
         assert_eq!(settings.max_lifetime, Duration::from_secs(300));
         assert!(
             settings.max_lifetime < Duration::from_secs(30 * 60),
-            "a 30-minute lifetime is what §3.5 flags"
+            "a 30-minute lifetime is what a pooler punishes"
         );
     }
 
     #[test]
     fn the_minimum_never_exceeds_the_maximum() {
-        // Not a hypothetical: a pool with `min > max` silently behaves like `max`, so the
+        // Not hypothetical: a pool with `min > max` silently behaves like `max`, so the
         // minimum would be a lie rather than a setting.
-        let settings = PoolSettings::for_neon();
-
-        assert!(settings.min_connections <= settings.max_connections);
+        for settings in [PoolSettings::pooled(), PoolSettings::direct()] {
+            assert!(settings.min_connections <= settings.max_connections);
+        }
     }
 
     #[test]
     fn acquiring_has_enough_room_for_a_deliberately_small_pool() {
-        // 3 seconds with a 10-connection pool turns a burst of concurrency into request
-        // failures that a slightly larger pool would have absorbed.
-        assert!(PoolSettings::for_neon().acquire_timeout >= Duration::from_secs(5));
+        // 3 seconds with a small pool turns a burst of concurrency into request failures
+        // that a slightly larger pool would have absorbed.
+        assert!(PoolSettings::pooled().acquire_timeout >= Duration::from_secs(5));
     }
 
     #[test]
-    fn the_default_is_the_neon_profile() {
+    fn the_default_is_the_pooled_profile() {
         // `Default` exists so a bare `PoolSettings::default()` cannot quietly resurrect the
         // oversized pool.
-        assert_eq!(PoolSettings::default(), PoolSettings::for_neon());
+        assert_eq!(PoolSettings::default(), PoolSettings::pooled());
+    }
+
+    #[test]
+    fn the_two_profiles_differ_where_the_pooler_demands_it() {
+        // A direct connection may be wider and longer-lived; a pooled one may not. This is
+        // the difference the whole file is about.
+        let pooled = PoolSettings::pooled();
+        let direct = PoolSettings::direct();
+
+        assert!(direct.max_connections > pooled.max_connections);
+        assert!(direct.max_lifetime > pooled.max_lifetime);
     }
 
     #[test]
     fn the_oversized_pool_is_rejected_by_the_invariant() {
-        // The exact `master` configuration, asserted to fail. If this ever passes, the
-        // invariant is not doing its job.
+        // The exact `master` configuration, asserted to fail against the pooled profile.
+        // If this ever passes, the invariant is not doing its job.
         let master = PoolSettings {
             max_connections: 20,
             min_connections: 2,
@@ -205,8 +253,19 @@ mod tests {
         };
 
         assert!(
-            !master.fits_neon(),
-            "§3.5 says 20 connections and 30 minutes is wrong for Neon"
+            !master.fits_pooler(),
+            "20 connections and a 30-minute lifetime is wrong behind a pooler"
+        );
+    }
+
+    #[test]
+    fn a_direct_profile_is_rejected_by_the_pooler_invariant_and_that_is_expected() {
+        // Documents that `direct()` failing `fits_pooler()` is not a bug: the invariant is
+        // about the pooled shape, and `direct()` is deliberately outside it.
+        assert!(!PoolSettings::direct().fits_pooler());
+        assert!(
+            PoolSettings::direct().min_connections <= PoolSettings::direct().max_connections,
+            "even outside the budget, the profile must be internally consistent"
         );
     }
 
@@ -215,9 +274,9 @@ mod tests {
         let inverted = PoolSettings {
             max_connections: 4,
             min_connections: 8,
-            ..PoolSettings::for_neon()
+            ..PoolSettings::pooled()
         };
 
-        assert!(!inverted.fits_neon());
+        assert!(!inverted.fits_pooler());
     }
 }
