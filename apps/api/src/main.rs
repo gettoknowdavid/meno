@@ -15,6 +15,7 @@
 //! a container platform actually sends.
 
 use std::net::{Ipv4Addr, SocketAddr};
+use std::sync::Arc;
 
 use anyhow::Context;
 
@@ -23,6 +24,7 @@ use axum::routing::get;
 use tokio::net::TcpListener;
 
 use meno_api::config::Config;
+use meno_api::infrastructure::push::{PushSender, sender_from_config};
 use meno_api::infrastructure::redis::{Redis, RedisConfig};
 use meno_api::infrastructure::signals::shutdown_signal;
 use meno_api::infrastructure::telemetry;
@@ -31,8 +33,8 @@ use meno_api::infrastructure::telemetry;
 ///
 /// # Errors
 ///
-/// Returns an error if the config is invalid, Redis cannot be reached, or the port
-/// cannot be bound. Each is returned with context rather than panicking — plan §4.3
+/// Returns an error if the config is invalid, Redis cannot be reached, the push
+/// credentials are unusable, or the port cannot be bound. Each is returned with context rather than panicking — plan §4.3
 /// requires the process to log clearly and exit, never to abort mid-write.
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -53,7 +55,18 @@ async fn main() -> anyhow::Result<()> {
         .await
         .with_context(|| format!("failed to connect to Redis at {redis_url}"))?;
 
-    let app = build_router(&config, redis);
+    // Push is optional (§4.6), so this cannot fail when `PUSH_ENABLED` is unset — it
+    // returns the no-op sender and every notification job logs `Skipped`. When push *is*
+    // enabled it can still fail, on an unparseable or non-RSA
+    // `FIREBASE_SERVICE_ACCOUNT_JSON`, and that is deliberately fatal: an enabled
+    // adapter that cannot sign a JWT would otherwise boot and silently drop every
+    // broadcast notification. The context names the variable, because the raw error is
+    // about a key rather than about a URL.
+    let push = sender_from_config(&config)
+        .map_err(|e| anyhow::anyhow!("push is enabled but unusable: {e}"))
+        .context("check PUSH_ENABLED and FIREBASE_SERVICE_ACCOUNT_JSON")?;
+
+    let app = build_router(&config, redis, push);
 
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, config.port));
     let listener = TcpListener::bind(address)
@@ -73,9 +86,10 @@ async fn main() -> anyhow::Result<()> {
 /// The application router.
 ///
 /// Serves the health endpoints until `bootstrap`/`state`/`routes` land; those replace
-/// this body. The signature already takes the pieces they will need, so the swap is a
-/// change to this function only.
-fn build_router(_config: &Config, _redis: Redis) -> Router {
+/// this body. The signature already takes the pieces they will need — the config, the
+/// Redis handle and the [`PushSender`] the notification jobs will be handed — so the
+/// swap is a change to this function only.
+fn build_router(_config: &Config, _redis: Redis, _push: Arc<dyn PushSender>) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .route("/health/ready", get(|| async { "ready" }))

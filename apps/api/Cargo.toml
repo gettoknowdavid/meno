@@ -29,6 +29,7 @@ path = "src/lib.rs"
 meno-core = { workspace = true }
 
 anyhow = { workspace = true }
+async-trait = { workspace = true }
 axum = { workspace = true }
 dashmap = { workspace = true }
 # `config` is required by §4.6 ("replace `env::var` + `Context` chains with a typed,
@@ -38,8 +39,10 @@ dashmap = { workspace = true }
 config = { workspace = true }
 dotenvy = { workspace = true }
 fred = { workspace = true }
+jsonwebtoken = { workspace = true }
 livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
+reqwest = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
@@ -51,8 +54,13 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 uuid = { workspace = true }
 
-# No `[dev-dependencies]`: the `#[ignore]`d live-LiveKit tests compile against the
-# normal dependencies, and every other test in the crate is infrastructure-free.
+# `wiremock` is §10's HTTP double: it serves the FCM token and `messages:send`
+# endpoints on loopback so the adapter's real request path — bearer auth, JSON body,
+# status classification — is exercised without a Firebase project. Without it the push
+# adapter's HTTP behaviour is only reachable from `#[ignore]`d tests that need
+# credentials.
+[dev-dependencies]
+wiremock = { workspace = true }
 
 [lints]
 workspace = true

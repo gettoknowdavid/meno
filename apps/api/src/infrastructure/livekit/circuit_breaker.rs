@@ -74,10 +74,17 @@ pub struct CircuitBreaker {
     failure_threshold: u64,
     success_threshold: u64,
     open_duration: Duration,
+
+    /// Which dependency this breaker guards, for log lines only.
+    ///
+    /// The breaker is shared by more than one adapter — `infrastructure::push` guards
+    /// FCM with one — and a log line that names the wrong service sends whoever is
+    /// on call to debug the wrong dependency.
+    service: &'static str,
 }
 
 impl CircuitBreaker {
-    /// Build a breaker.
+    /// Build a breaker for LiveKit.
     ///
     /// `failure_threshold` is the consecutive failures that trip it; `open_duration`
     /// is how long it stays open before allowing a probe. `success_threshold` is
@@ -85,6 +92,19 @@ impl CircuitBreaker {
     /// traffic without making recovery feel slow.
     #[must_use]
     pub fn new(failure_threshold: u64, open_duration: Duration) -> Arc<Self> {
+        Self::named(failure_threshold, open_duration, "LiveKit")
+    }
+
+    /// Build a breaker labelled for a different service.
+    ///
+    /// The label affects the `tracing` fields only. [`Self::check`] still returns
+    /// [`OPEN_MESSAGE`], so no existing caller or test has to change.
+    #[must_use]
+    pub fn named(
+        failure_threshold: u64,
+        open_duration: Duration,
+        service: &'static str,
+    ) -> Arc<Self> {
         Arc::new(Self {
             state: AtomicU8::new(CircuitState::Closed as u8),
             failure_count: AtomicU64::new(0),
@@ -95,7 +115,14 @@ impl CircuitBreaker {
             failure_threshold: failure_threshold.max(1),
             success_threshold: 2,
             open_duration,
+            service,
         })
+    }
+
+    /// The service this breaker guards.
+    #[must_use]
+    pub const fn service(&self) -> &'static str {
+        self.service
     }
 
     /// The current state.
@@ -131,7 +158,7 @@ impl CircuitBreaker {
                 if elapsed.is_some_and(|elapsed| elapsed >= self.open_duration) {
                     self.state
                         .store(CircuitState::HalfOpen as u8, Ordering::Release);
-                    tracing::info!("LiveKit circuit breaker → HalfOpen");
+                    tracing::info!(service = self.service, "circuit breaker → HalfOpen");
                     return Ok(());
                 }
 
@@ -150,7 +177,10 @@ impl CircuitBreaker {
                         .store(CircuitState::Closed as u8, Ordering::Release);
                     self.failure_count.store(0, Ordering::Relaxed);
                     self.success_count.store(0, Ordering::Relaxed);
-                    tracing::info!("LiveKit circuit breaker → Closed (recovered)");
+                    tracing::info!(
+                        service = self.service,
+                        "circuit breaker → Closed (recovered)"
+                    );
                 }
             }
             _ => {
@@ -172,7 +202,7 @@ impl CircuitBreaker {
             self.state
                 .store(CircuitState::Open as u8, Ordering::Release);
             self.success_count.store(0, Ordering::Relaxed);
-            tracing::error!(failures, "LiveKit circuit breaker → Open");
+            tracing::error!(service = self.service, failures, "circuit breaker → Open");
         }
     }
 
@@ -337,6 +367,32 @@ mod tests {
 
         assert_eq!(breaker.state(), CircuitState::Open);
         assert!(breaker.check().await.is_err());
+    }
+
+    #[test]
+    fn a_breaker_names_the_service_it_guards() {
+        // The point of the label: `infrastructure::push` shares this breaker, and a log
+        // line reading "LiveKit circuit breaker → Open" during an FCM outage sends
+        // whoever is on call to the wrong dependency.
+        assert_eq!(
+            CircuitBreaker::new(3, Duration::from_secs(1)).service(),
+            "LiveKit"
+        );
+        assert_eq!(
+            CircuitBreaker::named(3, Duration::from_secs(1), "FCM").service(),
+            "FCM"
+        );
+    }
+
+    #[test]
+    fn labelling_a_breaker_does_not_change_its_state_machine() {
+        // `new` is exactly `named(.., "LiveKit")`, so the existing behaviour, thresholds
+        // and `OPEN_MESSAGE` are untouched by the label.
+        let breaker = CircuitBreaker::named(2, Duration::from_secs(60), "FCM");
+
+        assert_eq!(breaker.state(), CircuitState::Closed);
+        assert_eq!(breaker.failure_threshold, 2);
+        assert_eq!(breaker.open_duration, Duration::from_secs(60));
     }
 
     #[test]
