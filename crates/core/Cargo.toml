@@ -1,0 +1,19 @@
+[package]
+name = "meno-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+description = "Pure, dependency-light domain primitives for Meno: cursors, errors, ids, time."
+license.workspace = true
+
+[dependencies]
+base64 = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+serde_with = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+uuid = { workspace = true }
+
+[lints]
+workspace = true

@@ -1,0 +1,131 @@
+[workspace]
+resolver = "3"
+members = ["crates/core"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+license = "MIT"
+
+[workspace.dependencies]
+meno-core = { path = "crates/core" }
+
+axum = { version = "0.8.9", features = ["macros", "multipart", "ws"] }
+bytes = "1.12.1"
+http-body-util = "0.1.5"
+
+tokio = { version = "1.43.3", features = ["full"] }
+tower = { version = "0.5.3", features = ["retry", "timeout", "util"] }
+tower-http = {
+  version = "0.7.1",
+  features = [
+    "compression-gzip",
+    "cors",
+    "limit",
+    "request-id",
+    "timeout",
+    "trace",
+  ]
+}
+
+sqlx = {
+  version = "0.9.0",
+  default-features = false,
+  features = [
+    "json",
+    "macros",
+    "migrate",
+    "postgres",
+    "runtime-tokio",
+    "time",
+    "tls-rustls",
+    "uuid",
+  ]
+}
+
+fred = {
+  version = "10.1.0",
+  default-features = false,
+  features = [
+    "i-pubsub",
+    "i-scripts",
+    "replication",
+    "serde-json",
+    "tokio-rustls",
+  ]
+}
+
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_with = "3.24.0"
+validator = { version = "0.21.0", features = ["derive"] }
+
+anyhow = "1.0.104"
+thiserror = "2.0.21"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
+
+chrono = "0.4.45"
+time = { version = "0.3.55", features = ["serde", "serde-well-known"] }
+
+uuid = { version = "1.27.0", features = ["serde", "v4"] }
+
+argon2 = "0.6.0"
+base64 = "0.23.1"
+hex = "0.4.3"
+jsonwebtoken = { version = "11.1.0", features = ["aws_lc_rs"] }
+rand = "0.10.3"
+sha2 = "0.11.0"
+
+apalis = { version = "1.0.0-rc.10", features = ["limit", "prometheus"] }
+apalis-postgres = { version = "1.0.0-rc.9", features = ["time"] }
+
+oauth2 = { version = "5.0.0-rc.1", features = ["reqwest"] }
+
+reqwest = {
+  version = "0.13.5",
+  default-features = false,
+  features = [
+    "gzip",
+    "json",
+    "rustls-tls",
+  ]
+}
+
+object_store = { version = "0.14.2", features = ["aws"] }
+
+livekit-api = "0.8.1"
+livekit-protocol = "0.8.0"
+
+async-trait = "0.1.92"
+axum-prometheus = "0.10.1"
+
+config = { version = "0.15.27", default-features = false }
+dashmap = "7.0.0-rc2"
+dotenvy = "0.15.7"
+futures-util = "0.3.34"
+mockall = "0.15.0"  # dev-dependency only
+once_cell = "1.21.4"
+regex = "1.13.1"
+strum = { version = "0.28.0", features = ["derive"] }
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+expect_used = "deny"
+must_use_candidate = "warn"
+panic = "deny"
+print_stderr = "deny"
+print_stdout = "deny"
+todo = "warn"
+unwrap_used = "deny"
+
+[workspace.lints.rust]
+missing_docs = "warn"
+
+[profile.release]
+opt-level = 3
+strip = true
+lto = "fat"
+panic = "abort"
+codegen-units = 1
