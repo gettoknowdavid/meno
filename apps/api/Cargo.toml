@@ -20,11 +20,11 @@ path = "src/worker.rs"
 name = "meno_api"
 path = "src/lib.rs"
 
-# TEMPORARY: declaring only what the modules that exist *today* need (`config`,
-# `infrastructure/{redis,ws,livekit,signals,telemetry}` and `types`). Step 3.6's final
-# manifest adds the rest — sqlx, apalis, reqwest, storage, mail and the LiveKit
-# service-client features — once `modules/`, `routes/` and `jobs/` exist to use them.
-# Declaring the full set now would not compile.
+# Declared incrementally: this manifest lists what the modules that exist *today* need
+# (`config`, `infrastructure/*`, `middleware` and `types`). The plan's remaining adapters —
+# apalis for §6's job queue, mail for verification and OTP — are added when `jobs/` and
+# `modules/` land to use them, because an unused dependency is a build-time cost nobody
+# chose.
 [dependencies]
 meno-core = { workspace = true }
 
@@ -33,6 +33,11 @@ async-trait = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
+# `http-body-util` is what `BodyExt::collect` comes from. The idempotency middleware has
+# to buffer a response body to cache it (§4.5: the replay must carry the body *and* its
+# `Content-Type`), and axum's `Body` implements `http_body::Body`, not the concrete
+# buffering traits — so this is a genuine runtime dependency, not a test convenience.
+http-body-util = { workspace = true }
 # `config` is required by §4.6 ("replace `env::var` + `Context` chains with a typed,
 # layered config ... with a single aggregated error"). It is declared in the workspace
 # manifest and used by `config.rs` via the `ConfigSource` trait, which keeps the
@@ -63,7 +68,10 @@ uuid = { workspace = true }
 # status classification — is exercised without a Firebase project. Without it the push
 # adapter's HTTP behaviour is only reachable from `#[ignore]`d tests that need
 # credentials.
+# `tower` provides `ServiceExt::oneshot`, which is how the middleware contract tests
+# (§10) drive a `Router` without binding a socket.
 [dev-dependencies]
+tower = { workspace = true }
 wiremock = { workspace = true }
 
 [lints]
