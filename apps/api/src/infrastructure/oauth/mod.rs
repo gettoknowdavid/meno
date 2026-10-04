@@ -95,6 +95,10 @@ impl IdentityProvider for NoopIdentityProvider {
         Err(OAuthError::Disabled)
     }
 
+    async fn verify_id_token(&self, _id_token: &str) -> Result<GoogleIdentity, OAuthError> {
+        Err(OAuthError::Disabled)
+    }
+
     fn is_enabled(&self) -> bool {
         false
     }
@@ -146,6 +150,32 @@ impl InMemoryIdentityProvider {
     ) -> std::sync::MutexGuard<'_, Option<Result<GoogleIdentity, OAuthError>>> {
         self.identity.lock().unwrap_or_else(PoisonError::into_inner)
     }
+
+    /// Consume the scripted answer, applying the §7.12 guard.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::CodeRejected`] once the slot is empty, whatever the
+    /// [`OAuthError::CodeRejected`] was scripted to be, and
+    /// [`OAuthError::EmailNotVerified`] for an unverified address.
+    fn take_scripted_identity(&self) -> Result<GoogleIdentity, OAuthError> {
+        *self
+            .exchanges
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) += 1;
+
+        // Take the scripted answer so a second exchange does not silently succeed — a
+        // reusable code is exactly the replay the single-use state store exists to stop.
+        let identity = self.lock_identity().take().ok_or_else(|| {
+            OAuthError::CodeRejected("the authorization code has already been redeemed".to_owned())
+        })??;
+
+        // The same §7.12 guard the real adapter applies. Without it the double would be
+        // *more* permissive than production, and every test built on it would assert
+        // behaviour a real provider can never produce.
+        identity.require_linkable()?;
+        Ok(identity)
+    }
 }
 
 impl std::fmt::Debug for InMemoryIdentityProvider {
@@ -174,22 +204,14 @@ impl IdentityProvider for InMemoryIdentityProvider {
         _code: &str,
         _state: &OAuthState,
     ) -> Result<GoogleIdentity, OAuthError> {
-        *self
-            .exchanges
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner) += 1;
+        self.take_scripted_identity()
+    }
 
-        // Take the scripted answer so a second exchange does not silently succeed — a
-        // reusable code is exactly the replay the single-use state store exists to stop.
-        let identity = self.lock_identity().take().ok_or_else(|| {
-            OAuthError::CodeRejected("the authorization code has already been redeemed".to_owned())
-        })??;
-
-        // The same §7.12 guard the real adapter applies. Without it the double would be
-        // *more* permissive than production, and every test built on it would assert
-        // behaviour a real provider can never produce.
-        identity.require_linkable()?;
-        Ok(identity)
+    async fn verify_id_token(&self, _id_token: &str) -> Result<GoogleIdentity, OAuthError> {
+        // One slot, both entry points, and the same one-shot semantics: a code or an ID
+        // token that has been presented twice is a replay, and a double that quietly
+        // accepted both would hide that rather than surface it.
+        self.take_scripted_identity()
     }
 
     fn is_enabled(&self) -> bool {
@@ -250,6 +272,62 @@ mod tests {
             provider.exchange_code("code", &state()).await,
             Err(OAuthError::Disabled)
         ));
+    }
+
+    #[tokio::test]
+    async fn the_no_op_refuses_the_id_token_flow_too() {
+        // A new trait method that the no-op forgot to implement would compile as an
+        // unimplemented body and 500 at runtime on a deployment with Google switched
+        // off — the exact configuration §4.6 says must still work.
+        let provider = NoopIdentityProvider;
+
+        assert!(matches!(
+            provider.verify_id_token("id-token").await,
+            Err(OAuthError::Disabled)
+        ));
+    }
+
+    #[tokio::test]
+    async fn the_double_returns_its_scripted_identity_on_the_id_token_path_too() {
+        // Both entry points go through one guard, so both must be drivable from a test.
+        let provider = InMemoryIdentityProvider::returning(GoogleIdentity::verified(
+            "1000",
+            "user@example.com",
+        ));
+
+        let identity = provider
+            .verify_id_token("id-token")
+            .await
+            .expect("the scripted identity");
+
+        assert_eq!(identity.email, "user@example.com");
+        assert!(provider.verify_id_token("id-token").await.is_err());
+    }
+
+    #[tokio::test]
+    async fn the_double_refuses_an_unverified_identity_on_both_paths() {
+        // §7.12, asserted where the double is defined. A double that let an unverified
+        // address through would make every account-linking test built on it meaningless.
+        //
+        // A fresh double per path: the scripted identity is consumed, so a shared one
+        // would answer the second call "already redeemed" and this would pass for the
+        // wrong reason — which is the failure mode a security assertion must never have.
+        for entry in ["exchange_code", "verify_id_token"] {
+            let provider = InMemoryIdentityProvider::returning(GoogleIdentity::unverified(
+                "1000",
+                "victim@example.com",
+            ));
+
+            let outcome = match entry {
+                "exchange_code" => provider.exchange_code("code", &state()).await,
+                _ => provider.verify_id_token("id-token").await,
+            };
+
+            assert!(
+                matches!(outcome, Err(OAuthError::EmailNotVerified)),
+                "{entry} must refuse an unverified address, got {outcome:?}"
+            );
+        }
     }
 
     #[tokio::test]

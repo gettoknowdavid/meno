@@ -239,6 +239,13 @@ impl IdentityProvider for GoogleIdentityProvider {
         into_identity(info)
     }
 
+    async fn verify_id_token(&self, id_token: &str) -> Result<GoogleIdentity, OAuthError> {
+        // The inherent method applies `into_identity`, and therefore the §7.12 guard.
+        // Duplicating the request here would give the mobile path its own copy of the
+        // check, which is the failure mode this seam exists to prevent.
+        self.identity_from_id_token(id_token).await
+    }
+
     fn is_enabled(&self) -> bool {
         true
     }

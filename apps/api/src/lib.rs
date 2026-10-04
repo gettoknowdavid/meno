@@ -12,12 +12,13 @@
 //! | [`config`] | typed, validated configuration (§4.6, §7.8) |
 //! | [`infrastructure`] | adapters — Redis, database, storage, OAuth, push, LiveKit, sockets |
 //! | [`middleware`] | cross-cutting request concerns, and the single §4.2 error renderer |
+//! | [`modules`] | the domain features; [`modules::auth`] is the one that has landed |
 //! | [`types`] | wire types shared across domains; the success envelope |
 //!
-//! **Still to come**, per §2's tree: `bootstrap`, `routes`, `state`, `modules` and `jobs`. Only
-//! what exists today is declared here, so the crate compiles and its tests run — but note that
-//! `bootstrap.rs` is what `main.rs` and `worker.rs` will share once `routes` and `modules`
-//! land, which is why neither binary grows that wiring in the meantime.
+//! **Still to come**, per §2's tree: `bootstrap`, `routes`, `state` and `jobs`. Only what
+//! exists today is declared here, so the crate compiles and its tests run — but note that
+//! `bootstrap.rs` is what `main.rs` and `worker.rs` will share once `routes` lands, which
+//! is why neither binary grows that wiring in the meantime.
 //!
 //! # The layer rule
 //!
@@ -37,4 +38,5 @@
 pub mod config;
 pub mod infrastructure;
 pub mod middleware;
+pub mod modules;
 pub mod types;

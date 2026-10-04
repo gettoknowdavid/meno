@@ -21,14 +21,16 @@ name = "meno_api"
 path = "src/lib.rs"
 
 # Declared incrementally: this manifest lists what the modules that exist *today* need
-# (`config`, `infrastructure/*`, `middleware` and `types`). The plan's remaining adapters —
-# apalis for §6's job queue, mail for verification and OTP — are added when `jobs/` and
-# `modules/` land to use them, because an unused dependency is a build-time cost nobody
-# chose.
+# (`config`, `infrastructure/*`, `middleware`, `types` and `modules/auth`). The plan's
+# remaining adapter — apalis for §6's job queue — is added when `jobs/` lands to use it,
+# because an unused dependency is a build-time cost nobody chose.
 [dependencies]
 meno-core = { workspace = true }
 
 anyhow = { workspace = true }
+# `argon2` is the password KDF (plan S3.2): hashing and verifying, both on
+# `spawn_blocking` because a single verification costs ~50ms of deliberate work.
+argon2 = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
 bytes = { workspace = true }
@@ -45,12 +47,19 @@ http-body-util = { workspace = true }
 config = { workspace = true }
 dotenvy = { workspace = true }
 fred = { workspace = true }
+# `hex` renders the SHA-256 digest a refresh token is stored as; `sha2` computes it. A
+# refresh token is never stored verbatim, so a database dump holds nothing replayable.
+hex = { workspace = true }
 jsonwebtoken = { workspace = true }
 livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
 oauth2 = { workspace = true }
 object_store = { workspace = true }
+# `rand` draws the six-digit one-time codes from the OS CSPRNG. A predictable code
+# turns a 10^6 search space into a target (plan S4.7).
+rand = { workspace = true }
 reqwest = { workspace = true }
+sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }

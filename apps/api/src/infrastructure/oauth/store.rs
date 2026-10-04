@@ -298,6 +298,21 @@ pub trait IdentityProvider: Send + Sync + std::fmt::Debug {
         state: &OAuthState,
     ) -> Result<GoogleIdentity, OAuthError>;
 
+    /// Exchange an ID token that arrived on a mobile deep link.
+    ///
+    /// The second of the two entry points, and it enforces
+    /// [`GoogleIdentity::require_linkable`] for exactly the same reason
+    /// [`Self::exchange_code`] does: `master` checked the flag on this path and not on
+    /// the other, which is how an unverified-email takeover survived review. Both paths
+    /// go through one guard so a third cannot be added without it.
+    ///
+    /// # Errors
+    ///
+    /// [`OAuthError::EmailNotVerified`] for an unverified address,
+    /// [`OAuthError::Rejected`] for a token the provider will not identify, and
+    /// [`OAuthError::Upstream`] for a provider fault.
+    async fn verify_id_token(&self, id_token: &str) -> Result<GoogleIdentity, OAuthError>;
+
     /// Whether this provider is usable right now.
     ///
     /// The sign-in screen uses it to decide whether to render the button at all, so a

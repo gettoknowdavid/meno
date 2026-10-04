@@ -64,7 +64,11 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../crates/db/migra
 /// a path typo silently embedding *zero* migrations — `sqlx::migrate!` accepts an empty
 /// directory without complaint, and a fresh database would then have no schema and no
 /// error, which is §7.2's exact failure recurring in a new form.
-pub const EMBEDDED_MIGRATION_COUNT: usize = 15;
+///
+/// Bumped by hand for each new migration, which is the point: a reviewer sees the count
+/// change in the diff next to the `.sql` file that caused it, rather than trusting a
+/// runtime count that would agree with itself either way.
+pub const EMBEDDED_MIGRATION_COUNT: usize = 16;
 
 /// Open a connection pool.
 ///

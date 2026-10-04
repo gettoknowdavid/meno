@@ -33,6 +33,10 @@ sqlx = {
   version = "0.9.0",
   default-features = false,
   features = [
+    # `ipnetwork` gives `std::net::IpAddr` its Postgres `INET` codec, which is what
+    # `auth_sessions.ip` is. Without it the column is unbindable and the session's
+    # device context cannot be written at all.
+    "ipnetwork",
     "json",
     "macros",
     "migrate",

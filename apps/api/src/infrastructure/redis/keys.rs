@@ -278,6 +278,18 @@ impl RedisKey {
         Self::new(format!("block-list:{prefix}:{id}"), ttl)
     }
 
+    /// "Log out everywhere" marker for a user.
+    ///
+    /// A separate constructor from [`Self::block_list`] because a token `jti` and a
+    /// `user_id` are both `Uuid`s drawn from the same space: sharing one key shape would
+    /// mean a marker could collide with a single-token revocation, and a `SCAN` over one
+    /// would match the other. The `u:` infix keeps them apart while staying in the same
+    /// `block-list:` namespace, so a deployment can expire the whole set at once.
+    #[must_use]
+    pub fn user_tokens_blocked(prefix: &str, user_id: Uuid, ttl: Duration) -> Self {
+        Self::new(format!("block-list:{prefix}:u:{user_id}"), ttl)
+    }
+
     /// Idempotency key for safe client retries.
     #[must_use]
     pub fn idempotency(key: Uuid, ttl: Duration) -> Self {
