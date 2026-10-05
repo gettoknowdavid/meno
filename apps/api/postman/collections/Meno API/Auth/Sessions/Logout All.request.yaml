@@ -7,3 +7,17 @@ auth:
   credentials:
     - key: token
       value: '{{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status) return;
+
+      // All sessions revoked — clear every token from environment and collection.
+      ['access_token', 'refresh_token', 'user_id', 'user_email'].forEach(key => {
+        pm.environment.set(key, '');
+        pm.collectionVariables.set(key, '');
+      });
+
+      console.log('[Logout All] All sessions revoked. Variables cleared.');

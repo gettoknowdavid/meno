@@ -9,3 +9,23 @@ queryParams:
   - key: state
     value: 'STATE_TOKEN'
     description: 'State token issued by this service'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      const { access_token, refresh_token, expires_in, user } = json.data;
+
+      pm.environment.set('access_token', access_token);
+      pm.environment.set('refresh_token', refresh_token);
+      pm.environment.set('user_id', user.id);
+      pm.environment.set('user_email', user.email);
+
+      pm.collectionVariables.set('access_token', access_token);
+      pm.collectionVariables.set('refresh_token', refresh_token);
+      pm.collectionVariables.set('user_id', user.id);
+      pm.collectionVariables.set('user_email', user.email);
+
+      console.log(`[Google Web] Signed in as ${user.email} (${user.id}). Token expires in ${expires_in}s.`);

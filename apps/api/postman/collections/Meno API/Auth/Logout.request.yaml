@@ -12,3 +12,17 @@ body:
       "refresh_token": "{{refresh_token}}",
       "access_token": "{{access_token}}"
     }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status) return;
+
+      // Clear all session state from both environment and collection variables.
+      ['access_token', 'refresh_token', 'user_id', 'user_email'].forEach(key => {
+        pm.environment.set(key, '');
+        pm.collectionVariables.set(key, '');
+      });
+
+      console.log('[Logout] Session cleared.');

@@ -12,3 +12,12 @@ body:
       "email": "ada@example.com",
       "code": "123456"
     }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status) return;
+
+      // verify-email returns a plain message (no token data) — just log confirmation.
+      console.log(`[Verify Email] ${json.message}`);
