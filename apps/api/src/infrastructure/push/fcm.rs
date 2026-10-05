@@ -65,13 +65,6 @@ use crate::infrastructure::push::error::PushError;
 use crate::infrastructure::push::model::{MulticastResult, PushMessage, PushTarget};
 use crate::infrastructure::push::token::AccessTokenProvider;
 
-/// How long one FCM request may take before it is abandoned.
-///
-/// Push is off the request path (§4.9 — fan-out is a job), but a hung connection
-/// still occupies a worker slot and a slot in [`MAX_CONCURRENT_SENDS`], so it is
-/// bounded rather than left to `reqwest`'s effectively-infinite default.
-pub const REQUEST_TIMEOUT_SECS: u64 = 10;
-
 /// Concurrent device sends within one [`FcmPushSender::send_multicast`] call.
 ///
 /// FCM's documented guidance for `UNAVAILABLE` is exponential backoff; firing the
@@ -165,12 +158,11 @@ impl FcmPushSender {
         settings: &PushSettings,
         endpoints: &PushEndpoints,
     ) -> Result<Self, PushError> {
-        let http = Client::builder()
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
-            .build()
-            .map_err(|e| {
-                PushError::Transport(format!("the HTTP client could not be built: {e}"))
-            })?;
+        // The shared pool (§5.6): one client for FCM, Google and mail, rather than a
+        // pool per adapter — see `infrastructure::http`'s module docs.
+        let http = crate::infrastructure::http::shared()
+            .map_err(|e| PushError::Transport(e.to_string()))?
+            .clone();
 
         let mut account = ServiceAccount::parse(settings.service_account_json.expose())?;
 
@@ -808,7 +800,10 @@ mod tests {
                 MAX_CONCURRENT_SENDS <= 500,
                 "more than 500 concurrent sends is how you get throttled"
             );
-            assert!(REQUEST_TIMEOUT_SECS > 0 && REQUEST_TIMEOUT_SECS <= 30);
+            assert!(
+                crate::infrastructure::http::REQUEST_TIMEOUT_SECS > 0
+                    && crate::infrastructure::http::REQUEST_TIMEOUT_SECS <= 30
+            );
             assert!(FAILURE_THRESHOLD > 0);
         }
     }

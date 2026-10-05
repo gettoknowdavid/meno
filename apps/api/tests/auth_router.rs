@@ -2,7 +2,7 @@
 //!
 //! # Why this suite exists
 //!
-//! The inline `service_tests` assert on the *service*; these assert on the *wire*. A
+//! `auth_service.rs` asserts on the *service*; these assert on the *wire*. A
 //! handler can be correct in isolation and still answer 200 where the contract says
 //! 401, or return a bare `{"error": "..."}` instead of the §4.2 envelope. Nothing below
 //! the handler would catch either, which is why §10 ranks router tests separately from

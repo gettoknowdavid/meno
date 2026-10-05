@@ -100,7 +100,9 @@ pub struct AppContext {
 /// - push or storage is *enabled but unusable*. Optional integrations must not fail when
 ///   switched off (§4.6) — that is what the no-op adapters are for — but an enabled
 ///   adapter that cannot build would fail one request at a time, and the first symptom
-///   would be a user reporting their avatar is broken.
+///   would be a user reporting their avatar is broken;
+/// - the WebSocket pub/sub bridge cannot reach Redis (built in `state::build`, same
+///   reasoning: it is on the delivery path for every message, not just one request).
 ///
 /// This function deliberately does not start the job monitor; see the module docs.
 pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
@@ -108,6 +110,13 @@ pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
     telemetry::init(&config);
 
     tracing::info!(config = %config.summary(), role = %role, "starting");
+
+    // Build the shared outbound HTTP client now rather than on the first outbound
+    // call (§4.3): its configuration is constants, so a failure here is a host problem
+    // — a broken TLS backend, an exhausted fd limit — that must stop startup with a
+    // message instead of surfacing as a per-request fault in FCM, Google sign-in or
+    // mail. See `infrastructure::http`.
+    crate::infrastructure::http::shared().context("the outbound HTTP client could not be built")?;
 
     let pool = create_postgres_pool(&config).await?;
     run_migrations(&pool, &config).await?;
@@ -132,13 +141,25 @@ pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
         redis: redis.clone(),
         // §4.6: an unset SMTP_HOST yields the no-op mailer, which logs and drops.
         // Refusing to start would make `SMTP_HOST` load-bearing for a deployment that
-        // does not need email.
-        mailer: AuthState::default_mailer(&config),
+        // does not need email — but a *configured* one that cannot build (§3.6's Brevo
+        // adapter) is refused here rather than failing one send at a time.
+        mailer: AuthState::default_mailer(&config)
+            .context("check SMTP_HOST, SMTP_USER, SMTP_PASSWORD and SMTP_FROM")?,
         push,
         storage,
     })
-    .map_err(|e| anyhow::anyhow!("auth wiring failed: {e}"))
-    .context("check JWT_SECRET, JWT_REFRESH_SECRET and the GOOGLE_* settings")?;
+    .await
+    .map_err(|e| anyhow::anyhow!("state wiring failed: {e}"))
+    .context("check JWT_SECRET, JWT_REFRESH_SECRET, the GOOGLE_* settings and REDIS_URL")?;
+
+    // The pub/sub subscriber is the *receiving* half of cross-replica WebSocket
+    // delivery, and only this process holds sockets: a worker that subscribed would
+    // receive every envelope and deliver it to zero local connections. The bridge's
+    // own contract is "spawn exactly once, before the server accepts connections",
+    // and `role` is the only place that knows which binary is starting (§6).
+    if role == AppRole::Web {
+        state.ws_bridge.spawn_subscriber_loop();
+    }
 
     Ok(AppContext { config, state })
 }

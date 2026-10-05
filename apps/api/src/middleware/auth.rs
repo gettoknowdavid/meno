@@ -257,6 +257,39 @@ impl AuthState {
             blocklist,
         }
     }
+
+    /// The whole of the gate: verify the token, then confirm it is not revoked.
+    ///
+    /// One method so every surface makes the same decision. [`auth_middleware`] runs it
+    /// for HTTP requests and the `/ws` upgrade runs it before a socket exists — a rule
+    /// that lives in two places is a rule that eventually applies to one of them.
+    ///
+    /// The order is the middleware's, preserved deliberately: the blocklist round trip
+    /// is **not** made when verification already failed (an invalid token must not buy
+    /// an attacker a Redis `EXISTS`), and a revoked token reports the same generic
+    /// [`ErrorCode::InvalidToken`] as an invalid one, so the response is not an oracle
+    /// for which check failed.
+    ///
+    /// # Errors
+    ///
+    /// - [`MenoError::Unauthorized`] with [`ErrorCode::InvalidToken`] for a token that
+    ///   fails verification or has been revoked — the reason is logged, never returned.
+    /// - Whatever the blocklist returns when Redis itself is down. That is deliberately
+    ///   *not* an authentication failure (§4.2): "I could not check" and "you are
+    ///   revoked" have opposite remedies, and conflating them logs every client out
+    ///   during a blip.
+    pub async fn authenticate(&self, token: &str) -> Result<AuthUser, MenoError> {
+        let claims = self.verifier.verify(token).await?;
+
+        match self.blocklist.is_revoked(claims.jti, claims.exp).await {
+            Ok(false) => Ok(AuthUser::from_claims(claims)),
+            Ok(true) => Err(MenoError::Unauthorized {
+                code: ErrorCode::InvalidToken,
+                message: "the access token is not valid".to_owned(),
+            }),
+            Err(error) => Err(error),
+        }
+    }
 }
 
 impl std::fmt::Debug for AuthState {
@@ -503,28 +536,12 @@ pub async fn auth_middleware(
         Err(error) => return from_error(&error),
     };
 
-    let claims = match state.verifier.verify(token).await {
-        Ok(claims) => claims,
+    // The gate itself lives on `AuthState` so the `/ws` upgrade runs the identical
+    // sequence; the ordering and revocation rules are documented there.
+    let user = match state.authenticate(token).await {
+        Ok(user) => user,
         Err(error) => return from_error(&error),
     };
-
-    // Short-circuited before the round trip: an invalid token must not cost a Redis
-    // lookup, or a credential-stuffing run buys the attacker a request amplification for
-    // free.
-    match state.blocklist.is_revoked(claims.jti, claims.exp).await {
-        Ok(false) => {}
-        Ok(true) => {
-            // Same code as any other unusable token. A "revoked" code would tell an
-            // attacker which tokens are live and worth stealing.
-            return from_error(&MenoError::Unauthorized {
-                code: ErrorCode::InvalidToken,
-                message: "the access token is not valid".to_owned(),
-            });
-        }
-        Err(error) => return from_error(&error),
-    }
-
-    let user = AuthUser::from_claims(claims);
 
     // §4.8: named fields, never `format!` into the message.
     tracing::debug!(

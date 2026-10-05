@@ -46,6 +46,8 @@ anyhow = { workspace = true }
 argon2 = { workspace = true }
 async-trait = { workspace = true }
 axum = { workspace = true }
+# `/metrics` (§7.5): the Prometheus recorder plus the axum layer and endpoint.
+axum-prometheus = { workspace = true }
 bytes = { workspace = true }
 dashmap = { workspace = true }
 # `http-body-util` is what `BodyExt::collect` comes from. The idempotency middleware has
@@ -60,6 +62,9 @@ http-body-util = { workspace = true }
 config = { workspace = true }
 dotenvy = { workspace = true }
 fred = { workspace = true }
+# `futures_util` splits the axum WebSocket into its sink and stream halves for the
+# `/ws` read/write/heartbeat loop (`routes::ws`), which is three tasks over one socket.
+futures-util = { workspace = true }
 # `hex` renders the SHA-256 digest a refresh token is stored as; `sha2` computes it. A
 # refresh token is never stored verbatim, so a database dump holds nothing replayable.
 hex = { workspace = true }
@@ -68,6 +73,10 @@ livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
 oauth2 = { workspace = true }
 object_store = { workspace = true }
+# `once_cell` gives `infrastructure::http` a fallible one-time initialiser
+# (`OnceCell::get_or_try_init`), which std's `OnceLock` does not offer on this
+# toolchain — the shared HTTP client has to be able to *report* a build failure.
+once_cell = { workspace = true }
 # `rand` draws the six-digit one-time codes from the OS CSPRNG. A predictable code
 # turns a 10^6 search space into a target (plan S4.7).
 rand = { workspace = true }
@@ -76,6 +85,9 @@ sha2 = { workspace = true }
 thiserror = { workspace = true }
 time = { workspace = true }
 tokio = { workspace = true }
+# The cross-cutting router layers §9.3 puts in one place: CORS from `CORS_ORIGINS`,
+# request-id propagation, and the HTTP trace layer that pairs with `timing` (§4.8).
+tower-http = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 validator = { workspace = true }
@@ -96,11 +108,24 @@ uuid = { workspace = true }
 tower = { workspace = true }
 wiremock = { workspace = true }
 
+# Self-reference: this is what actually turns `test-support` on for `tests/`.
+#
+# Cargo unifies features across a target's dependency edges, and a test target depends
+# on this package both normally and through this dev-dependency — so building any test
+# target compiles `meno_api` with `test-support`, while `cargo build` (which never
+# resolves dev-dependencies) compiles none of the doubles. The comment on the
+# `[features]` table above promises exactly that; this line is the mechanism, because
+# Cargo has no feature that enables a feature for tests by itself.
+meno-api = { path = ".", features = ["test-support"] }
+
 # Named by the `tests/` suite. Most are already normal dependencies of the crate; they
 # are repeated here because a test target can only use what `[dev-dependencies]` (or
 # `[dependencies]`) offers, and being explicit keeps the suite's needs legible.
 axum = { workspace = true }
 http-body-util = { workspace = true }
+# The integration suites assert on `meno_core::ErrorCode` when checking an error
+# rendering; a test target cannot name it without declaring it.
+meno-core = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 

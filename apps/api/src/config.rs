@@ -344,6 +344,14 @@ pub struct Config {
     pub log_filter: String,
     /// Whether the web binary may skip migrations, from `SKIP_MIGRATIONS`.
     pub skip_migrations: bool,
+    /// Static bearer token guarding `GET /metrics`, from `METRICS_TOKEN`.
+    ///
+    /// Optional and fail-closed (§7.5, §4.8): **unset means the endpoint answers
+    /// 404**. The plan is explicit that `/metrics` must be private, and where a
+    /// private bind is unavailable a static token is the middle option it names —
+    /// but a token nobody set must disable the endpoint, not leave it open. `None`
+    /// is therefore the safe default, and `.env.example` says so next to the key.
+    pub metrics_token: Option<Secret>,
 }
 
 /// Where configuration values are read from.
@@ -608,6 +616,9 @@ impl Config {
                 .get("RUST_LOG")
                 .unwrap_or_else(|| "info,sqlx=warn".to_owned()),
             skip_migrations: parse_bool(source, "SKIP_MIGRATIONS", false),
+            // Optional by design: an absent METRICS_TOKEN disables `/metrics` rather
+            // than failing startup — see the field's docs.
+            metrics_token: optional_str(source, "METRICS_TOKEN").map(Secret::new),
         })
     }
 

@@ -35,6 +35,7 @@ use crate::infrastructure::redis::Redis;
 use super::cache::{AuthCache, RedisAuthCache};
 use super::credentials::{CredentialDeps, CredentialService};
 use super::google::{GoogleExchange, ProviderExchange};
+use super::mailer::brevo::{BrevoMailer, MailError};
 use super::mailer::{AuthMailer, NoopAuthMailer};
 use super::repository::{AuthRepo, PgAuthRepo, RepoDeps};
 use super::services::{AuthDeps as ServiceDeps, AuthService};
@@ -173,25 +174,36 @@ impl AuthState {
         })
     }
 
-    /// The mailer to use when configuration offers none (§4.6).
+    /// The mailer for this configuration (§4.6, §3.6).
     ///
     /// A function rather than something [`Self::new`] decides internally, because the
     /// decision belongs to whoever is assembling the application: an in-process test
     /// wants [`super::mailer::RecordingAuthMailer`], and a deployment with `SMTP_HOST`
     /// set wants the real sender.
-    #[must_use]
-    pub fn default_mailer(config: &Config) -> Arc<dyn AuthMailer> {
-        if config.email.is_some() {
-            // The SMTP adapter is §6's remaining piece. Until it exists, an enabled
-            // deployment logs rather than silently pretending to send.
-            tracing::warn!(
-                "SMTP is configured but no sender is wired yet; \
-                 verification and reset codes will be logged, not mailed"
-            );
-        } else {
+    ///
+    /// - `SMTP_HOST` set → [`BrevoMailer`], the HTTPS transport plan §3.6 asks for.
+    /// - `SMTP_HOST` unset → [`NoopAuthMailer`], which logs and drops: §4.6's rule is
+    ///   that a *disabled* integration must not fail the flows that would use it, so
+    ///   refusing to boot over a missing mail host would make `SMTP_HOST`
+    ///   load-bearing for an application that does not send email.
+    ///
+    /// # Errors
+    ///
+    /// [`MailError`] when mail *is* configured but the adapter cannot be built — the
+    /// shared HTTP client or the endpoint. An enabled-but-unusable adapter is exactly
+    /// what §4.6 says must not ship: it would fail one send at a time forever, with
+    /// the first report coming from a user who never received their code. So this is a
+    /// startup failure, surfaced by `bootstrap`.
+    pub fn default_mailer(config: &Config) -> Result<Arc<dyn AuthMailer>, MailError> {
+        let Some(settings) = &config.email else {
             tracing::info!("no SMTP_HOST configured; auth emails are discarded");
-        }
+            return Ok(Arc::new(NoopAuthMailer));
+        };
 
-        Arc::new(NoopAuthMailer)
+        tracing::info!(
+            host = %settings.host,
+            "auth email configured; sending through the Brevo HTTPS adapter"
+        );
+        Ok(Arc::new(BrevoMailer::new(settings)?))
     }
 }

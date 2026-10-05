@@ -231,6 +231,16 @@ impl Redis {
         self.conn().exists::<bool, &str>(key.as_ref()).await
     }
 
+    /// One `PING` round trip.
+    ///
+    /// The only command here whose *purpose* is to ask whether the server answers,
+    /// rather than to read state — which is what `/health/ready` needs (§4.3). It
+    /// reports a transport failure as `Err`, so the probe renders `"redis": false`
+    /// instead of mistaking "could not connect" for "connected and empty".
+    pub async fn ping(&self) -> Result<(), Error> {
+        self.conn().ping::<()>(None).await
+    }
+
     /// Increment a counter, setting its TTL only on first creation.
     ///
     /// Uses Lua so the increment and the expiry are one atomic step: two concurrent

@@ -67,6 +67,14 @@ pub struct MenoState {
     pub redis: Redis,
     /// Authentication. The only refactored module so far (§4.7).
     pub auth: AuthState,
+    /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
+    ///
+    /// Built here rather than in `routes.rs` because it is fallible — a blank
+    /// `JWT_SECRET` must stop boot (§7.11) — and because this file is the one place
+    /// allowed to name concrete adapters. It is the middleware's own view (verifier +
+    /// blocklist); no handler takes it, which is the point of keeping it beside — but
+    /// separate from — [`Self::auth`].
+    pub auth_guard: crate::middleware::auth::AuthState,
     /// Push notifications. Optional (§4.6); a no-op sender when disabled.
     ///
     /// Held here rather than by a module because no module uses it yet. It is the first
@@ -75,6 +83,27 @@ pub struct MenoState {
     pub push: Arc<dyn PushSender>,
     /// Object storage. Optional (§4.6); a no-op store when disabled.
     pub storage: Arc<dyn ObjectStore>,
+    /// The Prometheus handle `GET /metrics` renders (§7.5, §4.8).
+    ///
+    /// Cloned from the process-wide recorder; whether the endpoint *answers* is
+    /// decided by [`Self::config`]'s `metrics_token`, not by this field — the
+    /// recorder keeps counting either way, so enabling the endpoint later shows
+    /// history from the moment it started counting.
+    pub metrics: crate::infrastructure::metrics::Metrics,
+    /// The local socket registry behind `GET /ws` (plan §4.7's realtime surface).
+    ///
+    /// "Local" is the point: which sockets live on *this* replica, and nothing about
+    /// the others. Cross-replica delivery is [`Self::ws_bridge`]'s job, and keeping
+    /// the two apart is what lets the registry be I/O-free — and therefore tested
+    /// without a Redis.
+    pub ws: crate::infrastructure::ws::WsService,
+    /// Redis pub/sub fan-out for events that must reach other replicas (§3.1).
+    ///
+    /// Built eagerly rather than on first publish: a bridge that cannot reach Redis
+    /// must stop boot with a message (§7.11), not fail one delivery at a time once
+    /// traffic is live. Its subscriber loop is spawned by `bootstrap`, because only
+    /// that knows whether this process holds sockets.
+    pub ws_bridge: crate::infrastructure::ws::pubsub::WsPubSubBridge,
 }
 
 /// Lets axum hand a nested sub-router its own state.
@@ -107,8 +136,12 @@ impl std::fmt::Debug for MenoState {
             .field("db", &"[pool]")
             .field("redis", &"[redacted]")
             .field("auth", &self.auth)
+            .field("auth_guard", &self.auth_guard)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
+            .field("metrics", &self.metrics)
+            .field("ws", &"[sockets]")
+            .field("ws_bridge", &"[bridge]")
             .finish()
     }
 }
@@ -145,12 +178,14 @@ pub struct Assembly {
 ///   (§4.7 item 4 — a shared pair means a refresh token would validate as an access
 ///   token);
 /// - Google sign-in enabled but the settings do not build a client;
-/// - the Argon2id dummy hash that equalises login timing could not be computed.
+/// - the Argon2id dummy hash that equalises login timing could not be computed;
+/// - the WebSocket pub/sub bridge cannot reach Redis — an eagerly-built adapter that
+///   is enabled but unusable, refused at boot rather than per message.
 ///
-/// All three are startup failures by design: booting anyway turns each into a
+/// All of these are startup failures by design: booting anyway turns each into a
 /// one-request-at-a-time outage discovered by a user, rather than a boot that stops
 /// with a message naming the variable at fault.
-pub fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
+pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
     // Redis, not the in-memory store: an OAuth callback is a separate request that may
     // land on another replica, and a state stored in one process's memory is invisible
     // to the others — which would refuse every such callback as a CSRF replay.
@@ -165,12 +200,48 @@ pub fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         mailer: parts.mailer.clone(),
     })?;
 
+    // The router's guard (§4.7 items 5-6): one HMAC check against the access secret
+    // and one blocklist round trip per protected request. `JwtVerifier::new` refuses a
+    // blank secret so a typo'd `JWT_SECRET` fails here, at boot, instead of rejecting
+    // every token at runtime (§7.11).
+    let auth_guard = crate::middleware::auth::AuthState::new(
+        Arc::new(crate::middleware::auth::JwtVerifier::new(
+            parts.config.jwt_secret.expose(),
+        )?),
+        Arc::new(crate::middleware::auth::RedisTokenBlocklist::new(
+            parts.redis.clone(),
+        )),
+    );
+
+    // The realtime pair: the local socket registry, and the pub/sub bridge that makes
+    // a message published here reach sockets on other replicas (§3.1). The bridge is
+    // built — and verifies both of its clients — right now rather than on first
+    // publish, so an unreachable Redis is a boot failure with a message instead of a
+    // silent one-replica delivery failure discovered when a message goes missing.
+    let ws = crate::infrastructure::ws::WsService::new(parts.redis.clone());
+    let ws_bridge = crate::infrastructure::ws::pubsub::WsPubSubBridge::build_from_config(
+        &crate::infrastructure::redis::RedisConfig::from_url(
+            parts.config.redis_url.expose().to_owned(),
+        ),
+        ws.clone(),
+        parts.redis.clone(),
+    )
+    .await
+    .map_err(|error| meno_core::Error::Internal {
+        context: "build_ws_pubsub_bridge",
+        detail: error.to_string(),
+    })?;
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
         redis: parts.redis,
         auth,
+        auth_guard,
         push: parts.push,
         storage: parts.storage,
+        metrics: crate::infrastructure::metrics::Metrics::global(),
+        ws,
+        ws_bridge,
     })
 }

@@ -5,8 +5,11 @@
 //! §6's job queue has not landed, so there is no `jobs::Jobs` to hand an email to yet.
 //! Rather than reach into an unwritten module — or, worse, call an HTTP API from inside
 //! a request handler — auth declares the narrow interface it needs and the wiring layer
-//! supplies an implementation. §4.6's rule about optional integrations applies: with
-//! mail unconfigured, [`NoopAuthMailer`] is used and every send logs `skipped`.
+//! supplies an implementation: [`brevo::BrevoMailer`] is that implementation for a
+//! configured deployment, chosen by
+//! [`AuthState::default_mailer`](super::state::AuthState::default_mailer). §4.6's rule
+//! about optional integrations applies: with mail unconfigured, [`NoopAuthMailer`] is
+//! used and every send logs `skipped`.
 //!
 //! # Why sends are best-effort at the call site
 //!
@@ -24,6 +27,8 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use meno_core::Error as MenoError;
+
+pub mod brevo;
 
 /// The kinds of message auth sends.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

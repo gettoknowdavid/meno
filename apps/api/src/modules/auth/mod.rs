@@ -48,10 +48,10 @@
 //! # What is not here
 //!
 //! Rate limiting is §4.7 item 8, but it is a router concern and already exists as
-//! [`crate::middleware::rate_limit`]; applying it to `/auth/*` happens when `routes.rs`
-//! lands. There is no SMTP adapter either — [`mailer::NoopAuthMailer`] stands in until
-//! §6's email seam does, and [`state::AuthState::default_mailer`] is where that choice
-//! is made.
+//! [`crate::middleware::rate_limit`]; applying it to `/auth/*` happens in `routes.rs`.
+//! Email transport is [`mailer::brevo::BrevoMailer`] (plan §3.6 — Brevo's HTTPS API,
+//! not raw SMTP) when `SMTP_HOST` is set, and [`mailer::NoopAuthMailer`] when it is
+//! not; [`state::AuthState::default_mailer`] is where that choice is made.
 
 pub mod cache;
 pub mod credentials;
@@ -68,6 +68,6 @@ pub mod state;
 pub mod token;
 pub mod validators;
 
-#[cfg(test)]
-#[path = "service_tests.rs"]
-mod service_tests;
+// The module's contract tests live in `apps/api/tests/auth_service.rs`, outside the
+// crate, where every path starts at `meno_api::` and the fixtures are shared with
+// `auth_router.rs` through `tests/support/mod.rs`.

@@ -1,11 +1,20 @@
-//! Contract tests for [`AuthService`], [`CredentialService`] and [`handlers`].
+//! §10 contract tests for `AuthService`, `CredentialService` and the auth handlers,
+//! driven through the shared harness in [`support`].
 //!
-//! # Why a sibling file
+//! # Why this file lives in `tests/`
 //!
-//! §9.3 caps a file at ~400 lines, and `services.rs` is already near its limit without a
-//! test module. Splitting the tests out rather than appending them keeps the production
-//! file readable — a reader looking for "what does login do" should not have to scroll
-//! past forty tests to find out.
+//! It started life as `src/modules/auth/service_tests.rs`, a sibling of the code under
+//! test. Moving it out buys two things:
+//!
+//! 1. **It runs outside the crate.** Every path below starts at `meno_api::`, which is
+//!    the path a consumer crate uses — a helper that was reachable by `super::` but not
+//!    exported now fails to compile here instead of silently staying private.
+//! 2. **It shares one harness.** `tests/support/mod.rs` was built from these same
+//!    fixtures for `auth_router.rs`; two copies of "Ada Lovelace, mixed-case address,
+//!    Correct horse battery staple" is two things to keep in step.
+//!
+//! §9.3's ~400-line cap is still why this is a separate file rather than an inline
+//! `mod tests` in `services.rs`.
 //!
 //! # What is asserted here, and why it is asserted *here*
 //!
@@ -24,6 +33,25 @@
 //! - **Reuse detection.** A replayed refresh token comes back as a refusal *and* ends
 //!   every session for that user — while a *forged* one ends nothing.
 //! - **§7.12.** An unverified Google address never links to an existing account.
+//!
+//! # What this cannot prove
+//!
+//! No Postgres, Redis or SMTP runs here; see `support::mod` for why that is a
+//! deliberate split rather than a gap being papered over.
+
+// The three panicking lints are denied workspace-wide but explicitly *allowed in
+// tests* — see `clippy.toml`, whose comment states the policy as "deny in
+// apps/api/src, allow in tests/". The `allow-*-in-tests` keys there cover `#[test]`
+// functions; the shared helpers in `support/mod.rs` and the small `async fn` helpers
+// below are not `#[test]` functions, so the allowance does not reach them.
+//
+// This is the same policy applied to the same code, not a relaxation of it: the rule
+// exists so a *request path* cannot panic, and nothing here serves a request. Every
+// `expect` below is a fixture that would make the test meaningless if it failed, and
+// its message says so.
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
+mod support;
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -33,124 +61,35 @@ use axum::body::Body;
 use axum::http::{Request as HttpRequest, StatusCode, header};
 use axum::routing::{get, post};
 use http_body_util::BodyExt;
-use tower::ServiceExt;
-
-use super::cache::{AuthCache, InMemoryAuthCache};
-use super::credentials::{CredentialDeps, CredentialService};
-use super::dto::{
+use meno_api::infrastructure::oauth::{
+    GoogleIdentity, InMemoryIdentityProvider, InMemoryStateStore,
+};
+use meno_api::middleware::auth::AuthUser;
+use meno_api::modules::auth::cache::{AuthCache, InMemoryAuthCache};
+use meno_api::modules::auth::dto::{
     ForgotPasswordRequest, GoogleMobileAuthRequest, LoginRequest, LogoutRequest,
     RefreshTokenRequest, RegisterRequest, ResendOtpRequest, SessionResponse, Validatable,
 };
-use super::error;
-use super::google::{ProviderExchange, StubExchange};
-use super::mailer::{AuthEmail, AuthMailer, RecordingAuthMailer};
-use super::model::{AuthProvider, OtpType, UserRole};
-use super::repository::{AuthRepo, InMemoryAuthRepo};
-use super::services::{AuthDeps, AuthService};
-use super::state::AuthState;
-use super::token::{TokenConfig, TokenService};
-use crate::config::Secret;
-use crate::middleware::auth::AuthUser;
+use meno_api::modules::auth::error;
+use meno_api::modules::auth::google::{ProviderExchange, StubExchange};
+use meno_api::modules::auth::handlers;
+use meno_api::modules::auth::mailer::{AuthEmail, RecordingAuthMailer};
+use meno_api::modules::auth::model::{AuthProvider, OtpType, User, UserRole};
+use meno_api::modules::auth::repository::{AuthRepo, InMemoryAuthRepo};
+use meno_api::modules::auth::services::{AuthDeps, AuthService, redact};
+use meno_api::modules::auth::state::AuthState;
+use meno_api::modules::auth::token::TokenService;
+use support::{Harness, PASSWORD, harness, harness_with, register_request, token_config};
+use tower::ServiceExt;
+
 use meno_core::ErrorCode;
 
-/// The password every fixture account is given.
-///
-/// A real password that also satisfies the composition policy — an all-lowercase
-/// passphrase would be refused at `RegisterRequest` validation before the login tests
-/// ever reached Argon2id, which is the path a timing assertion has to measure to mean
-/// anything.
-const PASSWORD: &str = "Correct horse battery staple";
-
-/// Everything the module needs, with the doubles left concrete so a test can read them.
-struct Harness {
-    state: AuthState,
-    service: AuthService,
-    credentials: CredentialService,
-    tokens: TokenService,
-    repo: Arc<InMemoryAuthRepo>,
-    mailer: Arc<RecordingAuthMailer>,
-    google: Arc<StubExchange>,
-}
-
-fn token_config() -> TokenConfig {
-    TokenConfig::validate(
-        Secret::new("access-secret-for-tests"),
-        Secret::new("refresh-secret-for-tests"),
-        900,
-        2_592_000,
-    )
-    .expect("a valid configuration")
-}
-
-fn harness() -> Harness {
-    harness_with(StubExchange::exchanging(
-        "google-subject",
-        "ada@example.com",
-    ))
-}
-
-fn harness_with(google: StubExchange) -> Harness {
-    let repo = Arc::new(InMemoryAuthRepo::new());
-    let cache = Arc::new(InMemoryAuthCache::new());
-    // Concrete, so the assertions below can read what was sent; the `dyn` view handed
-    // to the services is a clone of the same allocation, not a second double.
-    let mailer = Arc::new(RecordingAuthMailer::new());
-    let mailer_dyn: Arc<dyn AuthMailer> = Arc::clone(&mailer) as Arc<dyn AuthMailer>;
-    let repo_trait: Arc<dyn AuthRepo> = Arc::clone(&repo) as Arc<dyn AuthRepo>;
-
-    let tokens = TokenService::new(
-        token_config(),
-        Arc::clone(&repo_trait),
-        Arc::clone(&cache) as Arc<dyn AuthCache>,
-    )
-    .expect("a valid token service");
-
-    let service = AuthService::new(AuthDeps {
-        repo: Arc::clone(&repo_trait),
-        tokens: tokens.clone(),
-        mailer: Arc::clone(&mailer_dyn),
-    })
-    .expect("a valid service");
-
-    let credentials = CredentialService::new(CredentialDeps {
-        repo: Arc::clone(&repo_trait),
-        tokens: tokens.clone(),
-        mailer: Arc::clone(&mailer_dyn),
-    });
-
-    let google = Arc::new(google);
-    let state = AuthState::from_parts(
-        repo_trait,
-        cache as Arc<dyn AuthCache>,
-        tokens.clone(),
-        Arc::clone(&google) as Arc<dyn super::google::GoogleExchange>,
-        mailer_dyn,
-    )
-    .expect("a valid state");
-
-    Harness {
-        state,
-        service,
-        credentials,
-        tokens,
-        repo,
-        mailer,
-        google,
-    }
-}
-
-fn register_request() -> RegisterRequest {
-    RegisterRequest {
-        full_name: "Ada Lovelace".to_owned(),
-        // Mixed case on purpose: §9.5 normalises at the boundary, so this must not
-        // become a second account.
-        email: "Ada@Example.com".to_owned(),
-        password: PASSWORD.to_owned(),
-    }
-}
-
 /// A registered, signed-in account, and the refresh token for its session.
-async fn registered(h: &Harness) -> (super::model::User, String) {
+///
+/// Kept here rather than in [`support`] because [`support::registered`] mints a *second*
+/// session for the account, and several tests below count sessions — `registered` plus
+/// `second_device` must be two devices, not three.
+async fn registered(h: &Harness) -> (User, String) {
     let response = h
         .service
         .register(&register_request())
@@ -170,7 +109,7 @@ async fn registered(h: &Harness) -> (super::model::User, String) {
 }
 
 /// Sign a second device in, so a test has more than one session to reason about.
-async fn second_device(h: &Harness, user: &super::model::User) {
+async fn second_device(h: &Harness, user: &User) {
     h.tokens
         .issue_pair(user, vec![AuthProvider::Password], Default::default())
         .await
@@ -787,15 +726,10 @@ async fn an_unverified_provider_address_never_links_to_an_existing_account() {
         .expect("exists");
 
     let exchange = ProviderExchange::new(
-        Arc::new(
-            crate::infrastructure::oauth::InMemoryIdentityProvider::returning(
-                crate::infrastructure::oauth::GoogleIdentity::unverified(
-                    "attacker",
-                    "ada@example.com",
-                ),
-            ),
-        ),
-        Arc::new(crate::infrastructure::oauth::InMemoryStateStore::new()),
+        Arc::new(InMemoryIdentityProvider::returning(
+            GoogleIdentity::unverified("attacker", "ada@example.com"),
+        )),
+        Arc::new(InMemoryStateStore::new()),
     );
 
     let error = service
@@ -852,16 +786,10 @@ async fn a_provider_fault_is_retryable_and_leaks_nothing() {
 #[test]
 fn a_logged_address_keeps_only_the_domain() {
     // The local part is what identifies a person and what a breach list is keyed on.
-    assert_eq!(
-        super::services::redact("ada.lovelace@example.com"),
-        "***@example.com"
-    );
-    assert_eq!(
-        super::services::redact("ada@example.com"),
-        "***@example.com"
-    );
-    assert_eq!(super::services::redact("not-an-address"), "***");
-    assert_eq!(super::services::redact(""), "***");
+    assert_eq!(redact("ada.lovelace@example.com"), "***@example.com");
+    assert_eq!(redact("ada@example.com"), "***@example.com");
+    assert_eq!(redact("not-an-address"), "***");
+    assert_eq!(redact(""), "***");
 }
 
 #[test]
@@ -869,12 +797,12 @@ fn no_debug_output_carries_a_secret_or_a_code() {
     let h = harness();
 
     let service = format!("{:?}", h.service);
-    assert!(!service.contains("access-secret-for-tests"), "{service}");
-    assert!(!service.contains("refresh-secret-for-tests"), "{service}");
+    assert!(!service.contains("integration-access-secret"), "{service}");
+    assert!(!service.contains("integration-refresh-secret"), "{service}");
 
     let credentials = format!("{:?}", h.credentials);
     assert!(
-        !credentials.contains("refresh-secret-for-tests"),
+        !credentials.contains("integration-refresh-secret"),
         "{credentials}"
     );
 
@@ -894,10 +822,10 @@ fn no_debug_output_carries_a_secret_or_a_code() {
 /// it directly would not prove any of that.
 fn router(state: AuthState) -> Router {
     Router::new()
-        .route("/auth/login", post(super::handlers::login))
-        .route("/auth/logout", post(super::handlers::logout))
-        .route("/auth/sessions", get(super::handlers::list_sessions))
-        .route("/auth/resend-otp", post(super::handlers::resend_otp))
+        .route("/auth/login", post(handlers::login))
+        .route("/auth/logout", post(handlers::logout))
+        .route("/auth/sessions", get(handlers::list_sessions))
+        .route("/auth/resend-otp", post(handlers::resend_otp))
         .with_state(state)
 }
 

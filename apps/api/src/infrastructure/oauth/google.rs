@@ -30,7 +30,6 @@
 //! what only a real consent screen can.
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use oauth2::basic::{
@@ -41,18 +40,14 @@ use oauth2::{
     AuthUrl, AuthorizationCode, ClientId, ClientSecret, PkceCodeChallenge, RedirectUrl,
     StandardRevocableToken, TokenResponse, TokenUrl,
 };
+use std::time::Duration;
+
 use reqwest::Client;
 use serde::Deserialize;
 
 use crate::config::GoogleSettings;
 use crate::infrastructure::oauth::error::OAuthError;
 use crate::infrastructure::oauth::store::{GoogleIdentity, IdentityProvider, OAuthState, SCOPES};
-
-/// How long the adapter's own HTTP calls may take.
-///
-/// The token and userinfo calls sit on a sign-in request path, so they need a deadline:
-/// without one a hung connection holds the request open indefinitely.
-const REQUEST_TIMEOUT_SECS: u64 = 10;
 
 /// Google's client, with every endpoint resolved.
 type GoogleClient = oauth2::Client<
@@ -89,6 +84,15 @@ pub struct GoogleIdentityProvider {
     userinfo_uri: String,
     tokeninfo_uri: String,
     http: Client,
+    /// The code exchange's HTTP client, built once.
+    ///
+    /// Deliberately *not* the shared [`crate::infrastructure::http`] handle: `oauth2`
+    /// pins reqwest 0.12 and the workspace uses 0.13, so the two `reqwest::Client`
+    /// types are unrelated and cannot be passed across. What must not happen — and did
+    /// — is `Client::new()` per sign-in, a fresh pool and a fresh TLS handshake for
+    /// every code exchange. This field is that client, built once with the shared
+    /// layer's timeouts, so the exchange reuses one pool for the process's lifetime.
+    oauth_http: oauth2::reqwest::Client,
 }
 
 impl GoogleIdentityProvider {
@@ -119,8 +123,25 @@ impl GoogleIdentityProvider {
             .set_token_uri(token_uri)
             .set_redirect_uri(redirect_uri);
 
-        let http = Client::builder()
-            .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECS))
+        // The shared outbound client (§5.6): one pool for token, userinfo and every
+        // other adapter's calls, with the request deadline spelled in one place.
+        let http = crate::infrastructure::http::shared()
+            .map_err(|e| OAuthError::Config(e.to_string()))?
+            .clone();
+
+        // Built once, per the field's docs: `oauth2`'s client is a different reqwest
+        // type than ours, but it obeys the same outbound policy.
+        let oauth_http = oauth2::reqwest::Client::builder()
+            .timeout(Duration::from_secs(
+                crate::infrastructure::http::REQUEST_TIMEOUT_SECS,
+            ))
+            .connect_timeout(Duration::from_secs(
+                crate::infrastructure::http::CONNECT_TIMEOUT_SECS,
+            ))
+            // See `infrastructure::http`: a 3xx from the token endpoint is a fault to
+            // report, not a route to follow — and `oauth2`'s docs recommend exactly
+            // this for `request_async`.
+            .redirect(oauth2::reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| OAuthError::Config(format!("the HTTP client is unusable: {e}")))?;
 
@@ -129,6 +150,7 @@ impl GoogleIdentityProvider {
             userinfo_uri: settings.userinfo_uri.clone(),
             tokeninfo_uri: settings.tokeninfo_uri.clone(),
             http,
+            oauth_http,
         }))
     }
 
@@ -221,7 +243,7 @@ impl IdentityProvider for GoogleIdentityProvider {
             .client
             .exchange_code(AuthorizationCode::new(code.to_owned()))
             .set_pkce_verifier(oauth2::PkceCodeVerifier::new(state.verifier.clone()))
-            .request_async(&oauth2::reqwest::Client::new())
+            .request_async(&self.oauth_http)
             .await
             .map_err(|e| OAuthError::CodeRejected(e.to_string()))?;
 

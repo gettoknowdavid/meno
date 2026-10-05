@@ -82,7 +82,10 @@ pub struct Harness {
 /// Two *different* secrets, because §4.7 item 4 is the rule that a refresh token
 /// cannot be presented as an access token, and `validate` refuses a shared pair. A
 /// fixture that reused one secret would be testing a configuration the code rejects.
-fn token_config() -> TokenConfig {
+///
+/// Public because `auth_service.rs` builds a second, deliberately-failing mailer on
+/// top of this same configuration rather than re-deriving it.
+pub fn token_config() -> TokenConfig {
     TokenConfig::validate(
         Secret::new("integration-access-secret"),
         Secret::new("integration-refresh-secret"),
