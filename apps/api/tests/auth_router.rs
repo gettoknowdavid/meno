@@ -36,14 +36,22 @@ mod support;
 
 use axum::Router;
 use axum::body::Body;
+use axum::extract::Request;
 use axum::http::{Request as HttpRequest, StatusCode, header};
+use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use http_body_util::BodyExt;
+use meno_api::middleware::auth::AuthUser;
+use meno_api::modules::auth::model::{AuthProvider, UserRole};
+use meno_api::modules::auth::state::AuthState;
 use support::{Harness, PASSWORD, harness, last_mail, registered};
+use time::OffsetDateTime;
+use time::format_description::well_known::Rfc3339;
 use tower::ServiceExt;
+use uuid::Uuid;
 
 /// The routes under test, with `AuthState` installed.
-fn router(state: meno_api::modules::auth::state::AuthState) -> Router {
+fn router(state: AuthState) -> Router {
     Router::new()
         .route(
             "/auth/register",
@@ -75,6 +83,89 @@ fn json_post(uri: &str, body: String) -> HttpRequest<Body> {
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
         .expect("the request is well formed")
+}
+
+fn json_get(uri: &str) -> HttpRequest<Body> {
+    HttpRequest::builder()
+        .uri(uri)
+        .body(Body::empty())
+        .expect("the request is well formed")
+}
+
+/// The same router with the identity [`auth_middleware`] would have inserted.
+///
+/// The three session handlers read `Extension<AuthUser>`, and this suite has no
+/// middleware — so without this the endpoint is unreachable, and the wire shape of the
+/// only response in the API that carries two timestamps could not be asserted at all.
+fn router_as(state: AuthState, user: AuthUser) -> Router {
+    router(state).layer(middleware::from_fn(
+        move |mut request: Request, next: Next| {
+            let user = user.clone();
+            async move {
+                request.extensions_mut().insert(user);
+                next.run(request).await
+            }
+        },
+    ))
+}
+
+/// The fixture identity, standing in for a verified access token.
+fn caller(id: Uuid) -> AuthUser {
+    AuthUser {
+        id,
+        jti: Uuid::from_u128(1),
+        full_name: "Ada Lovelace".to_owned(),
+        email: "ada@example.com".to_owned(),
+        verified: true,
+        providers: vec![AuthProvider::Password],
+        role: UserRole::User,
+    }
+}
+
+/// Assert that no value anywhere in `value` is `time`'s nine-number date tuple.
+///
+/// `time`'s default `Serialize` for `OffsetDateTime` emits
+/// `[year, ordinal, hour, minute, second, nanosecond, offset_h, offset_m, offset_s]`
+/// because the crate avoids strings for compactness in binary formats. It is the shape
+/// this API shipped from `GET /auth/sessions` until `dto.rs` annotated its fields, and
+/// it is unreadable: element 1 is a *day of year*, not a month. Walking the tree rather
+/// than asserting two named fields is what keeps the guard honest — a date is still a
+/// tuple if it is nested in `data`, in a list, or behind a `#[serde(flatten)]`.
+fn assert_no_tuple_dates(value: &serde_json::Value, path: &str) {
+    match value {
+        serde_json::Value::Array(items) => {
+            if items.len() == 9 && items.iter().all(serde_json::Value::is_i64) {
+                panic!("`{path}` is a bare OffsetDateTime tuple: {value}");
+            }
+            for (i, item) in items.iter().enumerate() {
+                assert_no_tuple_dates(item, &format!("{path}[{i}]"));
+            }
+        }
+        serde_json::Value::Object(map) => {
+            for (key, item) in map {
+                assert_no_tuple_dates(item, &format!("{path}.{key}"));
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Assert that `value` is an RFC 3339 instant a client can actually parse.
+///
+/// Not just "it is a string": a wrong-but-stringy date fails here too, which is the
+/// half of the contract that "is not an array" alone would not catch.
+fn assert_rfc3339(value: &serde_json::Value, path: &str) {
+    let text = value
+        .as_str()
+        .unwrap_or_else(|| panic!("`{path}` must be an RFC 3339 string, got {value}"));
+
+    let parsed = OffsetDateTime::parse(text, &Rfc3339)
+        .unwrap_or_else(|e| panic!("`{path}` = {text:?} is not RFC 3339: {e}"));
+
+    assert!(
+        parsed > OffsetDateTime::UNIX_EPOCH,
+        "`{path}` = {text:?} parsed, but is not a real instant for this service"
+    );
 }
 
 /// Send one request and read back the status and parsed body.
@@ -260,6 +351,70 @@ async fn a_forged_refresh_token_is_refused_and_revokes_nothing() {
         status,
         StatusCode::OK,
         "a forged token must not have revoked this: {body}"
+    );
+}
+
+#[tokio::test]
+async fn every_date_on_the_wire_is_an_rfc3339_string() {
+    // The regression: `GET /auth/sessions` answered
+    //   "createdAt": [2026, 278, 20, 51, 45, 911000000, 0, 0, 0]
+    // because a bare `OffsetDateTime` field carries no format instruction and `time`
+    // serialises itself as a nine-number tuple. No client can read that — element 1 is a
+    // day of year, not a month — so this walks every response the suite can reach and
+    // refuses anything but an RFC 3339 string.
+    let h = harness();
+    let (user, _) = registered(&h).await;
+
+    let (status, login) = send(
+        router(h.state.clone()),
+        json_post("/auth/login", login_body()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{login}");
+
+    let (status, sessions) = send(
+        router_as(h.state, caller(user.id)),
+        json_get("/auth/sessions"),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{sessions}");
+    assert!(
+        sessions["data"].is_array() && !sessions["data"].as_array().expect("an array").is_empty(),
+        "the fixture session must be listed, or this proves nothing: {sessions}"
+    );
+
+    for (name, body) in [("login", &login), ("sessions", &sessions)] {
+        assert_no_tuple_dates(body, name);
+    }
+
+    // Named, so a failure says which field regressed rather than only that some
+    // array of nine integers turned up somewhere in the document.
+    let first = &sessions["data"][0];
+    assert_rfc3339(&first["created_at"], "sessions[0].created_at");
+    assert_rfc3339(&first["last_used_at"], "sessions[0].last_used_at");
+    assert_rfc3339(
+        &login["data"]["user"]["created_at"],
+        "login.data.user.created_at",
+    );
+
+    // And the two are consistent, which is what makes the string meaningful: the
+    // session's creation and the account's creation are both "now" for this fixture, so
+    // they must not be decades apart in some other calendar.
+    let session_created = OffsetDateTime::parse(
+        first["created_at"].as_str().expect("asserted above"),
+        &Rfc3339,
+    )
+    .expect("asserted above");
+    let user_created = OffsetDateTime::parse(
+        login["data"]["user"]["created_at"]
+            .as_str()
+            .expect("asserted above"),
+        &Rfc3339,
+    )
+    .expect("asserted above");
+    assert!(
+        (session_created - user_created).abs() < time::Duration::minutes(1),
+        "one fixture, two unrelated timestamps: {session_created} vs {user_created}"
     );
 }
 

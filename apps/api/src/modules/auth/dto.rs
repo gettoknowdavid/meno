@@ -20,6 +20,25 @@
 //! whether a one-time code is still live, is the service's question; a handler that
 //! checked either would be doing business logic, and §7's handler rule says handlers are
 //! parse → authorise → delegate → respond.
+//!
+//! # Dates on the wire
+//!
+//! Every response field typed as a date carries `#[serde(with = "time::serde::rfc3339")]`
+//! — on an `Option<T>` field it is `time::serde::rfc3339::option`, which turns `None`
+//! into `null` and back.
+//!
+//! This is not optional. `time`'s own `Serialize` for `OffsetDateTime` deliberately
+//! avoids strings ("strings are avoided to allow for optimal representations in various
+//! binary forms") and emits the nine-number tuple
+//! `(year, ordinal, hour, minute, second, nanosecond, offset_h, offset_m, offset_s)` —
+//! `"created_at": [2026, 278, 20, 51, 45, 911000000, 0, 0, 0]`. The second element is a
+//! day of year, not a month, so even a client that guessed the layout would be up to
+//! eleven months out. The attribute is what makes it RFC 3339
+//! (`"2026-10-05T20:51:45.911Z"`), which `Date.parse` in Dart and `new Date(string)` in
+//! JavaScript both accept.
+//!
+//! `apps/api/tests/wire_dates.rs` enforces it for every serialisable struct in the
+//! workspace, so a forgotten attribute fails the suite instead of shipping.
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -343,8 +362,10 @@ pub struct SessionResponse {
     /// Something a person recognises.
     pub device_label: String,
     /// When the session was created.
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
     /// When it was last used to refresh.
+    #[serde(with = "time::serde::rfc3339")]
     pub last_used_at: OffsetDateTime,
     /// How many times this device's chain has been rotated.
     pub rotations: u32,
@@ -376,6 +397,7 @@ pub struct UserResponse {
     /// The account's role.
     pub role: UserRole,
     /// When the account was created.
+    // See "Dates on the wire" in the module docs above.
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
 }

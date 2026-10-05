@@ -87,6 +87,10 @@ pub struct LivekitParticipantInfo {
     /// The Meno user, parsed from the LiveKit participant identity.
     pub id: Uuid,
     /// When they joined.
+    // RFC 3339 rather than `OffsetDateTime`'s default: `time` serialises that as the
+    // nine-number tuple `(year, ordinal, hour, minute, second, nanosecond, offset_h,
+    // offset_m, offset_s)`, which no client can read. See `modules::auth::dto`.
+    #[serde(with = "time::serde::rfc3339")]
     pub joined_at: OffsetDateTime,
 }
 
