@@ -1,0 +1,11 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/auth/google/callback?code=GOOGLE_AUTH_CODE&state=STATE_TOKEN'
+order: 2000
+queryParams:
+  - key: code
+    value: 'GOOGLE_AUTH_CODE'
+    description: 'Authorization code from Google redirect'
+  - key: state
+    value: 'STATE_TOKEN'
+    description: 'State token issued by this service'

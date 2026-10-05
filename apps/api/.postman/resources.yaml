@@ -1,0 +1,8 @@
+workspace:
+  id: 9d26492c-6fdc-4c75-aeeb-22fcc81dbfa8
+localResources:
+  specs:
+    - ../F:/projects/work/meno/apps/api/postman/specs/meno-api.yaml
+resourceNameMappings:
+  specs:
+    - ../postman/specs/meno-api.yaml: meno-api.yaml

@@ -1,0 +1,7 @@
+$kind: websocket-request
+url: 'ws://localhost:3000/ws?token={{access_token}}'
+order: 1000
+queryParams:
+  - key: token
+    value: '{{access_token}}'
+    description: 'JWT access token (Bearer header not supported for WS handshakes)'

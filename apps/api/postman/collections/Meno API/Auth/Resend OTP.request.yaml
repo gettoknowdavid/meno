@@ -1,0 +1,14 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/auth/resend-otp'
+order: 6000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "ada@example.com",
+      "otp_type": "verify_email"
+    }

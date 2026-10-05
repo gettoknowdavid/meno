@@ -1,0 +1,4 @@
+$kind: collection
+name: Auth
+description: 'Authentication and session management endpoints.'
+order: 2000

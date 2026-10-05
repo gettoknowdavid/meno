@@ -1,0 +1,4 @@
+$kind: collection
+name: WebSocket
+description: 'Real-time WebSocket connection.'
+order: 5000

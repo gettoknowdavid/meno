@@ -1,0 +1,4 @@
+$kind: collection
+name: Google OAuth
+description: 'Google OAuth2 sign-in flows (web and mobile).'
+order: 3000

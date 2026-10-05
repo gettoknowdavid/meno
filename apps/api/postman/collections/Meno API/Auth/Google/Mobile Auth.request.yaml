@@ -1,0 +1,14 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/auth/google/mobile'
+order: 3000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "id_token": "GOOGLE_ID_TOKEN",
+      "device_label": "Ada's iPhone"
+    }

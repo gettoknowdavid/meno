@@ -1,0 +1,14 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/auth/login'
+order: 2000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "email": "ada@example.com",
+      "password": "CorrectHorse9!"
+    }
