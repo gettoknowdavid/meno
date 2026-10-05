@@ -50,9 +50,11 @@ use crate::infrastructure::oauth::google::GoogleIdentityProvider;
 
 pub mod error;
 pub mod google;
+mod redis_store;
 pub mod store;
 
 pub use error::OAuthError;
+pub use redis_store::RedisOAuthStateStore;
 pub use store::{
     GoogleIdentity, IdentityProvider, InMemoryStateStore, OAuthState, OAuthStateStore,
     STATE_TTL_SECS,

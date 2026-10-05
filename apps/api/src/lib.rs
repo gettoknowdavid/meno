@@ -35,8 +35,11 @@
 //! [`meno_core::ErrorBody`], so a client sees one envelope for a body rejection, a throttle, a
 //! validation failure and a domain error alike.
 
+pub mod bootstrap;
 pub mod config;
 pub mod infrastructure;
 pub mod middleware;
 pub mod modules;
+pub mod routes;
+pub mod state;
 pub mod types;

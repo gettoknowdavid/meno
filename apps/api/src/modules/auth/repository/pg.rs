@@ -41,6 +41,16 @@ use sqlx::AssertSqlSafe;
 const USER_COLUMNS: &str = "id, full_name, bio, email, avatar_id, avatar_url, verified, \
                             role, created_at, updated_at, deleted_at";
 
+/// [`USER_COLUMNS`], qualified with the `u` alias.
+///
+/// The `SELECT`s that join `users` against `user_identities` need this: both
+/// tables have an `id`, so the unqualified list is ambiguous and Postgres
+/// rejects it. Two constants rather than one, because `RETURNING` cannot take
+/// a table qualifier -- these are genuinely different SQL, not a preference.
+const USER_COLUMNS_U: &str = "u.id, u.full_name, u.bio, u.email, u.avatar_id, \
+                              u.avatar_url, u.verified, u.role, u.created_at, \
+                              u.updated_at, u.deleted_at";
+
 /// Splice `USER_COLUMNS` into a statement template and mark the result safe.
 ///
 /// # Why this is an audit and not a suppression
@@ -58,7 +68,11 @@ const USER_COLUMNS: &str = "id, full_name, bio, email, avatar_id, avatar_url, ve
 /// future change interpolates anything else here, it fails the same way this file had to
 /// be changed to compile: by someone reading this comment.
 fn with_user_columns(template: &str) -> AssertSqlSafe<String> {
-    AssertSqlSafe(template.replace("{USER_COLUMNS}", USER_COLUMNS))
+    AssertSqlSafe(
+        template
+            .replace("{USER_COLUMNS_U}", USER_COLUMNS_U)
+            .replace("{USER_COLUMNS}", USER_COLUMNS),
+    )
 }
 
 /// Postgres-backed [`AuthRepo`].
@@ -101,8 +115,8 @@ fn internal(operation: &'static str, error: impl std::fmt::Display) -> MenoError
 impl AuthRepo for PgAuthRepo {
     async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, MenoError> {
         let sql = with_user_columns(
-            "SELECT {USER_COLUMNS} FROM public.users \
-             WHERE email = $1 AND deleted_at IS NULL",
+            "SELECT {USER_COLUMNS_U} FROM public.users u \
+             WHERE u.email = $1 AND u.deleted_at IS NULL",
         );
 
         sqlx::query_as::<_, User>(sql)
@@ -114,7 +128,8 @@ impl AuthRepo for PgAuthRepo {
 
     async fn find_user_by_id(&self, id: Uuid) -> Result<Option<User>, MenoError> {
         let sql = with_user_columns(
-            "SELECT {USER_COLUMNS} FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT {USER_COLUMNS_U} FROM public.users u \
+             WHERE u.id = $1 AND u.deleted_at IS NULL",
         );
 
         sqlx::query_as::<_, User>(sql)
@@ -290,10 +305,16 @@ impl AuthRepo for PgAuthRepo {
             .await
             .map_err(|e| internal("begin_rotate_session", e))?;
 
-        // The delete both tests liveness and claims the token. `RETURNING` is what makes
-        // the claim atomic: a losing racer gets zero rows and lands in `Replayed`.
+        // The conditional `UPDATE` both tests liveness and claims the token, and
+        // `RETURNING` is what makes the claim atomic: a losing racer matches no
+        // live row and lands in `Replayed`.
+        //
+        // It sets `revoked_at` rather than deleting, and that is load-bearing: the
+        // row is the only evidence that this jti ever existed, and the probe below
+        // reads it to tell a replay from an unknown token. Deleting here made
+        // every replay read as `Unknown` -- the opposite of what §4.7 item 2 needs.
         let claimed: Option<(Uuid, Uuid)> = sqlx::query_as(
-            "DELETE FROM public.auth_sessions \
+            "UPDATE public.auth_sessions SET revoked_at = now(), last_used_at = now() \
              WHERE refresh_jti = $1 AND user_id = $2 AND revoked_at IS NULL \
              RETURNING id, user_id",
         )
@@ -314,9 +335,11 @@ impl AuthRepo for PgAuthRepo {
                 // between "unknown token" and "a token we already rotated", and it is
                 // the whole of the reuse signal.
                 let seen: Option<Uuid> = sqlx::query_scalar(
-                    "SELECT id FROM public.auth_sessions WHERE refresh_jti = $1 LIMIT 1",
+                    "SELECT id FROM public.auth_sessions \
+                     WHERE refresh_jti = $1 AND user_id = $2 LIMIT 1",
                 )
                 .bind(current_jti)
+                .bind(user_id)
                 .fetch_optional(&self.pool)
                 .await
                 .map_err(|e| internal("check_rotated_jti", e))?;
@@ -428,7 +451,7 @@ impl AuthRepo for PgAuthRepo {
     ) -> Result<(), MenoError> {
         sqlx::query(
             "INSERT INTO public.refresh_tokens (user_id, token_hash, expires_at, jti) \
-             VALUES ($1, $2, $3)",
+             VALUES ($1, $2, $3, $4)",
         )
         .bind(user_id)
         .bind(token_hash)
@@ -549,7 +572,7 @@ impl AuthRepo for PgAuthRepo {
         provider_user_id: &str,
     ) -> Result<Option<User>, MenoError> {
         let sql = with_user_columns(
-            "SELECT {USER_COLUMNS} FROM public.users u \
+            "SELECT {USER_COLUMNS_U} FROM public.users u \
              JOIN public.user_identities i ON i.user_id = u.id \
              WHERE i.provider_type = $1 AND i.provider_user_id = $2 AND u.deleted_at IS NULL",
         );
@@ -588,7 +611,8 @@ impl AuthRepo for PgAuthRepo {
         .map_err(|e| map_error("link_provider", e))?;
 
         let row = sqlx::query_as::<_, User>(with_user_columns(
-            "SELECT {USER_COLUMNS} FROM public.users WHERE id = $1 AND deleted_at IS NULL",
+            "SELECT {USER_COLUMNS_U} FROM public.users u \
+             WHERE u.id = $1 AND u.deleted_at IS NULL",
         ))
         .bind(user_id)
         .fetch_one(&mut *tx)

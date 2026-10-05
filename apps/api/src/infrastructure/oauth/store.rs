@@ -136,7 +136,10 @@ impl GoogleIdentity {
 /// Held server-side and single-use (§4.7.7). The caller persists this with
 /// [`STATE_TTL_SECS`] as the deadline and must delete it on the callback — a second
 /// callback with the same state is a replay and must be refused.
-#[derive(Clone, Debug, PartialEq, Eq)]
+// `Serialize`/`Deserialize` because this value has to survive a round trip through
+// Redis: the CSRF binding is only useful if the callback — a *different* HTTP request,
+// possibly on a different replica — can read back what the redirect stored.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct OAuthState {
     /// The CSRF token to send to the client and compare against on callback.
     pub state: String,

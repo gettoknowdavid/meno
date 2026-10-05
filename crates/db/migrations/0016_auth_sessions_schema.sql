@@ -53,6 +53,19 @@ CREATE INDEX idx_auth_sessions_jti ON public.auth_sessions (refresh_jti);
 -- means a session created before this migration must re-authenticate once. Adding the
 -- column NOT NULL would have required dropping the constraint table-wide in one step.
 ALTER TABLE public.refresh_tokens ADD COLUMN jti UUID;
+
+-- `revoke_refresh_token` marks a token dead rather than deleting it, so the
+-- row survives as an audit trail (a deleted row cannot answer "was this token
+-- real?", which is the question reuse detection asks). `pg.rs` already wrote
+-- `revoked_at` here; nothing created it, so every logout against Postgres
+-- failed with a missing-column error.
+--
+-- Nullable so `0003`'s existing rows stay valid without a backfill: a token with
+-- a NULL `revoked_at` is live, which is the same reading the partial index uses.
+ALTER TABLE public.refresh_tokens ADD COLUMN revoked_at TIMESTAMPTZ(3);
+
+-- "Is this jti live?" is checked on every refresh and every logout.
+CREATE INDEX idx_refresh_tokens_jti_live ON public.refresh_tokens (jti) WHERE revoked_at IS NULL;
 CREATE UNIQUE INDEX idx_refresh_tokens_jti ON public.refresh_tokens (jti) WHERE jti IS NOT NULL;
 
 -- `revoke_all_sessions` is what reuse detection fires. It must not be able to miss a row

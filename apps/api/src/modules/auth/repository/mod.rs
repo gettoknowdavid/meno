@@ -26,10 +26,14 @@
 
 mod pg;
 
-#[cfg(test)]
+// The in-memory repository is a real implementation of this module's trait, not test
+// scaffolding: it backs the `tests/` integration suite, which links `meno_api` as an
+// external crate where `#[cfg(test)]` is false. Gated on the feature so a production
+// build still leaves it out.
+#[cfg(any(test, feature = "test-support"))]
 mod memory;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use memory::InMemoryAuthRepo;
 pub use pg::PgAuthRepo;
 

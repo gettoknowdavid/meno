@@ -24,6 +24,19 @@ path = "src/lib.rs"
 # (`config`, `infrastructure/*`, `middleware`, `types` and `modules/auth`). The plan's
 # remaining adapter — apalis for §6's job queue — is added when `jobs/` lands to use it,
 # because an unused dependency is a build-time cost nobody chose.
+[features]
+# Test doubles, made reachable from outside the crate.
+#
+# Rust's integration tests live in `tests/` and link `meno_api` as an *external*
+# dependency, where `#[cfg(test)]` is false — so an in-memory repository gated that way
+# does not exist as far as they are concerned. This feature is the alternative to
+# ungating unconditionally: `cargo test` turns it on automatically for the test targets,
+# while a production build compiles none of the doubles.
+#
+# Nothing here is reachable from a deployment binary, because a deployment builds with
+# `--no-default-features` semantics by simply not asking for this feature.
+test-support = []
+
 [dependencies]
 meno-core = { workspace = true }
 
@@ -82,6 +95,14 @@ uuid = { workspace = true }
 [dev-dependencies]
 tower = { workspace = true }
 wiremock = { workspace = true }
+
+# Named by the `tests/` suite. Most are already normal dependencies of the crate; they
+# are repeated here because a test target can only use what `[dev-dependencies]` (or
+# `[dependencies]`) offers, and being explicit keeps the suite's needs legible.
+axum = { workspace = true }
+http-body-util = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
 
 [lints]
 workspace = true

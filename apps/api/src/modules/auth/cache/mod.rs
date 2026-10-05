@@ -23,12 +23,14 @@
 
 mod redis_store;
 
-#[cfg(test)]
+// As in `repository`: reachable from the `tests/` suite, absent from a production
+// build.
+#[cfg(any(test, feature = "test-support"))]
 mod memory_store;
 
 pub use redis_store::RedisAuthCache;
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub use memory_store::InMemoryAuthCache;
 
 use async_trait::async_trait;
