@@ -8,9 +8,12 @@
 //! the handler would catch either, which is why §10 ranks router tests separately from
 //! unit tests rather than treating them as a longer version of the same thing.
 //!
-//! The router here is built by hand because `routes.rs` has not landed yet. When it
-//! does, this file's `router()` should be replaced by the real one and these tests
-//! should keep passing unchanged — that is the property being protected.
+//! The router here is built by hand rather than reused from
+//! [`meno_api::routes::build_routes`], because that needs a real `MenoState` — a live
+//! Postgres pool and Redis client — and assembling those would turn this into an
+//! integration test against shared infrastructure. Keeping the router local keeps the
+//! suite hermetic; the cost is that `router()` must be kept in step with the real
+//! table by hand.
 //!
 //! # What this cannot prove
 //!

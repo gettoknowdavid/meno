@@ -290,7 +290,8 @@ mod tests {
     //! exists to prevent, so the test is "every path in the table answers something other
     //! than 404" rather than a behavioural one. The handlers' behaviour is covered by
     //! `tests/auth_service.rs` and `tests/auth_router.rs`, and the live wiring — auth
-    //! gate, limiter, readiness probes — by `tests/router_wiring.rs`.
+    //! gate, limiter, readiness probes — against a running instance, since each of them
+    //! needs a live Postgres and Redis.
 
     use super::*;
     use axum::body::Body;
