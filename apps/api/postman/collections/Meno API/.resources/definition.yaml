@@ -1,19 +1,11 @@
 $kind: collection
-name: 'Meno API'
-description: 'Meno HTTP API — authentication, session management, and real-time features.'
+description: Meno HTTP API — authentication, session management, and real-time features.
 variables:
-  - key: base_url
-    value: '{{base_url}}'
-    description: 'Base URL — set by the active environment'
-  - key: access_token
-    value: ''
-    description: 'JWT access token — populated by the login/register post-response script'
-  - key: refresh_token
-    value: ''
-    description: 'JWT refresh token — populated by the login/register post-response script'
+  base_url: "{{base_url}}"
+  access_token: ""
+  refresh_token: ""
 scripts:
-  - type: 'http:afterResponse'
-    language: text/javascript
+  - type: http:afterResponse
     code: |-
       // Auto-capture tokens from auth responses (register, login, refresh, Google flows)
       const json = pm.response.json();
@@ -21,3 +13,4 @@ scripts:
           pm.collectionVariables.set('access_token', json.data.access_token);
           pm.collectionVariables.set('refresh_token', json.data.refresh_token);
       }
+    language: text/javascript

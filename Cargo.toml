@@ -124,10 +124,10 @@ dashmap = "7.0.0-rc2"
 dotenvy = "0.15.7"
 futures-util = "0.3.34"
 mockall = "0.15.0"  # dev-dependency only
-wiremock = "0.6.5"   # dev-dependency only
 once_cell = "1.21.4"
 regex = "1.13.1"
 strum = { version = "0.28.0", features = ["derive"] }
+wiremock = "0.6.5"  # dev-dependency only
 
 [workspace.lints.clippy]
 dbg_macro = "deny"
@@ -141,6 +141,10 @@ unwrap_used = "deny"
 
 [workspace.lints.rust]
 missing_docs = "warn"
+
+[profile.dev]
+debug = 1
+split-debuginfo = "unpacked"
 
 [profile.release]
 opt-level = 3

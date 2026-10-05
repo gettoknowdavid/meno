@@ -67,6 +67,23 @@ impl InMemoryAuthRepo {
             .unwrap_or_else(|e| e.into_inner())
             .refresh_spent
     }
+
+    /// What is stored against a live one-time code, if any.
+    ///
+    /// Exists so a test can assert on the *stored representation* of a code rather than
+    /// only on whether spending it worked — "the flow succeeds" is also true when the
+    /// code sits in the table in plaintext, which is the property that must not be true.
+    /// Returning [`None`] for a spent or unknown code keeps it usable after a spend.
+    #[must_use]
+    pub fn stored_otp(&self, email: &str, kind: OtpType) -> Option<String> {
+        let key = (User::normalized_email(email), kind);
+        self.state
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .codes
+            .get(&key)
+            .map(|otp| otp.code.clone())
+    }
 }
 
 #[derive(Debug, Default)]

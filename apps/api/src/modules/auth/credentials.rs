@@ -22,6 +22,7 @@
 
 use std::time::Duration;
 
+use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
@@ -42,8 +43,7 @@ use meno_core::Error as MenoError;
 ///
 /// Ten minutes: long enough for a user who left the app to come back to it, short enough
 /// that a code left in a mailbox — which is readable by whoever holds the mailbox — is
-/// not useful for long. §3.2 notes the code is stored in plaintext while it lives, which
-/// is the reason the window is not a day.
+/// not useful for long.
 pub const OTP_TTL: Duration = Duration::from_secs(600);
 
 /// Number of digits in a one-time code.
@@ -230,9 +230,12 @@ impl CredentialService {
     /// whatever storage reports.
     async fn consume_code(&self, email: &str, kind: OtpType, code: &str) -> Result<(), MenoError> {
         let now = OffsetDateTime::now_utc();
+        // The digest, not the code: storage holds hashes (see `code_digest`), so the
+        // lookup has to be made with the same value the row was written with.
+        let digest = code_digest(code);
         if self
             .repo
-            .consume_otp(email, kind, code, now)
+            .consume_otp(email, kind, &digest, now)
             .await
             .map_err(|problem| {
                 tracing::error!(error = %problem, "could not read a one-time code");
@@ -264,7 +267,11 @@ pub(crate) async fn send_code(
     let code = generate_code();
     let expires_at = OffsetDateTime::now_utc() + OTP_TTL;
 
-    if let Err(problem) = repo.save_otp(email, kind, &code, expires_at).await {
+    // The digest goes to storage; the code itself only ever leaves in the email below.
+    if let Err(problem) = repo
+        .save_otp(email, kind, &code_digest(&code), expires_at)
+        .await
+    {
         tracing::error!(error = %problem, kind = kind.as_str(), "could not store a one-time code");
         return;
     }
@@ -297,6 +304,36 @@ fn generate_code() -> String {
     (0..OTP_DIGITS)
         .map(|_| char::from(b'0' + rng.random_range(0..10)))
         .collect()
+}
+
+/// SHA-256 of a one-time code, hex-encoded — what the `otps` row stores.
+///
+/// # Why the code is not stored
+///
+/// The `otps` table holds one row per outstanding code, and it holds both
+/// `verify_email` and `reset_password` codes. With the code in plaintext there, anyone
+/// who can read the table — a leaked backup, a read-only SQL injection somewhere else
+/// in the codebase, an over-broad analytics role — can verify an account or reset any
+/// user's password without ever touching the mail transport. Hashing removes that:
+/// the table becomes useless on its own, which is the same reasoning and the same
+/// primitive already used for refresh tokens in [`super::token::hash_token`].
+///
+/// # What this does not defend against
+///
+/// An attacker who can *call* `verify-email` can still try all a million six-digit
+/// codes against one address; a digest does not slow that down, because the endpoint
+/// hashes whatever it is given. That is bounded by two things that already exist and
+/// that this change does not weaken: [`OTP_TTL`] is ten minutes, and the rate limiter
+/// on `/auth/*` is fail-closed. Salted hashing (Argon2) buys nothing here and costs
+/// the index lookup the spend path depends on — the comparison happens in SQL, on an
+/// exact match against the hex digest.
+///
+/// The comparison itself is therefore not constant-time, and cannot be: it is an
+/// equality predicate inside the conditional `UPDATE`. What that would leak is the
+/// match length of a *digest*, not of the code, so there is nothing to learn.
+#[must_use]
+pub fn code_digest(code: &str) -> String {
+    hex::encode(Sha256::digest(code.as_bytes()))
 }
 
 /// A stored one-time code, for the repository contract and for tests.

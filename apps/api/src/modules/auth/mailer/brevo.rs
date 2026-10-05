@@ -108,14 +108,25 @@ impl std::fmt::Debug for BrevoMailer {
 }
 
 impl BrevoMailer {
-    /// The adapter for `settings`, pointed at [`DEFAULT_ENDPOINT`].
+    /// The adapter for `settings`, pointed at [`DEFAULT_ENDPOINT`] unless
+    /// `SMTP_ENDPOINT` overrides it.
+    ///
+    /// # Why the endpoint is overridable
+    ///
+    /// The transport is an HTTPS API, so the local story is not "run an SMTP server" —
+    /// it is "run something that speaks this API". Pointing `SMTP_ENDPOINT` at a local
+    /// mock gives a developer the real adapter, the real rendered body and a 201, with
+    /// no provider account, no quota and no 401, and it exercises the production code
+    /// path rather than a second transport that only exists locally.
     ///
     /// # Errors
     ///
     /// [`MailError`]; see its variants. Reported at startup by
-    /// [`super::super::state::AuthState::default_mailer`].
+    /// [`super::super::state::AuthState::default_mailer`], so an override that does not
+    /// parse fails the boot loudly instead of failing every send.
     pub fn new(settings: &EmailSettings) -> Result<Self, MailError> {
-        Self::with_endpoint(settings, DEFAULT_ENDPOINT)
+        let endpoint = settings.endpoint.as_deref().unwrap_or(DEFAULT_ENDPOINT);
+        Self::with_endpoint(settings, endpoint)
     }
 
     /// Build against an explicit endpoint — the test seam, as in the push adapter.
@@ -248,6 +259,7 @@ mod tests {
             user: "brevo".to_owned(),
             password: Secret::new("api-key-123"),
             from: "no-reply@example.com".to_owned(),
+            endpoint: None,
         }
     }
 
@@ -264,6 +276,59 @@ mod tests {
         // root would let a wrong-path regression pass unnoticed.
         let endpoint = format!("{}/v3/smtp/email", server.uri());
         BrevoMailer::with_endpoint(&settings(), &endpoint).expect("the fixture endpoint parses")
+    }
+
+    #[tokio::test]
+    async fn an_endpoint_override_receives_the_message_instead_of_the_provider() {
+        // The property `SMTP_ENDPOINT` exists for: a developer points it at a local
+        // catcher and gets a 201 with no provider account. This asserts the override
+        // is honoured by `new()` — the constructor production actually calls — rather
+        // than only by the test seam.
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v3/smtp/email"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let overridden = EmailSettings {
+            endpoint: Some(format!("{}/v3/smtp/email", server.uri())),
+            ..settings()
+        };
+        let mailer = BrevoMailer::new(&overridden).expect("the override parses");
+
+        mailer.send(&message()).await.expect("sent");
+
+        server
+            .received_requests()
+            .await
+            .expect("recorded")
+            .into_iter()
+            .for_each(|request| assert_eq!(request.method.as_str(), "POST"));
+    }
+
+    #[tokio::test]
+    async fn without_an_override_the_provider_endpoint_is_used() {
+        // The other half: an absent override must not become an empty or relative URL,
+        // which would fail every send at boot instead of reaching the provider.
+        let mailer = BrevoMailer::new(&settings()).expect("the default endpoint parses");
+        assert_eq!(mailer.endpoint.as_str(), DEFAULT_ENDPOINT);
+    }
+
+    #[test]
+    fn an_unparseable_override_is_refused_at_construction() {
+        // A typo in a development convenience variable should fail the boot with a
+        // readable message, not once per send.
+        let broken = EmailSettings {
+            endpoint: Some("not a url".to_owned()),
+            ..settings()
+        };
+        assert!(
+            BrevoMailer::new(&broken).is_err(),
+            "refused at construction"
+        );
     }
 
     #[tokio::test]

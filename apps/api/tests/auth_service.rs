@@ -66,9 +66,11 @@ use meno_api::infrastructure::oauth::{
 };
 use meno_api::middleware::auth::AuthUser;
 use meno_api::modules::auth::cache::{AuthCache, InMemoryAuthCache};
+use meno_api::modules::auth::credentials::code_digest;
 use meno_api::modules::auth::dto::{
     ForgotPasswordRequest, GoogleMobileAuthRequest, LoginRequest, LogoutRequest,
     RefreshTokenRequest, RegisterRequest, ResendOtpRequest, SessionResponse, Validatable,
+    VerifyEmailRequest,
 };
 use meno_api::modules::auth::error;
 use meno_api::modules::auth::google::{ProviderExchange, StubExchange};
@@ -142,6 +144,90 @@ async fn registering_creates_the_account_mails_a_code_and_returns_a_session() {
     assert_eq!(mail.to, "ada@example.com");
     assert_eq!(mail.code.len(), 6, "six digits");
     assert!(mail.code.bytes().all(|byte| byte.is_ascii_digit()));
+}
+
+// ── one-time codes at rest ─────────────────────────────────────────────────
+
+#[tokio::test]
+async fn the_stored_code_is_a_digest_and_not_the_code_that_was_mailed() {
+    // The `otps` table holds both `verify_email` and `reset_password` codes, so a
+    // plaintext row is enough to verify an account or take over any account from a
+    // database dump alone. The digest has to be in the row, and the code that reaches
+    // the mailbox must still be the one that verifies.
+    let h = harness();
+    h.service
+        .register(&register_request())
+        .await
+        .expect("registering");
+
+    let mailed = h.mailer.last().expect("a message").code.clone();
+    let stored = h
+        .repo
+        .stored_otp("ada@example.com", OtpType::VerifyEmail)
+        .expect("a live code");
+
+    assert_ne!(stored, mailed, "the code itself must never reach storage");
+    assert_eq!(
+        stored,
+        code_digest(&mailed),
+        "what is stored is the digest of the code that was mailed"
+    );
+    assert_eq!(stored.len(), 64, "SHA-256 rendered as hex");
+    assert!(stored.bytes().all(|byte| byte.is_ascii_hexdigit()));
+}
+
+#[tokio::test]
+async fn a_mailed_code_still_verifies_even_though_storage_holds_a_digest() {
+    // The other half of the same property: hashing must not break spending. If the
+    // write hashed and the read did not, every user would be locked out and only the
+    // error rate would show it.
+    let h = harness();
+    registered(&h).await;
+
+    let mailed = h.mailer.last().expect("a message").code.clone();
+    h.credentials
+        .verify_email(&VerifyEmailRequest {
+            email: "ada@example.com".to_owned(),
+            code: mailed,
+        })
+        .await
+        .expect("the mailed code verifies");
+}
+
+#[tokio::test]
+async fn a_reset_code_is_also_stored_as_a_digest() {
+    // The reset flow is the higher-value target: the code authorises a password change,
+    // and `forgot_password` ends every session when it succeeds.
+    let h = harness();
+    registered(&h).await;
+
+    h.credentials
+        .forgot_password(&ForgotPasswordRequest {
+            email: "ada@example.com".to_owned(),
+        })
+        .await
+        .expect("requesting a reset");
+
+    let mailed = h.mailer.last().expect("a message").code.clone();
+    let stored = h
+        .repo
+        .stored_otp("ada@example.com", OtpType::ResetPassword)
+        .expect("a live reset code");
+
+    assert_ne!(
+        stored, mailed,
+        "the reset code must not be readable from storage"
+    );
+    assert_eq!(stored, code_digest(&mailed));
+}
+
+#[tokio::test]
+async fn a_digest_is_stable_and_distinguishes_codes() {
+    // Stability is what makes the equality lookup in SQL work at all; distinguishability
+    // is what stops one address's code from spending another's.
+    assert_eq!(code_digest("123456"), code_digest("123456"));
+    assert_ne!(code_digest("123456"), code_digest("654321"));
+    assert_eq!(code_digest("123456").len(), 64);
 }
 
 #[tokio::test]

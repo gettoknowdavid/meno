@@ -279,6 +279,12 @@ pub struct EmailSettings {
     pub password: Secret,
     /// Envelope sender.
     pub from: String,
+    /// Overrides the transactional-mail API URL, for a local catcher.
+    ///
+    /// `None` means the provider's real endpoint. Set it to a local mock to read
+    /// outgoing mail in development without a provider account — see
+    /// [`DEFAULT_ENDPOINT`](crate::modules::auth::mailer::brevo::DEFAULT_ENDPOINT).
+    pub endpoint: Option<String>,
 }
 
 /// S3-compatible object storage settings. Present only when storage is enabled.
@@ -530,6 +536,11 @@ impl Config {
             user: required_str(source, "SMTP_USER", &mut errors),
             password: required_secret(source, "SMTP_PASSWORD", &mut errors),
             from: required_str(source, "SMTP_FROM", &mut errors),
+            // The only optional member of `EmailSettings`, and the only one that has a
+            // development use: point it at `ops/mail-catcher.mjs` and outgoing mail is
+            // readable in a browser instead of requiring a provider account. Absent in
+            // every real deployment, where the default is the only correct value.
+            endpoint: source.get("SMTP_ENDPOINT"),
         });
 
         // Storage is gated on `STORAGE_ENABLED`, falling back to the presence of
@@ -1043,6 +1054,38 @@ mod tests {
 
         assert_eq!(email.host, "smtp.example.com");
         assert_eq!(email.port, 465, "465 is the documented default");
+        assert_eq!(
+            email.endpoint, None,
+            "no override unless one is configured: production must reach the provider"
+        );
+    }
+
+    #[test]
+    fn the_mail_endpoint_override_is_optional_and_read_from_smtp_endpoint() {
+        let base = valid()
+            .with("SMTP_HOST", "smtp.example.com")
+            .with("SMTP_USER", "postmaster")
+            .with("SMTP_PASSWORD", "smtp-password")
+            .with("SMTP_FROM", "hello@example.com");
+        // `with` consumes, so each variant starts from its own copy.
+        let base_blank = base.clone();
+
+        let overridden = Config::from_source(&base.with("SMTP_ENDPOINT", "http://127.0.0.1:1026"))
+            .expect("valid");
+        assert_eq!(
+            overridden
+                .email
+                .as_ref()
+                .expect("email")
+                .endpoint
+                .as_deref(),
+            Some("http://127.0.0.1:1026")
+        );
+
+        // Empty is unset, not a URL of "" — the source treats `KEY=` as absent, so a
+        // leftover blank in a copied `.env` does not break the boot.
+        let blank = Config::from_source(&base_blank.with("SMTP_ENDPOINT", "")).expect("valid");
+        assert_eq!(blank.email.as_ref().expect("email").endpoint, None);
     }
 
     #[test]
