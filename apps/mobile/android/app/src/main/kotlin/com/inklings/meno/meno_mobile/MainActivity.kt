@@ -1,4 +1,4 @@
-package com.inklings.meno.meno_mobile
+package com.inklings.meno
 
 import io.flutter.embedding.android.FlutterActivity
 
