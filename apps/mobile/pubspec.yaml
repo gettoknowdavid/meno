@@ -59,3 +59,31 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  assets:
+    - assets/json/kjv.json
+
+  fonts:
+    - family: MIcons
+      fonts:
+        - asset: assets/fonts/MIcons.ttf
+
+flutter_launcher_icons:
+  android: "ic_launcher"
+  ios: true
+  image_path: "assets/images/ic_launcher.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+  web:
+    generate: true
+  windows:
+    generate: true
+  macos:
+    generate: true
+
+flutter_native_splash:
+  color: "#360090"
+
+  android_12:
+    image: assets/images/splash-logo.png
+    icon_background_color: "#360090"
