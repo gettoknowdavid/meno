@@ -130,8 +130,10 @@ coverage/
 
 .env
 .env.local
+.env.dev
 .env.development
 .env.development.local
+.env.prod
 .env.production
 .env.production.local
 .env.test.local
