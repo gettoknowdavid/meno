@@ -359,9 +359,115 @@ impl ErrorBody {
     }
 }
 
+/// Build a validation failure from one field's messages.
+///
+/// The one-argument form, for the common case of a single rule failing.
+#[must_use]
+pub fn invalid_field(field: &str, message: impl Into<String>) -> Error {
+    let mut fields: HashMap<String, Vec<String>> = HashMap::new();
+    fields.insert(field.to_owned(), vec![message.into()]);
+    Error::Validation { fields }
+}
+
+/// Build a validation failure from several fields at once.
+///
+/// Takes ownership so a caller can hand it a [`FieldErrors`] it built by accumulating,
+/// which is how every `validate` method reports without cloning.
+#[must_use]
+pub fn invalid_fields(fields: HashMap<String, Vec<String>>) -> Error {
+    Error::Validation { fields }
+}
+
+/// The accumulator [`invalid_fields`] is fed from.
+///
+/// A named type rather than a free function so the "create, fill, convert" shape is
+/// visible in the signature of every `validate` method, and so the empty-map case is
+/// handled once — a validation failure with no fields is a bug, and it is caught here
+/// rather than shipped as `{code: "VALIDATION_FAILED", data: {}}`.
+///
+/// # Why it lives here and not in a module
+///
+/// It started in `modules/auth/error.rs`, which meant the second module to need one
+/// would have had to copy it — and a copy that accumulates differently is how §4.2's
+/// "duplicated nine times and drifted" happens again. A module may reach down to
+/// `crates/core` and may not reach sideways into another module, so the accumulator
+/// every module needs has to sit below both of them. It is pure `std` with no I/O, so
+/// §2.1's purity rule is satisfied.
+#[derive(Debug, Default)]
+pub struct FieldErrors {
+    fields: HashMap<String, Vec<String>>,
+}
+
+impl FieldErrors {
+    /// An empty accumulator.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Record `message` against `field`.
+    pub fn push(&mut self, field: &str, message: impl Into<String>) {
+        self.fields
+            .entry(field.to_owned())
+            .or_default()
+            .push(message.into());
+    }
+
+    /// Record every message in `messages` against `field`.
+    pub fn extend(&mut self, field: &str, messages: &[&str]) {
+        for message in messages {
+            self.push(field, *message);
+        }
+    }
+
+    /// Whether anything failed.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.fields.is_empty()
+    }
+
+    /// The validation error, or `Ok(())` when nothing failed.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Validation`] carrying every accumulated field.
+    pub fn into_result(self) -> Result<(), Error> {
+        if self.fields.is_empty() {
+            Ok(())
+        } else {
+            Err(invalid_fields(self.fields))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_empty_accumulator_is_success_not_an_empty_failure() {
+        // The bug this catches: a `validate` that returns
+        // `Err(Validation { fields: {} })`, which renders as a 422 with no explanation.
+        assert!(FieldErrors::new().into_result().is_ok());
+    }
+
+    #[test]
+    fn validation_keeps_one_entry_per_field() {
+        let mut fields = FieldErrors::new();
+        fields.push("email", "An email address is required");
+        fields.push("password", "A password must be at least 8 characters");
+
+        let Error::Validation { fields } = fields.into_result().expect_err("failed") else {
+            panic!("expected a validation failure");
+        };
+
+        assert_eq!(fields.len(), 2);
+        assert_eq!(fields["email"], ["An email address is required"]);
+        assert_eq!(
+            fields["password"],
+            ["A password must be at least 8 characters"]
+        );
+    }
 
     #[test]
     fn infrastructure_errors_never_leak_detail_to_the_client() {

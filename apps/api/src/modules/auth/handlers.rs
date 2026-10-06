@@ -31,7 +31,6 @@
 //! wiring bug reported as a 500, not a user who forgot to log in.
 
 use axum::extract::{Extension, Path, State};
-use axum::response::{IntoResponse, Response};
 use uuid::Uuid;
 
 use super::dto::{
@@ -43,34 +42,13 @@ use super::google::GoogleAuthorize;
 use super::state::AuthState;
 use crate::middleware::auth::AuthUser;
 use crate::middleware::extractors::MenoBody;
-use crate::middleware::from_error;
 use crate::types::meno_response::MenoResponse;
 
 /// A handler result: the envelope on success, the shared renderer on failure.
-pub type Outcome<T> = Result<MenoResponse<T>, Failure>;
-
-/// A domain failure on its way to the wire.
 ///
-/// Deliberately not a `Response`. Returning the rendered `Response` as the error type
-/// would type `axum::response::Response` into every handler signature, and a handler
-/// that wanted to *inspect* a failure — a test asserting the code, or a future handler
-/// that adds a header — would find it had already been thrown away.
-#[derive(Debug)]
-pub struct Failure(pub meno_core::Error);
-
-impl From<meno_core::Error> for Failure {
-    fn from(error: meno_core::Error) -> Self {
-        Self(error)
-    }
-}
-
-impl IntoResponse for Failure {
-    /// The §4.2 boundary. `middleware::from_error` is the only place in the crate that
-    /// builds an error body, so this is the only place that reaches for it.
-    fn into_response(self) -> Response {
-        from_error(&self.0)
-    }
-}
+/// Re-exported from [`crate::types`] rather than defined here, so a module that may not
+/// reach sideways into `auth` can still return the same shape.
+pub use crate::types::meno_response::{Failure, Outcome};
 
 /// `POST /auth/register`.
 pub async fn register(

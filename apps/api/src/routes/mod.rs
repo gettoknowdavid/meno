@@ -15,10 +15,19 @@
 //!
 //! # Modules contribute, they do not self-register
 //!
-//! [`build_routes`] names each module's paths explicitly. A module registering its own
+//! [`build_routes`] names each module's mount explicitly. A module registering its own
 //! routes would be convenient and would make the table impossible to read in one place —
 //! and the table *is* the security surface, so it should be reviewable without opening
 //! eight files.
+//!
+//! # One file per module, one table
+//!
+//! Each module's paths live in its own file — [`auth::routes`], [`broadcasts::routes`] —
+//! so adding a module does not make this file the place where every endpoint in the
+//! product is spelled out, and so a module's layers and its reason for them stay with
+//! the handlers they wrap. The *mounts* stay here: this file is the only place that
+//! answers "what does this API expose", and every module's [`PathList`](auth::AUTH_PATHS)
+//! is re-exported below so the tests can check all of them from one place.
 //!
 //! # Layer order is a contract, not a preference
 //!
@@ -26,37 +35,28 @@
 //! stack, then auth, then rate limiting, then idempotency — because each layer reads
 //! what the one above it inserted. This file implements it by splitting the auth table
 //! into a public half and a protected half and applying the layers per half; see
-//! [`auth_routes`] for the reasoning.
+//! [`auth::routes`] for the reasoning.
 
+mod auth;
+mod broadcasts;
+mod health;
 mod layers;
 mod metrics;
 mod ws;
 
 use std::sync::Arc;
-use std::time::Duration;
 
-use axum::Json;
 use axum::Router;
-use axum::extract::State;
-use axum::http::StatusCode;
-use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
-use serde::Serialize;
+use axum::routing::get;
 
-use crate::infrastructure::redis::Redis;
-use crate::middleware::auth::auth_middleware;
-use crate::middleware::idempotency::idempotency_middleware;
-use crate::middleware::rate_limit::{LimitPolicy, RateLimitState, rate_limit_middleware};
-use crate::modules::auth::state::AuthState;
+use crate::middleware::rate_limit::RateLimitState;
 use crate::state::MenoState;
 
-/// How long one dependency probe may take before it is reported as down.
-///
-/// A readiness answer an orchestrator waits on must be fast: a probe that hangs is
-/// indistinguishable from an outage, and one that takes ten seconds turns every
-/// dependency blip into a deployment event. Two seconds is comfortably above a local
-/// round trip and well below any load-balancer timeout.
-const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+// Every module's path list, so one test can assert the whole table. Re-exported rather
+// than re-declared: a list written twice is a list that will disagree with the router.
+pub use auth::{AUTH_PATHS, PROTECTED_PATHS};
+pub use broadcasts::BROADCAST_PATHS;
+pub use health::HEALTH_PATHS;
 
 /// Build the application's routes.
 ///
@@ -70,12 +70,15 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(2);
 /// the position its own module docs describe.
 pub fn build_routes(state: MenoState) -> Router {
     let guard = state.auth_guard.clone();
-    let limiter = RateLimitState::new(state.redis.clone(), LimitPolicy::auth());
+    let limiter = RateLimitState::new(state.redis.clone(), auth::policy());
+    // One handle, two mounts: the idempotency middleware needs Redis either way, and
+    // sharing the `Arc` keeps a single connection pool behind both.
     let idempotency = Arc::new(state.redis.clone());
+    let idempotency_for_broadcasts = Arc::clone(&idempotency);
 
     let router = Router::new()
-        .route("/health", get(health))
-        .route("/health/ready", get(readiness))
+        .route("/health", get(health::liveness))
+        .route("/health/ready", get(health::readiness))
         // Private by default (§7.5): see `routes::metrics` for the two fail-closed
         // branches that replace `master`'s public endpoint.
         .route("/metrics", get(metrics::handler))
@@ -93,193 +96,24 @@ pub fn build_routes(state: MenoState) -> Router {
         //
         // The alternative, widening all fourteen handlers to take `MenoState`, is
         // precisely the god-object coupling §9.3 rules out.
+        // Each module's sub-router is built against its own state and then lifted to
+        // the application's with `with_state`, which projects the one field the module
+        // needs through its `FromRef` impl. No handler ever sees — or can reach — the
+        // rest.
         .nest(
             "/auth",
-            auth_routes(guard, limiter, idempotency).with_state(state.auth.clone()),
+            auth::routes(guard, limiter, idempotency).with_state(state.auth.clone()),
+        )
+        .nest(
+            "/broadcasts",
+            // The nest carries no prefix of its own: the module's paths already begin
+            // with `/broadcasts`, so the tree reads `GET /broadcasts` and not
+            // `/broadcasts/broadcasts`.
+            broadcasts::routes(state.auth_guard.clone(), idempotency_for_broadcasts)
+                .with_state(state.broadcast.clone()),
         );
 
     layers::apply(router, &state.config).with_state(state)
-}
-
-/// The auth module's endpoints (§4.7), with their layers attached.
-///
-/// Grouped here rather than inside the auth module so the table reads top to bottom:
-/// this is what the API surface *is*, and a reader should not have to know how many
-/// modules exist to answer that.
-///
-/// # Why the router splits in two
-///
-/// Three routes read `Extension<AuthUser>` and therefore need
-/// [`crate::middleware::auth::auth_middleware`] in front of them:
-/// [`handlers::list_sessions`], [`handlers::revoke_session`] and
-/// [`handlers::logout_everywhere`]. Gating the whole nest would be a lockout —
-/// `register` and `login` are how a caller obtains a token — and gating nothing is
-/// what `master` did, which left those three answering **500 "Missing request
-/// extension"** rather than 401: a route that exists, compiles, and is unreachable.
-///
-/// So the nest is two routers, each with its own layer stack in the order
-/// `middleware/mod.rs` requires (outermost last):
-///
-/// | half | outermost → innermost |
-/// | --- | --- |
-/// | public (11 routes) | rate limit → idempotency |
-/// | protected (3 routes) | auth → rate limit → idempotency |
-///
-/// The protected order is the load-bearing one: the guard runs first so it can insert
-/// [`AuthUser`](crate::middleware::auth::AuthUser), the limiter runs second so §4.4's
-/// "identify by authenticated user id" can read it, and idempotency runs last so
-/// §4.5's caller scoping is neither anonymous nor spoofable.
-///
-/// Rate limiting is [`LimitPolicy::auth`] — 5/min, **fail closed** (§4.4): a login
-/// endpoint whose limiter is down must not become an unthrottled login endpoint.
-///
-/// # What an earlier attempt got wrong
-///
-/// A previous revision documented that `from_fn_with_state(auth_state, auth_middleware)`
-/// did not compile against these four handlers, with `FromFn<_, _, Route, _>:
-/// Service<_>` unsatisfied. The layer has to be applied to the `Router` — which owns
-/// the state plumbing — not to a single route's method router; `Router::layer` is what
-/// makes `FromFn` a service here. That is the shape below, and it compiles.
-fn auth_routes(
-    guard: crate::middleware::auth::AuthState,
-    limiter: RateLimitState,
-    idempotency: Arc<Redis>,
-) -> Router<AuthState> {
-    use crate::modules::auth::handlers;
-
-    let public = Router::new()
-        // Registration and sign-in.
-        .route("/register", post(handlers::register))
-        .route("/login", post(handlers::login))
-        .route("/google/url", get(handlers::google_authorize_url))
-        .route("/google/callback", get(handlers::google_web_callback))
-        .route("/google/mobile", post(handlers::google_mobile_auth))
-        // Session lifecycle that presents its tokens in the body, so it needs no
-        // request-extension identity to work.
-        .route("/refresh", post(handlers::refresh))
-        .route("/logout", post(handlers::logout))
-        // One-time codes and password resets.
-        .route("/verify-email", post(handlers::verify_email))
-        .route("/resend-otp", post(handlers::resend_otp))
-        .route("/forgot-password", post(handlers::forgot_password))
-        .route("/reset-password", post(handlers::reset_password))
-        // Innermost first: applied before the limiter so the limiter is outermost of
-        // this half's stack.
-        .layer(from_fn_with_state(
-            Arc::clone(&idempotency),
-            idempotency_middleware,
-        ))
-        .layer(from_fn_with_state(limiter.clone(), rate_limit_middleware));
-
-    let protected = Router::new()
-        .route("/sessions", get(handlers::list_sessions))
-        .route("/sessions/{id}", post(handlers::revoke_session))
-        .route("/logout-all", post(handlers::logout_everywhere))
-        // Reverse of the required outermost-first order: auth last, because the last
-        // layer applied is the one a request meets first.
-        .layer(from_fn_with_state(idempotency, idempotency_middleware))
-        .layer(from_fn_with_state(limiter, rate_limit_middleware))
-        .layer(from_fn_with_state(guard, auth_middleware));
-
-    public.merge(protected)
-}
-
-/// `GET /health` — is the process up.
-///
-/// Deliberately does not touch Postgres or Redis. This endpoint answers "is this
-/// container running", and a liveness probe that fails when a *dependency* is down gets
-/// the container killed and restarted, which fixes nothing and turns a database blip
-/// into an outage. Dependency health is [`readiness`]'s job.
-#[must_use]
-pub async fn health() -> &'static str {
-    "ok"
-}
-
-/// What `/health/ready` reports (plan §4.3).
-///
-/// The exact shape the plan's gate curls for — `{"status":"ok","db":true,"redis":true}`
-/// — with `status` flipping to `degraded` when either probe fails, and the status line
-/// with it: 200 while the instance may take traffic, 503 when it may not.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
-pub struct Readiness {
-    /// `"ok"` or `"degraded"` — the one field an operator reads first.
-    pub status: &'static str,
-    /// Postgres answered `SELECT 1` inside the probe budget.
-    pub db: bool,
-    /// Redis answered `PING` inside the probe budget.
-    pub redis: bool,
-}
-
-impl Readiness {
-    /// Assemble the report for two probe outcomes.
-    #[must_use]
-    pub const fn new(db: bool, redis: bool) -> Self {
-        Self {
-            status: if db && redis { "ok" } else { "degraded" },
-            db,
-            redis,
-        }
-    }
-
-    /// Whether this instance should receive traffic.
-    #[must_use]
-    pub const fn is_ready(self) -> bool {
-        self.db && self.redis
-    }
-
-    /// 200 when ready, 503 when not — decided by the probes, never assumed.
-    #[must_use]
-    pub const fn status_code(self) -> StatusCode {
-        if self.is_ready() {
-            StatusCode::OK
-        } else {
-            StatusCode::SERVICE_UNAVAILABLE
-        }
-    }
-}
-
-/// `GET /health/ready` — should this instance receive traffic.
-///
-/// A real dependency check (§4.3): one round trip to Postgres and one to Redis, each
-/// bounded by [`PROBE_TIMEOUT`], reported honestly. The previous version answered a
-/// constant `"ready"` from configuration alone, which asserted nothing — it said
-/// "booted" while the database was unreachable, and an orchestrator believes the
-/// status line, not the prose around it.
-///
-/// Both probes run concurrently: a readiness endpoint is polled on every probe
-/// interval, and serialising them doubles the worst-case latency of a path that sits
-/// in front of every other one.
-pub async fn readiness(State(state): State<MenoState>) -> (StatusCode, Json<Readiness>) {
-    let (db, redis) = tokio::join!(probe_db(&state), probe_redis(&state));
-    let report = Readiness::new(db, redis);
-
-    if !report.is_ready() {
-        // Named fields only (§4.8): which dependency failed is what the next reader
-        // needs, and it goes to the log, not to the client.
-        tracing::warn!(db, redis, "instance is not ready");
-    }
-
-    (report.status_code(), Json(report))
-}
-
-/// Whether Postgres answers a round trip inside the budget.
-async fn probe_db(state: &MenoState) -> bool {
-    matches!(
-        tokio::time::timeout(
-            PROBE_TIMEOUT,
-            sqlx::query_scalar::<_, i32>("SELECT 1").fetch_one(&state.db)
-        )
-        .await,
-        Ok(Ok(1))
-    )
-}
-
-/// Whether Redis answers a round trip inside the budget.
-async fn probe_redis(state: &MenoState) -> bool {
-    matches!(
-        tokio::time::timeout(PROBE_TIMEOUT, state.redis.ping()).await,
-        Ok(Ok(()))
-    )
 }
 
 #[cfg(test)]
@@ -298,90 +132,18 @@ mod tests {
     use axum::http::{Request, StatusCode};
     use tower::ServiceExt;
 
-    /// Every path the auth module's handlers are mounted on.
+    /// Every path every module mounts.
     ///
-    /// Written out rather than derived from the router, because a list derived from the
-    /// thing it is meant to check cannot fail.
-    const AUTH_PATHS: &[&str] = &[
-        "/auth/register",
-        "/auth/login",
-        "/auth/google/url",
-        "/auth/google/callback",
-        "/auth/google/mobile",
-        "/auth/refresh",
-        "/auth/logout",
-        "/auth/logout-all",
-        "/auth/sessions",
-        "/auth/sessions/00000000-0000-0000-0000-000000000000",
-        "/auth/verify-email",
-        "/auth/resend-otp",
-        "/auth/forgot-password",
-        "/auth/reset-password",
-    ];
-
-    /// The routes that read `Extension<AuthUser>` and so must sit behind the guard.
-    ///
-    /// A separate list from `AUTH_PATHS` because the two answer different questions —
-    /// "is it mounted" versus "is it gated" — and a guard that quietly covers the
-    /// wrong half is the failure worth pinning here.
-    const PROTECTED_PATHS: &[&str] = &[
-        "/auth/sessions",
-        "/auth/sessions/00000000-0000-0000-0000-000000000000",
-        "/auth/logout-all",
-    ];
-
-    #[tokio::test]
-    async fn the_liveness_endpoint_answers_without_touching_a_dependency() {
-        // `build_routes` needs a `MenoState`, which needs a pool and Redis, so this one
-        // is mounted on its own router — which is exactly how it is reached in
-        // production, before any merge.
-        let router = Router::new().route("/health", get(health));
-
-        let response = router
-            .oneshot(
-                Request::builder()
-                    .uri("/health")
-                    .body(Body::empty())
-                    .expect("a valid request"),
-            )
-            .await
-            .expect("a response");
-
-        assert_eq!(response.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(response.into_body(), 64)
-            .await
-            .expect("the body buffers");
-        assert_eq!(bytes.as_ref(), b"ok");
-    }
-
-    #[test]
-    fn readiness_renders_the_shape_the_plan_gate_curls() {
-        // §4.3's contract, asserted on the encoded value: a renamed field here breaks
-        // every probe script and dashboard that reads `db` or `redis`.
-        let report = Readiness::new(true, true);
-
-        assert_eq!(report.status_code(), StatusCode::OK);
-        let json = serde_json::to_value(report).expect("serialisable");
-        assert_eq!(
-            json,
-            serde_json::json!({ "status": "ok", "db": true, "redis": true })
-        );
-    }
-
-    #[test]
-    fn a_failed_probe_degrades_the_report_and_the_status_line() {
-        // The half that actually matters: an orchestrator branches on the status code,
-        // so a `true`-looking body with a 200 while Redis is down is the bug shape.
-        for (db, redis) in [(false, true), (true, false), (false, false)] {
-            let report = Readiness::new(db, redis);
-
-            assert_eq!(report.status_code(), StatusCode::SERVICE_UNAVAILABLE);
-            assert!(!report.is_ready());
-            let json = serde_json::to_value(report).expect("serialisable");
-            assert_eq!(json["status"], "degraded", "{json}");
-            assert_eq!(json["db"], db, "{json}");
-            assert_eq!(json["redis"], redis, "{json}");
-        }
+    /// Built from the per-module lists in `auth` and `broadcasts` rather than written
+    /// out here, so a module that adds a route and forgets to list it fails these tests
+    /// instead of silently shipping.
+    fn every_path() -> Vec<&'static str> {
+        AUTH_PATHS
+            .iter()
+            .chain(BROADCAST_PATHS)
+            .chain(HEALTH_PATHS)
+            .copied()
+            .collect()
     }
 
     #[tokio::test]
@@ -404,44 +166,64 @@ mod tests {
     }
 
     #[test]
-    fn the_auth_table_has_no_duplicate_paths() {
+    fn no_module_ships_a_duplicate_path() {
         // A duplicate path is not a compile error and not a 404 — axum keeps one of the
         // two handlers and the other silently stops being reachable. It would only ever
         // be noticed by a user hitting the route that lost.
-        //
-        // Sorted here rather than requiring the constant to be written sorted: the
-        // constant is grouped by what the endpoints *do* (sign-in, sessions, codes),
-        // which is worth more to a reader than an ordering that exists only to make this
-        // assertion cheaper.
-        let unique: std::collections::HashSet<_> = AUTH_PATHS.iter().collect();
+        let paths = every_path();
+        let unique: std::collections::HashSet<_> = paths.iter().collect();
 
         assert_eq!(
             unique.len(),
-            AUTH_PATHS.len(),
-            "a duplicate path would shadow a handler"
+            paths.len(),
+            "a duplicate path would shadow a handler: {paths:?}"
         );
-        // The set has to have been built from the real list, not a hardcoded one.
-        assert_eq!(unique.len(), 14, "the table has fourteen auth endpoints");
+        // The count is asserted so a module cannot quietly delete its way out of the
+        // check by emptying its own list.
+        assert_eq!(
+            paths.len(),
+            25,
+            "fourteen auth endpoints, nine broadcast ones and two probes"
+        );
     }
 
     #[test]
-    fn every_auth_path_is_under_the_auth_prefix() {
-        // The sub-router is nested at `/auth`, so a path written with its own `/auth`
-        // prefix would be served at `/auth/auth/...` — which compiles, answers, and is
-        // simply the wrong URL. This is the cheapest possible guard on that.
-        for path in AUTH_PATHS {
-            assert!(
-                path.starts_with("/auth/"),
-                "{path} would be served at /auth{path}"
-            );
+    fn every_module_paths_under_the_prefix_it_is_nested_at() {
+        // Each sub-router is nested at a prefix, so a module whose paths already carry
+        // that prefix would be served at `/auth/auth/...` — which compiles, answers, and
+        // is simply the wrong URL. The cheapest possible guard on that.
+        for (paths, prefix) in [
+            (AUTH_PATHS, "/auth"),
+            (BROADCAST_PATHS, "/"),
+            (HEALTH_PATHS, "/health"),
+        ] {
+            for &path in paths {
+                assert!(
+                    path.starts_with(prefix),
+                    "{path} would be served at {prefix}{path}"
+                );
+            }
         }
+    }
+
+    #[test]
+    fn the_broadcast_nest_is_not_prefixed_twice() {
+        // The one that bit: the broadcast tree writes `/broadcasts/...` inside its
+        // sub-router *and* is nested, so the prefix has to be the root. Asserted
+        // separately because the table above would pass for the wrong reason if this
+        // file had been mounted at `/broadcasts` with prefixed paths.
+        assert!(
+            BROADCAST_PATHS[0] == "/broadcasts",
+            "the first broadcast path is the collection itself: {:?}",
+            BROADCAST_PATHS
+        );
     }
 
     #[test]
     fn the_protected_half_is_exactly_the_routes_that_read_authuser() {
         // The three handlers with `Extension<AuthUser>` in their signature are the
         // three listed here. If a fourth handler gains the extractor, it must join this
-        // list — and the split in `auth_routes` — or it answers 500 instead of 401,
+        // list — and the split in `auth::routes` — or it answers 500 instead of 401,
         // which is the failure the split exists to end.
         assert!(!PROTECTED_PATHS.is_empty());
         for path in PROTECTED_PATHS {

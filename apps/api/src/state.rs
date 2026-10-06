@@ -52,6 +52,7 @@ use crate::infrastructure::redis::Redis;
 use crate::infrastructure::storage::ObjectStore;
 use crate::modules::auth::mailer::AuthMailer;
 use crate::modules::auth::state::AuthState;
+use crate::modules::broadcast::state::BroadcastState;
 
 /// Everything the running application holds.
 ///
@@ -65,8 +66,14 @@ pub struct MenoState {
     pub db: PgPool,
     /// Redis, for the auth token blocklist and the OAuth state store.
     pub redis: Redis,
-    /// Authentication. The only refactored module so far (§4.7).
+    /// Authentication (§4.7).
     pub auth: AuthState,
+    /// Broadcasts — create, schedule, go live, join, participants (§2's tree).
+    ///
+    /// The second module to land, and the one that shows why a module carries its own
+    /// state rather than reaching into the application: this field is a projection of a
+    /// repository and a media adapter, and nothing outside `state` names either.
+    pub broadcast: BroadcastState,
     /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
     ///
     /// Built here rather than in `routes.rs` because it is fallible — a blank
@@ -123,6 +130,19 @@ impl axum::extract::FromRef<MenoState> for AuthState {
     }
 }
 
+/// The same projection for the broadcast module (plan §4.1).
+///
+/// The second implementation of the same idea, and the point of naming it: every
+/// module that lands adds one `FromRef` and one field, and the handlers keep taking
+/// their own state. The alternative — a sub-router taking `MenoState` — would hand every
+/// handler the whole application, which §9.3 calls a god object and §2's tree is built
+/// to avoid.
+impl axum::extract::FromRef<MenoState> for BroadcastState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.broadcast.clone()
+    }
+}
+
 impl std::fmt::Debug for MenoState {
     /// Names the fields and nothing else.
     ///
@@ -137,6 +157,7 @@ impl std::fmt::Debug for MenoState {
             .field("redis", &"[redacted]")
             .field("auth", &self.auth)
             .field("auth_guard", &self.auth_guard)
+            .field("broadcast", &self.broadcast)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
             .field("metrics", &self.metrics)
@@ -232,11 +253,23 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         detail: error.to_string(),
     })?;
 
+    // Built before the struct literal, because the literal moves `parts.db` and
+    // `parts.config` and this needs both. Cloning a pool and an `Arc` is free; a
+    // borrow-after-move is not.
+    let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
+        pool: parts.db.clone(),
+        livekit: parts.config.livekit.clone(),
+    });
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
         redis: parts.redis,
         auth,
+        // Broadcasts (§2's tree). The media server is optional — §4.6 — so `Wiring`
+        // chose an adapter from configuration rather than this file demanding one, and a
+        // deployment without LiveKit still gets drafts, schedules and the catalogue.
+        broadcast,
         auth_guard,
         push: parts.push,
         storage: parts.storage,

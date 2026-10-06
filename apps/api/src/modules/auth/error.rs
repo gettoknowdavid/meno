@@ -29,9 +29,17 @@
 //! available and unused is deliberate: the profile routes need it, and a reader who
 //! finds it should find the comment explaining why login does not.
 
-use std::collections::HashMap;
-
 use meno_core::{Error as MenoError, ErrorCode};
+
+/// The accumulator `dto::validate` fills, and the two constructors that turn one into
+/// an [`MenoError::Validation`].
+///
+/// Re-exported rather than defined here: §4.2's rule is one taxonomy with one
+/// accumulator, and this module is not the only one that validates at the boundary. The
+/// implementation lives in [`meno_core::error`] because a module may reach down to
+/// `crates/core` and may not reach sideways into another module — so the second module
+/// to need it would otherwise have had to copy it.
+pub use meno_core::error::{FieldErrors, invalid_field, invalid_fields};
 
 /// The email is already registered to another account. §4.2 `Conflict`.
 #[must_use]
@@ -189,78 +197,6 @@ pub fn internal(context: &'static str, detail: impl std::fmt::Display) -> MenoEr
     MenoError::Internal {
         context,
         detail: detail.to_string(),
-    }
-}
-
-/// Build a `§4.2` validation failure from one field's messages.
-///
-/// The one-argument form, for the common case of a single rule failing.
-#[must_use]
-pub fn invalid_field(field: &str, message: impl Into<String>) -> MenoError {
-    let mut fields: HashMap<String, Vec<String>> = HashMap::new();
-    fields.insert(field.to_owned(), vec![message.into()]);
-    MenoError::Validation { fields }
-}
-
-/// Build a `§4.2` validation failure from several fields at once.
-///
-/// Takes ownership so the caller can hand it a `HashMap` it built with
-/// [`push`], which is how `dto::validate` accumulates without cloning.
-#[must_use]
-pub fn invalid_fields(fields: HashMap<String, Vec<String>>) -> MenoError {
-    MenoError::Validation { fields }
-}
-
-/// The accumulator [`invalid_fields`] is fed from.
-///
-/// A named type rather than a free function so the "create, fill, convert" shape is
-/// visible in the signature of every `validate` method, and so the empty-map case is
-/// handled once — a validation failure with no fields is a bug, and it is caught here
-/// rather than shipped as `{code: "VALIDATION_FAILED", data: {}}`.
-#[derive(Debug, Default)]
-pub struct FieldErrors {
-    fields: HashMap<String, Vec<String>>,
-}
-
-impl FieldErrors {
-    /// An empty accumulator.
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// Record `message` against `field`.
-    pub fn push(&mut self, field: &str, message: impl Into<String>) {
-        self.fields
-            .entry(field.to_owned())
-            .or_default()
-            .push(message.into());
-    }
-
-    /// Record every message in `messages` against `field`.
-    pub fn extend(&mut self, field: &str, messages: &[&str]) {
-        for message in messages {
-            self.push(field, *message);
-        }
-    }
-
-    /// Whether anything failed.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.fields.is_empty()
-    }
-
-    /// The `§4.2` error, or `Ok(())` when nothing failed.
-    ///
-    /// # Errors
-    ///
-    /// [`MenoError::Validation`] carrying every accumulated field.
-    pub fn into_result(self) -> Result<(), MenoError> {
-        if self.fields.is_empty() {
-            Ok(())
-        } else {
-            Err(invalid_fields(self.fields))
-        }
     }
 }
 

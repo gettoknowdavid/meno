@@ -15,10 +15,15 @@
 //!
 //! # What has landed
 //!
-//! [`auth`] is the only module here so far. The rest of §2's tree — `profile`,
-//! `broadcast`, `subscribers`, `notifications`, `chat`, `notes`, `settings` — is
-//! declared as it is written rather than stubbed, because a `pub mod` with an empty
-//! body is a module that compiles and does nothing.
+//! [`auth`] and [`broadcast`]. The rest of §2's tree — `profile`, `subscribers`,
+//! `notifications`, `chat`, `notes`, `settings` — is declared as it is written rather
+//! than stubbed, because a `pub mod` with an empty body is a module that compiles and
+//! does nothing.
+//!
+//! [`broadcast`] landed second and shows the pattern at its clearest: a module that
+//! needs an external dependency it may not have (LiveKit, §4.6) takes that as a
+//! `state::Wiring` parameter and chooses an adapter, so `LIVEKIT_ENABLED=false` is a
+//! deployment rather than a compile error.
 //!
 //! # The layer rule
 //!
@@ -32,3 +37,4 @@
 //! service or handler cannot accidentally depend on Postgres rather than on `AuthRepo`.
 
 pub mod auth;
+pub mod broadcast;

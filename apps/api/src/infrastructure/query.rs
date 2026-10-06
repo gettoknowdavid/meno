@@ -55,6 +55,18 @@ impl<'a> ColumnName<'a> {
         self.0
     }
 
+    /// Wrap a literal column name without checking.
+    ///
+    /// Use this for column names hard-coded in this crate's own source and therefore
+    /// incapable of carrying request input — the validation that [`parse`](Self::parse)
+    /// provides is only useful for names that arrived from outside. The field is private
+    /// and constructible only within this impl, so this is the infallible boundary for
+    /// known-safe literals while `parse` remains the checked boundary for external ones.
+    #[must_use]
+    pub const fn literal(name: &'a str) -> Self {
+        Self(name)
+    }
+
     /// Check a name and return it as a [`ColumnName`].
     ///
     /// # Errors

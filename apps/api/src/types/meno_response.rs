@@ -28,8 +28,43 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
+use meno_core::Error as MenoError;
 use meno_core::error::Meta;
 use serde::Serialize;
+
+/// A handler result: the envelope on success, the shared renderer on failure.
+pub type Outcome<T> = Result<MenoResponse<T>, Failure>;
+
+/// A domain failure on its way to the wire.
+///
+/// Deliberately not a `Response`. Returning the rendered `Response` as the error type
+/// would type `axum::response::Response` into every handler signature, and a handler that
+/// wanted to *inspect* a failure — a test asserting the code, or a future handler that
+/// adds a header — would find it had already been thrown away.
+///
+/// # Why it lives here and not in one module
+///
+/// It started in `modules/auth/handlers.rs`, which meant the second module could not use
+/// it: a module may reach down to `types`, `middleware` and `crates/core`, and may not
+/// reach sideways into `modules/auth` (see the layer rule in `modules/mod.rs`). A
+/// one-field newtype that every handler returns is exactly the "more than one route
+/// module speaks it" case the `types` module docs describe.
+#[derive(Debug)]
+pub struct Failure(pub MenoError);
+
+impl From<MenoError> for Failure {
+    fn from(error: MenoError) -> Self {
+        Self(error)
+    }
+}
+
+impl IntoResponse for Failure {
+    /// The §4.2 boundary. [`crate::middleware::from_error`] is the only place in the
+    /// crate that builds an error body, so this is the only place that reaches for it.
+    fn into_response(self) -> Response {
+        crate::middleware::from_error(&self.0)
+    }
+}
 
 /// Stable code for a 200 response.
 pub const CODE_OK: &str = "OK";
