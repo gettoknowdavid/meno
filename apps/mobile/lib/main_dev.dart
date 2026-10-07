@@ -6,9 +6,9 @@ import 'package:meno_mobile/locator.dart';
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
   final config = Config(
-    menoApiUrl: ProdEnv.menoApiUrl,
-    webSocketUrl: ProdEnv.webSocketUrl,
-    menoLiveKitUrl: ProdEnv.menoLiveKitUrl,
+    menoApiUrl: DevEnv.menoApiUrl,
+    webSocketUrl: DevEnv.webSocketUrl,
+    menoLiveKitUrl: DevEnv.menoLiveKitUrl,
   );
   configureDependencies(config);
   runApp(const MenoApp());
