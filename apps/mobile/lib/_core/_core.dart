@@ -1,3 +1,3 @@
 export 'config/config.dart';
 export 'config/env.dart';
-export 'scope.dart';
+export 'logging/meno_logger.dart';
