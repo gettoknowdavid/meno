@@ -1,6 +1,9 @@
 export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
 export 'src/styles.dart';
+export 'src/text/m_read_more_text.dart';
+export 'src/text/m_text.dart';
+export 'src/text/meno_text.dart';
 export 'src/theme/m_color.dart';
 export 'src/theme/m_color_scheme.dart';
 export 'src/theme/m_icons.dart';
