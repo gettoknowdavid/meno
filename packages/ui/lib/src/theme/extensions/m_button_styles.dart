@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/m_internal.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/internal/m_internal.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/corners.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 ButtonStyle _baseButtonStyle(MTextTheme textTheme) {
   return ButtonStyle(
@@ -178,25 +179,9 @@ class MButtonStyles extends ThemeExtension<MButtonStyles> {
   /// The style for danger buttons.
   final ButtonStyle danger;
 
-  /// Retrieves the [MButtonStyles] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MButtonStyles] extension if it exists. If no
-  /// [MButtonStyles] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final buttonStyles = MButtonStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MButtonStyles]
-  /// extension.
-  ///
-  /// Returns the [MButtonStyles] extension if found, or null if no
-  /// [MButtonStyles] extension is available in the closest [Theme] instance.
-  static MButtonStyles? of(BuildContext context) {
-    return Theme.of(context).extension<MButtonStyles>();
+  /// Returns the [MButtonStyles] extension from the closest [Theme].
+  static MButtonStyles of(BuildContext context) {
+    return Theme.of(context).extension<MButtonStyles>()!;
   }
 
   /// Provides the [ElevatedButtonThemeData] based on the primary button style.

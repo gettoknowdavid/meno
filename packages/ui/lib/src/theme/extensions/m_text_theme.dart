@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:meno_ui/src/gen/fonts.gen.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
 
 /// A custom theme extension for managing text styles within the app.
 ///
@@ -275,31 +275,16 @@ class MTextTheme extends ThemeExtension<MTextTheme> {
     );
   }
 
-  /// Retrieves the [MTextTheme] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MTextTheme] extension if it exists. If no [MTextTheme]
-  /// extension is found, this method returns null.
-  ///
-  /// The [MTextTheme] extension must be added to the [ThemeData.extensions]
-  /// in your theme configuration to be accessible using this method.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final mTextTheme = MTextTheme.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MTextTheme]
-  /// extension.
-  ///
-  /// Returns the [MTextTheme] extension if found, or null if no [MTextTheme]
-  /// extension is available in the closest [Theme] instance.
+  /// Returns the [MTextTheme] extension from the closest [Theme].
   static MTextTheme of(BuildContext context) {
     return Theme.of(context).extension<MTextTheme>()!;
   }
 }
 
+/// Builds the full type scale from the SF Pro Display family.
+///
+/// `regular`/`medium`/`bold` variants share a size and line height and differ
+/// only by weight.
 @immutable
 class _Typography {
   new(this._colors);
@@ -401,7 +386,6 @@ class _Typography {
   }) {
     return _style.copyWith(
       fontSize: size,
-      fontFamily: FontFamily.sFProDisplay,
       height: height != null ? (height / size) : _style.height,
       fontWeight: weight ?? FontWeight.w500,
       decoration: decoration,

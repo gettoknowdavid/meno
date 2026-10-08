@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
 
 /// A theme extension for customizing the appearance of OTP fields in the
 /// Meno design system.
@@ -85,23 +85,7 @@ class MOtpFieldStyles extends ThemeExtension<MOtpFieldStyles> {
   /// The border of the OTP field when there is an error.
   final BoxBorder borderError;
 
-  /// Retrieves the [MOtpFieldStyles] extension from the closest [Theme]
-  /// instance that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MOtpFieldStyles] extension if it exists. If no
-  /// [MOtpFieldStyles] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final otpFieldStyles = MOtpFieldStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the
-  /// [MOtpFieldStyles] extension.
-  ///
-  /// Returns the [MOtpFieldStyles] extension if found, or null if no
-  /// [MOtpFieldStyles] extension is available in the closest [Theme] instance.
+  /// Returns the [MOtpFieldStyles] extension from the closest [Theme].
   static MOtpFieldStyles of(BuildContext context) {
     return Theme.of(context).extension<MOtpFieldStyles>()!;
   }
@@ -130,20 +114,24 @@ class MOtpFieldStyles extends ThemeExtension<MOtpFieldStyles> {
   }
 
   @override
-  ThemeExtension<MOtpFieldStyles> lerp(MOtpFieldStyles? other, double t) {
+  ThemeExtension<MOtpFieldStyles> lerp(
+    covariant ThemeExtension<MOtpFieldStyles>? other,
+    double t,
+  ) {
+    if (other is! MOtpFieldStyles) return this;
     return MOtpFieldStyles(
-      textStyle: TextStyle.lerp(textStyle, other?.textStyle, t)!,
-      textColor: Color.lerp(textColor, other?.textColor, t)!,
-      fillColor: Color.lerp(fillColor, other?.fillColor, t)!,
+      textStyle: TextStyle.lerp(textStyle, other.textStyle, t)!,
+      textColor: Color.lerp(textColor, other.textColor, t)!,
+      fillColor: Color.lerp(fillColor, other.fillColor, t)!,
       fillColorDisabled: Color.lerp(
         fillColorDisabled,
-        other?.fillColorDisabled,
+        other.fillColorDisabled,
         t,
       )!,
-      errorColor: Color.lerp(errorColor, other?.errorColor, t)!,
-      border: BoxBorder.lerp(border, other?.border, t)!,
-      borderFocused: BoxBorder.lerp(borderFocused, other?.borderFocused, t)!,
-      borderError: BoxBorder.lerp(borderError, other?.borderError, t)!,
+      errorColor: Color.lerp(errorColor, other.errorColor, t)!,
+      border: BoxBorder.lerp(border, other.border, t)!,
+      borderFocused: BoxBorder.lerp(borderFocused, other.borderFocused, t)!,
+      borderError: BoxBorder.lerp(borderError, other.borderError, t)!,
     );
   }
 }

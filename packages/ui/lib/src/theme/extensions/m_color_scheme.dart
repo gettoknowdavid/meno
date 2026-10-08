@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/m_internal.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
+import 'package:meno_ui/src/internal/m_internal.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
 
 /// A custom theme extension for managing colors within the app.
 ///
@@ -427,63 +427,63 @@ class MColorScheme extends ThemeExtension<MColorScheme> {
   @override
   ThemeExtension<MColorScheme> copyWith({
     Brightness? brightness,
-    MColor? primary,
-    MColor? onPrimary,
-    MColor? primaryContainer,
-    MColor? onPrimaryContainer,
-    MColor? secondary,
-    MColor? onSecondary,
-    MColor? secondaryContainer,
-    MColor? onSecondaryContainer,
-    MColor? tertiary,
-    MColor? onTertiary,
-    MColor? tertiaryContainer,
-    MColor? onTertiaryContainer,
-    MColor? error,
-    MColor? onError,
-    MColor? errorContainer,
-    MColor? onErrorContainer,
-    MColor? informational,
-    MColor? onInformational,
-    MColor? informationalContainer,
-    MColor? onInformationalContainer,
-    MColor? warning,
-    MColor? onWarning,
-    MColor? warningContainer,
-    MColor? onWarningContainer,
-    MColor? success,
-    MColor? onSuccess,
-    MColor? successContainer,
-    MColor? onSuccessContainer,
-    MColor? notification,
-    MColor? onNotification,
-    MColor? inActive,
-    MColor? onInActive,
-    MColor? inActiveContainer,
-    MColor? onInActiveContainer,
-    MColor? disabled,
-    MColor? onDisabled,
-    MColor? disabledContainer,
-    MColor? onDisabledContainer,
-    MColor? background,
-    MColor? onBackground,
-    MColor? onBackgroundProminent,
-    MColor? onBackgroundVariant,
-    MColor? surface,
-    MColor? onSurface,
-    MColor? surfaceTint,
-    MColor? surfaceShade,
-    MColor? onSurfaceShade,
-    MColor? inverseSurface,
-    MColor? onInverseSurface,
-    MColor? inversePrimary,
-    MColor? onInversePrimary,
-    MColor? scrim,
-    MColor? shadow,
-    MColor? outline,
-    MColor? outlineVariant1,
-    MColor? outlineVariant2,
-    MColor? outlineVariant3,
+    Color? primary,
+    Color? onPrimary,
+    Color? primaryContainer,
+    Color? onPrimaryContainer,
+    Color? secondary,
+    Color? onSecondary,
+    Color? secondaryContainer,
+    Color? onSecondaryContainer,
+    Color? tertiary,
+    Color? onTertiary,
+    Color? tertiaryContainer,
+    Color? onTertiaryContainer,
+    Color? error,
+    Color? onError,
+    Color? errorContainer,
+    Color? onErrorContainer,
+    Color? informational,
+    Color? onInformational,
+    Color? informationalContainer,
+    Color? onInformationalContainer,
+    Color? warning,
+    Color? onWarning,
+    Color? warningContainer,
+    Color? onWarningContainer,
+    Color? success,
+    Color? onSuccess,
+    Color? successContainer,
+    Color? onSuccessContainer,
+    Color? notification,
+    Color? onNotification,
+    Color? inActive,
+    Color? onInActive,
+    Color? inActiveContainer,
+    Color? onInActiveContainer,
+    Color? disabled,
+    Color? onDisabled,
+    Color? disabledContainer,
+    Color? onDisabledContainer,
+    Color? background,
+    Color? onBackground,
+    Color? onBackgroundProminent,
+    Color? onBackgroundVariant,
+    Color? surface,
+    Color? onSurface,
+    Color? surfaceTint,
+    Color? surfaceShade,
+    Color? onSurfaceShade,
+    Color? inverseSurface,
+    Color? onInverseSurface,
+    Color? inversePrimary,
+    Color? onInversePrimary,
+    Color? scrim,
+    Color? shadow,
+    Color? outline,
+    Color? outlineVariant1,
+    Color? outlineVariant2,
+    Color? outlineVariant3,
   }) {
     return MColorScheme(
       brightness: brightness ?? this.brightness,
@@ -702,29 +702,9 @@ class MColorScheme extends ThemeExtension<MColorScheme> {
     );
   }
 
-  /// Retrieves the [MColorScheme] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MColorScheme] extension if it exists. If no
-  /// [MColorScheme] extension is found, this method returns null.
-  ///
-  /// The [MColorScheme] extension must be added to the [ThemeData.extensions]
-  /// in your theme configuration to be accessible using this method.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final mColorScheme = MColorScheme.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MColorScheme]
-  /// extension.
-  ///
-  /// Returns the [MColorScheme] extension if found, or null if no
-  /// [MColorScheme] extension is available in the closest [Theme] instance.
+  /// Returns the [MColorScheme] extension from the closest [Theme].
   static MColorScheme of(BuildContext context) {
-    final brightness = MediaQuery.platformBrightnessOf(context);
-    return Theme.of(context).extension<MColorScheme>() ?? .$default(brightness);
+    return Theme.of(context).extension<MColorScheme>()!;
   }
 
   /// Creates the [ColorScheme] based the [MColorScheme] extension

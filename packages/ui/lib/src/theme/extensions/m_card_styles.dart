@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/m_internal.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/internal/m_internal.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/corners.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A theme extension for customizing card styles in the
 /// Meno design system.
@@ -121,23 +122,7 @@ class MCardStyles extends ThemeExtension<MCardStyles> {
   /// Returns a [CardTheme] instance with the styles applied.
   CardThemeData get cardTheme => CardThemeData(color: backgroundColor);
 
-  /// Retrieves the [MCardStyles] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MCardStyles] extension if it exists. If no [MCardStyles]
-  /// extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final cardStyles = MCardStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MCardStyles]
-  /// extension.
-  ///
-  /// Returns the [MCardStyles] extension if found, or null if no [MCardStyles]
-  /// extension is available in the closest [Theme] instance.
+  /// Returns the [MCardStyles] extension from the closest [Theme].
   static MCardStyles of(BuildContext context) {
     return Theme.of(context).extension<MCardStyles>()!;
   }

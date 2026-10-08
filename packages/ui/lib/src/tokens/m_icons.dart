@@ -21,7 +21,7 @@ import 'package:flutter/widgets.dart';
 
 /// Meno Custom Icons
 class MIcons {
-  MIcons._();
+  new _();
 
   static const _kFontFam = 'MIcons';
 
@@ -30,17 +30,25 @@ class MIcons {
   static const IconData marker_pin_01 = IconData(0xe902, fontFamily: _kFontFam);
   static const IconData minus_circle = IconData(0xe903, fontFamily: _kFontFam);
   static const IconData plus_circle_1 = IconData(0xe904, fontFamily: _kFontFam);
-  static const IconData arrow_narrow_down_left =
-      IconData(0xe905, fontFamily: _kFontFam);
+  static const IconData arrow_narrow_down_left = IconData(
+    0xe905,
+    fontFamily: _kFontFam,
+  );
   static const IconData bell_03 = IconData(0xe906, fontFamily: _kFontFam);
   static const IconData bell_04 = IconData(0xe907, fontFamily: _kFontFam);
   static const IconData bell_off_03 = IconData(0xe908, fontFamily: _kFontFam);
-  static const IconData bell_ringing_03 =
-      IconData(0xe909, fontFamily: _kFontFam);
-  static const IconData bell_ringing_04 =
-      IconData(0xe90a, fontFamily: _kFontFam);
-  static const IconData calendar_plus_02 =
-      IconData(0xe90b, fontFamily: _kFontFam);
+  static const IconData bell_ringing_03 = IconData(
+    0xe909,
+    fontFamily: _kFontFam,
+  );
+  static const IconData bell_ringing_04 = IconData(
+    0xe90a,
+    fontFamily: _kFontFam,
+  );
+  static const IconData calendar_plus_02 = IconData(
+    0xe90b,
+    fontFamily: _kFontFam,
+  );
   static const IconData clock_rewind = IconData(0xe90c, fontFamily: _kFontFam);
   static const IconData copy_06 = IconData(0xe90d, fontFamily: _kFontFam);
   static const IconData file_02 = IconData(0xe90e, fontFamily: _kFontFam);
@@ -53,16 +61,24 @@ class MIcons {
   static const IconData folder_plus = IconData(0xe915, fontFamily: _kFontFam);
   static const IconData folder_x = IconData(0xe916, fontFamily: _kFontFam);
   static const IconData format_italic = IconData(0xe917, fontFamily: _kFontFam);
-  static const IconData format_list_bulleted =
-      IconData(0xe918, fontFamily: _kFontFam);
-  static const IconData format_list_numbered =
-      IconData(0xe919, fontFamily: _kFontFam);
-  static const IconData format_underlined =
-      IconData(0xe91a, fontFamily: _kFontFam);
+  static const IconData format_list_bulleted = IconData(
+    0xe918,
+    fontFamily: _kFontFam,
+  );
+  static const IconData format_list_numbered = IconData(
+    0xe919,
+    fontFamily: _kFontFam,
+  );
+  static const IconData format_underlined = IconData(
+    0xe91a,
+    fontFamily: _kFontFam,
+  );
   static const IconData forward_10 = IconData(0xe91b, fontFamily: _kFontFam);
   static const IconData italic_01 = IconData(0xe91c, fontFamily: _kFontFam);
-  static const IconData layers_three_01 =
-      IconData(0xe91d, fontFamily: _kFontFam);
+  static const IconData layers_three_01 = IconData(
+    0xe91d,
+    fontFamily: _kFontFam,
+  );
   static const IconData library_music = IconData(0xe91e, fontFamily: _kFontFam);
   static const IconData life_buoy_01 = IconData(0xe91f, fontFamily: _kFontFam);
   static const IconData log_out_03 = IconData(0xe920, fontFamily: _kFontFam);
@@ -74,8 +90,10 @@ class MIcons {
   static const IconData access_time = IconData(0xe926, fontFamily: _kFontFam);
   static const IconData announcement = IconData(0xe927, fontFamily: _kFontFam);
   static const IconData compass = IconData(0xe928, fontFamily: _kFontFam);
-  static const IconData dots_horizontal =
-      IconData(0xe929, fontFamily: _kFontFam);
+  static const IconData dots_horizontal = IconData(
+    0xe929,
+    fontFamily: _kFontFam,
+  );
   static const IconData dots_vertical = IconData(0xe92a, fontFamily: _kFontFam);
   static const IconData edit_02 = IconData(0xe92b, fontFamily: _kFontFam);
   static const IconData edit_05 = IconData(0xe92c, fontFamily: _kFontFam);
@@ -97,8 +115,10 @@ class MIcons {
   static const IconData menu_03 = IconData(0xe93e, fontFamily: _kFontFam);
   static const IconData pin = IconData(0xe93f, fontFamily: _kFontFam);
   static const IconData playlist_add = IconData(0xe940, fontFamily: _kFontFam);
-  static const IconData playlist_add_check =
-      IconData(0xe941, fontFamily: _kFontFam);
+  static const IconData playlist_add_check = IconData(
+    0xe941,
+    fontFamily: _kFontFam,
+  );
   static const IconData plus_circle = IconData(0xe942, fontFamily: _kFontFam);
   static const IconData send = IconData(0xe943, fontFamily: _kFontFam);
   static const IconData star_border = IconData(0xe944, fontFamily: _kFontFam);
@@ -107,14 +127,22 @@ class MIcons {
   static const IconData x_close = IconData(0xe947, fontFamily: _kFontFam);
   static const IconData airplay = IconData(0xe948, fontFamily: _kFontFam);
   static const IconData arrow_left = IconData(0xe949, fontFamily: _kFontFam);
-  static const IconData arrow_narrow_down =
-      IconData(0xe94a, fontFamily: _kFontFam);
-  static const IconData arrow_narrow_right =
-      IconData(0xe94b, fontFamily: _kFontFam);
-  static const IconData arrow_narrow_up =
-      IconData(0xe94c, fontFamily: _kFontFam);
-  static const IconData arrow_narrow_up_right =
-      IconData(0xe94d, fontFamily: _kFontFam);
+  static const IconData arrow_narrow_down = IconData(
+    0xe94a,
+    fontFamily: _kFontFam,
+  );
+  static const IconData arrow_narrow_right = IconData(
+    0xe94b,
+    fontFamily: _kFontFam,
+  );
+  static const IconData arrow_narrow_up = IconData(
+    0xe94c,
+    fontFamily: _kFontFam,
+  );
+  static const IconData arrow_narrow_up_right = IconData(
+    0xe94d,
+    fontFamily: _kFontFam,
+  );
   static const IconData check = IconData(0xe94e, fontFamily: _kFontFam);
   static const IconData chevron_down = IconData(0xe94f, fontFamily: _kFontFam);
   static const IconData chevron_left = IconData(0xe950, fontFamily: _kFontFam);
@@ -127,8 +155,10 @@ class MIcons {
   static const IconData help_circle = IconData(0xe957, fontFamily: _kFontFam);
   static const IconData key = IconData(0xe958, fontFamily: _kFontFam);
   static const IconData log_out = IconData(0xe959, fontFamily: _kFontFam);
-  static const IconData microphone_off =
-      IconData(0xe95a, fontFamily: _kFontFam);
+  static const IconData microphone_off = IconData(
+    0xe95a,
+    fontFamily: _kFontFam,
+  );
   static const IconData pause_circle = IconData(0xe95b, fontFamily: _kFontFam);
   static const IconData play = IconData(0xe95c, fontFamily: _kFontFam);
   static const IconData play_circle = IconData(0xe95d, fontFamily: _kFontFam);

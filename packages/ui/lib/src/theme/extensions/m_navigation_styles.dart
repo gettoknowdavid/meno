@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A theme extension for customizing the navigation elements in the
 /// Meno design system.
@@ -103,24 +103,7 @@ class MNavigationStyles extends ThemeExtension<MNavigationStyles> {
   /// The text style for action elements in navigation.
   final TextStyle actionTextStyle;
 
-  /// Retrieves the [MNavigationStyles] extension from the closest [Theme]
-  /// instance that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MNavigationStyles] extension if it exists. If no
-  /// [MNavigationStyles] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final navigationStyles = MNavigationStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the
-  /// [MNavigationStyles] extension.
-  ///
-  /// Returns the [MNavigationStyles] extension if found, or null if no
-  /// [MNavigationStyles] extension is available in the closest [Theme]
-  /// instance.
+  /// Returns the [MNavigationStyles] extension from the closest [Theme].
   static MNavigationStyles of(BuildContext context) {
     return Theme.of(context).extension<MNavigationStyles>()!;
   }

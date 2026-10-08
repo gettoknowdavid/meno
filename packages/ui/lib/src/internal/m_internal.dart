@@ -1,36 +1,37 @@
+// Kept private to the package: these helpers are not part of the public API.
+// `resolve` mirrors the `bool isLight` convention used by Flutter itself.
 //
 // ignore_for_file: avoid_positional_boolean_parameters
 
 import 'package:flutter/material.dart';
 
-/// Provides helper functions for design system
-class MInternal {
+/// Shared helpers for the theme extensions.
+///
+/// Not exported from `package:meno_ui/meno_ui.dart`.
+abstract final class MInternal {
   /// Resolves the appropriate value based on the theme brightness.
   ///
-  /// This method selects either the light theme value or the dark theme value
-  /// based on whether the theme brightness is light or dark.
-  ///
-  /// - [isLight]: A boolean indicating if the theme is light.
+  /// - [isLight]: Whether the theme is light.
   /// - [lightThemeValue]: The value to use for light themes.
   /// - [darkThemeValue]: The value to use for dark themes.
-  ///
-  /// Returns the appropriate value for the current theme brightness.
   static T resolve<T>(bool isLight, T lightThemeValue, T darkThemeValue) {
     return isLight ? lightThemeValue : darkThemeValue;
   }
 
-  /// Convenience method for easier use of [WidgetStateProperty.all].
+  /// Convenience wrapper around [WidgetStateProperty.all].
   static WidgetStateProperty<T> all<T>(T value) {
     return WidgetStateProperty.all(value);
   }
 
-  /// Convenience method for easier use of [WidgetStateProperty.resolveWith].
-  static WidgetStateProperty<T?> resolveWith<T>({
+  /// Convenience wrapper around [WidgetStateProperty.resolveWith].
+  ///
+  /// Returns [defaultValue] for any state that has no explicit override, so
+  /// callers only declare the states they actually restyle.
+  static WidgetStateProperty<T> resolveWith<T>({
     required T defaultValue,
     T? pressedValue,
     T? disabledValue,
     T? hoveredValue,
-    String? parent,
     T? selectedValue,
   }) {
     return WidgetStateProperty.resolveWith((states) {
@@ -59,7 +60,7 @@ class MInternal {
   }
 }
 
-/// Extension helper to get the values for [WidgetStateProperty]s
+/// Reads the value a [WidgetStateProperty] resolves to for a single state.
 extension WidgetStatePropertyX<T> on WidgetStateProperty<T> {
   /// Disabled value
   T get disabledValue => resolve({WidgetState.disabled});

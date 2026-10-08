@@ -1,13 +1,13 @@
 import 'dart:ui';
 
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/m_internal.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/tab_bar_style.dart';
+import 'package:meno_ui/src/internal/m_internal.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/tab_bar_style.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// {@template meno_tab_bar_theme}
-/// Custom implementation of theme configurations for [MTabBar]
+/// Theme configuration for the `MTabBar` tab bars.
 /// {@endtemplate}
 class MTabBarTheme extends ThemeExtension<MTabBarTheme> {
   /// {@macro meno_tab_bar_theme}
@@ -18,11 +18,6 @@ class MTabBarTheme extends ThemeExtension<MTabBarTheme> {
     required this.labelPadding,
     required this.height,
   });
-
-  /// Snackbar theme
-  factory of(BuildContext context) {
-    return Theme.of(context).extension<MTabBarTheme>()!;
-  }
 
   /// {@macro meno_tab_bar_theme}
   factory $default(MColorScheme colors) {
@@ -67,19 +62,24 @@ class MTabBarTheme extends ThemeExtension<MTabBarTheme> {
     );
   }
 
-  /// [TabBarStyle]s for the [MTabBar.normal] tab bar
+  /// Returns the [MTabBarTheme] extension from the closest [Theme].
+  static MTabBarTheme of(BuildContext context) {
+    return Theme.of(context).extension<MTabBarTheme>()!;
+  }
+
+  /// [TabBarStyle]s for the normal `MTabBar` variant
   final TabBarStyle normal;
 
-  /// [TabBarStyle]s for the [MTabBar.contained] tab bar
+  /// [TabBarStyle]s for the contained `MTabBar` variant
   final TabBarStyle contained;
 
-  /// Padding given to the [MTabBar]
+  /// Padding given to the tab bar
   final EdgeInsetsGeometry padding;
 
-  /// Padding for the individual [MenoTab] labels
+  /// Padding for the individual tab labels
   final EdgeInsetsGeometry labelPadding;
 
-  /// Height of the [MTabBar]
+  /// Height of the tab bar
   final double height;
 
   @override

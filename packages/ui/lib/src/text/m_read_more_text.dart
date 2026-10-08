@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/styles.dart';
 import 'package:meno_ui/src/text/m_text.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A widget that allows users to expand and collapse long text.
 ///

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/m_internal.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/internal/m_internal.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/corners.dart';
+import 'package:meno_ui/src/tokens/m_color.dart';
 
 /// A theme extension for customizing the appearance of text fields in the
 /// Meno design system.
@@ -152,23 +152,7 @@ class MTextFieldStyle extends ThemeExtension<MTextFieldStyle> {
   /// The field's error border
   final InputBorder borderError;
 
-  /// Retrieves the [MTextFieldStyle] extension from the closest [Theme]
-  /// instance that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MTextFieldStyle] extension if it exists. If no
-  /// [MTextFieldStyle] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final textFieldStyle = MTextFieldStyle.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the
-  /// [MTextFieldStyle] extension.
-  ///
-  /// Returns the [MTextFieldStyle] extension if found, or null if no
-  /// [MTextFieldStyle] extension is available in the closest [Theme] instance.
+  /// Returns the [MTextFieldStyle] extension from the closest [Theme].
   static MTextFieldStyle of(BuildContext context) =>
       Theme.of(context).extension<MTextFieldStyle>()!;
 
@@ -218,42 +202,46 @@ class MTextFieldStyle extends ThemeExtension<MTextFieldStyle> {
   }
 
   @override
-  ThemeExtension<MTextFieldStyle> lerp(MTextFieldStyle? other, double t) {
+  ThemeExtension<MTextFieldStyle> lerp(
+    covariant ThemeExtension<MTextFieldStyle>? other,
+    double t,
+  ) {
+    if (other is! MTextFieldStyle) return this;
     return MTextFieldStyle(
-      textStyle: TextStyle.lerp(textStyle, other?.textStyle, t)!,
-      errorTextStyle: TextStyle.lerp(errorTextStyle, other?.errorTextStyle, t)!,
-      hintTextStyle: TextStyle.lerp(hintTextStyle, other?.hintTextStyle, t)!,
-      labelTextStyle: TextStyle.lerp(labelTextStyle, other?.labelTextStyle, t)!,
+      textStyle: TextStyle.lerp(textStyle, other.textStyle, t)!,
+      errorTextStyle: TextStyle.lerp(errorTextStyle, other.errorTextStyle, t)!,
+      hintTextStyle: TextStyle.lerp(hintTextStyle, other.hintTextStyle, t)!,
+      labelTextStyle: TextStyle.lerp(labelTextStyle, other.labelTextStyle, t)!,
       counterTextStyle: TextStyle.lerp(
         counterTextStyle,
-        other?.counterTextStyle,
+        other.counterTextStyle,
         t,
       )!,
-      textColor: Color.lerp(textColor, other?.textColor, t)!,
-      iconColor: Color.lerp(iconColor, other?.iconColor, t)!,
-      fillColor: Color.lerp(fillColor, other?.fillColor, t)!,
+      textColor: Color.lerp(textColor, other.textColor, t)!,
+      iconColor: Color.lerp(iconColor, other.iconColor, t)!,
+      fillColor: Color.lerp(fillColor, other.fillColor, t)!,
       fillColorDisabled: Color.lerp(
         fillColorDisabled,
-        other?.fillColorDisabled,
+        other.fillColorDisabled,
         t,
       )!,
-      counterBgColor: Color.lerp(counterBgColor, other?.counterBgColor, t)!,
+      counterBgColor: Color.lerp(counterBgColor, other.counterBgColor, t)!,
       counterTextColor: Color.lerp(
         counterTextColor,
-        other?.counterTextColor,
+        other.counterTextColor,
         t,
       )!,
       counterBgColorDisabled: Color.lerp(
         counterBgColorDisabled,
-        other?.counterBgColorDisabled,
+        other.counterBgColorDisabled,
         t,
       )!,
       counterTextColorDisabled: Color.lerp(
         counterTextColorDisabled,
-        other?.counterTextColorDisabled,
+        other.counterTextColorDisabled,
         t,
       )!,
-      errorColor: Color.lerp(errorColor, other?.errorColor, t)!,
+      errorColor: Color.lerp(errorColor, other.errorColor, t)!,
       border: border,
       borderFocused: borderFocused,
       borderDisabled: borderDisabled,

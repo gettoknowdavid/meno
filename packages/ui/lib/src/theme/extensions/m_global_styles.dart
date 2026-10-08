@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/corners.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A theme extension for customizing global elements in the
 /// Meno design system.
@@ -75,37 +75,21 @@ class MGlobalStyles extends ThemeExtension<MGlobalStyles> {
     return DividerThemeData(color: dividerColor, thickness: 1);
   }
 
-  /// Retrieves the [MGlobalStyles] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MGlobalStyles] extension if it exists. If no
-  /// [MGlobalStyles] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final globalStyles = MGlobalStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MGlobalStyles]
-  /// extension.
-  ///
-  /// Returns the [MGlobalStyles] extension if found, or null if no
-  /// [MGlobalStyles] extension is available in the closest [Theme] instance.
+  /// Returns the [MGlobalStyles] extension from the closest [Theme].
   static MGlobalStyles of(BuildContext context) {
     return Theme.of(context).extension<MGlobalStyles>()!;
   }
 
   @override
   ThemeExtension<MGlobalStyles> copyWith({
-    MColor? dividerColor,
+    Color? dividerColor,
     SnackBarThemeData? snackBarTheme,
-    CheckboxThemeData? checkBoxTheme,
+    CheckboxThemeData? checkboxTheme,
   }) {
     return MGlobalStyles(
       dividerColor: dividerColor ?? this.dividerColor,
       snackBarTheme: snackBarTheme ?? this.snackBarTheme,
-      checkboxTheme: checkBoxTheme ?? checkboxTheme,
+      checkboxTheme: checkboxTheme ?? this.checkboxTheme,
     );
   }
 

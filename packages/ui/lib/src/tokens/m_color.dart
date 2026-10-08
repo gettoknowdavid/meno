@@ -1,10 +1,15 @@
+// The palette exposes one constant per brand swatch; per-member docs would add
+// noise without information.
 // ignore_for_file: public_member_api_docs
 
 import 'package:flutter/material.dart';
 
-/// Standard colors for the Meno app
+/// The raw Meno brand palette.
+///
+/// These are primitive color values, independent of brightness. Semantic,
+/// brightness-aware roles are defined by `MColorScheme`.
 class MColor extends Color {
-  const MColor._(super.value);
+  const new _(super.value);
 
   // Basic
   static const MColor n0 = MColor._(0xFF000000);
@@ -158,9 +163,7 @@ double _clampInt(double value, double min, double max) {
 }
 
 MColor _scaleAlpha(MColor a, double factor) {
-  return MColor._(
-    a.withAlpha((a.a * factor).round().clamp(0, 255)).toARGB32(),
-  );
+  return MColor._(a.withAlpha((a.a * factor).round().clamp(0, 255)).toARGB32());
 }
 
 extension ColorEx on Color {

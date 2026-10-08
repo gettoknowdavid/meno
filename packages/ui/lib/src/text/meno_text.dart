@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/theme/m_text_styles.dart';
+import 'package:meno_ui/src/tokens/m_text_styles.dart';
 
 /// Custom thickness of the glyphs used to draw the text.
 enum MenoFontWeight {

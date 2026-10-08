@@ -1,15 +1,13 @@
+/// The Meno design system.
+///
+/// The public surface is grouped into three layers:
+/// * `src/tokens` — raw palette, type scale and geometry values.
+/// * `src/theme` — the `ThemeData` builder and its extensions.
+/// * `src/text` — the text widgets built on top of those tokens.
+library;
+
 export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
-export 'src/styles.dart';
-export 'src/text/m_read_more_text.dart';
-export 'src/text/m_text.dart';
-export 'src/text/meno_text.dart';
-export 'src/theme/m_color.dart';
-export 'src/theme/m_color_scheme.dart';
-export 'src/theme/m_icons.dart';
-export 'src/theme/m_text_styles.dart';
-export 'src/theme/m_theme.dart';
-export 'src/theme/styles/m_button_styles.dart';
-export 'src/theme/styles/m_text_field_style.dart';
-export 'src/theme/styles/m_text_theme.dart';
-export 'src/theme/styles/styles.dart';
+export 'src/text/text.dart';
+export 'src/theme/theme.dart';
+export 'src/tokens/tokens.dart';

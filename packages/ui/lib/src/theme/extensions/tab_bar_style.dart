@@ -1,13 +1,13 @@
 import 'dart:ui';
+
 import 'package:flutter/material.dart';
 
-
 /// {@template tab_bar_style}
-/// Custom styles for [MTabBar]
+/// Custom styling for a tab bar's resolved visual states.
 /// {@endtemplate}
 class TabBarStyle {
   /// {@macro tab_bar_style}
-  TabBarStyle({
+  new({
     required this.labelColor,
     required this.backgroundColor,
     required this.dividerColor,
@@ -57,30 +57,27 @@ class TabBarStyle {
   static TabBarStyle? lerp(TabBarStyle? a, TabBarStyle? b, double t) {
     if (identical(a, b)) return a;
     return TabBarStyle(
-      labelColor:
-          WidgetStateProperty.lerp<Color?>(
-            a?.labelColor,
-            b?.labelColor,
-            t,
-            Color.lerp,
-          )!,
-      backgroundColor:
-          WidgetStateProperty.lerp<Color?>(
-            a?.labelColor,
-            b?.labelColor,
-            t,
-            Color.lerp,
-          )!,
+      labelColor: WidgetStateProperty.lerp<Color?>(
+        a?.labelColor,
+        b?.labelColor,
+        t,
+        Color.lerp,
+      )!,
+      backgroundColor: WidgetStateProperty.lerp<Color?>(
+        a?.backgroundColor,
+        b?.backgroundColor,
+        t,
+        Color.lerp,
+      )!,
       dividerColor: Color.lerp(a?.dividerColor, b?.dividerColor, t)!,
       indicator: Decoration.lerp(a?.indicator, b?.indicator, t)!,
       dividerHeight: lerpDouble(a?.dividerHeight, b?.dividerHeight, t)!,
-      iconTheme:
-          WidgetStateProperty.lerp<IconThemeData?>(
-            a?.iconTheme,
-            b?.iconTheme,
-            t,
-            IconThemeData.lerp,
-          )!,
+      iconTheme: WidgetStateProperty.lerp<IconThemeData?>(
+        a?.iconTheme,
+        b?.iconTheme,
+        t,
+        IconThemeData.lerp,
+      )!,
     );
   }
 }

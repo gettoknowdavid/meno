@@ -1,16 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:meno_ui/src/gen/fonts.gen.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
-import 'package:meno_ui/src/theme/styles/m_button_styles.dart';
-import 'package:meno_ui/src/theme/styles/m_card_styles.dart';
-import 'package:meno_ui/src/theme/styles/m_global_styles.dart';
-import 'package:meno_ui/src/theme/styles/m_modal_styles.dart';
-import 'package:meno_ui/src/theme/styles/m_navigation_styles.dart';
-import 'package:meno_ui/src/theme/styles/m_otp_field_style.dart';
-import 'package:meno_ui/src/theme/styles/m_tab_bar_theme.dart';
-import 'package:meno_ui/src/theme/styles/m_text_field_style.dart';
-import 'package:meno_ui/src/theme/styles/m_text_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_button_styles.dart';
+import 'package:meno_ui/src/theme/extensions/m_card_styles.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_global_styles.dart';
+import 'package:meno_ui/src/theme/extensions/m_modal_styles.dart';
+import 'package:meno_ui/src/theme/extensions/m_navigation_styles.dart';
+import 'package:meno_ui/src/theme/extensions/m_otp_field_style.dart';
+import 'package:meno_ui/src/theme/extensions/m_tab_bar_theme.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_field_style.dart';
+import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/tokens/corners.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A utility class for creating and accessing theme data based on the
 /// application's brightness setting.

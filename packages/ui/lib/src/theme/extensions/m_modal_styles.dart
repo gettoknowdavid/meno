@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:meno_ui/src/styles.dart';
-import 'package:meno_ui/src/theme/m_color_scheme.dart';
+import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
+import 'package:meno_ui/src/tokens/spacing.dart';
 
 /// A theme extension for customizing the modal elements in the
 /// Meno design system.
@@ -53,23 +53,7 @@ class MModalStyles extends ThemeExtension<MModalStyles> {
   /// The background color of the modal when it is in a modal state.
   final Color modalBackgroundColor;
 
-  /// Retrieves the [MModalStyles] extension from the closest [Theme] instance
-  /// that encloses the given [context].
-  ///
-  /// This method searches for the nearest [Theme] widget in the widget tree
-  /// and returns the [MModalStyles] extension if it exists. If no
-  /// [MModalStyles] extension is found, this method returns null.
-  ///
-  /// Example usage:
-  /// ```dart
-  /// final modalStyles = MModalStyles.of(context);
-  /// ```
-  ///
-  /// - [context]: The build context from which to retrieve the [MModalStyles]
-  /// extension.
-  ///
-  /// Returns the [MModalStyles] extension if found, or null if no
-  /// [MModalStyles] extension is available in the closest [Theme] instance.
+  /// Returns the [MModalStyles] extension from the closest [Theme].
   static MModalStyles of(BuildContext context) {
     return Theme.of(context).extension<MModalStyles>()!;
   }
