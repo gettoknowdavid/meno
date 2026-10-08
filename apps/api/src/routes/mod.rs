@@ -42,6 +42,8 @@ mod broadcasts;
 mod health;
 mod layers;
 mod metrics;
+mod profile;
+mod settings;
 mod ws;
 
 use std::sync::Arc;
@@ -57,6 +59,8 @@ use crate::state::MenoState;
 pub use auth::{AUTH_PATHS, PROTECTED_PATHS};
 pub use broadcasts::BROADCAST_PATHS;
 pub use health::HEALTH_PATHS;
+pub use profile::PROFILE_PATHS;
+pub use settings::SETTINGS_PATHS;
 
 /// Build the application's routes.
 ///
@@ -71,10 +75,14 @@ pub use health::HEALTH_PATHS;
 pub fn build_routes(state: MenoState) -> Router {
     let guard = state.auth_guard.clone();
     let limiter = RateLimitState::new(state.redis.clone(), auth::policy());
-    // One handle, two mounts: the idempotency middleware needs Redis either way, and
-    // sharing the `Arc` keeps a single connection pool behind both.
-    let idempotency = Arc::new(state.redis.clone());
-    let idempotency_for_broadcasts = Arc::clone(&idempotency);
+    // One handle, every mount that needs Redis: auth's idempotency middleware, the
+    // broadcast limiter + idempotency layer, and the profile/settings rate limiters.
+    // Sharing one `Arc` keeps a single connection pool behind all of them.
+    let redis = Arc::new(state.redis.clone());
+    let idempotency_for_auth = Arc::clone(&redis);
+    let redis_for_broadcasts = Arc::clone(&redis);
+    let redis_for_profile = Arc::clone(&redis);
+    let redis_for_settings = Arc::clone(&redis);
 
     let router = Router::new()
         .route("/health", get(health::liveness))
@@ -102,15 +110,30 @@ pub fn build_routes(state: MenoState) -> Router {
         // rest.
         .nest(
             "/auth",
-            auth::routes(guard, limiter, idempotency).with_state(state.auth.clone()),
+            auth::routes(guard, limiter, idempotency_for_auth).with_state(state.auth.clone()),
+        )
+        // Broadcast is merged, not nested: its sub-router spells `/broadcasts/...` in
+        // full (see `broadcasts::routes`), so `nest("/broadcasts", …)` would strip
+        // that prefix before the inner router matches and serve
+        // `/broadcasts/broadcasts` — axum 0.8 refuses `nest("/")` outright ("use
+        // merge instead"), so `merge` is the only spelling that mounts these paths
+        // where `BROADCAST_PATHS` says they are. The old comment claimed the nest
+        // "carries no prefix of its own"; it did, and `GET /broadcasts` answered 404.
+        .merge(
+            broadcasts::routes(state.auth_guard.clone(), redis_for_broadcasts)
+                .with_state(state.broadcast.clone()),
         )
         .nest(
-            "/broadcasts",
-            // The nest carries no prefix of its own: the module's paths already begin
-            // with `/broadcasts`, so the tree reads `GET /broadcasts` and not
-            // `/broadcasts/broadcasts`.
-            broadcasts::routes(state.auth_guard.clone(), idempotency_for_broadcasts)
-                .with_state(state.broadcast.clone()),
+            "/users",
+            // Relative paths inside, the nest carries the prefix — the auth pattern,
+            // so the tree reads `GET /users` and `GET /users/me`.
+            profile::routes(state.auth_guard.clone(), redis_for_profile)
+                .with_state(state.profile.clone()),
+        )
+        .nest(
+            "/settings",
+            settings::routes(state.auth_guard.clone(), redis_for_settings)
+                .with_state(state.settings.clone()),
         );
 
     layers::apply(router, &state.config).with_state(state)
@@ -142,6 +165,8 @@ mod tests {
             .iter()
             .chain(BROADCAST_PATHS)
             .chain(HEALTH_PATHS)
+            .chain(PROFILE_PATHS)
+            .chain(SETTINGS_PATHS)
             .copied()
             .collect()
     }
@@ -182,20 +207,25 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            25,
-            "fourteen auth endpoints, nine broadcast ones and two probes"
+            31,
+            "fourteen auth endpoints, nine broadcast ones, four profile, two settings and two probes"
         );
     }
 
     #[test]
     fn every_module_paths_under_the_prefix_it_is_nested_at() {
-        // Each sub-router is nested at a prefix, so a module whose paths already carry
-        // that prefix would be served at `/auth/auth/...` — which compiles, answers, and
-        // is simply the wrong URL. The cheapest possible guard on that.
+        // Each nested sub-router's paths must start with the prefix the mount
+        // carries, or the module is served at `/auth/auth/...` — which compiles,
+        // answers, and is simply the wrong URL. The cheapest possible guard on that.
+        // Broadcast is merged rather than nested (see `build_routes`), so its prefix
+        // is the root and the check is trivially true — its own test below is the
+        // one that carries the weight there.
         for (paths, prefix) in [
             (AUTH_PATHS, "/auth"),
             (BROADCAST_PATHS, "/"),
             (HEALTH_PATHS, "/health"),
+            (PROFILE_PATHS, "/users"),
+            (SETTINGS_PATHS, "/settings"),
         ] {
             for &path in paths {
                 assert!(
@@ -208,10 +238,12 @@ mod tests {
 
     #[test]
     fn the_broadcast_nest_is_not_prefixed_twice() {
-        // The one that bit: the broadcast tree writes `/broadcasts/...` inside its
-        // sub-router *and* is nested, so the prefix has to be the root. Asserted
-        // separately because the table above would pass for the wrong reason if this
-        // file had been mounted at `/broadcasts` with prefixed paths.
+        // The one that bit — twice. The broadcast tree writes `/broadcasts/...`
+        // inside its sub-router, so it must be mounted at the root: nested at
+        // `/broadcasts` it served `/broadcasts/broadcasts`, and `nest("/")` is
+        // refused by axum 0.8, which is what forced the `.merge` in `build_routes`.
+        // Asserted separately because the table above would pass for the wrong reason
+        // if this list had been mounted with a prefix it already carries.
         assert!(
             BROADCAST_PATHS[0] == "/broadcasts",
             "the first broadcast path is the collection itself: {:?}",

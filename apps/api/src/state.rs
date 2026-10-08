@@ -9,18 +9,19 @@
 //! None of that code compiles against the current tree, and `lib.rs` never declared this
 //! module, so the file was dead: a description of an application rather than part of one.
 //!
-//! This is the same idea rebuilt around what actually exists. **Auth is the only
-//! refactored module**, so [`MenoState`] carries auth plus the infrastructure every
-//! module will need. When the next module lands it adds a field here, and nothing else
-//! in this file changes — which is the property worth preserving.
+//! This is the same idea rebuilt around what actually exists. **Auth, broadcasts,
+//! profile and settings are the refactored modules**, so [`MenoState`] carries those
+//! four plus the infrastructure every module will need. When the next module lands it
+//! adds a field here, and nothing else in this file changes — which is the property
+//! worth preserving.
 //!
 //! # Why not the other modules
 //!
 //! Three reasons, and the third is the one that matters:
 //!
-//! 1. **They do not exist.** There is no `modules::profile`, no `modules::broadcast`, no
-//!    `jobs/`. Naming them would not compile.
-//! 2. **A field is a promise.** `pub profile: ProfileState` asserts that the profile
+//! 1. **They do not exist.** There is no `modules::subscribers`, no `modules::chat`,
+//!    no `jobs/`. Naming them would not compile.
+//! 2. **A field is a promise.** `pub chat: ChatState` would assert that the chat
 //!    routes work, that the adapter is wired, and that someone can review it. With no
 //!    implementation behind it the field is a lie the type system cannot catch.
 //! 3. **The alternative already failed once.** `master` shipped all thirteen and the
@@ -53,6 +54,8 @@ use crate::infrastructure::storage::ObjectStore;
 use crate::modules::auth::mailer::AuthMailer;
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::profile::state::ProfileState;
+use crate::modules::settings::state::SettingsState;
 
 /// Everything the running application holds.
 ///
@@ -74,6 +77,18 @@ pub struct MenoState {
     /// state rather than reaching into the application: this field is a projection of a
     /// repository and a media adapter, and nothing outside `state` names either.
     pub broadcast: BroadcastState,
+    /// The caller's own profile, other people's, search, and avatar upload (§2's tree).
+    ///
+    /// A projection of a repository, a cache and the object store — chosen in
+    /// `profile::state::Wiring`, so `STORAGE_ENABLED=false` makes avatar upload a
+    /// 503 rather than a compile failure (§4.6).
+    pub profile: ProfileState,
+    /// The caller's notification, theme, language and preference switches (§2's tree).
+    ///
+    /// Arrives with `profile` because `GET /users/me` embeds this block — one wire
+    /// contract, two directories, and two fields that must be wired together or
+    /// neither answers honestly.
+    pub settings: SettingsState,
     /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
     ///
     /// Built here rather than in `routes.rs` because it is fallible — a blank
@@ -143,6 +158,20 @@ impl axum::extract::FromRef<MenoState> for BroadcastState {
     }
 }
 
+/// The same projection for profile — the third implementation of the idea.
+impl axum::extract::FromRef<MenoState> for ProfileState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.profile.clone()
+    }
+}
+
+/// The same projection for settings — the fourth.
+impl axum::extract::FromRef<MenoState> for SettingsState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.settings.clone()
+    }
+}
+
 impl std::fmt::Debug for MenoState {
     /// Names the fields and nothing else.
     ///
@@ -158,6 +187,8 @@ impl std::fmt::Debug for MenoState {
             .field("auth", &self.auth)
             .field("auth_guard", &self.auth_guard)
             .field("broadcast", &self.broadcast)
+            .field("profile", &self.profile)
+            .field("settings", &self.settings)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
             .field("metrics", &self.metrics)
@@ -261,6 +292,22 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         livekit: parts.config.livekit.clone(),
     });
 
+    // Profile and settings, for the same reason and in the same shape: `Wiring`
+    // takes raw handles and chooses the adapters (§5.6), so this file never names
+    // `PgProfileRepo` or `ProfileRedisCache`. `profile` needs the object store
+    // because avatar upload proxies through it (§3.3); `settings` needs only the
+    // pool and Redis. Both are built before the struct literal, which moves
+    // `parts.db` and `parts.redis`.
+    let profile = ProfileState::new(crate::modules::profile::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+        storage: Arc::clone(&parts.storage),
+    });
+    let settings = SettingsState::new(crate::modules::settings::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+    });
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
@@ -270,6 +317,12 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         // chose an adapter from configuration rather than this file demanding one, and a
         // deployment without LiveKit still gets drafts, schedules and the catalogue.
         broadcast,
+        // Profile and settings (§2's tree). The object store is optional (§4.6), so
+        // `profile::state::Wiring` chose an adapter from what `parts` carries: a
+        // deployment without S3 serves profiles and search normally and answers
+        // avatar upload with a 503.
+        profile,
+        settings,
         auth_guard,
         push: parts.push,
         storage: parts.storage,
