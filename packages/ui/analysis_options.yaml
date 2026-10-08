@@ -1,14 +1,45 @@
-include: package:flutter_lints/flutter.yaml
+include: package:very_good_analysis/analysis_options.yaml
+
+# ---------------------------------------------------------------------------
+# Intent:
+#  - Shared design-system package (packages/ui) consumed by apps/mobile and,
+#    later, other app targets — so the public API stays documented and typed.
+#  - Base is very_good_analysis (the package's dev dependency), matching the
+#    convention already used by apps/mobile/analysis_options.yaml.
+#  - Relax specific rules only with a reason; do not blanket-relax a category.
+# ---------------------------------------------------------------------------
 
 analyzer:
-  exclude:
-    - build/**
-    - android/**
-    - ios/**
-    - web/**
-    - windows/**
-    - macos/**
-    - linux/**
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
 
-# Additional information about this file can be found at
-# https://dart.dev/guides/language/analysis-options
+  exclude:
+    # flutter_gen output (see `flutter_gen.output` in pubspec.yaml).
+    - lib/src/gen/**
+    - lib/**/*.g.dart
+    - lib/**/*.freezed.dart
+    - build/**
+
+linter:
+  rules:
+    # Shared package: consumers only see these doc comments, so unlike the
+    # app layer (which relaxes this), the package keeps them enforced.
+    public_member_api_docs: true
+
+    # Design-system widgets should be const-constructible where possible and
+    # expose a Key so consumers can target them from tests/overlays.
+    prefer_const_constructors: true
+    prefer_const_constructors_in_immutables: true
+    prefer_const_literals_to_create_immutables: true
+    use_key_in_widget_constructors: true
+
+    # Keep the package surface tidy: explicit return types, ordered imports,
+    # single quotes, child properties last, no dynamic dispatch, no print.
+    always_declare_return_types: true
+    directives_ordering: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    prefer_single_quotes: true
+    sort_child_properties_last: true
