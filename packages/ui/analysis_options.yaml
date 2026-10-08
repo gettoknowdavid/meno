@@ -1,14 +1,5 @@
 include: package:very_good_analysis/analysis_options.yaml
 
-# ---------------------------------------------------------------------------
-# Intent:
-#  - Shared design-system package (packages/ui) consumed by apps/mobile and,
-#    later, other app targets — so the public API stays documented and typed.
-#  - Base is very_good_analysis (the package's dev dependency), matching the
-#    convention already used by apps/mobile/analysis_options.yaml.
-#  - Relax specific rules only with a reason; do not blanket-relax a category.
-# ---------------------------------------------------------------------------
-
 analyzer:
   language:
     strict-casts: true
@@ -16,7 +7,6 @@ analyzer:
     strict-raw-types: true
 
   exclude:
-    # flutter_gen output (see `flutter_gen.output` in pubspec.yaml).
     - lib/src/gen/**
     - lib/**/*.g.dart
     - lib/**/*.freezed.dart
