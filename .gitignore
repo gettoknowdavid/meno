@@ -75,7 +75,6 @@ build/
 *.freezed.dart
 *.freezed.json
 *.gr.dart
-*.gen.dart
 *.gql.dart
 *.mocks.dart
 *.config.dart

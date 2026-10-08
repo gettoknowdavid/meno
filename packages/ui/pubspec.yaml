@@ -59,18 +59,6 @@ flutter:
 
 flutter_gen:
   output: lib/src/gen/
+
   integrations:
     flutter_svg: true
-
-  assets:
-    enabled: true
-    outputs:
-      directory_path_enabled: true
-      package_parameter_enabled: true
-      class_name: Assets
-
-  fonts:
-    enabled: true
-    outputs:
-      directory_path_enabled: true
-      package_parameter_enabled: true
