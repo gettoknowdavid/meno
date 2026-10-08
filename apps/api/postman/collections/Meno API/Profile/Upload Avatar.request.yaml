@@ -1,0 +1,26 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/users/me/avatar'
+order: 5000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+body:
+  type: formdata
+  content:
+    - key: file
+      type: file
+      src: ''
+      description: 'Image file to upload as avatar (PNG, JPEG, WebP — max 5 MB)'
+      contentType: image/png
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      const { avatar_id, avatar_url } = json.data;
+      console.log(`[Upload Avatar] Avatar stored at key "${avatar_id}". URL: ${avatar_url ?? '(no public URL)'}`);

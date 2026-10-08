@@ -1,0 +1,17 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/settings'
+order: 1000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      console.log(`[Get Settings] display=${json.data.display}, language=${json.data.language}, has_push_token=${json.data.has_push_token}`);

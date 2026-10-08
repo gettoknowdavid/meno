@@ -1,0 +1,30 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/users?q=Ada'
+order: 4000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+queryParams:
+  - key: q
+    value: 'Ada'
+    description: 'Search term (min 3 characters). Matched against name and bio.'
+  - key: limit
+    value: '20'
+    description: 'Page size (1–100, default 20)'
+    disabled: true
+  - key: cursor
+    value: ''
+    description: 'Opaque cursor from the previous page''s next_cursor field'
+    disabled: true
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      const { items, next_cursor } = json.data;
+      console.log(`[Search Profiles] Got ${items.length} result(s). next_cursor: ${next_cursor ?? 'none'}`);

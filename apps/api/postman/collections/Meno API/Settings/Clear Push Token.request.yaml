@@ -1,0 +1,17 @@
+$kind: http-request
+method: DELETE
+url: '{{base_url}}/settings/push-token'
+order: 3000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status) return;
+
+      console.log('[Clear Push Token] Device push token removed from account.');

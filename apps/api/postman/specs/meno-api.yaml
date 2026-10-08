@@ -22,6 +22,210 @@ components:
       bearerFormat: JWT
 
   schemas:
+    SettingsResponse:
+      type: object
+      required:
+        - push_notifications
+        - app_notifications
+        - email_notifications
+        - display
+        - language
+        - notification_preferences
+        - has_push_token
+      properties:
+        push_notifications:
+          type: boolean
+          description: Push (FCM) notifications on/off.
+        app_notifications:
+          type: boolean
+          description: In-app notifications on/off.
+        email_notifications:
+          type: boolean
+          description: Email notifications on/off.
+        display:
+          type: string
+          enum:
+            - system
+            - light
+            - dark
+          description: UI theme preference.
+        language:
+          type: string
+          example: en
+          description: 'BCP-47 language tag, e.g. `en` or `en-GB`.'
+        notification_preferences:
+          type: object
+          description: Free-form client notification preferences, stored verbatim.
+        has_push_token:
+          type: boolean
+          description: Whether a device push token is currently on file. The token itself is never returned.
+
+    MeResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - email
+        - email_verified
+        - providers
+        - settings
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+          description: Whether the email address has been confirmed.
+        bio:
+          type:
+            - string
+            - 'null'
+          maxLength: 244
+        avatar_id:
+          type:
+            - string
+            - 'null'
+          description: Storage key of the current avatar.
+        avatar_url:
+          type:
+            - string
+            - 'null'
+          description: CDN URL for the avatar. Null when no public base URL is configured.
+        settings:
+          $ref: '#/components/schemas/SettingsResponse'
+        providers:
+          type: array
+          items:
+            type: string
+            enum:
+              - password
+              - google
+          description: Identity providers linked to this account.
+        followers:
+          type: integer
+          description: Follower count.
+        following:
+          type: integer
+          description: Following count.
+        broadcasts:
+          type: integer
+          description: Broadcast count.
+        created_at:
+          type: string
+          format: date-time
+
+    PublicProfileResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - is_following
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        bio:
+          type:
+            - string
+            - 'null'
+        avatar_url:
+          type:
+            - string
+            - 'null'
+        is_following:
+          type: boolean
+          description: Whether the authenticated viewer follows this profile.
+        followers:
+          type: integer
+        following:
+          type: integer
+        broadcasts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    ProfileSearchResult:
+      type: object
+      required:
+        - id
+        - full_name
+        - is_following
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        bio:
+          type:
+            - string
+            - 'null'
+        avatar_url:
+          type:
+            - string
+            - 'null'
+        is_following:
+          type: boolean
+          description: Whether the authenticated viewer follows this profile.
+        followers:
+          type: integer
+        following:
+          type: integer
+        broadcasts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    ProfileSearchPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileSearchResult'
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          description: Opaque cursor to pass as `cursor` on the next request. Absent when there are no more pages.
+
+    UploadAvatarResponse:
+      type: object
+      required:
+        - avatar_id
+      properties:
+        avatar_id:
+          type: string
+          description: Storage key now stored in `users.avatar_id`.
+        avatar_url:
+          type:
+            - string
+            - 'null'
+          description: CDN URL now stored in `users.avatar_url`. Null when storage has no public base URL.
+
     UserResponse:
       type: object
       required:
@@ -879,6 +1083,409 @@ paths:
                 message: All sessions revoked
         '401':
           description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me:
+    get:
+      summary: Get the authenticated user's own profile
+      operationId: getMe
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Partially update the authenticated user's profile
+      operationId: updateMe
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                  description: New display name. Omit to leave unchanged.
+                bio:
+                  type: string
+                  maxLength: 244
+                  description: 'New bio. Omit to leave unchanged; send `""` to clear it.'
+      responses:
+        '200':
+          description: Profile updated — returns the fresh record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/avatar:
+    post:
+      summary: Upload a new avatar for the authenticated user
+      operationId: uploadAvatar
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 'Image file (PNG, JPEG, or WebP). Maximum 5 MB.'
+      responses:
+        '200':
+          description: Avatar uploaded — returns the new storage key and CDN URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAvatarResponse'
+        '400':
+          description: Missing or empty file part
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: File exceeds the 5 MB limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Unsupported file type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users:
+    get:
+      summary: Search user profiles
+      operationId: searchProfiles
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 3
+          description: 'Search term (minimum 3 characters). Matched against name and bio via full-text search.'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page size.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor from the previous page's `next_cursor` field.
+      responses:
+        '200':
+          description: A page of matching profiles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSearchPage'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed (e.g. query too short)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{id}:
+    get:
+      summary: Get another user's public profile
+      operationId: getProfile
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the user whose profile to retrieve.
+      responses:
+        '200':
+          description: Public profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProfileResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /settings:
+    get:
+      summary: Get the authenticated user's settings
+      operationId: getSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Settings retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Partially update the authenticated user's settings
+      operationId: updateSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                push_notifications:
+                  type: boolean
+                app_notifications:
+                  type: boolean
+                email_notifications:
+                  type: boolean
+                push_notification_token:
+                  type: string
+                  maxLength: 4096
+                  description: 'FCM device token. Omit to keep the current one; use DELETE /settings/push-token to clear it.'
+                display:
+                  type: string
+                  enum:
+                    - system
+                    - light
+                    - dark
+                language:
+                  type: string
+                  pattern: '^[a-zA-Z]{2}(-[a-zA-Z]{2,4})?$'
+                  example: en
+                  description: 'BCP-47 language tag, e.g. `en` or `en-GB`.'
+                notification_preferences:
+                  type: object
+                  description: Free-form client preferences, stored and returned verbatim.
+      responses:
+        '200':
+          description: Settings updated — returns the fresh record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /settings/push-token:
+    delete:
+      summary: Clear the authenticated user's device push token
+      operationId: clearPushToken
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Push token cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Push token cleared
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
           content:
             application/json:
               schema:

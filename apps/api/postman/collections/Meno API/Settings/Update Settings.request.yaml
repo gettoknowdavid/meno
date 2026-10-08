@@ -1,0 +1,31 @@
+$kind: http-request
+method: PATCH
+url: '{{base_url}}/settings'
+order: 2000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "push_notifications": true,
+      "app_notifications": true,
+      "email_notifications": true,
+      "display": "system",
+      "language": "en",
+      "notification_preferences": {}
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      console.log(`[Update Settings] Settings saved. display=${json.data.display}, language=${json.data.language}`);
