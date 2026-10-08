@@ -1,4 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/widget_previews.dart';
+
+/// Previews the [MText] widget
+@Preview(name: 'My Sample Text')
+Widget previewMText() {
+  return const MText('Hello, World!');
+}
 
 /// A widget that displays styled text with customizable properties.
 ///
@@ -18,7 +25,7 @@ class MText extends StatelessWidget {
   /// * `decorationColor`: The color of the text decoration.
   /// * `decorationThickness`: The thickness of the text decoration.
   /// * `softWrap`: Whether to allow the text to wrap onto multiple lines.
-  const MText(
+  const new(
     this.data, {
     super.key,
     this.color,
