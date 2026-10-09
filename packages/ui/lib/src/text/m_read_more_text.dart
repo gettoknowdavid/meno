@@ -1,8 +1,32 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/widget_previews.dart';
 import 'package:meno_ui/src/text/m_text.dart';
 import 'package:meno_ui/src/theme/extensions/m_color_scheme.dart';
 import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
+import 'package:meno_ui/src/theme/m_theme.dart';
 import 'package:meno_ui/src/tokens/spacing.dart';
+
+/// Previews [MReadMoreText] truncated to its default [MReadMoreText.maxLines].
+///
+/// Unlike the bare text previews, this one supplies [MTheme] because the widget
+/// resolves its caption style and the colour of its 'more' toggle from the
+/// `MTextTheme` and `MColorScheme` extensions.
+@Preview(name: 'Collapsed', group: 'MReadMoreText', size: Size(360, 200))
+Widget previewMReadMoreText() {
+  return MaterialApp(
+    theme: MTheme.light,
+    home: const Scaffold(
+      body: Padding(
+        padding: EdgeInsets.all(Insets.lg),
+        child: MReadMoreText(
+          'Meno is where conversation happens. Host a live room, invite '
+          'cohosts, and let your audience join from anywhere — then revisit '
+          'the recording once the room closes.',
+        ),
+      ),
+    ),
+  );
+}
 
 /// A widget that allows users to expand and collapse long text.
 ///

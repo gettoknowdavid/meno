@@ -276,8 +276,20 @@ class MTextTheme extends ThemeExtension<MTextTheme> {
   }
 
   /// Returns the [MTextTheme] extension from the closest [Theme].
+  ///
+  /// The type scale only exists on a `ThemeData` built by `MTheme`, so this
+  /// throws when the enclosing theme came from anywhere else. The assertion
+  /// names the cause, because the scale is what every `MText` variant needs and
+  /// a bare `!` reports only "null check operator used on a null value".
   static MTextTheme of(BuildContext context) {
-    return Theme.of(context).extension<MTextTheme>()!;
+    final theme = Theme.of(context).extension<MTextTheme>();
+    assert(
+      theme != null,
+      'No MTextTheme in scope. Wrap this widget in a MaterialApp whose theme '
+      'comes from MTheme (MTheme.light or MTheme.dark): the type scale does '
+      'not exist on a default ThemeData.',
+    );
+    return theme!;
   }
 }
 
