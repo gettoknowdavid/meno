@@ -1,13 +1,20 @@
 /// The Meno design system.
 ///
-/// The public surface is grouped into three layers:
-/// * `src/tokens` — raw palette, type scale and geometry values.
+/// The public surface is grouped into layers:
+/// * `src/tokens` — raw palette, type scale, spacing and geometry values.
 /// * `src/theme` — the `ThemeData` builder and its extensions.
 /// * `src/text` — the text widgets built on top of those tokens.
+/// * `src/avatars`, `src/badges`, `src/buttons`, `src/loading_indicator` and
+///   `src/placeholders` — the components that render them.
 library;
 
+export 'src/avatars/avatars.dart';
+export 'src/badges/badges.dart';
+export 'src/buttons/buttons.dart';
 export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
+export 'src/loading_indicator/loading_indicator.dart';
+export 'src/placeholders/placeholders.dart';
 export 'src/text/text.dart';
 export 'src/theme/theme.dart';
 export 'src/tokens/tokens.dart';

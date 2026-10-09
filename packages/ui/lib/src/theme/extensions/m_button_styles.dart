@@ -5,6 +5,7 @@ import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
 import 'package:meno_ui/src/tokens/corners.dart';
 import 'package:meno_ui/src/tokens/m_color.dart';
 import 'package:meno_ui/src/tokens/spacing.dart';
+import 'package:meno_ui/src/tokens/strokes.dart';
 
 ButtonStyle _baseButtonStyle(MTextTheme textTheme) {
   return ButtonStyle(
@@ -100,8 +101,8 @@ class MButtonStyles extends ThemeExtension<MButtonStyles> {
         ),
         textStyle: MInternal.all(textTheme.bodyMedium),
         side: MInternal.resolveWith(
-          defaultValue: BorderSide(color: colors.primary, width: 1.50),
-          pressedValue: BorderSide(color: colors.primary, width: 1.50),
+          defaultValue: BorderSide(color: colors.primary, width: Strokes.thin),
+          pressedValue: BorderSide(color: colors.primary, width: Strokes.thin),
           disabledValue: const BorderSide(width: 0),
         ),
       ),
