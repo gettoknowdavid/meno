@@ -5,7 +5,6 @@ import 'package:meno_ui/src/buttons/m_button_icon_placement.dart';
 import 'package:meno_ui/src/loading_indicator/loading_indicator.dart';
 import 'package:meno_ui/src/text/m_text.dart';
 import 'package:meno_ui/src/tokens/spacing.dart';
-
 /// The shared base of every Meno button.
 ///
 /// A button is a label with an optional icon. The base owns those inputs and
