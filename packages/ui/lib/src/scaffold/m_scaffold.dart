@@ -1,7 +1,8 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
 
-/// A custom scaffold widget that wraps Flutter's Scaffold with additional features.
+/// A custom scaffold widget that wraps Flutter's Scaffold with additional
+/// features.
 ///
 /// This widget provides the same API as Flutter's [Scaffold] but adds a default
 /// horizontal padding to the body content and allows for theme integration.
