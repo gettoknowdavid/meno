@@ -19,6 +19,7 @@ export 'src/input_fields/input_fields.dart';
 export 'src/list_tiles/list_tiles.dart';
 export 'src/loading_indicator/loading_indicator.dart';
 export 'src/modals/modals.dart';
+export 'src/navigation/navigation.dart';
 export 'src/placeholders/placeholders.dart';
 export 'src/spacer/meno_spacer.dart';
 export 'src/tags/tags.dart';
