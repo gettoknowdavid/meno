@@ -11,6 +11,8 @@ library;
 export 'src/avatars/avatars.dart';
 export 'src/badges/badges.dart';
 export 'src/buttons/buttons.dart';
+export 'src/cards/cards.dart';
+export 'src/dividers/dividers.dart';
 export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
 export 'src/loading_indicator/loading_indicator.dart';

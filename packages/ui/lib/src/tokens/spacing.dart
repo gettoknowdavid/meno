@@ -6,9 +6,9 @@ import 'package:flutter/widgets.dart';
 /// ready-made gap from [Spaces]. Keeping the scale in one place is what lets
 /// layout code stay consistent across features.
 @immutable
-class Insets {
+final class Insets {
   /// Prevents instantiation: this type is a namespace for the scale.
-  const new _();
+  const Insets._();
 
   /// Micro spacing (4 units).
   static const double xs = 4;
@@ -40,9 +40,9 @@ class Insets {
 /// Use these instead of hand-written `SizedBox` values so the spacing rhythm
 /// stays aligned with the scale.
 @immutable
-class Spaces {
+final class Spaces {
   /// Prevents instantiation: this type is a namespace for the gaps.
-  const new _();
+  const Spaces._();
 
   // Horizontal Spaces
   /// A [SizedBox] with a width of [Insets.xs] logical pixels.

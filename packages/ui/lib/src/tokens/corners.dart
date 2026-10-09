@@ -1,13 +1,13 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 
 /// The corner-radius scale shared by the whole design system.
 ///
 /// Every rounded surface should draw its radius from this scale rather than
 /// introducing a one-off value.
 @immutable
-class Corners {
+final class Corners {
   /// Prevents instantiation: this type is a namespace for the scale.
-  const new _();
+  const Corners._();
 
   /// Micro corner radius (4 units).
   static const BorderRadius xs = BorderRadius.all(Radius.circular(4));
@@ -32,4 +32,12 @@ class Corners {
 
   /// Circular corner radius (555 units, typically used for full circles).
   static const BorderRadius circle = BorderRadius.all(Radius.circular(555));
+
+  /// Superelliptical corner used by live cards and rounded surfaces.
+  ///
+  /// Uses Flutter's built-in [RoundedSuperellipseBorder] so cards get the
+  /// same pill shape as before without an extra dependency.
+  static const RoundedSuperellipseBorder squircleLg = RoundedSuperellipseBorder(
+    borderRadius: BorderRadius.all(Radius.circular(28)),
+  );
 }
