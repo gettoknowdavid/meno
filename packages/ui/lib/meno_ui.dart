@@ -15,6 +15,7 @@ export 'src/cards/cards.dart';
 export 'src/dividers/dividers.dart';
 export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
+export 'src/input_fields/input_fields.dart';
 export 'src/loading_indicator/loading_indicator.dart';
 export 'src/placeholders/placeholders.dart';
 export 'src/spacer/meno_spacer.dart';

@@ -141,16 +141,16 @@ class MTextFieldStyle extends ThemeExtension<MTextFieldStyle> {
   final Color errorColor;
 
   /// The field's border
-  final InputBorder border;
+  final InputBorder? border;
 
   /// The field's focused border
-  final InputBorder borderFocused;
+  final InputBorder? borderFocused;
 
   /// The field's disabled border
-  final InputBorder borderDisabled;
+  final InputBorder? borderDisabled;
 
   /// The field's error border
-  final InputBorder borderError;
+  final InputBorder? borderError;
 
   /// Returns the [MTextFieldStyle] extension from the closest [Theme].
   static MTextFieldStyle of(BuildContext context) =>
