@@ -3,7 +3,7 @@
 //
 // ignore_for_file: avoid_positional_boolean_parameters
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// Shared helpers for the theme extensions.
 ///

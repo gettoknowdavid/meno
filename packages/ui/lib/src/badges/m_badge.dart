@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/src/gen/assets.gen.dart';
 import 'package:meno_ui/src/internal/m_internal.dart';
 import 'package:meno_ui/src/text/m_text.dart';

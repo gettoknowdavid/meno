@@ -1,6 +1,6 @@
 import 'dart:ui' show clampDouble, lerpDouble;
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/src/buttons/m_button_icon_placement.dart';
 import 'package:meno_ui/src/loading_indicator/loading_indicator.dart';
 import 'package:meno_ui/src/text/m_text.dart';

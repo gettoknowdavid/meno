@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/src/gen/fonts.gen.dart';
 import 'package:meno_ui/src/theme/extensions/m_button_styles.dart';
 import 'package:meno_ui/src/theme/extensions/m_card_styles.dart';

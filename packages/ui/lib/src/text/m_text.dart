@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:flutter/widget_previews.dart';
 import 'package:meno_ui/src/theme/extensions/m_text_theme.dart';
 import 'package:meno_ui/src/theme/m_theme.dart';

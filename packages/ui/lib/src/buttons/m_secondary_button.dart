@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/src/buttons/m_button.dart';
 import 'package:meno_ui/src/loading_indicator/loading_indicator.dart';
 import 'package:meno_ui/src/theme/extensions/m_button_styles.dart';

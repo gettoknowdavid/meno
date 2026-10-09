@@ -1,6 +1,6 @@
 import 'dart:ui';
 
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 
 /// {@template tab_bar_style}
 /// Custom styling for a tab bar's resolved visual states.
