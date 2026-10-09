@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// A customizable divider with spacing control.
@@ -15,9 +15,9 @@ class MDivider extends StatelessWidget {
   /// * `bottomSpace`: The vertical space below the divider.
   /// * `start`: The horizontal indent of the divider.
   /// * `end`: The horizontal end indent of the divider.
-  /// * `color`: The color of the divider (defaults to the theme's divider color).
+  /// * `color`: The color of the divider.
   /// * `thickness`: The thickness of the divider line in logical pixels.
-  const MDivider({
+  const new({
     super.key,
     this.vertical = false,
     this.topSpace,
@@ -58,15 +58,11 @@ class MDivider extends StatelessWidget {
         : CrossAxisAlignment.center;
 
     return Column(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       crossAxisAlignment: aligned,
       children: [
         SizedBox(height: topSpace),
-        Container(
-          height: thickness,
-          color: dividerColor,
-          margin: EdgeInsets.zero,
-        ),
+        Container(height: thickness, color: dividerColor, margin: .zero),
         SizedBox(height: bottomSpace),
       ],
     );

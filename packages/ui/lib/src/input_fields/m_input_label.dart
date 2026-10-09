@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// A widget that displays a label for an input field, optionally with an icon.

@@ -1,4 +1,4 @@
-import 'package:flutter/material.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// A small circular widget representing a dot.
@@ -9,7 +9,7 @@ class MDot extends StatelessWidget {
   ///
   /// * `dimension`: The size of the dot (default: 4.0).
   /// * `color`: The color of the dot (defaults to [MColor.grey500]).
-  const MDot({super.key, this.dimension = 4, this.color});
+  const new({super.key, this.dimension = 4, this.color});
 
   /// The size of the dot.
   final double dimension;
@@ -23,7 +23,7 @@ class MDot extends StatelessWidget {
     return Container(
       width: dimension,
       height: dimension,
-      decoration: BoxDecoration(color: dotColor, shape: BoxShape.circle),
+      decoration: BoxDecoration(color: dotColor, shape: .circle),
     );
   }
 }

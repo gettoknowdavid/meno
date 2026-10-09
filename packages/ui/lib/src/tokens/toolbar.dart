@@ -7,11 +7,11 @@ class ToolBarHeights {
   const new _();
 
   /// Height of the home toolbar.
-  static const Size home = Size.fromHeight(64);
+  static const Size home = .fromHeight(64);
 
   /// Height of the primary toolbar.
-  static const Size primary = Size.fromHeight(120);
+  static const Size primary = .fromHeight(120);
 
   /// Height of the secondary toolbar.
-  static const Size secondary = Size.fromHeight(56);
+  static const Size secondary = .fromHeight(56);
 }

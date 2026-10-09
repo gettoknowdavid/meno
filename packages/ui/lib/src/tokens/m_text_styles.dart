@@ -13,7 +13,7 @@ class MTextStyles {
   static const TextStyle heading1 = TextStyle(
     fontSize: 32,
     height: 40.0 / 32.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -22,7 +22,7 @@ class MTextStyles {
   static const TextStyle heading1Regular = TextStyle(
     fontSize: 32,
     height: 40.0 / 32.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -31,7 +31,7 @@ class MTextStyles {
   static const TextStyle heading1Medium = TextStyle(
     fontSize: 32,
     height: 40.0 / 32.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -40,7 +40,7 @@ class MTextStyles {
   static const TextStyle heading1Bold = TextStyle(
     fontSize: 32,
     height: 40.0 / 32.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -49,7 +49,7 @@ class MTextStyles {
   static const TextStyle heading2 = TextStyle(
     fontSize: 24,
     height: 32.0 / 24.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -58,7 +58,7 @@ class MTextStyles {
   static const TextStyle heading2Regular = TextStyle(
     fontSize: 24,
     height: 32.0 / 24.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -67,7 +67,7 @@ class MTextStyles {
   static const TextStyle heading2Medium = TextStyle(
     fontSize: 24,
     height: 32.0 / 24.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -76,7 +76,7 @@ class MTextStyles {
   static const TextStyle heading2Bold = TextStyle(
     fontSize: 24,
     height: 32.0 / 24.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -85,7 +85,7 @@ class MTextStyles {
   static const TextStyle heading3 = TextStyle(
     fontSize: 20,
     height: 30.0 / 20.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -94,7 +94,7 @@ class MTextStyles {
   static const TextStyle heading3Regular = TextStyle(
     fontSize: 20,
     height: 30.0 / 20.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -103,7 +103,7 @@ class MTextStyles {
   static const TextStyle heading3Medium = TextStyle(
     fontSize: 20,
     height: 30.0 / 20.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -112,7 +112,7 @@ class MTextStyles {
   static const TextStyle heading3Bold = TextStyle(
     fontSize: 20,
     height: 30.0 / 20.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -121,7 +121,7 @@ class MTextStyles {
   static const TextStyle subheading = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -130,7 +130,7 @@ class MTextStyles {
   static const TextStyle subheadingRegular = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -139,7 +139,7 @@ class MTextStyles {
   static const TextStyle subheadingMedium = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -148,7 +148,7 @@ class MTextStyles {
   static const TextStyle subheadingBold = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -157,7 +157,7 @@ class MTextStyles {
   static const TextStyle body = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -166,7 +166,7 @@ class MTextStyles {
   static const TextStyle bodyRegular = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -175,7 +175,7 @@ class MTextStyles {
   static const TextStyle bodyMedium = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -184,7 +184,7 @@ class MTextStyles {
   static const TextStyle bodyBold = TextStyle(
     fontSize: 16,
     height: 24.0 / 16.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -193,7 +193,7 @@ class MTextStyles {
   static const TextStyle caption = TextStyle(
     fontSize: 14,
     height: 16.0 / 14.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -202,7 +202,7 @@ class MTextStyles {
   static const TextStyle captionRegular = TextStyle(
     fontSize: 14,
     height: 16.0 / 14.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -211,7 +211,7 @@ class MTextStyles {
   static const TextStyle captionMedium = TextStyle(
     fontSize: 14,
     height: 16.0 / 14.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -220,7 +220,7 @@ class MTextStyles {
   static const TextStyle captionBold = TextStyle(
     fontSize: 14,
     height: 16.0 / 14.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -229,7 +229,7 @@ class MTextStyles {
   static const TextStyle micro = TextStyle(
     fontSize: 12,
     height: 16.0 / 12.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -238,7 +238,7 @@ class MTextStyles {
   static const TextStyle microRegular = TextStyle(
     fontSize: 12,
     height: 16.0 / 12.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -247,7 +247,7 @@ class MTextStyles {
   static const TextStyle microMedium = TextStyle(
     fontSize: 12,
     height: 16.0 / 12.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -256,7 +256,7 @@ class MTextStyles {
   static const TextStyle microBold = TextStyle(
     fontSize: 12,
     height: 16.0 / 12.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -265,7 +265,7 @@ class MTextStyles {
   static const TextStyle nano = TextStyle(
     fontSize: 10,
     height: 14.0 / 10.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -274,7 +274,7 @@ class MTextStyles {
   static const TextStyle nanoRegular = TextStyle(
     fontSize: 10,
     height: 14.0 / 10.0,
-    fontWeight: FontWeight.w400,
+    fontWeight: .w400,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -283,7 +283,7 @@ class MTextStyles {
   static const TextStyle nanoMedium = TextStyle(
     fontSize: 10,
     height: 14.0 / 10.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -292,7 +292,7 @@ class MTextStyles {
   static const TextStyle nanoBold = TextStyle(
     fontSize: 10,
     height: 14.0 / 10.0,
-    fontWeight: FontWeight.bold,
+    fontWeight: .bold,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );
@@ -301,7 +301,7 @@ class MTextStyles {
   static const TextStyle button = TextStyle(
     fontSize: 8,
     height: 16.0 / 8.0,
-    fontWeight: FontWeight.w500,
+    fontWeight: .w500,
     fontFamily: FontFamily.sFProDisplay,
     letterSpacing: 0,
   );

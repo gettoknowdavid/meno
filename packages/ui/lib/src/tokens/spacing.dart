@@ -8,7 +8,7 @@ import 'package:flutter/widgets.dart';
 @immutable
 final class Insets {
   /// Prevents instantiation: this type is a namespace for the scale.
-  const Insets._();
+  const new _();
 
   /// Micro spacing (4 units).
   static const double xs = 4;
@@ -42,7 +42,7 @@ final class Insets {
 @immutable
 final class Spaces {
   /// Prevents instantiation: this type is a namespace for the gaps.
-  const Spaces._();
+  const new _();
 
   // Horizontal Spaces
   /// A [SizedBox] with a width of [Insets.xs] logical pixels.
