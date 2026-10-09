@@ -15,6 +15,7 @@ export 'src/gen/assets.gen.dart';
 export 'src/gen/fonts.gen.dart';
 export 'src/loading_indicator/loading_indicator.dart';
 export 'src/placeholders/placeholders.dart';
+export 'src/spacer/meno_spacer.dart';
 export 'src/tags/tags.dart';
 export 'src/text/text.dart';
 export 'src/theme/theme.dart';
