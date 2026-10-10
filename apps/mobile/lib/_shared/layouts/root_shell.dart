@@ -33,9 +33,8 @@ class _ShellTab {
 }
 
 /// The app's top-level tabs, in branch order.
-///
-/// The order must match the `StatefulShellBranch` order in the router: the
-/// shell maps a tab index straight onto `navigationShell.goBranch`.
+
+/// The order must match the router's `StatefulShellBranch` order.
 const List<_ShellTab> _tabs = [
   _ShellTab(label: 'Home', icon: MIcons.home_01, activeIcon: MIcons.home),
   _ShellTab(
@@ -51,14 +50,13 @@ const List<_ShellTab> _tabs = [
   ),
 ];
 
-/// The root navigation layout: a bottom bar on phones, a side rail on wider
-/// screens.
+/// The root navigation layout: bottom bar on phones, side rail on wider screens.
 ///
-/// The shell is presentation only. It reports taps back to the router through
+/// Presentation only. Taps are reported to the router through
 /// [StatefulNavigationShell.goBranch], so branch state, deep links and the
-/// redirect guard all stay owned by go_router.
-///
-/// Example usage (from the router's `StatefulShellRoute`):
+/// redirect guard stay owned by go_router.
+
+/// Example (from the router's `StatefulShellRoute`):
 /// ```dart
 /// builder: (_, _, navigationShell) =>
 ///     RootShell(navigationShell: navigationShell),

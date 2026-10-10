@@ -1,4 +1,3 @@
-//GENERATED BARREL FILE
 export 'email_verification_page.dart';
 export 'forgot_password_page.dart';
 export 'login_page.dart';

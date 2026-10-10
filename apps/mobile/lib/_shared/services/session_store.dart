@@ -4,7 +4,6 @@ import 'dart:convert';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/_shared/services/secure_storage.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Where the accounts signed in on this device live.
@@ -14,8 +13,7 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// the layout of a stored account is decided in exactly one place.
 ///
 /// The app signs in to several accounts at once and switches between them
-/// without a round trip — the Facebook/WhatsApp model. That needs two things
-/// on disk:
+/// without a round trip. That needs two things on disk:
 ///
 /// * a **vault** under [StorageKeys.accounts]: every account's whole
 ///   credential, keyed by user id, which is what makes a switch instant;
@@ -27,12 +25,11 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// The active set duplicates one vault entry on purpose. A request needs a
 /// bearer token on the hot path, and parsing the whole vault to find it would
 /// put a JSON decode in front of every call. The duplication is safe because
-/// both are written together, here.
+/// both are written together here.
 ///
 /// Every mutation publishes the new active credential on [activeChanges]. That
 /// is how the auth manager learns that a token was rotated by the interceptor,
-/// or that a session was dropped because the API refused to renew it, without
-/// the interceptor knowing the manager exists.
+/// or that a session was dropped because the API refused to renew it.
 final class SessionStore implements Disposable {
   new(this._storage);
 
@@ -52,9 +49,9 @@ final class SessionStore implements Disposable {
 
   /// The tokens of the active account.
   ///
-  /// Reads only the three token keys, which is the whole point of keeping them
-  /// beside the vault copy: an interceptor can answer "is there a token, and
-  /// is it about to expire" without decoding anything.
+  /// Reads only the three token keys, which is why they are kept beside the
+  /// vault copy: an interceptor can answer "is there a token, and is it about
+  /// to expire" without decoding anything.
   Future<Session> readActiveSession() async {
     final accessToken = await _storage.read(StorageKeys.accessToken);
     if (accessToken == null || accessToken.isEmpty) return Session.empty;
@@ -102,8 +99,7 @@ final class SessionStore implements Disposable {
   /// Makes [credential] the active account and files it in the vault.
   ///
   /// The order matters: the vault is written first, so a crash between the two
-  /// writes leaves an account that can be switched back to rather than an
-  /// active account nothing knows about.
+  /// writes leaves an account that can be switched back to.
   Future<void> saveActive(UserCredential credential) async {
     if (credential.isEmpty) return;
 
@@ -115,8 +111,8 @@ final class SessionStore implements Disposable {
   /// Files [credential] in the vault without making it active.
   ///
   /// Used when the interceptor renewed an account the user has since switched
-  /// away from: the fresh tokens are worth keeping, but they must not become
-  /// the account the app is acting as.
+  /// away from: the fresh tokens are worth keeping, but not as the active
+  /// account.
   Future<void> saveToVault(UserCredential credential) async {
     if (credential.isEmpty) return;
 
@@ -216,6 +212,10 @@ final class SessionStore implements Disposable {
     });
   }
 
+  /// Reads one vault entry from its JSON text.
+  ///
+  /// Returns null when the stored row is not the shape a credential expects.
+  
   /// Writes [credential] into the vault, leaving every other account alone.
   Future<void> _writeVaultEntry(UserCredential credential) async {
     final accounts = await readAccounts();
@@ -234,9 +234,8 @@ final class SessionStore implements Disposable {
   Future<void> _publish() async {
     if (_activeChanges.isClosed) return;
     _activeChanges.add(await readActiveCredential());
-  }
-
-  /// Reads a stored credential from its JSON text.
+  }  /// Reads a stored credential from its JSON text.
+  
   UserCredential? _decode(String raw) {
     try {
       final decoded = jsonDecode(raw);

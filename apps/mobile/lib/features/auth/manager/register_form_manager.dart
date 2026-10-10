@@ -23,7 +23,6 @@ abstract class RegisterForm with _$RegisterForm {
 }
 
 final class RegisterFormManager implements Disposable {
-  /// Creates an empty form.
   RegisterFormManager();
 
   final ValueNotifier<RegisterForm> _form = ValueNotifier(const RegisterForm());
@@ -66,7 +65,6 @@ final class RegisterFormManager implements Disposable {
   /// Empties every field.
   void reset() => _form.value = const RegisterForm();
 
-  /// Releases the form state.
   @override
   FutureOr<dynamic> onDispose() {
     _form.dispose();

@@ -14,35 +14,25 @@ typedef FromJson<T> = T Function(dynamic data);
 ///
 /// Transport only: it unwraps the API's envelope, turns failures into
 /// [MenoException]s and logs what it did. It knows nothing about endpoints, so
-/// every feature talks to the API through its own thin service built on this.
-///
-/// ## The envelope
+/// each feature talks to the API through its own thin service built on this.
 ///
 /// Every response — success or failure — is parsed as `{code, message, status,
 /// data?}`. The HTTP status line is authoritative and is never repeated in the
-/// body, so [Options.validateStatus] accepts every status: the body is what
-/// says why the request failed, and throwing it away would leave only a number.
-/// A body that is not the envelope (an error page from a proxy, a truncated
-/// response) becomes a [MalformedResponseException].
+/// body, so [Options.validateStatus] accepts every status. A body that is not
+/// the envelope becomes a [MalformedResponseException].
 ///
-/// ## Retrying
-///
-/// Retrying is opt-in per request and defaults to on for `GET` (repeating one
-/// costs nothing) and off for mutations. A mutation that opts in is sent with
-/// an `Idempotency-Key`, which the API uses to run it once even if the first
-/// attempt actually arrived — see `apps/api/src/middleware/idempotency.rs`.
-///
+/// Retrying is opt-in per request, on for `GET` and off for mutations by
+/// default. A mutation that opts in is sent with an `Idempotency-Key`, which
+/// the API uses to run it once even if the first attempt actually arrived.
 /// Only failures that mean *the request never reached a handler* are retried:
 /// no connectivity, a timeout, or a 503 from a dependency. Anything the API
-/// answered about the request itself — including 429 — is surfaced immediately,
-/// because repeating it would get the same answer.
+/// answered about the request itself is surfaced immediately.
 final class HttpClient implements Disposable {
   /// Creates a client for [baseUrl].
   ///
   /// [dio] lets a caller supply the transport — tests hand it a dio wired to a
-  /// stub adapter, and a later session interceptor may need the same instance.
-  /// The client owns the dio it is given: its options, timeouts and headers are
-  /// set here, so passing one only replaces the transport, not the contract.
+  /// stub adapter. The client owns the dio it is given, so passing one only
+  /// replaces the transport, not the contract.
   new({
     required this.logger,
     required String baseUrl,
@@ -65,9 +55,8 @@ final class HttpClient implements Disposable {
         Headers.acceptHeader: Headers.jsonContentType,
         ...?headers,
       }
-      // Every response, success or failure, is parsed as the envelope, so dio
-      // must not turn a 4xx or 5xx into a `badResponse` exception and take the
-      // body down with it.
+      // Every response is parsed as the envelope, so dio must not turn a 4xx or
+      // 5xx into a `badResponse` exception.
       ..validateStatus = (status) => status != null;
     _dio.interceptors.addAll(interceptors);
   }
@@ -94,10 +83,6 @@ final class HttpClient implements Disposable {
 
   final Random _random = Random();
   final Uuid _uuid = const Uuid();
-
-  // ======================================================================
-  // READS
-  // ======================================================================
 
   /// Runs a `GET` and decodes the envelope's `data` with [fromJson].
   Future<T> get<T>(
@@ -156,10 +141,7 @@ final class HttpClient implements Disposable {
     );
   }
 
-  // ======================================================================
-  // WRITES
-  // ======================================================================
-
+  /// Runs a `POST` and decodes the envelope's `data` with [fromJson].
   /// Runs a `POST` and decodes the envelope's `data` with [fromJson].
   Future<T> post<T>(
     String path, {
@@ -272,10 +254,6 @@ final class HttpClient implements Disposable {
     );
   }
 
-  // ======================================================================
-  // WRITES WITH NO PAYLOAD
-  // ======================================================================
-
   /// Runs a `POST` whose endpoint returns no payload.
   Future<void> postUnit(
     String path, {
@@ -357,14 +335,10 @@ final class HttpClient implements Disposable {
     );
   }
 
-  // ======================================================================
-  // FILES
-  // ======================================================================
-
   /// Uploads [formData] and decodes the envelope's `data` with [fromJson].
   ///
-  /// Never retried: a body that took a minute to send is not worth sending
-  /// again on a guess.
+  /// Never retried: a body that took a minute to send is not worth resending on
+  /// a guess.
   Future<T> upload<T>(
     String path, {
     required FromJson<T> fromJson,
@@ -429,10 +403,6 @@ final class HttpClient implements Disposable {
     }
   }
 
-  // ======================================================================
-  // UTILITIES
-  // ======================================================================
-
   /// A token that cancels one request, or every request it is handed to.
   CancelToken createCancelToken() => CancelToken();
 
@@ -440,10 +410,6 @@ final class HttpClient implements Disposable {
   FutureOr<dynamic> onDispose() {
     _dio.close(force: true);
   }
-
-  // ======================================================================
-  // CORE
-  // ======================================================================
 
   /// Sends one request, retrying it when that is safe and asked for.
   Future<T> _send<T>({
@@ -536,9 +502,7 @@ final class HttpClient implements Disposable {
     } on MenoException {
       rethrow;
     } on Object catch (error) {
-      // The envelope was valid but its payload is not what the caller expects:
-      // a DTO that does not match the API, or an empty payload where data was
-      // required. Both are contract failures, not data.
+      // The envelope was valid but its payload is not what the caller expects.
       throw MalformedResponseException(
         cause: error,
         message:
@@ -572,8 +536,8 @@ final class HttpClient implements Disposable {
               cause: error,
             );
       case DioExceptionType.unknown:
-        // dio classifies a socket failure as `connectionError`, so reaching
-        // this means something else went wrong, not that the device is offline.
+        // Reaching this means something else went wrong, not that the device is
+        // offline.
         return UnknownException(
           message: 'The request could not be sent. Please try again.',
           cause: error.error ?? error,
@@ -617,16 +581,14 @@ final class HttpClient implements Disposable {
       UpstreamUnavailableException() => error.retryAfter,
       _ => null,
     };
-    // A hint longer than the app is willing to wait means "come back later":
-    // retrying inside this call would just hold the caller for no reason.
+    // A hint longer than the app is willing to wait means "come back later".
     if (hinted != null && hinted > _maxRetryWait) return null;
 
     final backoff = retryBackoff * (1 << (attempt - 1));
     final capped = backoff > _maxRetryWait ? _maxRetryWait : backoff;
     final wait = hinted != null && hinted > capped ? hinted : capped;
 
-    // Spread retries out: a synchronised backoff turns one outage into a
-    // stampede of the API the moment it recovers.
+    // Spread retries out so one outage does not become a stampede on recovery.
     return wait * (0.5 + _random.nextDouble() / 2);
   }
 
@@ -655,8 +617,7 @@ final class HttpClient implements Disposable {
 
   /// The per-field detail a `VALIDATION_FAILED` envelope carries in `data`.
   ///
-  /// The API sends `{field: [message, …]}`; a value of any other shape is
-  /// ignored rather than guessed at.
+  /// The API sends `{field: [message, …]}`; any other shape is ignored.
   Map<String, List<String>>? _fieldErrors(dynamic data) {
     if (data is! Map) return null;
     final fields = <String, List<String>>{};

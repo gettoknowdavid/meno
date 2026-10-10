@@ -1,7 +1,3 @@
-/// The first-run onboarding feature.
-///
-/// Shows a carousel of what Meno does and records that it has been seen, so the
-/// router guard can skip it on later launches.
 library;
 
 export 'manager/onboarding_manager.dart';

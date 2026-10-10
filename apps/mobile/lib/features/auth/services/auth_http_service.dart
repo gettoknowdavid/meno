@@ -5,22 +5,17 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// The auth module's endpoints, one method each.
 ///
 /// Transcribed from `apps/api/src/routes/auth.rs`, including its snake_case
-/// field names and its split between the public half and the guarded one. The
-/// paths are absolute (`/auth/…`) because the API mounts the module at the
-/// root: `apps/api/src/routes/mod.rs` nests this router with no prefix.
+/// field names and its split between the public half and the guarded one. Paths
+/// are absolute (`/auth/…`) because the API mounts the module at the root.
 ///
-/// The service is transport only. It returns domain objects and throws
-/// [MenoException]s — the envelope, the retries and the error taxonomy are
-/// [HttpClient]'s job, so nothing here re-checks a status code.
+/// Transport only: it returns domain objects and throws [MenoException]s — the
+/// envelope, retries and error taxonomy are [HttpClient]'s job, so nothing here
+/// re-checks a status code.
 final class AuthHttpService {
   /// Creates a service over [_client].
   const new(this._client);
 
   final HttpClient _client;
-
-  // ======================================================================
-  // SESSIONS
-  // ======================================================================
 
   /// `POST /auth/register` — creates an account and signs it in.
   ///
@@ -85,10 +80,6 @@ final class AuthHttpService {
   /// makes "all" mean "all of mine".
   Future<void> logOutEverywhere() => _client.postUnit('/auth/logout-all');
 
-  // ======================================================================
-  // DEVICES
-  // ======================================================================
-
   /// `GET /auth/sessions` — the account's signed-in devices.
   Future<List<SessionInfo>> sessions() {
     return _client.getList(
@@ -101,10 +92,6 @@ final class AuthHttpService {
   /// `POST /auth/sessions/{id}` — ends one device's session.
   Future<void> revokeSession(String sessionId) =>
       _client.postUnit('/auth/sessions/$sessionId');
-
-  // ======================================================================
-  // ONE-TIME CODES AND PASSWORDS
-  // ======================================================================
 
   /// `POST /auth/verify-email` — confirms the address with a code.
   ///

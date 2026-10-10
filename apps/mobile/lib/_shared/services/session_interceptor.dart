@@ -11,23 +11,17 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// Attaches the active account's token to every request, and renews it when the
 /// API says it is no longer good.
 ///
-/// ## Why this works on `onResponse` and not `onError`
-///
 /// [HttpClient] asks dio to accept every status, because the API's envelope —
 /// not the status line — is what explains a failure. A `401` therefore arrives
 /// as a successful response and dio's error hook never sees it. The refusal is
 /// detected where it actually lands: in the response, by reading the status the
 /// envelope does not repeat.
 ///
-/// ## One refresh per account, no more
-///
 /// Refresh tokens are single-use and rotated by the API, so two concurrent
 /// refreshes for the same account would have the second one present a token the
-/// first already spent — which ends the session. Renewals are therefore shared:
-/// the in-flight future is keyed by account id and reused until it settles, so
-/// a screen with six requests in the air spends exactly one refresh token.
-///
-/// ## Several accounts at once
+/// first already spent. Renewals are therefore shared: the in-flight future is
+/// keyed by account id and reused until it settles, so a screen with six
+/// requests in the air spends exactly one refresh token.
 ///
 /// The tokens being refreshed belong to *an account*, not to "the app". The
 /// account id is captured when the request goes out, and a renewal that lands
@@ -56,8 +50,8 @@ final class SessionInterceptor extends Interceptor {
                receiveTimeout: const Duration(seconds: 30),
                sendTimeout: const Duration(seconds: 30),
                headers: {Headers.acceptHeader: Headers.jsonContentType},
-               // Every status is inspected by hand below, including the 401 a
-               // renewal is expected to be refused with.
+               // Every status is inspected by hand, including the 401 a renewal
+               // may be refused with.
                validateStatus: (status) => status != null,
              ),
            );
@@ -80,7 +74,6 @@ final class SessionInterceptor extends Interceptor {
   /// end one (`logout`), or are how a locked-out user gets back in
   /// (`forgot-password`, `reset-password`, the one-time codes). Renewing from
   /// them would recurse, or resurrect a session the user just closed.
-  ///
   /// `logout-all` is deliberately absent: it is protected, so it needs a live
   /// token and is worth renewing for rather than failing.
   static const List<String> _sessionlessPaths = [
@@ -129,8 +122,8 @@ final class SessionInterceptor extends Interceptor {
         credential = renewed;
       } else {
         // The renewal was refused, so the stored session is dead. Drop it and
-        // let this request go out unauthenticated: the API's own 401 is a
-        // better  explanation for the caller than anything synthesised here.
+        // let this request go out unauthenticated: the API's own 401 is the
+        // better answer here.
         await _store.clearActive();
         return handler.next(options);
       }
@@ -178,8 +171,7 @@ final class SessionInterceptor extends Interceptor {
 
     // Replayed on the bare client so this interceptor is not consulted again
     // for a request that has already been through it. The header is replaced
-    // with the token that was just minted, which is the whole point of the
-    // replay.
+    // with the token that was just minted.
     request.headers[authorizationHeader] =
         'Bearer ${renewed.session.accessToken}';
     request.extra[retriedKey] = true;
@@ -196,10 +188,6 @@ final class SessionInterceptor extends Interceptor {
       handler.next(response);
     }
   }
-
-  // ======================================================================
-  // RENEWAL
-  // ======================================================================
 
   /// Renews [stale], sharing one attempt between every caller for that account.
   Future<UserCredential?> _renew(UserCredential stale) {
@@ -220,10 +208,9 @@ final class SessionInterceptor extends Interceptor {
 
   /// Exchanges [stale]'s refresh token for a fresh pair.
   ///
-  /// Returns null for every refusal — a spent token, an API that answered with
-  /// an error envelope, a body that is not the documented shape. None of them
-  /// is recoverable at this level, and all of them mean the same thing to the
-  /// caller: sign in again.
+  /// Returns null for every refusal — a spent token, an API error envelope, or a
+  /// body that is not the documented shape. None is recoverable at this level,
+  /// and all mean the same thing to the caller: sign in again.
   Future<UserCredential?> _performRenewal(UserCredential stale) async {
     final refreshToken = stale.session.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) return null;
@@ -260,8 +247,8 @@ final class SessionInterceptor extends Interceptor {
       final renewed = AuthResponseDto.fromJson(payload).toDomain;
 
       // The account may have been switched away from while the renewal was in
-      // flight. The new tokens are still worth keeping, but not as the account
-      // the app is acting as.
+      // flight. The new tokens are still worth keeping, but not as the active
+      // account.
       if (await _store.readActiveUserId() == renewed.userId) {
         await _store.saveActive(renewed);
       } else {
@@ -288,8 +275,8 @@ final class SessionInterceptor extends Interceptor {
 
   /// Whether [path] belongs to an endpoint that must not renew a session.
   ///
-  /// Matched on the segment boundary rather than by `contains`, so that
-  /// `/auth/logout-all` is not mistaken for `/auth/logout`.
+  /// Matched on the segment boundary rather than by `contains`, so `/auth/logout-all`
+  /// is not mistaken for `/auth/logout`.
   static bool _isSessionless(String path) => _sessionlessPaths.any(
     (sessionless) => path == sessionless || path.startsWith('$sessionless/'),
   );
