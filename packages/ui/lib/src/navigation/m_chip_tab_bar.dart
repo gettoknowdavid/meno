@@ -18,7 +18,7 @@ const double _kChipHeight = 32;
 /// ```dart
 /// MChipTabBar(
 ///   controller: controller,
-///   tabs: const [
+///   tabs: [
 ///     MChipTab(label: 'All', index: 0, controller: controller),
 ///     MChipTab(label: 'Live', index: 1, controller: controller),
 ///   ],
@@ -46,15 +46,15 @@ class MChipTabBar extends StatelessWidget implements PreferredSizeWidget {
       child: TabBar(
         controller: controller,
         isScrollable: true,
-        tabAlignment: TabAlignment.start,
+        tabAlignment: .start,
         indicator: const BoxDecoration(),
-        indicatorSize: TabBarIndicatorSize.tab,
+        indicatorSize: .tab,
         dividerHeight: 0,
-        labelPadding: const EdgeInsets.symmetric(horizontal: Insets.sm),
-        padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
+        labelPadding: const .symmetric(horizontal: Insets.sm),
+        padding: const .symmetric(horizontal: Insets.sm),
         labelColor: Colors.transparent,
         unselectedLabelColor: Colors.transparent,
-        overlayColor: const WidgetStatePropertyAll<Color>(Colors.transparent),
+        overlayColor: .all(Colors.transparent),
         tabs: tabs,
       ),
     );
@@ -113,13 +113,13 @@ class MChipTab extends StatelessWidget {
           duration: const Duration(milliseconds: 200),
           curve: Curves.easeInOut,
           height: _kChipHeight,
-          padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+          padding: const .symmetric(horizontal: Insets.lg),
           decoration: BoxDecoration(
             color: background,
-            borderRadius: const BorderRadius.all(Radius.circular(100)),
+            borderRadius: const .all(.circular(100)),
           ),
           child: Row(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: .min,
             spacing: Insets.xs,
             children: [
               MText(label, color: foreground, style: textTheme.captionMedium),

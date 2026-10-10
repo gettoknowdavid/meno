@@ -73,7 +73,7 @@ class MSideNavRail extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: Insets.md),
+      padding: const .symmetric(horizontal: Insets.md),
       decoration: BoxDecoration(
         color: colors.background,
         border: Border(right: BorderSide(color: colors.outlineVariant1)),
@@ -86,7 +86,7 @@ class MSideNavRail extends StatelessWidget {
         leading: leading == null
             ? null
             : Padding(
-                padding: const EdgeInsets.only(
+                padding: const .only(
                   top: Insets.md,
                   bottom: Insets.xxl,
                 ),
@@ -107,7 +107,7 @@ class MSideNavRail extends StatelessWidget {
         trailing: trailing == null
             ? null
             : Padding(
-                padding: const EdgeInsets.only(top: Insets.xl),
+                padding: const .only(top: Insets.xl),
                 child: trailing,
               ),
       ),
@@ -146,7 +146,7 @@ class _MRailItem extends StatelessWidget {
         borderRadius: Corners.md,
         child: Container(
           height: Insets.xxxl,
-          padding: const EdgeInsets.symmetric(horizontal: Insets.md),
+          padding: const .symmetric(horizontal: Insets.md),
           decoration: BoxDecoration(
             color: selected ? colors.primaryContainer : null,
             borderRadius: Corners.md,

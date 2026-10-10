@@ -38,7 +38,7 @@ class MPagedLoadingIndicator extends StatelessWidget {
             'You have reached the end',
             style: textTheme.captionRegular,
             color: colors.onBackgroundVariant,
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
         const SizedBox(height: Insets.xl + Insets.xs),
       ],

@@ -208,7 +208,7 @@ class _MSliverAppBarState extends State<MSliverAppBar> {
         child: Stack(
           children: [
             Padding(
-              padding: EdgeInsets.symmetric(
+              padding: .symmetric(
                 vertical: MediaQuery.paddingOf(context).top / 2,
               ),
               child: Container(key: _childKey, child: widget.flexibleSpace),
@@ -216,7 +216,7 @@ class _MSliverAppBarState extends State<MSliverAppBar> {
             Positioned.fill(
               top: 10,
               child: Align(
-                alignment: Alignment.topCenter,
+                alignment: .topCenter,
                 child: AppBar(
                   backgroundColor: Colors.transparent,
                   elevation: 0,

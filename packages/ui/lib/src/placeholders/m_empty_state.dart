@@ -29,7 +29,7 @@ class MEmptyState extends StatelessWidget {
   Widget build(BuildContext context) {
     return Center(
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: .center,
         children: [
           Assets.images.liveForYou.image(
             height: _kIllustrationSize,
@@ -39,7 +39,7 @@ class MEmptyState extends StatelessWidget {
           MText(
             title ?? 'Nothing to show here',
             style: MTextTheme.of(context).captionMedium,
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
         ],
       ),

@@ -50,7 +50,7 @@ class MConfirmationDialog extends StatelessWidget {
     super.key,
     this.confirmLabel = 'Confirm',
     this.cancelLabel = 'Cancel',
-    this.variant = MConfirmationDialogVariant.primary,
+    this.variant = .primary,
   });
 
   /// The dialog title.
@@ -77,7 +77,7 @@ class MConfirmationDialog extends StatelessWidget {
     required String description,
     String confirmLabel = 'Confirm',
     String cancelLabel = 'Cancel',
-    MConfirmationDialogVariant variant = MConfirmationDialogVariant.primary,
+    MConfirmationDialogVariant variant = .primary,
   }) async {
     final result = await showDialog<bool>(
       context: context,
@@ -99,7 +99,7 @@ class MConfirmationDialog extends StatelessWidget {
 
     return AlertDialog(
       title: MText(title, style: textTheme.heading2Regular),
-      contentPadding: const EdgeInsets.all(Insets.xl),
+      contentPadding: const .all(Insets.xl),
       content: MText(description, style: textTheme.captionRegular),
       actions: [
         SizedBox.fromSize(
@@ -144,12 +144,12 @@ class _ConfirmButton extends StatelessWidget {
       shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
     );
     return switch (variant) {
-      MConfirmationDialogVariant.primary => MPrimaryButton(
+      .primary => MPrimaryButton(
         label: label,
         onPressed: onPressed,
         style: style,
       ),
-      MConfirmationDialogVariant.danger => MDangerButton(
+      .danger => MDangerButton(
         label: label,
         onPressed: onPressed,
         style: style,

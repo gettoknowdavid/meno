@@ -58,22 +58,18 @@ class MSearchBar extends StatelessWidget {
 
     return SearchBar(
       focusNode: focusNode,
-      scrollPadding: EdgeInsets.zero,
+      scrollPadding: .zero,
       hintText: hintText,
       onChanged: onChanged,
-      elevation: const WidgetStatePropertyAll<double>(0),
+      elevation: .all(0),
       enabled: enabled,
       trailing: trailing,
       leading: leading ?? const Icon(MIcons.search, size: Insets.lg),
-      constraints: BoxConstraints.tight(const Size.fromHeight(40)),
-      padding: const WidgetStatePropertyAll<EdgeInsets>(
-        EdgeInsets.symmetric(horizontal: Insets.md),
-      ),
-      hintStyle: WidgetStatePropertyAll<TextStyle>(textTheme.captionRegular),
-      shape: const WidgetStatePropertyAll<OutlinedBorder>(
-        RoundedRectangleBorder(borderRadius: Corners.sm),
-      ),
-      side: WidgetStateProperty.resolveWith((states) {
+      constraints: .tight(const Size.fromHeight(40)),
+      padding: .all(const .symmetric(horizontal: Insets.md)),
+      hintStyle: .all(textTheme.captionRegular),
+      shape: .all(const RoundedRectangleBorder(borderRadius: Corners.sm)),
+      side: .resolveWith((states) {
         final side = BorderSide(color: colors.inActive);
         if (states.contains(WidgetState.error)) {
           return side.copyWith(color: colors.error, width: 2);
@@ -86,7 +82,7 @@ class MSearchBar extends StatelessWidget {
         }
         return side;
       }),
-      textStyle: WidgetStateTextStyle.resolveWith((states) {
+      textStyle: .resolveWith((states) {
         final baseTextStyle = textTheme.captionRegular;
         late Color color;
         if (states.contains(WidgetState.disabled)) {

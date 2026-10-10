@@ -28,8 +28,8 @@ class MErrorState extends StatelessWidget {
     super.key,
     this.onRetry,
     this.showRetry = true,
-    this.margin = const EdgeInsets.all(Insets.lg),
-    this.padding = const EdgeInsets.all(Insets.lg),
+    this.margin = const .all(Insets.lg),
+    this.padding = const .all(Insets.lg),
   });
 
   /// The message shown to the user.
@@ -55,20 +55,20 @@ class MErrorState extends StatelessWidget {
     return Container(
       margin: margin,
       padding: padding,
-      alignment: Alignment.center,
+      alignment: .center,
       decoration: ShapeDecoration(
         color: colors.primaryContainer,
         shape: const RoundedSuperellipseBorder(borderRadius: Corners.lg),
       ),
       child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+        mainAxisAlignment: .center,
         children: [
           Icon(Icons.error_outline, color: colors.error),
           Spaces.verticalMedium,
           MText(
             message,
             style: textTheme.captionMedium,
-            textAlign: TextAlign.center,
+            textAlign: .center,
             maxLines: 5,
           ),
           if (showRetry) ...[

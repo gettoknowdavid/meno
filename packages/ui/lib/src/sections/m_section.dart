@@ -57,7 +57,7 @@ class MSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+      crossAxisAlignment: .start,
       children: [
         MHeader(title: title, action: _seeAllAction(context), padding: padding),
         const SizedBox(height: Insets.xl),
