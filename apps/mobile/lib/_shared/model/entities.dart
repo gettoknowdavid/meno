@@ -1,0 +1,114 @@
+import 'package:freezed_annotation/freezed_annotation.dart';
+
+part 'entities.freezed.dart';
+
+/// How an account can sign in.
+///
+/// Mirrors `AuthProvider` in `apps/api/src/middleware/auth.rs`. The enum is
+/// `#[non_exhaustive]` on the server, so [fromWire] returns null for a value
+/// this build has never heard of rather than throwing — an account created with
+/// a provider the app does not support yet can still be listed.
+enum AuthProvider {
+  /// Email and password.
+  password('password'),
+
+  /// Google, via OAuth2/OIDC.
+  google('google');
+
+  new(this.wire);
+
+  /// The exact string the API sends.
+  final String wire;
+
+  /// The provider [wire] names, or null when it is one this build omits.
+  static AuthProvider? fromWire(String wire) {
+    for (final provider in AuthProvider.values) {
+      if (provider.wire == wire) return provider;
+    }
+    return null;
+  }
+}
+
+/// The account the API's auth endpoints return.
+///
+/// Deliberately not the whole `users` row: `avatar_url` arrives resolved so the
+/// app never has to build a storage URL, and the follower counts and search
+/// vector are absent because they belong to the profile endpoints.
+@freezed
+abstract class User with _$User {
+  /// Creates a user.
+  const factory({
+    /// The account id, as the API's UUID string.
+    required String id,
+
+    /// The name shown next to the account.
+    required String fullName,
+
+    /// The address the account signs in with.
+    required String email,
+
+    /// The account's biography, when it has one.
+    String? bio,
+
+    /// Whether the address has been confirmed with a code.
+    @Default(false) bool verified,
+
+    /// The resolved avatar URL, when the account has an avatar.
+    String? avatarUrl,
+
+    /// The providers this account can sign in with.
+    @Default(<AuthProvider>[]) List<AuthProvider> providers,
+
+    /// What the account may do.
+    @Default(UserRole.user) UserRole role,
+
+    /// When the account was created.
+    DateTime? createdAt,
+  }) = _User;
+
+  const new _();
+
+  /// A user with no fields set: nobody is signed in.
+  static const User empty = User(id: '', fullName: '', email: '');
+
+  /// The first name, for greetings.
+  String get firstName {
+    final parts = fullName.trim().split(RegExp(r'\s+'));
+    return parts.isEmpty ? fullName : parts.first;
+  }
+
+  /// Whether this is [empty] rather than a real account.
+  bool get isEmpty => id.isEmpty;
+
+  /// Whether the account can sign in with [provider].
+  bool signsInWith(AuthProvider provider) => providers.contains(provider);
+}
+
+/// What an account may do.
+///
+/// Mirrors `UserRole` in `apps/api/src/middleware/auth.rs`, including its
+/// non-exhaustiveness: an unrecognised role reads as [user], the least
+/// privileged answer.
+enum UserRole {
+  /// An ordinary signed-in user.
+  user('user'),
+
+  /// A creator, who owns broadcasts.
+  creator('creator'),
+
+  /// An administrator.
+  admin('admin');
+
+  new(this.wire);
+
+  /// The exact string the API sends.
+  final String wire;
+
+  /// The role [wire] names, defaulting to [user].
+  static UserRole fromWire(String wire) {
+    for (final role in UserRole.values) {
+      if (role.wire == wire) return role;
+    }
+    return UserRole.user;
+  }
+}

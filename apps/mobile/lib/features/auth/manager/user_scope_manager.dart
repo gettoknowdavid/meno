@@ -3,39 +3,28 @@ import 'dart:async';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Keeps a get_it scope in step with the signed-in account.
 ///
-/// ## Why a scope, and not just a registration
-///
-/// A scope is a registration *layer* with a lifetime. Everything registered in
+/// A scope is a registration *layer* with a lifetime: everything registered in
 /// [Scope.authenticated] is created when an account becomes active and disposed
-/// when it stops being — together, in one call, with no list of services to
-/// remember to tear down. That is the shape the app needs for per-account state:
-/// one account's notes, drafts, sockets and caches must not survive into the
-/// next account's session, and a scope is the mechanism that guarantees it.
-///
-/// ## What it does here
+/// when it stops being, so one account's notes, drafts, sockets and caches
+/// cannot outlive their account or leak into the next. This is the mechanism
+/// that guarantees it.
 ///
 /// It follows [AuthManager.activeCredential] — which already folds together
 /// signing in, switching accounts, renewing a token and being signed out — and
 /// pushes or pops the scope to match:
 ///
-/// * a different account becomes active → the old scope is popped (disposing
-///   everything registered in it) and a new one is pushed for the new account;
+/// * a different account becomes active → the old scope is popped and a new one
+///   pushed for the new account;
 /// * the same account's tokens are renewed → nothing moves, so a network
 ///   refresh never tears down the user's screens;
 /// * nobody is signed in → the scope is gone.
-///
-/// ## Adding to the scope
-///
-/// [_registerDependencies] is the extension point. A feature that owns
-/// per-account objects adds its registration there, and inherits the lifetime
-/// handling for free.
 final class UserScopeManager implements Disposable {
   /// Creates a manager that follows [_auth].
-  UserScopeManager(this._auth);
+  new(this._auth);
 
   final AuthManager _auth;
 
@@ -87,10 +76,9 @@ final class UserScopeManager implements Disposable {
     _scopedUserId = credential.userId;
   }
 
-  /// Registers everything that belongs to one account.
-  ///
-  /// The active credential is the minimum: a screen that needs the signed-in
-  /// user's tokens reads them from here rather than reaching into storage.
+  /// Registers everything that belongs to one account. A screen that needs the
+  /// signed-in user's tokens reads them from here rather than reaching into
+  /// storage.
   void _registerDependencies(GetIt getIt, UserCredential credential) {
     getIt.registerSingleton<UserCredential>(credential);
   }

@@ -5,21 +5,18 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/manager/register_form_manager.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Creates an account.
 ///
 /// The form lives in a get_it scope pushed for this page, so its fields are
-/// created when the page is built and destroyed with it: two visits cannot share
-/// a half-typed password, and there is nothing to remember to clear.
+/// created when the page is built and destroyed with it: two visits cannot
+/// share a half-typed password, and there is nothing to remember to clear.
 ///
 /// The password rules the tracker shows are the API's own
-/// (`password_problems` in `apps/api/src/modules/auth/validators.rs`), so the
-/// form never asks for something — a digit, a symbol — that the server does not
-/// require.
+/// (`password_problems` in `apps/api/src/modules/auth/validators.rs`).
 class RegisterPage extends WatchingWidget {
   /// Creates the registration page.
   ///
@@ -37,28 +34,31 @@ class RegisterPage extends WatchingWidget {
           getIt.registerSingleton<RegisterFormManager>(RegisterFormManager()),
     );
 
-    registerHandler(
-      select: (AuthManager manager) => manager.register.errors,
+    registerHandler<AuthManager, CommandError<RegisterArgs>?>(
+      select: (manager) => manager.register.errors,
       handler: (context, error, _) =>
           context.showErrorToast(errorMessage(error?.error)),
     );
-    // Creating the account is what leaves the intro behind for good; the
-    // intro's own buttons only open this screen.
-    registerHandler(
-      select: (AuthManager manager) => manager.register.results,
+    registerHandler<AuthManager, CommandResult<RegisterArgs?, UserCredential>>(
+      select: (manager) => manager.register.results,
       handler: (context, result, _) {
         if (result.isSuccess) di<OnboardingManager>().completeOnboarding.run();
       },
     );
 
-    final form = watchValue((RegisterFormManager manager) => manager.form);
-    final isRunning = watchValue((AuthManager manager) => manager.register.isRunning);
+    final form = watchValue<RegisterFormManager, RegisterForm>(
+      (manager) => manager.form,
+    );
+    final isRunning = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
 
     final rules = [
       MPasswordRule(
         title: '8+',
         caption: 'Characters',
-        isMet: !form.password.breaks(ValueRule.tooShort) &&
+        isMet:
+            !form.password.breaks(ValueRule.tooShort) &&
             !form.password.breaks(ValueRule.tooLong),
       ),
       MPasswordRule(
@@ -88,10 +88,7 @@ class RegisterPage extends WatchingWidget {
     }
 
     return MScaffold(
-      appBar: MAppBar.primary(
-        title: 'New Account',
-        implyLeading: implyLeading,
-      ),
+      appBar: MAppBar.primary(title: 'New Account', implyLeading: implyLeading),
       body: Form(
         autovalidateMode: AutovalidateMode.onUserInteraction,
         child: SingleChildScrollView(

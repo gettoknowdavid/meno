@@ -5,19 +5,14 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/manager/user_manager.dart';
-import 'package:meno_mobile/features/auth/model/entities/otp_type.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Collects the reset code the API mailed.
 ///
-/// The code is *not* checked here, because the API has no endpoint that checks
-/// one on its own: `POST /auth/reset-password` takes the address, the code and
-/// the new password together, and the code is what authorises the change. So this
-/// screen only carries the code forward to the page that sets the password —
-/// which is also why a wrong code is reported there, next to the password it
-/// refused to replace.
+/// This screen only carries the code forward to the page that sets the
+/// password — which is also why a wrong code is reported there, next to the
+/// password it refused to replace.
 class ResetPasswordOtpPage extends WatchingWidget {
   /// Creates the reset-code page.
   ///
@@ -30,20 +25,22 @@ class ResetPasswordOtpPage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerHandler(
-      select: (AuthManager manager) => manager.resendOtp,
+    registerHandler<AuthManager, void>(
+      select: (manager) => manager.resendOtp,
       handler: (context, _, _) =>
           context.showSuccessToast('A new code is on its way.'),
     );
-    registerHandler(
-      select: (AuthManager manager) => manager.resendOtp.errors,
+    registerHandler<AuthManager, CommandError<OtpRequestArgs>?>(
+      select: (manager) => manager.resendOtp.errors,
       handler: (context, error, _) =>
           context.showErrorToast(errorMessage(error?.error)),
     );
 
-    final account = watchValue((UserManager manager) => manager.lastKnownUser);
-    final isResending = watchValue(
-      (AuthManager manager) => manager.resendOtp.isRunning,
+    final account = watchValue<UserManager, User>(
+      (manager) => manager.lastKnownUser,
+    );
+    final isResending = watchValue<AuthManager, bool>(
+      (manager) => manager.resendOtp.isRunning,
     );
 
     final codeController = createOnce(TextEditingController.new);

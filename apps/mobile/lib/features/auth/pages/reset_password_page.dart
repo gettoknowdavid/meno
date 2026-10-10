@@ -10,11 +10,7 @@ import 'package:meno_ui/meno_ui.dart';
 
 /// Sets a new password with a reset code.
 ///
-/// The last step of the flow and the only one that calls
-/// `/auth/reset-password`: the address, the code and the new password travel
-/// together, so this is where a wrong or expired code actually fails. The rules
-/// shown are the API's, and the confirmation field is a UI affordance — the API
-/// takes one password and one only.
+/// The last step of the flow and the only one that calls `/auth/reset-password`.
 class ResetPasswordPage extends WatchingWidget {
   /// Creates the new-password page.
   ///
@@ -30,18 +26,18 @@ class ResetPasswordPage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerHandler(
-      select: (AuthManager manager) => manager.resetPassword,
+    registerHandler<AuthManager, void>(
+      select: (manager) => manager.resetPassword,
       handler: (context, _, _) => context.go(MRoutes.resetPasswordSuccess),
     );
-    registerHandler(
-      select: (AuthManager manager) => manager.resetPassword.errors,
+    registerHandler<AuthManager, CommandError<ResetPasswordArgs>?>(
+      select: (manager) => manager.resetPassword.errors,
       handler: (context, error, _) =>
           context.showErrorToast(errorMessage(error?.error)),
     );
 
-    final isSaving = watchValue(
-      (AuthManager manager) => manager.resetPassword.isRunning,
+    final isSaving = watchValue<AuthManager, bool>(
+      (manager) => manager.resetPassword.isRunning,
     );
 
     final formKey = createOnce(GlobalKey<FormState>.new);
@@ -133,12 +129,7 @@ class ResetPasswordPage extends WatchingWidget {
         ),
       ),
     );
-  }
-
-  /// The policy chips for [password].
-  ///
-  /// Built per build rather than held in state: the password is a local field
-  /// here, and a reset form has nothing else to keep in step with it.
+  }    /// The policy chips for [password].
   static List<MPasswordRule> _passwordRules(Password password) => [
     MPasswordRule(
       title: '8+',

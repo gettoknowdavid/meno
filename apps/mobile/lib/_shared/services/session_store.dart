@@ -3,48 +3,42 @@ import 'dart:convert';
 
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_shared/model/value_objects/session.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/_shared/services/secure_storage.dart';
-import 'package:meno_mobile/features/auth/model/dtos/auth_response_dto.dart';
-import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Where the accounts signed in on this device live.
 ///
 /// One writer, two readers: the auth manager, the session interceptor and the
-/// screens all go through here rather than touching [SecureStorage] keys, so the
-/// layout of a stored account is decided in exactly one place.
-///
-/// ## One active account, many stored ones
+/// screens all go through here rather than touching [SecureStorage] keys, so
+/// the layout of a stored account is decided in exactly one place.
 ///
 /// The app signs in to several accounts at once and switches between them
-/// without a round trip — the Facebook/WhatsApp model. That needs two things on
-/// disk:
+/// without a round trip — the Facebook/WhatsApp model. That needs two things
+/// on disk:
 ///
-/// * a **vault** under [StorageKeys.accounts]: every account's whole credential,
-///   keyed by user id, which is what makes a switch instant;
+/// * a **vault** under [StorageKeys.accounts]: every account's whole
+///   credential, keyed by user id, which is what makes a switch instant;
 /// * an **active** set under [StorageKeys.userId],
 ///   [StorageKeys.accessToken], [StorageKeys.refreshToken],
-///   [StorageKeys.sessionExpiry] and [StorageKeys.credential]: the account every
-///   request is made as.
+///   [StorageKeys.sessionExpiry] and [StorageKeys.credential]: the account
+///   every request is made as.
 ///
 /// The active set duplicates one vault entry on purpose. A request needs a
 /// bearer token on the hot path, and parsing the whole vault to find it would
 /// put a JSON decode in front of every call. The duplication is safe because
 /// both are written together, here.
 ///
-/// ## Change notification
-///
 /// Every mutation publishes the new active credential on [activeChanges]. That
 /// is how the auth manager learns that a token was rotated by the interceptor,
 /// or that a session was dropped because the API refused to renew it, without
 /// the interceptor knowing the manager exists.
 final class SessionStore implements Disposable {
-  /// Creates a store over [_storage].
   new(this._storage);
 
   final SecureStorage _storage;
-  final StreamController<UserCredential?> _activeChanges =
-      StreamController<UserCredential?>.broadcast();
+
+  final _activeChanges = StreamController<UserCredential?>.broadcast();
 
   /// The active credential, published after every mutation.
   ///
@@ -53,18 +47,14 @@ final class SessionStore implements Disposable {
   /// object gets it from here rather than re-reading storage.
   Stream<UserCredential?> get activeChanges => _activeChanges.stream;
 
-  // ======================================================================
-  // READS
-  // ======================================================================
-
   /// The id of the active account, or null when nobody is signed in.
   Future<String?> readActiveUserId() => _storage.read(StorageKeys.userId);
 
   /// The tokens of the active account.
   ///
   /// Reads only the three token keys, which is the whole point of keeping them
-  /// beside the vault copy: an interceptor can answer "is there a token, and is
-  /// it about to expire" without decoding anything.
+  /// beside the vault copy: an interceptor can answer "is there a token, and
+  /// is it about to expire" without decoding anything.
   Future<Session> readActiveSession() async {
     final accessToken = await _storage.read(StorageKeys.accessToken);
     if (accessToken == null || accessToken.isEmpty) return Session.empty;
@@ -87,7 +77,7 @@ final class SessionStore implements Disposable {
   ///
   /// An entry that cannot be read is skipped rather than fatal: a vault written
   /// by an older build must not stop the accounts that still parse from being
-  /// listed, and the account list is the only way back to a working state.
+  /// listed.
   Future<Map<String, UserCredential>> readAccounts() async {
     final raw = await _storage.read(StorageKeys.accounts);
     if (raw == null || raw.isEmpty) return {};
@@ -109,15 +99,11 @@ final class SessionStore implements Disposable {
     }
   }
 
-  // ======================================================================
-  // WRITES
-  // ======================================================================
-
   /// Makes [credential] the active account and files it in the vault.
   ///
   /// The order matters: the vault is written first, so a crash between the two
-  /// writes leaves an account that can be switched back to rather than an active
-  /// account nothing knows about.
+  /// writes leaves an account that can be switched back to rather than an
+  /// active account nothing knows about.
   Future<void> saveActive(UserCredential credential) async {
     if (credential.isEmpty) return;
 
@@ -129,8 +115,8 @@ final class SessionStore implements Disposable {
   /// Files [credential] in the vault without making it active.
   ///
   /// Used when the interceptor renewed an account the user has since switched
-  /// away from: the fresh tokens are worth keeping, but they must not become the
-  /// account the app is acting as.
+  /// away from: the fresh tokens are worth keeping, but they must not become
+  /// the account the app is acting as.
   Future<void> saveToVault(UserCredential credential) async {
     if (credential.isEmpty) return;
 
@@ -140,8 +126,8 @@ final class SessionStore implements Disposable {
 
   /// Makes [userId] the active account, when it is in the vault.
   ///
-  /// Returns whether the switch happened. A switch is just a copy from the vault
-  /// into the active keys, which is why it needs no network call and no
+  /// Returns whether the switch happened. A switch is just a copy from the
+  /// vault into the active keys, which is why it needs no network call and no
   /// re-authentication.
   Future<bool> activate(String userId) async {
     final accounts = await readAccounts();
@@ -171,10 +157,11 @@ final class SessionStore implements Disposable {
   /// Removes [userId] from the vault.
   ///
   /// The active account is cleared with it when it was the active one, so
-  /// removing an account never leaves the app acting as an account it no longer
-  /// knows.
+  /// removing an account never leaves the app acting as an account it no
+  /// longer knows.
   Future<void> remove(String userId) async {
-    final accounts = await readAccounts()..remove(userId);
+    final accounts = await readAccounts()
+      ..remove(userId);
 
     if (accounts.isEmpty) {
       await _storage.delete(StorageKeys.accounts);
@@ -204,13 +191,8 @@ final class SessionStore implements Disposable {
     await _publish();
   }
 
-  /// Closes the change stream.
   @override
   FutureOr<dynamic> onDispose() => _activeChanges.close();
-
-  // ======================================================================
-  // PRIVATE
-  // ======================================================================
 
   /// The active account's expiry, as stored.
   Future<DateTime?> _readExpiry() async {
@@ -227,8 +209,10 @@ final class SessionStore implements Disposable {
       StorageKeys.userId: credential.userId,
       StorageKeys.accessToken: session.accessToken,
       StorageKeys.credential: jsonEncode(credential.toDto.toJson()),
-      if (session.refreshToken case final refresh?) StorageKeys.refreshToken: refresh,
-      if (expiry != null) StorageKeys.sessionExpiry: expiry.toUtc().toIso8601String(),
+      if (session.refreshToken case final refresh?)
+        StorageKeys.refreshToken: refresh,
+      if (expiry != null)
+        StorageKeys.sessionExpiry: expiry.toUtc().toIso8601String(),
     });
   }
 
@@ -240,7 +224,8 @@ final class SessionStore implements Disposable {
     await _storage.write(
       StorageKeys.accounts,
       value: jsonEncode({
-        for (final entry in accounts.entries) entry.key: entry.value.toDto.toJson(),
+        for (final entry in accounts.entries)
+          entry.key: entry.value.toDto.toJson(),
       }),
     );
   }

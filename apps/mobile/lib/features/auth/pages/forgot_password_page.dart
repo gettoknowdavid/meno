@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -9,36 +11,32 @@ import 'package:meno_ui/meno_ui.dart';
 
 /// Asks the API to mail a password reset code.
 ///
-/// The first step of the reset flow, and the only one that touches the network:
 /// `POST /auth/forgot-password` answers the same way whether or not the address
-/// exists, so a successful send here is not proof that an account was found. The
-/// code is checked later, by `/auth/reset-password`, which is why the next screen
-/// only collects it.
+/// exists, so a successful send here is not proof that an account was found.
 class ForgotPasswordPage extends WatchingWidget {
   /// Creates the forgot-password page.
   const new({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Watched through `results` rather than the command itself, because the
-    // address the code was sent to is the command's argument and the next screen
-    // needs to be told where the code is going.
-    registerHandler(
-      select: (AuthManager manager) => manager.forgotPassword.results,
+    registerHandler<AuthManager, CommandResult<Email?, void>>(
+      select: (manager) => manager.forgotPassword.results,
       handler: (context, result, _) {
         final email = result.paramData;
         if (!result.isSuccess || email == null) return;
-        context.push(MRoutes.resetPasswordOtpRoute(email: email.getOrNull));
+        unawaited(
+          context.push(MRoutes.resetPasswordOtpRoute(email: email.getOrNull)),
+        );
       },
     );
-    registerHandler(
-      select: (AuthManager manager) => manager.forgotPassword.errors,
+    registerHandler<AuthManager, CommandError<Email>?>(
+      select: (manager) => manager.forgotPassword.errors,
       handler: (context, error, _) =>
           context.showErrorToast(errorMessage(error?.error)),
     );
 
-    final isSending = watchValue(
-      (AuthManager manager) => manager.forgotPassword.isRunning,
+    final isSending = watchValue<AuthManager, bool>(
+      (manager) => manager.forgotPassword.isRunning,
     );
 
     final formKey = createOnce(GlobalKey<FormState>.new);

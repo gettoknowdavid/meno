@@ -87,9 +87,19 @@ analyzer:
     - macos/**
     - linux/**
 
-  errors:
-    invalid_annotation_target: ignore
-    strict_raw_type: ignore
+  # errors:
+  #   # Generated freezed/JSON wiring uses redirecting factory constructors and
+  #   # `@JsonKey` on fields, which these rules flag. They are already excluded
+  #   # from analysis above; this is a belt-and-suspenders for tooling that
+  #   # resolves the annotation targets directly.
+  #   invalid_annotation_target: ignore
+  #   strict_raw_type: ignore
+  #   # Dart 3.13's `unnecessary_type_name_in_constructor` wants the shorthand
+  #   # `const factory _(...) = _X`, but freezed's generated redirect requires
+  #   # the explicit class name (`const factory Foo(...) = _Foo`). This is a
+  #   # generator/lint incompatibility, so the rule is ignored app-wide rather than
+  #   # silenced inside every generated file.
+  #   unnecessary_type_name_in_constructor: ignore
 
   language:
     strict-casts: true

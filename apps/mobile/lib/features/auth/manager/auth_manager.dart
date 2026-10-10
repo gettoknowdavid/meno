@@ -4,31 +4,25 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/model/entities/otp_type.dart';
-import 'package:meno_mobile/features/auth/model/entities/session_info.dart';
-import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
 
 /// Every account the app can act as, and what it can do to them.
 ///
 /// The manager owns the *answer* to "who is signed in"; the bytes live in
-/// [SessionStore]. That split is what lets the session interceptor renew a token
-/// in the background: it writes to the store, the store publishes, and this
-/// manager adopts the result — no callback from the transport layer into
+/// [SessionStore]. That split is what lets the session interceptor renew a
+/// token in the background: it writes to the store, the store publishes, and
+/// this manager adopts the result — no callback from the transport layer into
 /// business logic, and no second copy of the credentials.
 ///
-/// ## Several accounts at once
-///
 /// [accounts] is the vault — every account signed in on this device — and
-/// [activeCredential] is the one every request is made as.
-/// [switchAccount] moves between them without a network call, which is the
-/// whole point of keeping the vault: a switch is a copy, not a sign-in.
-///
-/// ## Commands, not methods
+/// [activeCredential] is the one every request is made as. [switchAccount]
+/// moves between them without a network call, which is the whole point of
+/// keeping the vault: a switch is a copy, not a sign-in.
 ///
 /// Everything that talks to the API is a [Command], so a screen gets
-/// `isRunning`, `errors` and a success signal for free, and every failure takes
-/// the same route through [menoExceptionFilter].
+/// `isRunning`, `errors` and a success signal for free, and every failure
+/// takes the same route through [menoExceptionFilter].
 final class AuthManager implements Disposable {
   /// Creates a manager over its service, its store and the log.
   new({required this._http, required this._store, required this._logger}) {
@@ -142,13 +136,9 @@ final class AuthManager implements Disposable {
   final SessionStore _store;
   final MenoLogger _logger;
 
-  final ValueNotifier<UserCredential> _active = ValueNotifier(
-    UserCredential.empty,
-  );
-  final ValueNotifier<Map<String, UserCredential>> _accounts = ValueNotifier(
-    {},
-  );
-  final ValueNotifier<User> _lastKnown = ValueNotifier(User.empty);
+  final _active = ValueNotifier<UserCredential>(UserCredential.empty);
+  final _accounts = ValueNotifier<Map<String, UserCredential>>({});
+  final _lastKnown = ValueNotifier<User>(User.empty);
 
   StreamSubscription<UserCredential?>? _storeSubscription;
 
@@ -170,15 +160,10 @@ final class AuthManager implements Disposable {
   ValueListenable<bool> get emailVerified =>
       _active.select((credential) => credential.user.verified);
 
-  /// The id of the active account, or null when nobody is signed in.
-  ValueListenable<String?> get activeUserId => _active.select(
-    (credential) => credential.isEmpty ? null : credential.userId,
-  );
-
   /// Every account on this device, keyed by user id.
   ///
-  /// This is what a switch-account sheet renders: the active account plus the
-  /// others, with no request in between.
+  /// This is what a switch-account sheet renders: the active account plus
+  /// the others, with no request in between.
   ValueListenable<Map<String, UserCredential>> get accounts => _accounts;
 
   /// The last account that signed in, kept across a sign-out.
@@ -238,7 +223,6 @@ final class AuthManager implements Disposable {
   // ======================================================================
 
   /// Adopts the stored accounts and subscribes to storage changes.
-  ///
   /// Returns `this` so the locator can register it with the `init()` pattern:
   /// the app's startup gate then waits for a restored session instead of
   /// rendering the sign-in screen for one frame and then navigating away.
@@ -251,8 +235,7 @@ final class AuthManager implements Disposable {
   /// Re-reads the vault.
   ///
   /// Cheap (one secure-storage read) and called after every mutation that can
-  /// change it, so [accounts] is never a stale snapshot of the sheet the user is
-  /// looking at.
+  /// change it, so [accounts] is never a stale snapshot of the sheet.
   Future<void> refreshAccounts() async {
     _accounts.value = await _store.readAccounts();
   }
@@ -260,15 +243,12 @@ final class AuthManager implements Disposable {
   /// Signs the active account out locally.
   ///
   /// Deliberately not a [Command]: it is the reaction to a session the API has
-  /// already refused, so it must not surface a second failure of its own. The
-  /// vault is untouched — the account can be switched back to from the sign-in
-  /// screen.
+  /// already refused, so it must not surface a second failure of its own.
   Future<void> signOut() async {
     _logger.i('Signing out locally', tag: MenoLogTag.lifecycle.label);
     await _store.clearActive();
   }
 
-  /// Releases everything the manager holds.
   @override
   FutureOr<dynamic> onDispose() {
     unawaited(_storeSubscription?.cancel());
@@ -291,10 +271,6 @@ final class AuthManager implements Disposable {
     _accounts.dispose();
     _lastKnown.dispose();
   }
-
-  // ======================================================================
-  // PRIVATE — session bookkeeping
-  // ======================================================================
 
   /// Runs [request] and makes its account the active one.
   Future<UserCredential> _accept(

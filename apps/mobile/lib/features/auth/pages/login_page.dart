@@ -5,20 +5,17 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/manager/user_manager.dart';
-import 'package:meno_mobile/features/auth/widgets/switch_account_sheet.dart';
-import 'package:meno_mobile/features/auth/widgets/user_account_details.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Signs an account in with an email address and a password.
 ///
-/// The screen has two shapes. When the app knows who last signed in — after a
-/// sign-out, or a session that expired — it greets them and shows only the
-/// password field; a returning user is one tap and a password away, and the
-/// accounts already on the device are one tap away through the avatar. With
-/// nobody to greet, the full form is shown.
+/// When the app knows who last signed in — after a sign-out, or a session that
+/// expired — it greets them and shows only the password field; a returning
+/// user is one tap and a password away, and the accounts already on the
+/// device are one tap away through the avatar. With nobody to greet, the full
+/// form is shown.
 ///
 /// Nothing here navigates on success. A signed-in account flips
 /// [AuthManager.isAuthenticated], the router listens, and the guard moves the
@@ -37,23 +34,24 @@ class LoginPage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerHandler(
-      select: (AuthManager manager) => manager.login.errors,
+    registerHandler<AuthManager, CommandError<LoginArgs>?>(
+      select: (manager) => manager.login.errors,
       handler: (context, error, _) =>
           context.showErrorToast(errorMessage(error?.error)),
     );
-    // A sign-in that lands is what leaves the intro behind for good, so the
-    // intro's own buttons stay free of side effects: somebody who opens this
-    // screen and changes their mind is back on the intro at the next launch.
-    registerHandler(
-      select: (AuthManager manager) => manager.login.results,
+    registerHandler<AuthManager, CommandResult<LoginArgs?, UserCredential>>(
+      select: (manager) => manager.login.results,
       handler: (context, result, _) {
         if (result.isSuccess) di<OnboardingManager>().completeOnboarding.run();
       },
     );
 
-    final account = watchValue((UserManager manager) => manager.lastKnownUser);
-    final isRunning = watchValue((AuthManager manager) => manager.login.isRunning);
+    final account = watchValue<UserManager, User>(
+      (manager) => manager.lastKnownUser,
+    );
+    final isRunning = watchValue<AuthManager, bool>(
+      (manager) => manager.login.isRunning,
+    );
 
     final formKey = createOnce(GlobalKey<FormState>.new);
     final passwordController = createOnce(TextEditingController.new);

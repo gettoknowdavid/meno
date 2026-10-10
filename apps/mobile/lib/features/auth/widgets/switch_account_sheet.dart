@@ -8,26 +8,25 @@ import 'package:meno_ui/meno_ui.dart';
 /// Switching is a copy from the vault into the active keys
 /// ([AuthManager.switchAccount]) rather than a sign-in: every account in the
 /// list still holds live tokens, so choosing one is instant and needs no
-/// password. That is the whole point of keeping the vault, and it is what makes
-/// the several-accounts behaviour of messengers work here too.
+/// password. That is the whole point of keeping the vault, and it is what
+/// makes the several-accounts behaviour of messengers work here too.
 final class SwitchAccountSheet {
   /// Prevents instantiation: this type is a namespace for [show].
   const new _();
 
   /// What the "add another account" row returns.
   ///
-  /// A sentinel rather than a user id, because adding an account is not a switch
-  /// — it signs the active account out locally and leaves the rest in place.
+  /// A sentinel rather than a user id, because adding an account is not a
+  /// switch — it signs the active account out locally and leaves the rest in
+  /// place.
   static const String addAccountValue = '__add_account__';
 
   /// Shows the sheet and applies what was chosen.
   ///
-  /// Reads the store's current contents once, when the sheet opens: the list is
-  /// a snapshot of what can be switched to, and it cannot change while the sheet
-  /// is up.
+  /// Reads the store's current contents once, when the sheet opens: the list
+  /// is a snapshot of what can be switched to, and it cannot change while the
+  /// sheet is up.
   static Future<void> show(BuildContext context) async {
-    // Resolved before the first await so nothing reaches into the locator
-    // afterwards.
     final auth = di<AuthManager>();
     final accounts = auth.accounts.value.values.toList();
     final activeUserId = auth.activeUserId.value;

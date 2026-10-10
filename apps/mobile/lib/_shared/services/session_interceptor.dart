@@ -5,11 +5,8 @@ import 'dart:async';
 
 import 'package:dio/dio.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_shared/model/meno_response.dart';
-import 'package:meno_mobile/_shared/services/http_client.dart';
-import 'package:meno_mobile/_shared/services/session_store.dart';
-import 'package:meno_mobile/features/auth/model/dtos/auth_response_dto.dart';
-import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Attaches the active account's token to every request, and renews it when the
 /// API says it is no longer good.

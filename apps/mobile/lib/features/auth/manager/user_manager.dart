@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// The read-only view of who is signed in.
 ///

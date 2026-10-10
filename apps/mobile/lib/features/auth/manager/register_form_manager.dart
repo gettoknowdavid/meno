@@ -2,66 +2,26 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
+import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 
-/// What the registration form currently holds.
-///
-/// One immutable value rather than a notifier per field: every derived view a
-/// screen needs — "can this be submitted", "how strong is the password", "which
-/// rules are unmet" — is a projection of this, so there is no second place for
-/// the form's state to live and disagree.
-@immutable
-final class RegisterForm {
+part 'register_form_manager.freezed.dart';
+
+@freezed
+abstract class RegisterForm with _$RegisterForm {
   /// Creates form state.
-  const new({
-    this.fullName = FullName.empty,
-    this.email = Email.empty,
-    this.password = Password.emptyRegister,
-  });
+  const factory RegisterForm({
+    @Default(FullName.empty) FullName fullName,
+    @Default(Email.empty) Email email,
+    @Default(Password.emptyRegister) Password password,
+  }) = _RegisterForm;
 
-  /// The display name.
-  final FullName fullName;
-
-  /// The login address.
-  final Email email;
-
-  /// The chosen password.
-  final Password password;
+  const RegisterForm._();
 
   /// Whether every field is acceptable to the API's rules.
   bool get isValid => fullName.isValid && email.isValid && password.isValid;
-
-  /// A copy with the named fields replaced.
-  RegisterForm copyWith({
-    FullName? fullName,
-    Email? email,
-    Password? password,
-  }) => RegisterForm(
-    fullName: fullName ?? this.fullName,
-    email: email ?? this.email,
-    password: password ?? this.password,
-  );
-
-  @override
-  bool operator ==(Object other) =>
-      other is RegisterForm &&
-      other.fullName == fullName &&
-      other.email == email &&
-      other.password == password;
-
-  @override
-  int get hashCode => Object.hash(fullName, email, password);
 }
 
-/// Owns the registration form's fields.
-///
-/// Registered in a page scope rather than the root, so two visits to the
-/// registration screen cannot share a half-typed password, and the fields are
-/// gone the moment the page is: no manual reset, and nothing to leak into the
-/// next account.
-///
-/// Validation lives in the value objects ([FullName], [Email], [Password]) so it
-/// matches the API's rules exactly; this manager only holds them.
 final class RegisterFormManager implements Disposable {
   /// Creates an empty form.
   RegisterFormManager();

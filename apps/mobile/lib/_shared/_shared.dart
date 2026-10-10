@@ -1,12 +1,6 @@
 export 'layouts/root_shell.dart';
-export 'model/dtos/user_dto.dart';
-export 'model/entities/user.dart';
+export 'model/_model.dart';
 export 'model/meno_response.dart';
-export 'model/value_objects/email.dart';
-export 'model/value_objects/full_name.dart';
-export 'model/value_objects/password.dart';
-export 'model/value_objects/session.dart';
-export 'model/value_objects/value_object.dart';
 export 'services/http_client.dart';
 export 'services/local_storage.dart';
 export 'services/secure_storage.dart';

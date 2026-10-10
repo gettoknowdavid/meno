@@ -5,23 +5,15 @@ import 'package:meno_ui/meno_ui.dart';
 
 /// Greets the account that last signed in on this device.
 ///
-/// The sign-in screen shows this instead of an email field when the app already
-/// knows who is expected, which is the case every time somebody signs out or has
-/// a session expire. Offering the account back — rather than an empty form — is
-/// what makes returning to the app one tap instead of typing.
-///
-/// Example usage:
-/// ```dart
-/// UserAccountDetails(
-///   user: user,
-///   onSwitchAccount: openAccountSwitcher,
-/// )
-/// ```
+/// The sign-in screen shows this instead of an email field when the app
+/// already knows who is expected, which is the case every time somebody signs
+/// out or has a session expire. Offering the account back — rather than an
+/// empty form — is what makes returning to the app one tap instead of typing.
 class UserAccountDetails extends StatelessWidget {
   /// Creates the account card.
   ///
-  /// [user] is the account to greet and [onSwitchAccount] the action behind the
-  /// avatar, which opens the accounts signed in on this device.
+  /// [user] is the account to greet and [onSwitchAccount] the action behind
+  /// the avatar, which opens the accounts signed in on this device.
   const new({required this.user, super.key, this.onSwitchAccount});
 
   /// The account being greeted.

@@ -1,14 +1,12 @@
-//
-// ignore_for_file: avoid_equals_and_hash_code_on_mutable_classes
-
+import 'package:equatable/equatable.dart';
 import 'package:fpdart/fpdart.dart';
 
 /// The rule a value broke.
 ///
 /// A closed set rather than free-form text: the rule is what a screen compares,
 /// switches on and checks off in a list, while [ValueException.msg] is only
-/// what a person reads. Two failures that mean the same thing therefore share a
-/// [ValueRule] even when the API words them differently.
+/// what a person reads. Two failures that mean the same thing therefore share
+/// a [ValueRule] even when the API words them differently.
 enum ValueRule {
   /// Nothing was entered.
   required,
@@ -38,7 +36,7 @@ enum ValueRule {
 /// produces, so a form that checks on the client shows the same words the API
 /// would have used — and a field never says one thing offline and another thing
 /// online.
-final class ValueException implements Exception {
+final class ValueException with Equatable implements Exception {
   /// Creates a refusal with the [rule] it broke and the [msg] to show.
   const new(this.rule, this.msg);
 
@@ -49,11 +47,7 @@ final class ValueException implements Exception {
   final String msg;
 
   @override
-  bool operator ==(Object other) =>
-      other is ValueException && other.rule == rule && other.msg == msg;
-
-  @override
-  int get hashCode => Object.hash(rule, msg);
+  List<Object?> get props => [rule, msg];
 
   @override
   String toString() => msg;
@@ -66,12 +60,15 @@ final class ValueException implements Exception {
 /// requires saying which side it is on. Managers pass [getOrCrash] on the way
 /// to the API (validation has already happened) and forms read [failureOrNull]
 /// to mark their fields.
-abstract class ValueObject<T extends Object> {
+abstract class ValueObject<T extends Object> extends Equatable {
   /// Wraps an already-checked [value].
   const new(this.value);
 
   /// The value, or why it was refused.
   final Either<ValueException, T> value;
+
+  @override
+  List<Object?> get props => [value];
 
   /// Whether the input was accepted.
   bool get isValid => value.isRight();
