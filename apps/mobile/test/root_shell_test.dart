@@ -1,24 +1,45 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/app.dart';
-import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
+import 'package:meno_mobile/features/auth/model/dtos/auth_response_dto.dart';
+import 'package:meno_mobile/features/auth/model/entities/user_credential.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+const _config = Config(
+  env: Environment.dev,
+  menoApiUrl: 'https://dev.api',
+  webSocketUrl: 'wss://dev.socket',
+  menoLiveKitUrl: 'https://dev.livekit',
+);
+
+/// The account the sign-in flow would have left in the store: signed in, with
+/// the address already confirmed.
+final UserCredential _account = AuthResponseDto.fromJson({
+  'access_token': 'access-token',
+  'refresh_token': 'refresh-token',
+  'expires_in': 3600,
+  'user': {
+    'id': '1',
+    'full_name': 'Ada Lovelace',
+    'email': 'ada@example.com',
+    'verified': true,
+  },
+}).toDomain;
+
 /// Boots the app signed in and past onboarding, so the router lands inside the
 /// root shell.
 Future<void> _bootIntoShell(WidgetTester tester) async {
-  configureDependencies(
-    const Config(
-      env: Environment.dev,
-      menoApiUrl: 'https://dev.api',
-      webSocketUrl: 'wss://dev.socket',
-      menoLiveKitUrl: 'https://dev.livekit',
-    ),
-  );
-  di<AuthManager>().signIn(verified: true);
+  configureDependencies(_config);
+  await di.allReady();
+
+  // Nothing else can reach the shell: the guard sends an unfinished intro to
+  // the carousel and anybody signed out to the sign-in screen.
+  await di<SessionStore>().saveActive(_account);
 
   await tester.pumpWidget(const MenoApp());
   await tester.pumpAndSettle();
@@ -38,6 +59,9 @@ void main() {
     SharedPreferences.setMockInitialValues({
       StorageKeys.onboardingCompleted: true,
     });
+    // Secure storage starts empty and in memory: the tests write the accounts
+    // they need through the app's own store.
+    FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
   });
   tearDown(di.reset);

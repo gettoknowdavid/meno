@@ -17,8 +17,13 @@ const _config = Config(
 );
 
 void main() {
+  // The container reaches the platform channels (secure storage, preferences)
+  // while it starts, so the binding has to exist before it is asked to.
+  TestWidgetsFlutterBinding.ensureInitialized();
+
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
   });
   tearDown(di.reset);

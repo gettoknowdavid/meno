@@ -4,7 +4,6 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/model/onboarding_item.dart';
 import 'package:meno_mobile/features/onboarding/widgets/onboarding_body.dart';
 import 'package:meno_mobile/features/onboarding/widgets/onboarding_indicator.dart';
@@ -25,8 +24,9 @@ const double _kBottomGap = 64;
 /// The first screen of the app: a carousel of what Meno lets people do.
 ///
 /// The carousel advances itself every five seconds and can also be swiped.
-/// Either leaving action marks the intro as seen, which persists the flag
-/// through [OnboardingManager] so the guard stops sending people back here.
+/// Either action opens the form it names — and nothing is recorded here: the
+/// intro is left behind for good only once an account is actually signed in or
+/// created, which is what the auth screens record.
 class OnboardingPage extends WatchingWidget {
   /// Creates the intro page.
   const new({super.key});
@@ -118,12 +118,12 @@ class OnboardingPage extends WatchingWidget {
     );
   }
 
-  /// Records the intro as seen, then pushes [location].
+  /// Opens [location].
   ///
-  /// The flag is written before navigating so the guard — which re-runs as soon
-  /// as the manager notifies — never bounces the user back to the intro.
+  /// Deliberately records nothing: marking the intro as seen here would strand
+  /// anybody who changes their mind, because a restart would take them straight
+  /// past the intro to a form they never submitted.
   void _leave(BuildContext context, String location) {
-    di<OnboardingManager>().completeOnboarding.run();
     unawaited(context.push(location));
   }
 }

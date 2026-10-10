@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -104,7 +106,7 @@ class MenoApp extends WatchingWidget {
 
     if (error is UnauthenticatedException &&
         error.code != MenoErrorCode.invalidCredentials) {
-      di<AuthManager>().signOut();
+      unawaited(di<AuthManager>().signOut());
     }
 
     MToastController.of(overlay).show(

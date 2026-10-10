@@ -4,7 +4,7 @@ import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 
@@ -46,34 +46,50 @@ GoRouter createRouter({
 List<RouteBase> get _routes => [
   GoRoute(path: MRoutes.loading, builder: (_, _) => const StubPage('Loading')),
   GoRoute(path: MRoutes.onboarding, builder: (_, _) => const OnboardingPage()),
-  GoRoute(path: MRoutes.login, builder: (_, _) => const StubPage('Login')),
+  GoRoute(
+    path: MRoutes.login,
+    builder: (_, state) => LoginPage(
+      implyLeading: state.uri.queryParameters['implyLeading'] == 'true',
+    ),
+  ),
   GoRoute(
     path: MRoutes.register,
-    builder: (_, _) => const StubPage('Register'),
+    builder: (_, state) => RegisterPage(
+      implyLeading: state.uri.queryParameters['implyLeading'] != 'false',
+    ),
   ),
   GoRoute(
     path: MRoutes.emailVerification,
-    builder: (_, _) => const StubPage('Verify Email'),
+    builder: (_, state) =>
+        EmailVerificationPage(email: state.uri.queryParameters['email']),
   ),
   GoRoute(
     path: MRoutes.forgotPassword,
-    builder: (_, _) => const StubPage('Forgot Password'),
+    builder: (_, _) => const ForgotPasswordPage(),
   ),
+  // `/reset-password` is the flow's root, not a screen: the address is asked for
+  // at `/forgot-password`, and the API's own name for asking is
+  // `forgot-password`. A deep link to the bare path therefore starts the flow
+  // rather than showing a duplicate form.
   GoRoute(
     path: MRoutes.resetPassword,
-    builder: (_, _) => const StubPage('Reset Password'),
+    redirect: (_, _) => MRoutes.forgotPassword,
     routes: [
       GoRoute(
         path: 'otp',
-        builder: (_, _) => const StubPage('Reset Password OTP'),
+        builder: (_, state) =>
+            ResetPasswordOtpPage(email: state.uri.queryParameters['email']),
       ),
       GoRoute(
         path: 'new',
-        builder: (_, _) => const StubPage('Create New Password'),
+        builder: (_, state) => ResetPasswordPage(
+          email: state.uri.queryParameters['email'],
+          code: state.uri.queryParameters['code'],
+        ),
       ),
       GoRoute(
         path: 'success',
-        builder: (_, _) => const StubPage('Reset Password Success'),
+        builder: (_, _) => const ResetPasswordSuccessPage(),
       ),
     ],
   ),

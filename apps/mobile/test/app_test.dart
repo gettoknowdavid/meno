@@ -1,3 +1,4 @@
+import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -10,6 +11,9 @@ import '_support/pump_until_found.dart';
 void main() {
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    // Secure storage starts empty and in memory, so the startup gate can
+    // restore a session without a platform channel.
+    FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
   });
   tearDown(di.reset);
