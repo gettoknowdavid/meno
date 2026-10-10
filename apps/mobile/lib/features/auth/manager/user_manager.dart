@@ -29,7 +29,8 @@ final class UserManager {
       _auth.activeCredential.select((credential) => credential.user);
 
   /// The id of the signed-in account, or null.
-  ValueListenable<String?> get currentUserId => _auth.activeUserId;
+  ValueListenable<String?> get currentUserId =>
+      _auth.activeCredential.select((credential) => credential.userId);
 
   /// Whether an account is signed in.
   ValueListenable<bool> get isAuthenticated => _auth.isAuthenticated;

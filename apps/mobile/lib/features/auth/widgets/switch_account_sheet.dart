@@ -29,7 +29,7 @@ final class SwitchAccountSheet {
   static Future<void> show(BuildContext context) async {
     final auth = di<AuthManager>();
     final accounts = auth.accounts.value.values.toList();
-    final activeUserId = auth.activeUserId.value;
+    final activeUserId = auth.activeCredential.value.userId;
 
     final chosen = await showModalBottomSheet<String>(
       context: context,
