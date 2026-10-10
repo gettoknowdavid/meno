@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -37,7 +36,7 @@ void main() {
     // Onboarding already completed: the guard sends a signed-in user into the
     // shell instead of back to the intro.
     SharedPreferences.setMockInitialValues({
-      OnboardingService.onboardingKey: true,
+      StorageKeys.onboardingCompleted: true,
     });
     await di.reset();
   });

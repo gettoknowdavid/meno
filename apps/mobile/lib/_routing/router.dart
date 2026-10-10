@@ -1,5 +1,5 @@
-import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
@@ -7,6 +7,15 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
+
+/// The key of the router's root navigator.
+///
+/// Public because the overlay it builds is the only one that always exists:
+/// anything outside the widget tree — the global failure reporter — reaches
+/// toasts through it rather than through a page's context.
+final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>(
+  debugLabel: 'root',
+);
 
 /// Builds the application's [GoRouter].
 ///
@@ -22,6 +31,7 @@ GoRouter createRouter({
 
   return GoRouter(
     debugLogDiagnostics: debugLogDiagnostics,
+    navigatorKey: rootNavigatorKey,
     initialLocation: MRoutes.home,
     refreshListenable: Listenable.merge([
       onboarding.isOnboarded,

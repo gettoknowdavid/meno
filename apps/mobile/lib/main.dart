@@ -14,6 +14,7 @@ void main() {
   );
 
   configureDependencies(config);
+  configureGlobalExceptionHandler();
 
   di<MenoLogger>()
     ..i('App starting', tag: MenoLogTag.lifecycle.label)

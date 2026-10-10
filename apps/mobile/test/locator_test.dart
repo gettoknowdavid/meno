@@ -44,7 +44,7 @@ void main() {
 
     test('a stored onboarding flag reaches the manager', () async {
       SharedPreferences.setMockInitialValues({
-        OnboardingService.onboardingKey: true,
+        StorageKeys.onboardingCompleted: true,
       });
       configureDependencies(_config);
       await di.allReady();

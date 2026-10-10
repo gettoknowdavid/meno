@@ -3,6 +3,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:go_router/go_router.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
@@ -23,8 +24,23 @@ void _registerCore(Config config) {
     // Registered asynchronously so the app's startup gate waits for the
     // preference cache to load; every read after that is synchronous.
     ..registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance)
+    ..registerLazySingleton<LocalStorage>(
+      () => LocalStorage(di<SharedPreferences>()),
+      dispose: (storage) => storage.onDispose(),
+    )
+    ..registerLazySingleton<SecureStorage>(
+      () => SecureStorage(di<FlutterSecureStorage>()),
+      dispose: (storage) => storage.onDispose(),
+    )
+    ..registerLazySingleton<HttpClient>(
+      () => HttpClient(
+        baseUrl: di<Config>().menoApiUrl,
+        logger: di<MenoLogger>(),
+      ),
+      dispose: (client) => client.onDispose(),
+    )
     ..registerLazySingleton<OnboardingService>(
-      () => OnboardingService(di<SharedPreferences>()),
+      () => OnboardingService(di<LocalStorage>()),
     )
     ..registerLazySingleton<OnboardingManager>(
       () => OnboardingManager(di<OnboardingService>()),

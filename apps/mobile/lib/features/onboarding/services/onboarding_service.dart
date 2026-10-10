@@ -1,23 +1,21 @@
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 
 /// Persists whether the intro has been seen on this install.
 ///
-/// Reads are synchronous because [_preferences] caches its values once the
-/// instance is created — which is why the instance is registered as an async
-/// singleton, letting the app's startup gate wait for it.
+/// Reads are synchronous because [_storage] caches its values once the app's
+/// startup gate has let it through.
 final class OnboardingService {
-  /// Creates a service over [_preferences].
-  const new(this._preferences);
+  /// Creates a service over [_storage].
+  const new(this._storage);
 
-  /// The preference key holding the completed flag.
-  static const String onboardingKey = 'onboarding.completed';
-
-  final SharedPreferences _preferences;
+  final LocalStorage _storage;
 
   /// Whether the intro has already been completed on this install.
-  bool get isOnboarded => _preferences.getBool(onboardingKey) ?? false;
+  bool get isOnboarded =>
+      _storage.getBool(StorageKeys.onboardingCompleted) ?? false;
 
   /// Records that the intro has been completed.
   Future<void> completeOnboarding() =>
-      _preferences.setBool(onboardingKey, true);
+      _storage.setBool(StorageKeys.onboardingCompleted, value: true);
 }

@@ -35,7 +35,7 @@ void main() {
 
   testWidgets('an install that finished the intro skips it', (tester) async {
     SharedPreferences.setMockInitialValues({
-      OnboardingService.onboardingKey: true,
+      StorageKeys.onboardingCompleted: true,
     });
     configureDependencies(_config);
 
@@ -63,10 +63,7 @@ void main() {
 
     expect(find.text('Register'), findsWidgets);
     expect(find.text('Get started'), findsNothing);
-    expect(
-      di<SharedPreferences>().getBool(OnboardingService.onboardingKey),
-      isTrue,
-    );
+    expect(di<OnboardingService>().isOnboarded, isTrue);
 
     await unmountTree(tester);
   });
@@ -88,10 +85,7 @@ void main() {
 
     expect(find.text('Get started'), findsNothing);
     expect(find.widgetWithText(AppBar, 'Login'), findsOneWidget);
-    expect(
-      di<SharedPreferences>().getBool(OnboardingService.onboardingKey),
-      isTrue,
-    );
+    expect(di<OnboardingService>().isOnboarded, isTrue);
 
     await unmountTree(tester);
   });
