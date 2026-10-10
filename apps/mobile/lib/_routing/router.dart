@@ -22,7 +22,7 @@ GoRouter createRouter({
   return GoRouter(
     debugLogDiagnostics: debugLogDiagnostics,
     initialLocation: MRoutes.home,
-    refreshListenable: Listenable.merge([
+    refreshListenable: .merge([
       onboarding.isOnboarded,
       auth.isAuthenticated,
       auth.emailVerified,
@@ -268,7 +268,7 @@ class _RootShell extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MScaffold(
-      padding: EdgeInsets.zero,
+      padding: .zero,
       body: navigationShell,
       bottomNavigationBar: MBottomNavigationBar(
         currentIndex: navigationShell.currentIndex,

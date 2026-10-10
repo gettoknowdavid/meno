@@ -86,10 +86,7 @@ class MSideNavRail extends StatelessWidget {
         leading: leading == null
             ? null
             : Padding(
-                padding: const .only(
-                  top: Insets.md,
-                  bottom: Insets.xxl,
-                ),
+                padding: const .only(top: Insets.md, bottom: Insets.xxl),
                 child: Align(child: leading),
               ),
         destinations: [
