@@ -31,13 +31,7 @@ import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
 /// the same route through [menoExceptionFilter].
 final class AuthManager implements Disposable {
   /// Creates a manager over its service, its store and the log.
-  AuthManager({
-    required AuthHttpService http,
-    required SessionStore store,
-    required MenoLogger logger,
-  }) : _http = http,
-       _store = store,
-       _logger = logger {
+  new({required this._http, required this._store, required this._logger}) {
     login = Command.createAsync<LoginArgs, UserCredential>(
       (args) => _accept(
         () => _http.login(
@@ -101,10 +95,7 @@ final class AuthManager implements Disposable {
 
     verifyEmail = Command.createAsync<VerifyEmailArgs, UserCredential>(
       (args) => _accept(
-        () => _http.verifyEmail(
-          email: args.email.getOrCrash,
-          code: args.code,
-        ),
+        () => _http.verifyEmail(email: args.email.getOrCrash, code: args.code),
       ),
       initialValue: UserCredential.empty,
       errorFilterFn: menoExceptionFilter,
@@ -112,10 +103,7 @@ final class AuthManager implements Disposable {
     );
 
     resendOtp = Command.createAsyncNoResult<OtpRequestArgs>(
-      (args) => _http.resendOtp(
-        email: args.email.getOrCrash,
-        type: args.type,
-      ),
+      (args) => _http.resendOtp(email: args.email.getOrCrash, type: args.type),
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.resendOtp',
     );
@@ -157,7 +145,9 @@ final class AuthManager implements Disposable {
   final ValueNotifier<UserCredential> _active = ValueNotifier(
     UserCredential.empty,
   );
-  final ValueNotifier<Map<String, UserCredential>> _accounts = ValueNotifier({});
+  final ValueNotifier<Map<String, UserCredential>> _accounts = ValueNotifier(
+    {},
+  );
   final ValueNotifier<User> _lastKnown = ValueNotifier(User.empty);
 
   StreamSubscription<UserCredential?>? _storeSubscription;
@@ -181,8 +171,9 @@ final class AuthManager implements Disposable {
       _active.select((credential) => credential.user.verified);
 
   /// The id of the active account, or null when nobody is signed in.
-  ValueListenable<String?> get activeUserId =>
-      _active.select((credential) => credential.isEmpty ? null : credential.userId);
+  ValueListenable<String?> get activeUserId => _active.select(
+    (credential) => credential.isEmpty ? null : credential.userId,
+  );
 
   /// Every account on this device, keyed by user id.
   ///

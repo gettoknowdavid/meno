@@ -32,12 +32,15 @@ final class RegisterForm {
   bool get isValid => fullName.isValid && email.isValid && password.isValid;
 
   /// A copy with the named fields replaced.
-  RegisterForm copyWith({FullName? fullName, Email? email, Password? password}) =>
-      RegisterForm(
-        fullName: fullName ?? this.fullName,
-        email: email ?? this.email,
-        password: password ?? this.password,
-      );
+  RegisterForm copyWith({
+    FullName? fullName,
+    Email? email,
+    Password? password,
+  }) => RegisterForm(
+    fullName: fullName ?? this.fullName,
+    email: email ?? this.email,
+    password: password ?? this.password,
+  );
 
   @override
   bool operator ==(Object other) =>
@@ -63,9 +66,7 @@ final class RegisterFormManager implements Disposable {
   /// Creates an empty form.
   RegisterFormManager();
 
-  final ValueNotifier<RegisterForm> _form = ValueNotifier(
-    const RegisterForm(),
-  );
+  final ValueNotifier<RegisterForm> _form = ValueNotifier(const RegisterForm());
 
   /// The whole form, for a widget that wants to render from one value.
   ValueListenable<RegisterForm> get form => _form;

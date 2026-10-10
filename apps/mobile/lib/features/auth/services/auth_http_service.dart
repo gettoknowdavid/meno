@@ -1,3 +1,4 @@
+import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/dtos/auth_response_dto.dart';
 import 'package:meno_mobile/features/auth/model/dtos/session_info_dto.dart';
@@ -64,10 +65,7 @@ final class AuthHttpService {
   }) {
     return _client.post(
       '/auth/google/mobile',
-      data: {
-        'id_token': idToken,
-        if (deviceLabel != null) 'device_label': deviceLabel,
-      },
+      data: {'id_token': idToken, 'device_label': ?deviceLabel},
       fromJson: _credential,
     );
   }
@@ -77,16 +75,10 @@ final class AuthHttpService {
   /// Both tokens travel in the body, so this endpoint works without a header and
   /// without a live access token: the refresh token is what identifies the
   /// session to end.
-  Future<void> logout({
-    required String refreshToken,
-    String? accessToken,
-  }) {
+  Future<void> logout({required String refreshToken, String? accessToken}) {
     return _client.postUnit(
       '/auth/logout',
-      data: {
-        'refresh_token': refreshToken,
-        if (accessToken != null) 'access_token': accessToken,
-      },
+      data: {'refresh_token': refreshToken, 'access_token': ?accessToken},
     );
   }
 

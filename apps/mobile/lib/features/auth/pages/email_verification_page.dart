@@ -30,8 +30,8 @@ class EmailVerificationPage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerHandler(
-      select: (AuthManager manager) => manager.resendOtp,
+    registerHandler<AuthManager, void>(
+      select: (manager) => manager.resendOtp,
       handler: (context, _, _) =>
           context.showSuccessToast('A new code is on its way.'),
     );
