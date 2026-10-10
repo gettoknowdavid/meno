@@ -140,6 +140,7 @@ class _Artwork extends StatelessWidget {
     if (imageUrl == null) {
       imageWidget = Center(
         child: Assets.images.logoLight.svg(
+          package: 'meno_ui',
           colorFilter: colorFilter,
           height: 32,
         ),

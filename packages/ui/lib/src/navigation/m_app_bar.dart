@@ -210,7 +210,10 @@ class _PrimaryAppBarImpl extends StatelessWidget {
             Positioned(
               right: 0,
               bottom: 0,
-              child: Assets.images.geometricLines.svg(colorFilter: colorFilter),
+              child: Assets.images.geometricLines.svg(
+                colorFilter: colorFilter,
+                package: 'meno_ui',
+              ),
             ),
           ],
         ),

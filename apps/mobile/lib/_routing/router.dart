@@ -1,11 +1,11 @@
+import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
-import 'package:meno_ui/meno_ui.dart';
 
 /// Builds the application's [GoRouter].
 ///
@@ -22,7 +22,7 @@ GoRouter createRouter({
   return GoRouter(
     debugLogDiagnostics: debugLogDiagnostics,
     initialLocation: MRoutes.home,
-    refreshListenable: .merge([
+    refreshListenable: Listenable.merge([
       onboarding.isOnboarded,
       auth.isAuthenticated,
       auth.emailVerified,
@@ -203,7 +203,7 @@ List<RouteBase> get _routes => [
 
 StatefulShellRoute get _rootShell => StatefulShellRoute.indexedStack(
   builder: (_, _, navigationShell) =>
-      _RootShell(navigationShell: navigationShell),
+      RootShell(navigationShell: navigationShell),
   branches: [
     StatefulShellBranch(
       routes: [
@@ -258,40 +258,3 @@ StatefulShellRoute get _rootShell => StatefulShellRoute.indexedStack(
     ),
   ],
 );
-
-/// Root bottom-navigation shell — Home, Discover, Notes, Profile.
-class _RootShell extends StatelessWidget {
-  const new({required this.navigationShell});
-
-  final StatefulNavigationShell navigationShell;
-
-  @override
-  Widget build(BuildContext context) {
-    return MScaffold(
-      padding: .zero,
-      body: navigationShell,
-      bottomNavigationBar: MBottomNavigationBar(
-        currentIndex: navigationShell.currentIndex,
-        onTap: (index) => navigationShell.goBranch(
-          index,
-          initialLocation: index == navigationShell.currentIndex,
-        ),
-        items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home_outlined),
-            label: 'Home',
-          ),
-          BottomNavigationBarItem(icon: Icon(Icons.search), label: 'Discover'),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.article_outlined),
-            label: 'Notes',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline),
-            label: 'Profile',
-          ),
-        ],
-      ),
-    );
-  }
-}

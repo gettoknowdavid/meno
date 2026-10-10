@@ -22,8 +22,8 @@ class MPlaceholder extends StatelessWidget {
     return SizedBox.square(
       dimension: dimension,
       child: isLight
-          ? Assets.images.logoDark.svg()
-          : Assets.images.logoLight.svg(),
+          ? Assets.images.logoDark.svg(package: 'meno_ui')
+          : Assets.images.logoLight.svg(package: 'meno_ui'),
     );
   }
 }

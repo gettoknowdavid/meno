@@ -32,6 +32,7 @@ class MEmptyState extends StatelessWidget {
         mainAxisAlignment: .center,
         children: [
           Assets.images.liveForYou.image(
+            package: 'meno_ui',
             height: _kIllustrationSize,
             width: _kIllustrationSize,
           ),

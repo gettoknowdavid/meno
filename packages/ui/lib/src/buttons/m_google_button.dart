@@ -34,7 +34,7 @@ class MGoogleButton extends StatelessWidget {
 
     return MSecondaryButton.icon(
       label: title,
-      icon: Assets.images.google.svg(),
+      icon: Assets.images.google.svg(package: 'meno_ui'),
       onPressed: onPressed,
       style: OutlinedButton.styleFrom(
         side: BorderSide(width: Strokes.thin, color: colors.inActiveContainer),

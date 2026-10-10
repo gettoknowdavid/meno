@@ -66,6 +66,7 @@ class MRecentlyLiveCard extends StatelessWidget {
       );
     } else {
       placeholder = Assets.images.logoLight.svg(
+        package: 'meno_ui',
         colorFilter: colorFilter,
         height: 32,
       );

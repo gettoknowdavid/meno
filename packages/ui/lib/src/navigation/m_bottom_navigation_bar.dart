@@ -179,7 +179,7 @@ class MBottomBarNavigationItem extends StatelessWidget {
       child: Container(
         color: theme.backgroundColor,
         width: 62.5,
-        height: 56,
+        constraints: const BoxConstraints(minHeight: _kMicSize),
         child: content,
       ),
     );

@@ -76,7 +76,10 @@ class MLoadingIndicator extends StatelessWidget {
       return SizedBox(
         height: height,
         width: width,
-        child: Assets.images.loading.image(fit: BoxFit.cover),
+        child: Assets.images.loading.image(
+          fit: BoxFit.cover,
+          package: 'meno_ui',
+        ),
       );
     }
 
@@ -91,7 +94,7 @@ class MLoadingIndicator extends StatelessWidget {
           color: colors.background,
           borderRadius: Corners.md,
         ),
-        child: Assets.images.loading.image(),
+        child: Assets.images.loading.image(package: 'meno_ui'),
       ),
     );
   }

@@ -274,7 +274,10 @@ class MBadge extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           if (showLoader)
-            Assets.images.loading.image(color: effectiveValueColor),
+            Assets.images.loading.image(
+              color: effectiveValueColor,
+              package: 'meno_ui',
+            ),
           _buildText(
             content: value!,
             style: effectiveTextStyle,
