@@ -6,5 +6,8 @@ library;
 
 export 'm_app_bar.dart';
 export 'm_bottom_navigation_bar.dart';
+export 'm_chip_tab_bar.dart';
 export 'm_header.dart';
+export 'm_side_nav_rail.dart';
+export 'm_sliver_app_bar.dart';
 export 'm_tab_bar_view.dart';

@@ -4,6 +4,7 @@
 /// including title bars, close buttons, and themed styling.
 library;
 
+export 'm_confirmation_dialog.dart';
 export 'm_image_source_modal.dart';
 export 'm_modal.dart';
 export 'm_modal_title_bar.dart';

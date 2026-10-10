@@ -22,6 +22,7 @@ export 'src/modals/modals.dart';
 export 'src/navigation/navigation.dart';
 export 'src/placeholders/placeholders.dart';
 export 'src/scaffold/scaffold.dart';
+export 'src/sections/sections.dart';
 export 'src/spacer/meno_spacer.dart';
 export 'src/tags/tags.dart';
 export 'src/text/text.dart';
