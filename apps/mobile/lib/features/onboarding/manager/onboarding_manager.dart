@@ -1,20 +1,41 @@
+import 'dart:async';
+
 import 'package:flutter/foundation.dart';
+import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
 
-/// Tracks whether the user has completed first-run onboarding.
+/// Owns the flag that decides whether the intro still needs to be shown.
 ///
-/// Exposed as a [ValueNotifier] so the router guard and reactive widgets share
-/// a single source of truth.
-final class OnboardingManager {
-  /// Whether onboarding has been completed.
-  final ValueNotifier<bool> isOnboarded = ValueNotifier<bool>(false);
-
-  /// Marks onboarding as completed.
-  void complete() {
-    isOnboarded.value = true;
+/// The persisted value is read in the constructor, so [isOnboarded] is already
+/// correct when the manager resolves — the router guard can read it
+/// synchronously without a separate initialise step to remember.
+final class OnboardingManager extends ChangeNotifier implements Disposable {
+  /// Creates a manager backed by [_service].
+  new(this._service) {
+    _isOnboarded.value = _service.isOnboarded;
   }
 
-  /// Resets onboarding to its initial state.
-  void reset() {
-    isOnboarded.value = false;
+  final OnboardingService _service;
+  final _isOnboarded = ValueNotifier<bool>(false);
+
+  /// Whether the user has already seen and acted on the intro.
+  ValueListenable<bool> get isOnboarded => _isOnboarded;
+
+  /// Marks the intro as seen.
+  ///
+  /// [isOnboarded] flips first so the guard stops redirecting immediately, then
+  /// the flag is written through to storage.
+  late final Command<void, void> completeOnboarding =
+      Command.createAsyncNoParamNoResult(() async {
+        if (_isOnboarded.value) return;
+        _isOnboarded.value = true;
+        notifyListeners();
+        await _service.completeOnboarding();
+      });
+
+  @override
+  FutureOr<dynamic> onDispose() {
+    _isOnboarded.dispose();
+    completeOnboarding.dispose();
   }
 }

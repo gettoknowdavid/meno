@@ -3,9 +3,10 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
+import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 /// Boots the app signed in and past onboarding, so the router lands inside the
 /// root shell.
@@ -18,7 +19,6 @@ Future<void> _bootIntoShell(WidgetTester tester) async {
       menoLiveKitUrl: 'https://dev.livekit',
     ),
   );
-  di<OnboardingManager>().complete();
   di<AuthManager>().signIn(verified: true);
 
   await tester.pumpWidget(const MenoApp());
@@ -33,7 +33,14 @@ void _useWindow(WidgetTester tester, Size size) {
 }
 
 void main() {
-  setUp(di.reset);
+  setUp(() async {
+    // Onboarding already completed: the guard sends a signed-in user into the
+    // shell instead of back to the intro.
+    SharedPreferences.setMockInitialValues({
+      OnboardingService.onboardingKey: true,
+    });
+    await di.reset();
+  });
   tearDown(di.reset);
 
   testWidgets('uses the bottom bar on a phone-sized window', (tester) async {

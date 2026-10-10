@@ -1,30 +1,56 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
+import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:mocktail/mocktail.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class MockMenoLogger extends Mock implements MenoLogger;
 
+const _config = Config(
+  env: Environment.dev,
+  menoApiUrl: 'https://dev.api',
+  webSocketUrl: 'wss://dev.socket',
+  menoLiveKitUrl: 'https://dev.livekit',
+);
+
 void main() {
-  setUp(di.reset);
+  setUp(() async {
+    SharedPreferences.setMockInitialValues({});
+    await di.reset();
+  });
   tearDown(di.reset);
 
   group('configureDependencies', () {
     test('registers config, logger and secure storage in the root scope', () {
-      const config = Config(
-        env: Environment.dev,
-        menoApiUrl: 'https://dev.api',
-        webSocketUrl: 'wss://dev.socket',
-        menoLiveKitUrl: 'https://dev.livekit',
-      );
-
-      configureDependencies(config);
+      configureDependencies(_config);
 
       expect(di.currentScopeName, Scope.root);
-      expect(di<Config>(), same(config));
+      expect(di<Config>(), same(_config));
       expect(di<MenoLogger>(), isA<MenoLoggerImpl>());
       expect(di.isRegistered<FlutterSecureStorage>(), isTrue);
+    });
+
+    test('registers the onboarding storage and manager', () async {
+      configureDependencies(_config);
+      await di.allReady();
+
+      expect(di.isRegistered<SharedPreferences>(), isTrue);
+      expect(di.isRegistered<OnboardingService>(), isTrue);
+      expect(di<OnboardingManager>().isOnboarded.value, isFalse);
+    });
+
+    test('a stored onboarding flag reaches the manager', () async {
+      SharedPreferences.setMockInitialValues({
+        OnboardingService.onboardingKey: true,
+      });
+      configureDependencies(_config);
+      await di.allReady();
+
+      expect(di<OnboardingService>().isOnboarded, isTrue);
+      expect(di<OnboardingManager>().isOnboarded.value, isTrue);
     });
 
     test('wires the logger policy to the config environment', () {

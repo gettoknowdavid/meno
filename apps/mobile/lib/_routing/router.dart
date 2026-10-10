@@ -6,6 +6,7 @@ import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
+import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 
 /// Builds the application's [GoRouter].
 ///
@@ -34,10 +35,7 @@ GoRouter createRouter({
 
 List<RouteBase> get _routes => [
   GoRoute(path: MRoutes.loading, builder: (_, _) => const StubPage('Loading')),
-  GoRoute(
-    path: MRoutes.onboarding,
-    builder: (_, _) => const StubPage('Onboarding'),
-  ),
+  GoRoute(path: MRoutes.onboarding, builder: (_, _) => const OnboardingPage()),
   GoRoute(path: MRoutes.login, builder: (_, _) => const StubPage('Login')),
   GoRoute(
     path: MRoutes.register,
