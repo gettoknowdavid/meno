@@ -37,7 +37,15 @@ class RegisterPage extends WatchingWidget {
     registerHandler<AuthManager, CommandResult<RegisterArgs?, UserCredential>>(
       select: (manager) => manager.register.results,
       handler: (ctx, result, _) {
-        if (result.isSuccess) di<OnboardingManager>().completeOnboarding.run();
+        if (!result.isSuccess) return;
+
+        // Only a registration that went through empties the form. Clearing it
+        // as the request is sent would throw away a valid form on a refused
+        // one — an already-registered address, say — leaving every field
+        // showing text the manager no longer holds, and a submit button that
+        // stays disabled until each field is edited again.
+        di<RegisterFormManager>().reset();
+        di<OnboardingManager>().completeOnboarding.run();
       },
     );
 
@@ -254,23 +262,14 @@ class _TermsAndConditionsCheckBox extends WatchingWidget {
       (manager) => manager.register.isRunning,
     );
 
-    return Row(
-      children: [
-        SizedBox.square(
-          dimension: 20,
-          child: Checkbox(
-            value: terms.input,
-            onChanged: di<RegisterFormManager>().onTermsChanged,
-          ),
-        ),
-        const SizedBox(width: 10),
-        MInlineActionText(
-          label: 'By continuing you agree to our ',
-          actionLabel: 'Terms of Service',
-          enabled: !isRunning,
-          onAction: () {},
-        ),
-      ],
+    return MCheckboxFormField(
+      key: const Key('register_form_terms'),
+      label: 'By continuing you agree to our ',
+      actionLabel: 'Terms of Service',
+      onAction: () {},
+      enabled: !isRunning,
+      value: terms.input,
+      onChanged: di<RegisterFormManager>().onTermsChanged,
     );
   }
 }
@@ -290,7 +289,8 @@ class _RegisterButton extends WatchingWidget {
       (manager) => manager.isValid,
     );
 
-    /// Sends the registration, then empties the form.
+    /// Sends the registration. The form is emptied once the API accepts it,
+    /// not here: a refused registration must leave what was typed in place.
     void submit() {
       FocusScope.of(context).unfocus();
       final args = RegisterArgs(
@@ -299,7 +299,6 @@ class _RegisterButton extends WatchingWidget {
         password: manager.password.value,
       );
       di<AuthManager>().register.run(args);
-      di<RegisterFormManager>().reset();
     }
 
     return MPrimaryButton(
