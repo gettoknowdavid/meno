@@ -14,7 +14,7 @@ part 'dtos.g.dart';
 abstract class UserDto with _$UserDto {
   const factory({
     required String id,
-    @JsonKey(name: 'fullName') required String fullName,
+    @JsonKey(name: 'full_name') required String fullName,
     required String email,
     String? bio,
     @Default(false) bool verified,
