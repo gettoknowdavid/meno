@@ -313,7 +313,11 @@ class _Typography {
     fontWeight: FontWeight.w700,
   );
 
-  late final TextStyle heading2Regular = _font(24, height: 32);
+  late final TextStyle heading2Regular = _font(
+    24,
+    height: 32,
+    letterSpacing: 0.8,
+  );
 
   late final TextStyle heading2Medium = heading2Regular.copyWith(
     fontWeight: FontWeight.w600,
@@ -353,7 +357,8 @@ class _Typography {
     fontWeight: FontWeight.w700,
   );
 
-  late final TextStyle captionRegular = _font(14, height: 18);
+  // Updated this from 18 to 20. Will review later
+  late final TextStyle captionRegular = _font(14, height: 20);
 
   late final TextStyle captionMedium = captionRegular.copyWith(
     fontWeight: FontWeight.w600,
@@ -395,6 +400,7 @@ class _Typography {
     FontWeight? weight,
     TextDecoration? decoration,
     Color? color,
+    double? letterSpacing,
   }) {
     return _style.copyWith(
       fontSize: size,
@@ -402,6 +408,7 @@ class _Typography {
       fontWeight: weight ?? FontWeight.w500,
       decoration: decoration,
       color: color ?? _colors.onBackground,
+      letterSpacing: letterSpacing,
     );
   }
 }
