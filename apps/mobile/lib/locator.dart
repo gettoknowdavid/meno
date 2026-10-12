@@ -6,6 +6,7 @@ import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/onboarding.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The app's service locator.
@@ -69,6 +70,8 @@ void _registerCore(Config config) {
     ..registerLazySingleton<OnboardingService>(
       () => OnboardingService(di<LocalStorage>()),
     )
+    // Picks images from the device, for every feature that asks for one.
+    ..registerLazySingleton<MediaService>(MediaService.new)
     ..registerLazySingleton<OnboardingManager>(
       () => OnboardingManager(di<OnboardingService>()),
       dispose: (manager) => manager.onDispose(),
@@ -98,6 +101,24 @@ void _registerCore(Config config) {
     // Follows the active account and keeps the authenticated scope in step.
     ..registerSingletonAsync<UserScopeManager>(
       () => UserScopeManager(di<AuthManager>()).init(),
+      dependsOn: [AuthManager],
+      dispose: (manager) => manager.onDispose(),
+    )
+    // The profile feature: the endpoints, the device's copy of them, and the
+    // manager that keeps the signed-in account's own profile in step with the
+    // account it belongs to.
+    ..registerLazySingleton<ProfileHttpService>(
+      () => ProfileHttpService(di<HttpClient>()),
+    )
+    ..registerLazySingleton<ProfileCacheService>(
+      () => ProfileCacheService(di<LocalStorage>()),
+    )
+    ..registerSingletonAsync<MyProfileManager>(
+      () => MyProfileManager(
+        http: di<ProfileHttpService>(),
+        cache: di<ProfileCacheService>(),
+        user: di<UserManager>(),
+      ).init(),
       dependsOn: [AuthManager],
       dispose: (manager) => manager.onDispose(),
     )

@@ -1,16 +1,19 @@
-import 'package:flutter/material.dart';
-import 'package:meno_design_system/meno_design_system.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meno_ui/meno_ui.dart';
 
+/// The overflow menu of somebody else's profile.
+///
+/// Both rows are the layout's, and both are still inert: the first is the page
+/// the menu already sits on, and notifications belong to the notifications
+/// feature. The menu keeps its place rather than being removed, so the action
+/// that opens it does not disappear along with it.
 class ProfilePageOptionsModal extends StatelessWidget {
-  const ProfilePageOptionsModal._() : super(key: null);
+  /// Prevents instantiation: [show] is the way in.
+  const new _();
 
-  static Future<void> show(BuildContext context) {
-    return showModalBottomSheet<void>(
-      context: context,
-      useRootNavigator: true,
-      builder: (context) => const ProfilePageOptionsModal._(),
-    );
-  }
+  /// Shows the menu over [context].
+  static Future<void> show(BuildContext context) =>
+      context.showModal<void>(const ProfilePageOptionsModal._());
 
   @override
   Widget build(BuildContext context) {

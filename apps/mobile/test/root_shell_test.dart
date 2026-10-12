@@ -5,9 +5,12 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '_support/pump_until_found.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -34,6 +37,10 @@ final UserCredential _account = AuthResponseDto.fromJson({
 /// root shell.
 Future<void> _bootIntoShell(WidgetTester tester) async {
   configureDependencies(_config);
+  // `main()` does this after the locator is up. The profile screen starts a
+  // read the moment it is opened, and in a widget test every request is
+  // refused, so that failure reaches the global handler.
+  configureGlobalExceptionHandler();
   await di.allReady();
 
   // Nothing else can reach the shell: the guard sends an unfinished intro to
@@ -86,18 +93,24 @@ void main() {
     _useWindow(tester, const Size(390, 844));
     await _bootIntoShell(tester);
 
-    expect(find.text('My Profile'), findsNothing);
+    expect(find.byType(MyProfilePage), findsNothing);
 
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
 
-    expect(find.text('My Profile'), findsWidgets);
+    expect(find.byType(MyProfilePage), findsOneWidget);
+
+    // The read is refused in a widget test, and the toast that says so sits
+    // over the tab bar until it dismisses itself.
+    await tester.pumpAndSettle(const Duration(seconds: 4));
 
     await tester.tap(find.text('Discover'));
     await tester.pumpAndSettle();
 
-    expect(find.text('Discover Search'), findsNothing);
+    expect(find.byType(MyProfilePage), findsNothing);
     expect(find.text('Discover'), findsWidgets);
+
+    await unmountTree(tester);
   });
 
   testWidgets('tapping the active tab resets that branch', (tester) async {
@@ -106,11 +119,17 @@ void main() {
 
     await tester.tap(find.text('Profile'));
     await tester.pumpAndSettle();
-    expect(find.text('My Profile'), findsWidgets);
+    expect(find.byType(MyProfilePage), findsOneWidget);
+
+    // The read is refused in a widget test, and the toast that says so sits
+    // over the tab bar until it dismisses itself.
+    await tester.pumpAndSettle(const Duration(seconds: 4));
 
     // Tapping the already-selected tab must not throw and must stay put.
     await tester.tap(find.text('Profile').first);
     await tester.pumpAndSettle();
-    expect(find.text('My Profile'), findsWidgets);
+    expect(find.byType(MyProfilePage), findsOneWidget);
+
+    await unmountTree(tester);
   });
 }

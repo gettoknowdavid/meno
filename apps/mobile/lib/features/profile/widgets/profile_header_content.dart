@@ -1,14 +1,82 @@
-import 'package:flutter/material.dart';
-import 'package:flutter_it/flutter_it.dart';
-import 'package:meno/_core/value_objects/value_objects.dart';
-import 'package:meno/features/profile/profile.dart';
-import 'package:meno/features/profile/widgets/_widgets.dart';
-import 'package:meno_design_system/meno_design_system.dart';
-import 'package:readmore/readmore.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
+import 'package:meno_mobile/features/profile/widgets/profile_buttons.dart';
+import 'package:meno_ui/meno_ui.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
+/// The header of the signed-in account's own profile: avatar, counters, the
+/// upgrade row, the bio, and the two buttons that act on it.
+///
+/// It is the flexible space of the profile screen's app bar, so it is laid out
+/// above the toolbar's height and scrolls away with the tab bar.
 class MyProfileHeaderContent extends StatelessWidget {
-  const MyProfileHeaderContent({required this.profile, super.key});
+  /// Creates the header for [profile].
+  const new({required this.profile, this.isSkeleton = false, super.key});
 
+  /// The signed-in account's profile, or [MyProfile.empty] while it loads.
+  final MyProfile profile;
+
+  /// Whether the record is still on its way.
+  ///
+  /// True draws the header as a shimmering skeleton — the same layout, with
+  /// the design system's bones instead of placeholders that would read as
+  /// real numbers.
+  final bool isSkeleton;
+
+  @override
+  Widget build(BuildContext context) {
+    return Skeletonizer(
+      enabled: isSkeleton,
+      child: SafeArea(
+        bottom: false,
+        child: SingleChildScrollView(
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const .fromLTRB(Insets.lg, kToolbarHeight, Insets.lg, 0),
+          child: Column(
+            crossAxisAlignment: .start,
+            children: [
+              Row(
+                children: [
+                  MAvatar(radius: 40, url: profile.avatarUrl),
+                  const SizedBox(width: Insets.xl),
+                  Expanded(child: ProfileStatsRow(stats: profile.stats)),
+                ],
+              ),
+              Spaces.verticalLarge,
+              const AccountUpgradeSection(),
+              Spaces.verticalLarge,
+              if (profile.bio != null) ...[
+                ProfileBio(profile.bio!),
+                Spaces.verticalLarge,
+              ],
+              SizedBox(
+                height: 32,
+                child: Row(
+                  children: [
+                    Expanded(child: EditProfileButton(profile: profile)),
+                    Spaces.horizontalLarge,
+                    Expanded(
+                      child: ShareProfileButton(profile: profile.asProfile),
+                    ),
+                  ],
+                ),
+              ),
+              Spaces.verticalLarge,
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// The header of somebody else's profile: avatar, counters, bio and the two
+/// actions a visitor has.
+class UserProfileHeaderContent extends StatelessWidget {
+  /// Creates the header for [profile].
+  const new({required this.profile, super.key});
+
+  /// The profile being viewed.
   final Profile profile;
 
   @override
@@ -17,29 +85,31 @@ class MyProfileHeaderContent extends StatelessWidget {
       bottom: false,
       child: SingleChildScrollView(
         physics: const NeverScrollableScrollPhysics(),
-        padding: const .fromLTRB(16, kToolbarHeight, 16, 0),
+        padding: const .fromLTRB(Insets.lg, kToolbarHeight, Insets.lg, 0),
         child: Column(
           crossAxisAlignment: .start,
           children: [
             Row(
               children: [
-                MAvatar(radius: 40, url: profile.image?.getUrl()),
-                const SizedBox(width: 24),
-                Expanded(child: ProfileStatsWidget(stats: profile.stats)),
+                MAvatar(radius: 40, url: profile.avatarUrl),
+                const SizedBox(width: Insets.xl),
+                Expanded(child: ProfileStatsRow(stats: profile.stats)),
               ],
             ),
             Spaces.verticalLarge,
-            const AccountUpgradeSectionWidget(),
-            Spaces.verticalLarge,
             if (profile.bio != null) ...[
-              ProfileBioWidget(bio: profile.bio!),
+              ProfileBio(profile.bio!),
               Spaces.verticalLarge,
             ],
             SizedBox(
               height: 32,
               child: Row(
                 children: [
-                  Expanded(child: EditProfileButton(profile: profile)),
+                  // Subscribing is the subscriptions feature's to build: the
+                  // follower endpoints and the button's states belong to it.
+                  // Until then the slot shows the Meno mark rather than a
+                  // button that would pretend to have done something.
+                  const Expanded(child: SubscribePlaceholder()),
                   Spaces.horizontalLarge,
                   Expanded(child: ShareProfileButton(profile: profile)),
                 ],
@@ -53,58 +123,26 @@ class MyProfileHeaderContent extends StatelessWidget {
   }
 }
 
-class UserProfileHeaderContent extends WatchingWidget {
-  const UserProfileHeaderContent({required this.proxy, super.key});
-
-  final UserProfileProxy proxy;
+/// Where a subscribe button will go.
+///
+/// A placeholder rather than a disabled control: a button that cannot work yet
+/// invites taps and explains nothing.
+class SubscribePlaceholder extends StatelessWidget {
+  /// Creates the placeholder.
+  const new({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    watch(proxy);
-    return SafeArea(
-      bottom: false,
-      child: SingleChildScrollView(
-        physics: const NeverScrollableScrollPhysics(),
-        padding: const .fromLTRB(16, kToolbarHeight, 16, 0),
-        child: Column(
-          crossAxisAlignment: .start,
-          children: [
-            Row(
-              children: [
-                MAvatar(radius: 40, url: proxy.imageUrl),
-                const SizedBox(width: 24),
-                Expanded(child: ProfileStatsWidget(stats: proxy.stats)),
-              ],
-            ),
-            Spaces.verticalLarge,
-
-            if (proxy.bio != null) ...[
-              ProfileBioWidget(bio: proxy.bio!),
-              Spaces.verticalLarge,
-            ],
-
-            SizedBox(
-              height: 32,
-              child: Row(
-                children: [
-                  Expanded(child: SubscribeButton(proxy: proxy)),
-                  Spaces.horizontalLarge,
-                  Expanded(child: ShareProfileButton(profile: proxy.profile)),
-                ],
-              ),
-            ),
-            Spaces.verticalLarge,
-          ],
-        ),
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      const Center(child: MPlaceholder(dimension: 24));
 }
 
-class ProfileStatsWidget extends StatelessWidget {
-  const ProfileStatsWidget({required this.stats, super.key});
+/// The three counters, side by side.
+class ProfileStatsRow extends StatelessWidget {
+  /// Creates the row for [stats].
+  const new({required this.stats, super.key});
 
-  final UserStats stats;
+  /// The counters to show.
+  final ProfileStats stats;
 
   @override
   Widget build(BuildContext context) {
@@ -113,11 +151,13 @@ class ProfileStatsWidget extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 2),
+          // The API counts followers and following; the screens have always
+          // called them subscribers and subscriptions.
           _StatItem(title: 'Broadcasts', count: stats.broadcasts),
           const Spacer(),
-          _StatItem(title: 'Subscribers', count: stats.subscribers),
+          _StatItem(title: 'Subscribers', count: stats.followers),
           const Spacer(),
-          _StatItem(title: 'Subscriptions', count: stats.subscriptions),
+          _StatItem(title: 'Subscriptions', count: stats.following),
           const SizedBox(width: 2),
         ],
       ),
@@ -125,11 +165,12 @@ class ProfileStatsWidget extends StatelessWidget {
   }
 }
 
+/// One counter: its number above, its name below.
 class _StatItem extends StatelessWidget {
-  const _StatItem({required this.title, this.count = 0});
+  const new({required this.title, required this.count});
 
   final String title;
-  final int? count;
+  final int count;
 
   @override
   Widget build(BuildContext context) {
@@ -150,47 +191,45 @@ class _StatItem extends StatelessWidget {
   }
 }
 
-class ProfileBioWidget extends StatelessWidget {
-  const ProfileBioWidget({
-    required this.bio,
-    this.forceHeight = false,
-    super.key,
-  });
+/// A profile's biography, trimmed to three lines with a way to read the rest.
+class ProfileBio extends StatelessWidget {
+  /// Creates the bio for [bio].
+  const new(this.bio, {super.key});
 
-  final MultiLineString bio;
-  final bool forceHeight;
+  /// The text to show.
+  final String bio;
 
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
-    final style = textTheme.captionMedium.copyWith(
-      color: colors.onBackgroundVariant,
-    );
-    return ReadMoreText(
-      bio.getOrNull() ?? '',
-      style: textTheme.captionRegular,
-      trimLines: 3,
-      trimMode: TrimMode.Line,
-      trimExpandedText: '\nless',
-      trimCollapsedText: '\nmore',
-      moreStyle: style,
-      lessStyle: style,
+
+    return MReadMoreText(
+      bio,
+      style: textTheme.captionRegular.copyWith(
+        color: colors.onBackgroundVariant,
+      ),
     );
   }
 }
 
-class AccountUpgradeSectionWidget extends StatelessWidget {
-  const AccountUpgradeSectionWidget({super.key});
+/// The plan the account is on, and the way up from it.
+///
+/// The row the layout has always had. Nothing behind it yet: upgrading is the
+/// subscriptions feature's, so the button is inert rather than a fake request.
+class AccountUpgradeSection extends StatelessWidget {
+  /// Creates the upgrade row.
+  const new({super.key});
 
   @override
   Widget build(BuildContext context) {
     final textTheme = MTextTheme.of(context);
+
     return SizedBox(
       height: 24,
       child: Row(
         children: [
-          const MTag(title: 'FREE ACCOUNT', height: 24),
+          const MTag(title: 'FREE ACCOUNT'),
           Spaces.horizontalLarge,
           MTextButton(
             label: 'Upgrade to Premium',

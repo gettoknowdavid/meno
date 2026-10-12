@@ -1,65 +1,90 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
-import 'package:meno/_core/_core.dart';
-import 'package:meno/_routing/_routing.dart';
-import 'package:meno/_shared/_shared.dart';
-import 'package:meno/features/profile/model/_model.dart';
-import 'package:meno_design_system/meno_design_system.dart';
+import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/profile/manager/_manager.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
+import 'package:meno_mobile/features/profile/services/_services.dart';
+import 'package:meno_ui/meno_ui.dart';
 
+/// The sheet that edits the signed-in account's profile.
+///
+/// The form lives in a scope pushed for this sheet, so its fields exist
+/// exactly as long as it does — two visits cannot share a half-typed name —
+/// and the save hands the API's answer to [MyProfileManager], which updates
+/// the profile screen and the cache behind it.
 class ProfileEditorModal extends WatchingWidget {
-  const ProfileEditorModal._(this.profile) : super(key: null);
-  final Profile profile;
+  /// Prevents instantiation: [show] is the way in.
+  const new _();
 
-  static Future<dynamic> show(BuildContext context, Profile profile) {
-    return showModalBottomSheet<dynamic>(
-      context: context,
-      builder: (context) => ProfileEditorModal._(profile),
-      isScrollControlled: true,
-      useRootNavigator: true,
-    );
-  }
+  /// Shows the editor over [context].
+  static Future<void> show(BuildContext context) => context.showModal<void>(
+    const ProfileEditorModal._(),
+    isScrollControlled: true,
+    useRootNavigator: true,
+  );
 
   @override
   Widget build(BuildContext context) {
-    final proxy = createOnce(() => MyProfileProxy(profile));
-    final formKey = createOnce(GlobalKey<FormState>.new);
-
-    registerHandler(
-      target: proxy.updateProfile.results,
-      handler: (context, CommandResult<void, void> results, cancel) {
-        if (results.isSuccess) return context.pop();
-        if (results.hasError) {
-          final error = results.error;
-          if (error == null) return;
-          final message = switch (error) {
-            MenoException(:final message) => message,
-            _ => error.toString(),
-          };
-          context.showErrorSnackBar(message);
-        }
+    pushScope(
+      init: (getIt) {
+        getIt.registerSingleton<ProfileEditorManager>(
+          ProfileEditorManager(
+            profile: di<MyProfileManager>().profile.value,
+            http: di<ProfileHttpService>(),
+            owner: di<MyProfileManager>(),
+          ),
+        );
       },
     );
 
-    watch(proxy);
+    // The command itself is watched rather than its results: it notifies only
+    // when it finishes successfully, so there is no state to disentangle.
+    registerHandler<ProfileEditorManager, MyProfile>(
+      select: (manager) => manager.save,
+      handler: (ctx, _, _) {
+        ctx
+          ..showSuccessToast('Profile updated')
+          ..pop();
+      },
+    );
+
+    registerHandler<ProfileEditorManager, CommandError<void>?>(
+      select: (manager) => manager.save.errors,
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
+    );
+
+    final manager = di<ProfileEditorManager>();
+    final isSaving = watchValue<ProfileEditorManager, bool>(
+      (manager) => manager.save.isRunning,
+    );
+    final isValid = watch(manager.isValid).value;
+    final hasChanges = watch(manager.hasChanges).value;
 
     return MModal(
       title: 'Edit profile details',
       builder: (context) => SingleChildScrollView(
         padding: MediaQuery.viewInsetsOf(context),
         child: Form(
-          key: formKey,
+          key: createOnce(GlobalKey<FormState>.new),
           autovalidateMode: .onUserInteraction,
           child: Column(
             crossAxisAlignment: .stretch,
             children: [
               Spaces.verticalLarge,
-              Align(child: _Avatar(proxy: proxy)),
+              Align(child: _Avatar(manager: manager)),
               Spaces.verticalXLarge,
-              _NameField(proxy: proxy),
+              _NameField(manager: manager, enabled: !isSaving),
               Spaces.verticalXLarge,
-              _BioField(proxy: proxy),
+              _BioField(manager: manager, enabled: !isSaving),
               Spaces.verticalXLarge,
-              _SubmitButton(proxy: proxy),
+              MPrimaryButton(
+                label: 'Save changes',
+                loading: isSaving,
+                disabled: !isValid || !hasChanges,
+                onPressed: manager.save.run,
+              ),
               const SizedBox(height: 56),
             ],
           ),
@@ -69,27 +94,30 @@ class ProfileEditorModal extends WatchingWidget {
   }
 }
 
-class _Avatar extends WatchingWidget {
-  const _Avatar({required this.proxy});
+/// The avatar, and the tap that replaces it.
+class _Avatar extends StatelessWidget {
+  const new({required this.manager});
 
-  final MyProfileProxy proxy;
+  final ProfileEditorManager manager;
 
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
+
     return SizedBox.square(
       dimension: 96,
       child: Stack(
         children: [
           MAvatar(
             radius: 49,
-            url: proxy.profile.image?.getUrl(),
-            file: proxy.image?.getFile(),
+            // A picture picked on this visit wins over the saved one.
+            url: manager.currentAvatarUrl,
+            file: manager.avatar.value.getFile,
             hasBorder: false,
             onTap: () => context.showModal<void>(
               MImageSourceModal(
-                onGallerySourceTap: proxy.onImageChanged,
-                onCameraSourceTap: () => proxy.onImageChanged(false),
+                onGallerySourceTap: () => _pick(context, fromGallery: true),
+                onCameraSourceTap: () => _pick(context, fromGallery: false),
               ),
             ),
           ),
@@ -110,65 +138,65 @@ class _Avatar extends WatchingWidget {
       ),
     );
   }
+
+  /// Asks the device for a picture and hands it to the form.
+  ///
+  /// A refusal — a denied permission, a platform that cannot open its
+  /// picker — leaves the form exactly as it was and says so: there is nothing
+  /// to upload, so nothing about the save changes.
+  Future<void> _pick(BuildContext context, {required bool fromGallery}) async {
+    try {
+      final file = await di<MediaService>().getImage(
+        fromGallery: fromGallery,
+      );
+      if (file != null) manager.onAvatarChanged(file);
+    } on Exception {
+      if (context.mounted) {
+        context.showErrorToast('Could not open your photos.');
+      }
+    }
+  }
 }
 
-class _NameField extends WatchingWidget {
-  const _NameField({required this.proxy});
+/// The display name field.
+class _NameField extends StatelessWidget {
+  const new({required this.manager, required this.enabled});
 
-  final MyProfileProxy proxy;
+  final ProfileEditorManager manager;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final isUpdating = watch(proxy.updateProfile.isRunning).value;
     return MTextFormField(
       label: 'Name',
       hint: 'John Doe',
       required: true,
-      enabled: !isUpdating,
-      initialValue: proxy.fullName.getOrNull(),
-      onChanged: proxy.onNameChanged,
-      validator: (_) => proxy.fullName.failureOrNull?.msg,
+      enabled: enabled,
+      initialValue: manager.fullName.value.getOrNull,
+      onChanged: manager.onFullNameChanged,
+      validator: (_) => manager.fullName.value.failureOrNull?.msg,
     );
   }
 }
 
-class _BioField extends WatchingWidget {
-  const _BioField({required this.proxy});
+/// The biography field.
+class _BioField extends StatelessWidget {
+  const new({required this.manager, required this.enabled});
 
-  final MyProfileProxy proxy;
+  final ProfileEditorManager manager;
+  final bool enabled;
 
   @override
   Widget build(BuildContext context) {
-    final isUpdating = watch(proxy.updateProfile.isRunning).value;
     return MTextArea(
       label: 'Description',
       hint: 'Enter a brief description',
       maxLines: 5,
-      maxLength: 244,
-      enabled: !isUpdating,
-      initialValue: proxy.bio?.getOrNull(),
-      onChanged: proxy.onBioChanged,
-      validator: (_) => proxy.bio?.failureOrNull?.msg,
-    );
-  }
-}
-
-class _SubmitButton extends WatchingWidget {
-  const _SubmitButton({required this.proxy});
-
-  final MyProfileProxy proxy;
-
-  @override
-  Widget build(BuildContext context) {
-    final isUpdating = watch(proxy.updateProfile.isRunning).value;
-    final isFormValid = watch(proxy.isFormValid).value;
-    final hasChanges = watch(proxy.hasChanges).value;
-
-    return MPrimaryButton(
-      label: 'Save changes',
-      loading: isUpdating,
-      disabled: !isFormValid || !hasChanges,
-      onPressed: proxy.updateProfile.run,
+      maxLength: ProfileEditorManager.bioMax,
+      enabled: enabled,
+      initialValue: manager.bio.value?.getOrNull,
+      onChanged: manager.onBioChanged,
+      validator: (_) => manager.bio.value?.failureOrNull?.msg,
     );
   }
 }

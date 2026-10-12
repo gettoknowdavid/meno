@@ -7,15 +7,14 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
 
 /// The key of the router's root navigator.
 ///
 /// Public because the overlay it builds is the only one that always exists:
 /// anything outside the widget tree — the global failure reporter — reaches
 /// toasts through it rather than through a page's context.
-final GlobalKey<NavigatorState> rootNavigatorKey = GlobalKey<NavigatorState>(
-  debugLabel: 'root',
-);
+final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
 
 /// Builds the application's [GoRouter].
 ///
@@ -48,20 +47,24 @@ List<RouteBase> get _routes => [
   GoRoute(path: MRoutes.onboarding, builder: (_, _) => const OnboardingPage()),
   GoRoute(
     path: MRoutes.login,
-    builder: (_, state) => LoginPage(
-      implyLeading: state.uri.queryParameters['implyLeading'] == 'true',
-    ),
+    builder: (_, state) {
+      final implyLeading = state.uri.queryParameters['implyLeading'] == 'true';
+      return LoginPage(implyLeading: implyLeading);
+    },
   ),
   GoRoute(
     path: MRoutes.register,
-    builder: (_, state) => RegisterPage(
-      implyLeading: state.uri.queryParameters['implyLeading'] != 'false',
-    ),
+    builder: (_, state) {
+      final implyLeading = state.uri.queryParameters['implyLeading'] != 'false';
+      return RegisterPage(implyLeading: implyLeading);
+    },
   ),
   GoRoute(
     path: MRoutes.emailVerification,
-    builder: (_, state) =>
-        EmailVerificationPage(email: state.uri.queryParameters['email']),
+    builder: (_, state) {
+      final email = state.uri.queryParameters['email'];
+      return EmailVerificationPage(email: email);
+    },
   ),
   GoRoute(
     path: MRoutes.forgotPassword,
@@ -77,15 +80,18 @@ List<RouteBase> get _routes => [
     routes: [
       GoRoute(
         path: 'otp',
-        builder: (_, state) =>
-            ResetPasswordOtpPage(email: state.uri.queryParameters['email']),
+        builder: (_, state) {
+          final email = state.uri.queryParameters['email'];
+          return ResetPasswordOtpPage(email: email);
+        },
       ),
       GoRoute(
         path: 'new',
-        builder: (_, state) => ResetPasswordPage(
-          email: state.uri.queryParameters['email'],
-          code: state.uri.queryParameters['code'],
-        ),
+        builder: (_, state) {
+          final email = state.uri.queryParameters['email'];
+          final code = state.uri.queryParameters['code'];
+          return ResetPasswordPage(email: email, code: code);
+        },
       ),
       GoRoute(
         path: 'success',
@@ -113,13 +119,17 @@ List<RouteBase> get _routes => [
   ),
   GoRoute(
     path: MRoutes.userProfilePattern,
-    builder: (_, state) =>
-        StubPage('Profile ${state.pathParameters['userId'] ?? ''}'),
+    builder: (_, state) {
+      final userId = state.pathParameters['userId'] ?? '';
+      return StubPage('User Profile $userId');
+    },
   ),
   GoRoute(
     path: MRoutes.switchAccountPattern,
-    builder: (_, state) =>
-        StubPage('Switch Account ${state.pathParameters['userId'] ?? ''}'),
+    builder: (_, state) {
+      final userId = state.pathParameters['userId'] ?? '';
+      return StubPage('Switch Account $userId');
+    },
   ),
   GoRoute(
     path: MRoutes.settings,
@@ -142,8 +152,10 @@ List<RouteBase> get _routes => [
     routes: [
       GoRoute(
         path: ':folderId',
-        builder: (_, state) =>
-            StubPage('Folder ${state.pathParameters['folderId'] ?? ''}'),
+        builder: (_, state) {
+          final folderId = state.pathParameters['folderId'] ?? '';
+          return StubPage('Folder $folderId');
+        },
       ),
     ],
   ),
@@ -157,8 +169,10 @@ List<RouteBase> get _routes => [
       ),
       GoRoute(
         path: ':broadcastId',
-        builder: (_, state) =>
-            StubPage('Broadcast ${state.pathParameters['broadcastId'] ?? ''}'),
+        builder: (_, state) {
+          final broadcastId = state.pathParameters['broadcastId'] ?? '';
+          return StubPage('Broadcast $broadcastId');
+        },
         routes: [
           GoRoute(
             path: 'edit',
@@ -276,7 +290,7 @@ StatefulShellRoute get _rootShell => StatefulShellRoute.indexedStack(
       routes: [
         GoRoute(
           path: MRoutes.myProfile,
-          builder: (_, _) => const StubPage('My Profile'),
+          builder: (_, _) => const MyProfilePage(),
         ),
       ],
     ),

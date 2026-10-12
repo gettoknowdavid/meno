@@ -22,6 +22,15 @@ final class StorageKeys {
   // Shared preferences.
   static const String onboardingCompleted = 'onboarding.completed';
 
+  /// The signed-in account's own profile, as it was last fetched.
+  ///
+  /// Scoped to the account it describes through [forUser], so switching
+  /// accounts shows that account's profile rather than the previous one's.
+  static const String profile = 'profile.me';
+
+  /// A profile that has been opened, kept so returning to it is instant.
+  static const String publicProfile = 'profile.public';
+
   /// [key] scoped to [userId].
   ///
   /// Device storage is shared by every account that signs in on it, so anything

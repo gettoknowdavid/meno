@@ -1,193 +1,72 @@
-import 'dart:io' show Platform;
+import 'dart:io' show File;
 
-import 'package:dio/dio.dart' show CancelToken, FormData, MultipartFile;
-import 'package:meno/_core/_core.dart';
-import 'package:meno/_shared/_shared.dart';
-import 'package:meno/features/profile/model/_model.dart';
+import 'package:dio/dio.dart' show FormData, MultipartFile;
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
 
-/// Remote data source for the profile feature.
+/// The profile module's endpoints, one method each.
 ///
-/// Wraps every API call the profile domain needs:
-/// - Own profile: get, edit
-/// - Browse profiles: paginated list
-/// - Subscribers / Subscriptions: paginated lists
-/// - Subscribe / Unsubscribe actions
-/// - Favorites: list, add, remove
-/// - Recordings: list
-///
-/// All methods throw [MenoException] on failure — the repository layer
-/// catches and converts to `Either`.
+/// Only the four the profile screens need. Browsing, followers, favourites and
+/// recordings are not here: they belong to the screens that show them, and a
+/// service that owns three endpoints cannot drift from the API the way one that
+/// owns a dozen can.
 final class ProfileHttpService {
-  const ProfileHttpService(this._client);
+  /// Creates a service over [_client].
+  const new(this._client);
 
   final HttpClient _client;
 
-  // =========================================================================
-  // OWN PROFILE
-  // =========================================================================
+  /// `GET /users/me` — the signed-in account's own record.
+  Future<MyProfile> me() => _client.get('/users/me', fromJson: _me);
 
-  /// Fetches the full profile for [userId].
-  Future<Profile> getProfile(Id userId, {CancelToken? cancelToken}) {
+  /// `GET /users/{id}` — another account's public profile.
+  Future<Profile> profile(String userId) {
     return _client.get(
-      '/users/${userId.getOrCrash()}/profile',
-      fromJson: (json) => ProfileDto.fromJson(json).toDomain,
-      cancelToken: cancelToken,
+      '/users/$userId',
+      fromJson: (data) =>
+          ProfileDto.fromJson(data as Map<String, dynamic>).toDomain,
     );
   }
 
-  /// Updates the authenticated user's profile.
+  /// `PATCH /users/me` — a partial update, answering with the fresh record.
   ///
-  /// Sends a `multipart/form-data` PUT so an optional [image] file can be
-  /// included in the same request as the text fields.
+  /// A field left null is untouched by the API; [bio] set to the empty string
+  /// clears it, which is the only way to say "remove this" (the column is
+  /// written with `COALESCE`, so SQL null cannot mean it). The API refuses a
+  /// patch that carries neither field, so callers send only what changed.
+  Future<MyProfile> updateMe({String? fullName, String? bio}) {
+    return _client.patch(
+      '/users/me',
+      data: {'full_name': ?fullName, 'bio': ?bio},
+      fromJson: _me,
+    );
+  }
+
+  /// `POST /users/me/avatar` — stores [file] as the account's avatar.
   ///
-  /// Returns the updated [Profile] reflecting the server's persisted state.
-  Future<Profile> editProfile({
-    required Id userId,
-    SingleLineString? fullName,
-    MultiLineString? bio,
-    ImageInput? image,
-    CancelToken? cancelToken,
-  }) async {
-    final form = FormData();
-
-    if (fullName != null) {
-      form.fields.add(MapEntry('fullName', fullName.getOrCrash()));
-    }
-
-    if (bio != null) {
-      form.fields.add(MapEntry('bio', bio.getOrCrash()));
-    }
-
-    final imageFile = image?.getFile();
-    if (imageFile != null) {
-      form.files.add(
-        MapEntry(
-          'image',
-          await MultipartFile.fromFile(
-            imageFile.path,
-            filename: imageFile.path.split(Platform.pathSeparator).last,
+  /// The file part is named `file`: the API's multipart extractor separates
+  /// text parts from files by that name, and a part without a filename would be
+  /// read as text. What the bytes *are* is decided server-side, by sniffing
+  /// them — the part's declared type is not trusted, which is why none is sent.
+  Future<AvatarUpload> uploadAvatar(File file) {
+    return _client.upload(
+      '/users/me/avatar',
+      formData: FormData()
+        ..files.add(
+          MapEntry(
+            'file',
+            MultipartFile.fromFileSync(
+              file.path,
+              filename: file.uri.pathSegments.last,
+            ),
           ),
         ),
-      );
-    }
-
-    return _client.put(
-      '/users/${userId.getOrCrash()}/profile',
-      data: form,
-      fromJson: (json) => ProfileDto.fromJson(json).toDomain,
-      cancelToken: cancelToken,
+      fromJson: (data) =>
+          AvatarDto.fromJson(data as Map<String, dynamic>).toDomain,
     );
   }
 
-  // =========================================================================
-  // PROFILE BROWSE
-  // =========================================================================
-
-  /// Returns a paginated list of user profiles.
-  Future<PagedList<Profile?>> getProfiles({
-    OrderBy orderBy = OrderBy.asc,
-    SortBy sortBy = SortBy.fullName,
-    PaginationParams pagination = const PaginationParams(),
-    String? keywords,
-    bool includeSubscribed = true,
-    CancelToken? cancelToken,
-  }) {
-    final queryParameters = <String, dynamic>{
-      'orderBy': orderBy.value,
-      'sortBy': sortBy.value,
-      'page': pagination.page,
-      'size': pagination.size,
-      if (keywords != null && keywords.isNotEmpty) 'keywords': keywords,
-      if (includeSubscribed) 'include': 'subscribed',
-    };
-
-    return _client.get(
-      '/users/profiles',
-      queryParameters: queryParameters,
-      fromJson: (json) => PagedList<Profile?>.fromJson(
-        json,
-        (jsonT) => ProfileDto.fromJson(jsonT).toDomain,
-        listKey: 'users',
-      ),
-      cancelToken: cancelToken,
-    );
-  }
-
-  // =========================================================================
-  // SUBSCRIBERS / SUBSCRIPTIONS
-  // =========================================================================
-
-  /// Returns a paginated list of users who subscribe to `subscriptionId`.
-  Future<PagedList<Profile?>> getSubscribers({
-    required Id subscriptionId,
-    PaginationParams pagination = const PaginationParams(),
-    String? keywords,
-    bool includeSubscribed = true,
-    CancelToken? cancelToken,
-  }) {
-    final queryParameters = <String, dynamic>{
-      'subscriptionId': subscriptionId.getOrCrash(),
-      'page': pagination.page,
-      'size': pagination.size,
-      if (keywords != null && keywords.isNotEmpty) 'keywords': keywords,
-      if (includeSubscribed) 'include': 'subscribed',
-    };
-
-    return _client.get(
-      '/subscribers',
-      queryParameters: queryParameters,
-      fromJson: (json) => PagedList<Profile?>.fromJson(
-        json,
-        (jsonT) => ProfileDto.fromJson(jsonT).toDomain,
-        listKey: 'subscribers',
-      ),
-      cancelToken: cancelToken,
-    );
-  }
-
-  /// Returns a paginated list of users that `subscriberId` follows.
-  Future<PagedList<Profile?>> getSubscriptions({
-    required Id subscriberId,
-    PaginationParams pagination = const PaginationParams(),
-    String? keywords,
-    bool includeSubscribed = true,
-    CancelToken? cancelToken,
-  }) {
-    final queryParameters = <String, dynamic>{
-      'subscriberId': subscriberId.getOrCrash(),
-      'page': pagination.page,
-      'size': pagination.size,
-      if (keywords != null && keywords.isNotEmpty) 'keywords': keywords,
-      if (includeSubscribed) 'include': 'subscribed',
-    };
-
-    return _client.get(
-      '/subscribers',
-      queryParameters: queryParameters,
-      fromJson: (json) => PagedList<Profile?>.fromJson(
-        json,
-        (jsonT) => ProfileDto.fromJson(jsonT).toDomain,
-        listKey: 'subscribers',
-      ),
-      cancelToken: cancelToken,
-    );
-  }
-
-  /// Subscribes the authenticated user to [targetUserId].
-  Future<void> subscribe(Id targetUserId, {CancelToken? cancelToken}) {
-    return _client.postUnit(
-      '/subscribers',
-      data: {'userId': targetUserId.getOrCrash()},
-      cancelToken: cancelToken,
-    );
-  }
-
-  /// Unsubscribes the authenticated user from [targetUserId].
-  Future<void> unsubscribe(Id targetUserId, {CancelToken? cancelToken}) {
-    return _client.deleteUnit(
-      '/subscribers',
-      data: {'userId': targetUserId.getOrCrash()},
-      cancelToken: cancelToken,
-    );
-  }
+  /// Reads the record both `/users/me` endpoints answer with.
+  static MyProfile _me(dynamic data) =>
+      MeDto.fromJson(data as Map<String, dynamic>).toDomain;
 }

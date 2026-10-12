@@ -1,58 +1,108 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
-import 'package:meno/_routing/_routing.dart';
-import 'package:meno/_shared/_shared.dart';
-import 'package:meno/features/broadcast/broadcast.dart';
-import 'package:meno/features/profile/profile.dart';
-import 'package:meno/features/profile/widgets/_widgets.dart';
-import 'package:meno_design_system/meno_design_system.dart';
+import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_routing/routes.dart';
+import 'package:meno_mobile/_shared/model/_model.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/profile/manager/_manager.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
+import 'package:meno_mobile/features/profile/widgets/_widgets.dart';
+import 'package:meno_ui/meno_ui.dart';
 
-const _kTabBarHeight = 32.0;
+/// The height the screen's tab bar occupies under the toolbar.
+const double _kTabBarHeight = 32;
 
-class MyProfilePage extends WatchingStatefulWidget {
-  const MyProfilePage({super.key});
+/// The signed-in account's profile.
+///
+/// The record itself lives in [MyProfileManager], which is registered once and
+/// follows the active account, so this screen only has to read it: whatever is
+/// on disk for the account shows immediately and the fetch that follows
+/// replaces it. Reading is started here rather than at startup because a
+/// signed-in account that never opens this screen has no reason to be asked
+/// for.
+class MyProfilePage extends WatchingWidget {
+  /// Creates the page.
+  const new({super.key});
 
-  @override
-  State<MyProfilePage> createState() => _MyProfilePageState();
-}
-
-class _MyProfilePageState extends State<MyProfilePage> {
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
-
+    
     final scrollCtrl = createOnce(ScrollController.new);
 
-    final userId = watchValue((UserManager m) => m.currentUserId).value;
-    final profile = watchValue((MyProfileManager m) => m.profile);
-    final isEmpty = profile.isEmpty;
+    final manager = di<MyProfileManager>();
+
+    final profile = watchValue<MyProfileManager, MyProfile>(
+      (manager) => manager.profile,
+    );
+
+    final signedIn = watchValue<UserManager, User>(
+      (manager) => manager.currentUser,
+    );
+
+    final isFetching = watchValue<MyProfileManager, bool>(
+      (manager) => manager.fetch.isRunning,
+    );
+
+    // The vault already knows who signed in, so the title can greet them while
+    // the record is still on its way instead of saying "Unknown User".
+    final title = switch (profile.fullName) {
+      final name when name.isNotEmpty => name,
+      _ when signedIn.fullName.isNotEmpty => signedIn.fullName,
+      _ => 'Unknown User',
+    };
+
+    // Opening the screen reads; so does switching accounts while it is open —
+    // the manager has already put the new account's cached profile in place,
+    // and this is what replaces it with its record.
+    callOnce((_) => manager.fetch.run());
+
+    registerHandler<UserManager, String?>(
+      select: (auth) => auth.currentUserId,
+      handler: (ctx, _, _) => di<MyProfileManager>().fetch.run(),
+    );
+
+    if (profile.isEmpty && !isFetching) {
+      return MScaffold(
+        padding: .zero,
+        body: Center(
+          child: MErrorState(
+            message:
+                "We couldn't load your profile. Please check your connection, "
+                'then try again.',
+            onRetry: manager.fetch.run,
+          ),
+        ),
+      );
+    }
 
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        key: ValueKey(userId),
+        // Switching accounts rebuilds the screen, so the tabs of the previous
+        // account are not left selected for the new one.
+        key: ValueKey(signedIn.id),
         backgroundColor: colors.background,
         body: RefreshIndicator(
-          onRefresh: di<MyProfileManager>().fetch.runAsync,
+          onRefresh: manager.fetch.runAsync,
           child: NestedScrollView(
             controller: scrollCtrl,
             headerSliverBuilder: (context, innerBoxIsScrolled) => [
               _ProfileAppBar(
+                title: title,
                 profile: profile,
+                isSkeleton: profile.isEmpty,
                 innerBoxIsScrolled: innerBoxIsScrolled,
               ),
             ],
-            body: TabBarView(
+            body: const TabBarView(
               children: [
-                if (isEmpty) ...[
-                  const SizedBox.shrink(),
-                  const SizedBox.shrink(),
-                  const SizedBox.shrink(),
-                ] else ...[
-                  const ProfileRecentBroadcastsTab(),
-                  const ProfileAllBroadcastsTab(),
-                  const ProfileFavouritesTab(),
-                ],
+                // Every tab is a feed owned by another feature — recent
+                // broadcasts, all broadcasts, favourites — so each shows the
+                // Meno mark until that feature exists.
+                ProfileTabPlaceholder(injectOverlap: true),
+                ProfileTabPlaceholder(injectOverlap: true),
+                ProfileTabPlaceholder(injectOverlap: true),
               ],
             ),
           ),
@@ -62,53 +112,19 @@ class _MyProfilePageState extends State<MyProfilePage> {
   }
 }
 
-class _ProfileTitle extends StatelessWidget {
-  const _ProfileTitle({required this.profile});
-
-  final Profile profile;
-
-  @override
-  Widget build(BuildContext context) {
-    final colors = MColorScheme.of(context);
-    final textTheme = MTextTheme.of(context);
-
-    final name = profile.fullName.getOrElse((_) => 'Unknown User');
-
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      onTap: () => SwitchAccountModal.show(context),
-      child: SizedBox(
-        height: 30,
-        child: Row(
-          mainAxisSize: .min,
-          children: [
-            Container(
-              width: 3,
-              margin: const .symmetric(vertical: 2),
-              color: colors.error,
-            ),
-            Spaces.horizontalMicro,
-            MText(
-              name,
-              style: textTheme.heading3Bold,
-              color: colors.onBackground,
-            ),
-            Spaces.horizontalSmall,
-            const Icon(MIcons.chevron_down, size: 20),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
+/// The screen's collapsible header: the account's name and switcher, the
+/// header content, and the tab bar that stays pinned under the toolbar.
 class _ProfileAppBar extends StatelessWidget {
-  const _ProfileAppBar({
+  const new({
+    required this.title,
     required this.profile,
+    required this.isSkeleton,
     required this.innerBoxIsScrolled,
   });
 
-  final Profile profile;
+  final String title;
+  final MyProfile profile;
+  final bool isSkeleton;
   final bool innerBoxIsScrolled;
 
   @override
@@ -118,7 +134,7 @@ class _ProfileAppBar extends StatelessWidget {
 
     return SliverOverlapAbsorber(
       handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-      sliver: DynamicSliverAppBar(
+      sliver: MSliverAppBar(
         toolbarHeight: kToolbarHeight + 8,
         backgroundColor: colors.background,
         surfaceTintColor: Colors.transparent,
@@ -126,27 +142,30 @@ class _ProfileAppBar extends StatelessWidget {
         forceElevated: innerBoxIsScrolled,
         elevation: innerBoxIsScrolled ? 1 : 0,
         shadowColor: colors.onBackground.withValues(alpha: 0.08),
-        title: _ProfileTitle(profile: profile),
+        title: _ProfileTitle(title: title),
         actions: [
           MIconButton(
             icon: const Icon(MIcons.settings),
             color: colors.primary,
-            onPressed: () => context.push(R.settings),
+            onPressed: () => context.push(MRoutes.settings),
           ),
           Spaces.horizontalLarge,
         ],
-        flexibleSpace: MyProfileHeaderContent(profile: profile),
+        flexibleSpace: MyProfileHeaderContent(
+          profile: profile,
+          isSkeleton: isSkeleton,
+        ),
         bottom: PreferredSize(
           preferredSize: const .fromHeight(_kTabBarHeight),
           child: Container(
             color: colors.background,
             height: _kTabBarHeight,
             child: TabBar(
-              padding: const .symmetric(horizontal: 16),
+              padding: const .symmetric(horizontal: Insets.lg),
               labelStyle: textTheme.captionMedium,
               isScrollable: true,
               tabAlignment: .start,
-              labelPadding: const .symmetric(horizontal: 16),
+              labelPadding: const .symmetric(horizontal: Insets.lg),
               tabs: const [
                 Tab(text: 'Recent broadcasts'),
                 Tab(text: 'All broadcasts'),
@@ -160,147 +179,41 @@ class _ProfileAppBar extends StatelessWidget {
   }
 }
 
-class ProfileRecentBroadcastsTab extends WatchingStatefulWidget {
-  const ProfileRecentBroadcastsTab({super.key});
+/// The account's name in the toolbar, and the way to another account.
+class _ProfileTitle extends StatelessWidget {
+  const new({required this.title});
 
-  @override
-  State<ProfileRecentBroadcastsTab> createState() =>
-      _ProfileRecentBroadcastsTabState();
-}
+  final String title;
 
-class _ProfileRecentBroadcastsTabState extends State<ProfileRecentBroadcastsTab>
-    with AutomaticKeepAliveClientMixin {
   @override
   Widget build(BuildContext context) {
-    super.build(context);
+    final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
 
-    final feedSource = createOnce(() {
-      final creatorId = di<UserManager>().currentUserId.value;
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery.recentlyLive(creatorId: creatorId),
-      );
-    });
-
-    return FeedWidget(
-      feedSource: feedSource,
-      padding: const .all(16),
-      topSlivers: [
-        SliverOverlapInjector(
-          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      onTap: () => SwitchAccountSheet.show(context),
+      child: SizedBox(
+        height: 30,
+        child: Row(
+          mainAxisSize: .min,
+          children: [
+            Container(
+              width: 3,
+              margin: const .symmetric(vertical: 2),
+              color: colors.error,
+            ),
+            Spaces.horizontalMicro,
+            MText(
+              title,
+              style: textTheme.heading3Bold,
+              color: colors.onBackground,
+            ),
+            Spaces.horizontalSmall,
+            const Icon(MIcons.chevron_down, size: 20),
+          ],
         ),
-      ],
-      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
-      skeletonItemCount: 4,
-      itemBuilder: (context, broadcast) {
-        if (broadcast == null) return const SizedBox.shrink();
-        return BroadcastCard.rLiveTile(
-          broadcast,
-          key: ValueKey(broadcast.id.getOrCrash()),
-          onTap: () => context.push(R.broadcast(broadcast.id.getOrCrash())),
-        );
-      },
+      ),
     );
   }
-
-  @override
-  bool get wantKeepAlive => true;
-}
-
-class ProfileAllBroadcastsTab extends WatchingStatefulWidget {
-  const ProfileAllBroadcastsTab({super.key});
-
-  @override
-  State<ProfileAllBroadcastsTab> createState() =>
-      _ProfileAllBroadcastsTabState();
-}
-
-class _ProfileAllBroadcastsTabState extends State<ProfileAllBroadcastsTab>
-    with AutomaticKeepAliveClientMixin {
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-
-    final feedSource = createOnce(() {
-      final creatorId = di<UserManager>().currentUserId.value;
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery(creatorId: creatorId),
-      );
-    });
-
-    return FeedWidget(
-      feedSource: feedSource,
-      padding: const .all(16),
-      topSlivers: [
-        SliverOverlapInjector(
-          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-        ),
-      ],
-      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
-      skeletonItemCount: 4,
-      itemBuilder: (context, broadcast) {
-        if (broadcast == null) return const SizedBox.shrink();
-        return BroadcastCard.rLiveTile(
-          broadcast,
-          key: ValueKey(broadcast.id.getOrCrash()),
-          onTap: () => context.push(R.broadcast(broadcast.id.getOrCrash())),
-        );
-      },
-    );
-  }
-
-  @override
-  bool get wantKeepAlive => true;
-}
-
-class ProfileFavouritesTab extends WatchingStatefulWidget {
-  const ProfileFavouritesTab({super.key});
-
-  @override
-  State<ProfileFavouritesTab> createState() => _ProfileFavouritesTabState();
-}
-
-class _ProfileFavouritesTabState extends State<ProfileFavouritesTab>
-    with AutomaticKeepAliveClientMixin {
-  @override
-  Widget build(BuildContext context) {
-    super.build(context);
-
-    final favourites = watchValue((FavouritesManager m) => m.favourites);
-
-    if (favourites.isEmpty) {
-      return const MenoEmptyWidget(title: 'No favourite broadcasts yet');
-    }
-
-    return CustomScrollView(
-      slivers: [
-        SliverOverlapInjector(
-          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-        ),
-        SliverPadding(
-          padding: const .all(Insets.lg),
-          sliver: SliverList.separated(
-            separatorBuilder: (_, __) => Spaces.verticalLarge,
-            itemCount: favourites.length,
-            itemBuilder: (context, index) {
-              final favourite = favourites[index];
-              if (favourite == null) return const SizedBox.shrink();
-              return MRecentlyLiveListTile(
-                title: favourite.title,
-                creator: favourite.creatorName,
-                imageUrl: favourite.imageUrl,
-                onTap: () => context.push(R.broadcast(favourite.broadcastId)),
-              );
-            },
-          ),
-        ),
-      ],
-    );
-  }
-
-  @override
-  bool get wantKeepAlive => true;
 }

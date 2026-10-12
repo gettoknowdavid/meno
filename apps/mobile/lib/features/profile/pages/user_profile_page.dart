@@ -1,99 +1,99 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
-import 'package:meno/_core/_core.dart';
-import 'package:meno/_routing/_routing.dart';
-import 'package:meno/_shared/_shared.dart';
-import 'package:meno/features/broadcast/broadcast.dart';
-import 'package:meno/features/profile/profile.dart';
-import 'package:meno/features/profile/widgets/_widgets.dart';
-import 'package:meno_design_system/meno_design_system.dart';
+import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/features/profile/manager/_manager.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
+import 'package:meno_mobile/features/profile/services/_services.dart';
+import 'package:meno_mobile/features/profile/widgets/_widgets.dart';
+import 'package:meno_ui/meno_ui.dart';
 
-const _kTabBarHeight = 32.0;
+/// The height the screen's tab bar occupies under the toolbar.
+const double _kTabBarHeight = 32;
 
+/// Somebody else's profile, addressed by their account id.
+///
+/// The page owns its manager: a scope is pushed for the visit, so leaving and
+/// coming back reads the cache and refetches instead of showing whatever an
+/// earlier visit left behind.
 class UserProfilePage extends WatchingWidget {
-  const UserProfilePage({required this.userIdStr, super.key});
+  /// Creates the page for [userIdStr].
+  const new({required this.userIdStr, super.key});
 
+  /// The account id from the route.
   final String userIdStr;
 
   @override
   Widget build(BuildContext context) {
     pushScope(
-      init: (getIt) => getIt.registerLazySingleton(() {
-        final uId = Id.fromString(userIdStr);
-        return UserProfileManager(userId: uId, http: di<ProfileHttpService>());
-      }, onCreated: (instance) => instance.fetch.run()),
-    );
-
-    registerHandler(
-      handler: (context, errors, cancel) {
-        final error = errors?.error;
-        if (error == null) return;
-        if (error is MenoException) {
-          context.showErrorSnackBar(error.message);
-        } else {
-          context.showErrorSnackBar(error.toString());
-        }
-        context.pop();
+      init: (getIt) {
+        getIt.registerSingleton<UserProfileManager>(
+          UserProfileManager(
+            userId: userIdStr,
+            http: di<ProfileHttpService>(),
+            cache: di<ProfileCacheService>(),
+          ),
+        );
       },
-      select: (UserProfileManager manager) => manager.fetch.errors,
     );
 
-    final proxy = watchValue((UserProfileManager m) => m.proxy);
-    final isFetching = watchValue((UserProfileManager m) => m.fetch.isRunning);
+    registerHandler<UserProfileManager, CommandError<void>?>(
+      select: (manager) => manager.fetch.errors,
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
+    );
 
-    if (isFetching) return const LoadingPage();
-    if (!isFetching && proxy == null) return const _EmptyPage();
-    return _Content(proxy: proxy!);
+    final manager = di<UserProfileManager>();
+    final profile = watchValue<UserProfileManager, Profile>(
+      (manager) => manager.profile,
+    );
+    final isFetching = watchValue<UserProfileManager, bool>(
+      (manager) => manager.fetch.isRunning,
+    );
+
+    callOnce((_) => manager.fetch.run());
+
+    if (profile.isEmpty) {
+      // Nothing cached and nothing answered yet: the page waits rather than
+      // showing a name it does not have.
+      if (isFetching) return const MLoadingPage();
+      return const _EmptyPage();
+    }
+
+    return _Content(profile: profile, onRefresh: manager.fetch.runAsync);
   }
 }
 
-class _Content extends WatchingWidget {
-  const _Content({required this.proxy});
+/// The profile itself: the collapsible header, then the tab bar.
+class _Content extends StatelessWidget {
+  const new({required this.profile, required this.onRefresh});
 
-  final UserProfileProxy proxy;
+  final Profile profile;
+  final Future<void> Function() onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    watch(proxy);
-
     final colors = MColorScheme.of(context);
-
-    final recentBroadcastsFeed = createOnce(() {
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery.recentlyLive(creatorId: proxy.id),
-      );
-    });
-
-    final allBroadcastsFeed = createOnce(() {
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery(creatorId: proxy.id),
-      );
-    });
 
     return DefaultTabController(
       length: 2,
       child: Scaffold(
         backgroundColor: colors.background,
         body: RefreshIndicator(
-          onRefresh: () async {},
+          onRefresh: onRefresh,
           child: NestedScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            headerSliverBuilder: (context, innerBoxIsScrolled) {
-              return [
-                _ProfileAppBar(
-                  proxy: proxy,
-                  innerBoxIsScrolled: innerBoxIsScrolled,
-                ),
-              ];
-            },
-            body: TabBarView(
+            headerSliverBuilder: (context, innerBoxIsScrolled) => [
+              _ProfileAppBar(
+                profile: profile,
+                innerBoxIsScrolled: innerBoxIsScrolled,
+              ),
+            ],
+            body: const TabBarView(
               children: [
-                _RecentBroadcastsTab(feed: recentBroadcastsFeed),
-                _AllBroadcastsTab(feed: allBroadcastsFeed),
+                // Both tabs are broadcast feeds, which the broadcasts feature
+                // owns: the Meno mark stands in until it exists.
+                ProfileTabPlaceholder(),
+                ProfileTabPlaceholder(),
               ],
             ),
           ),
@@ -103,10 +103,15 @@ class _Content extends WatchingWidget {
   }
 }
 
+/// The header of a visited profile: back button, name, overflow menu, the
+/// header content and the pinned tab bar.
 class _ProfileAppBar extends StatelessWidget {
-  const _ProfileAppBar({required this.proxy, required this.innerBoxIsScrolled});
+  const new({
+    required this.profile,
+    required this.innerBoxIsScrolled,
+  });
 
-  final UserProfileProxy proxy;
+  final Profile profile;
   final bool innerBoxIsScrolled;
 
   @override
@@ -114,7 +119,7 @@ class _ProfileAppBar extends StatelessWidget {
     final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
 
-    return DynamicSliverAppBar(
+    return MSliverAppBar(
       toolbarHeight: kToolbarHeight,
       backgroundColor: colors.background,
       surfaceTintColor: Colors.transparent,
@@ -122,7 +127,7 @@ class _ProfileAppBar extends StatelessWidget {
       forceElevated: innerBoxIsScrolled,
       elevation: innerBoxIsScrolled ? 1 : 0,
       shadowColor: colors.onBackground.withValues(alpha: 0.08),
-      title: MText(proxy.fullName),
+      title: MText(profile.fullName),
       titleTextStyle: textTheme.bodyMedium,
       leading: MIconButton(
         icon: const Icon(MIcons.chevron_left),
@@ -138,21 +143,18 @@ class _ProfileAppBar extends StatelessWidget {
         ),
         Spaces.horizontalLarge,
       ],
-      flexibleSpace: SafeArea(
-        bottom: false,
-        child: UserProfileHeaderContent(proxy: proxy),
-      ),
+      flexibleSpace: UserProfileHeaderContent(profile: profile),
       bottom: PreferredSize(
         preferredSize: const .fromHeight(_kTabBarHeight),
         child: Container(
           color: colors.background,
           height: _kTabBarHeight,
           child: TabBar(
-            padding: const .symmetric(horizontal: 16),
+            padding: const .symmetric(horizontal: Insets.lg),
             labelStyle: textTheme.captionMedium,
             isScrollable: true,
             tabAlignment: .start,
-            labelPadding: const .symmetric(horizontal: 16),
+            labelPadding: const .symmetric(horizontal: Insets.lg),
             tabs: const [
               Tab(text: 'Recent broadcasts'),
               Tab(text: 'All broadcasts'),
@@ -164,56 +166,9 @@ class _ProfileAppBar extends StatelessWidget {
   }
 }
 
-class _RecentBroadcastsTab extends WatchingWidget {
-  const _RecentBroadcastsTab({required this.feed});
-
-  final BroadcastFeedDataSource feed;
-
-  @override
-  Widget build(BuildContext context) {
-    return FeedWidget(
-      feedSource: feed,
-      padding: const .all(16),
-      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
-      skeletonItemCount: 4,
-      itemBuilder: (context, broadcast) {
-        if (broadcast == null) return const SizedBox.shrink();
-        return BroadcastCard.rLiveTile(
-          broadcast,
-          key: ValueKey(broadcast.id.getOrCrash()),
-          onTap: () => context.push(R.broadcast(broadcast.id.getOrCrash())),
-        );
-      },
-    );
-  }
-}
-
-class _AllBroadcastsTab extends WatchingWidget {
-  const _AllBroadcastsTab({required this.feed});
-
-  final BroadcastFeedDataSource feed;
-
-  @override
-  Widget build(BuildContext context) {
-    return FeedWidget(
-      feedSource: feed,
-      padding: const .all(16),
-      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
-      skeletonItemCount: 4,
-      itemBuilder: (context, broadcast) {
-        if (broadcast == null) return const SizedBox.shrink();
-        return BroadcastCard.rLiveTile(
-          broadcast,
-          key: ValueKey(broadcast.id.getOrCrash()),
-          onTap: () => context.push(R.broadcast(broadcast.id.getOrCrash())),
-        );
-      },
-    );
-  }
-}
-
+/// What a visitor sees when there is no profile to show.
 class _EmptyPage extends StatelessWidget {
-  const _EmptyPage();
+  const new();
 
   @override
   Widget build(BuildContext context) {
@@ -223,7 +178,7 @@ class _EmptyPage extends StatelessWidget {
         centerTitle: true,
         actions: const [Icon(MIcons.dots_horizontal), Spaces.horizontalLarge],
       ),
-      body: const MenoEmptyWidget(),
+      body: const MEmptyState(),
     );
   }
 }
