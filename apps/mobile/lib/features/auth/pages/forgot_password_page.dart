@@ -5,7 +5,6 @@ import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -14,25 +13,26 @@ import 'package:meno_ui/meno_ui.dart';
 /// `POST /auth/forgot-password` answers the same way whether or not the address
 /// exists, so a successful send here is not proof that an account was found.
 class ForgotPasswordPage extends WatchingWidget {
-  /// Creates the forgot-password page.
   const new({super.key});
 
   @override
   Widget build(BuildContext context) {
+    final textTheme = MTextTheme.of(context);
+
     registerHandler<AuthManager, CommandResult<Email?, void>>(
       select: (manager) => manager.forgotPassword.results,
-      handler: (context, result, _) {
+      handler: (ctx, result, _) {
         final email = result.paramData;
         if (!result.isSuccess || email == null) return;
         unawaited(
-          context.push(MRoutes.resetPasswordOtpRoute(email: email.getOrNull)),
+          ctx.push(MRoutes.resetPasswordOtpRoute(email: email.getOrNull)),
         );
       },
     );
+
     registerHandler<AuthManager, CommandError<Email>?>(
       select: (manager) => manager.forgotPassword.errors,
-      handler: (context, error, _) =>
-          context.showErrorToast(errorMessage(error?.error)),
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
 
     final isSending = watchValue<AuthManager, bool>(
@@ -46,16 +46,16 @@ class ForgotPasswordPage extends WatchingWidget {
       appBar: MAppBar.primary(title: 'Reset Password'),
       body: Form(
         key: formKey,
-        autovalidateMode: AutovalidateMode.onUserInteraction,
+        autovalidateMode: .onUserInteraction,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: Insets.xl),
+          padding: const .symmetric(vertical: Insets.xl),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: .stretch,
             children: [
               MText(
                 'Enter the email address on your account and we will send you '
                 'a code to reset your password.',
-                style: MTextTheme.of(context).bodyRegular,
+                style: textTheme.bodyRegular,
                 maxLines: 3,
               ),
               Spaces.verticalXXLarge,
@@ -64,10 +64,10 @@ class ForgotPasswordPage extends WatchingWidget {
                 label: 'Email Address',
                 hint: 'example@gmail.com',
                 prefixIcon: MIcons.mail,
-                keyboardType: TextInputType.emailAddress,
+                keyboardType: .emailAddress,
                 controller: emailController,
                 enabled: !isSending,
-                validator: (_) => Email(emailController.text).errorMessage,
+                validator: (_) => Email(emailController.text).errorMsg,
               ),
               Spaces.verticalXXLarge,
               MPrimaryButton(

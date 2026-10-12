@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -31,8 +30,8 @@ class UserAccountDetails extends StatelessWidget {
       children: [
         Expanded(
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            mainAxisAlignment: MainAxisAlignment.center,
+            crossAxisAlignment: .start,
+            mainAxisAlignment: .center,
             children: [
               MText('Welcome back,', style: textTheme.subheadingMedium),
               MText(user.fullName, style: textTheme.heading2Medium),
@@ -41,7 +40,7 @@ class UserAccountDetails extends StatelessWidget {
         ),
         Spaces.horizontalLarge,
         Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+          mainAxisAlignment: .center,
           children: [
             MAvatar(
               radius: Insets.xl,
@@ -61,19 +60,5 @@ class UserAccountDetails extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties
-      ..add(DiagnosticsProperty<User>('user', user))
-      ..add(
-        DiagnosticsProperty<VoidCallback?>(
-          'onSwitchAccount',
-          onSwitchAccount,
-          ifNull: 'no switcher',
-        ),
-      );
   }
 }

@@ -29,12 +29,6 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// belongs to instead of becoming the active session. Switching accounts
 /// therefore never has to wait for, or invalidate, a renewal already in flight.
 final class SessionInterceptor extends Interceptor {
-  /// Creates the interceptor.
-  ///
-  /// [baseUrl] is the API root the renewals are sent to. [refreshDio] exists
-  /// for tests; when omitted a bare client is built, deliberately sharing no
-  /// interceptors with [HttpClient] — a renewal that recursed through this
-  /// interceptor would refresh in order to refresh.
   new({
     required this._store,
     required String baseUrl,
@@ -98,10 +92,6 @@ final class SessionInterceptor extends Interceptor {
   /// Renewals in flight, keyed by the account they belong to.
   final Map<String, Future<UserCredential?>> _renewals = {};
 
-  // ======================================================================
-  // REQUEST
-  // ======================================================================
-
   @override
   Future<void> onRequest(
     RequestOptions options,
@@ -133,10 +123,6 @@ final class SessionInterceptor extends Interceptor {
         'Bearer ${credential.session.accessToken}';
     return handler.next(options);
   }
-
-  // ======================================================================
-  // RESPONSE
-  // ======================================================================
 
   @override
   Future<void> onResponse(
@@ -208,9 +194,9 @@ final class SessionInterceptor extends Interceptor {
 
   /// Exchanges [stale]'s refresh token for a fresh pair.
   ///
-  /// Returns null for every refusal — a spent token, an API error envelope, or a
-  /// body that is not the documented shape. None is recoverable at this level,
-  /// and all mean the same thing to the caller: sign in again.
+  /// Returns null for every refusal — a spent token, an API error envelope,
+  /// or a body that is not the documented shape. None is recoverable at
+  /// this level, and all mean the same thing to the caller: sign in again.
   Future<UserCredential?> _performRenewal(UserCredential stale) async {
     final refreshToken = stale.session.refreshToken;
     if (refreshToken == null || refreshToken.isEmpty) return null;

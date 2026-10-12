@@ -205,8 +205,7 @@ final class SessionStore implements Disposable {
       StorageKeys.userId: credential.userId,
       StorageKeys.accessToken: session.accessToken,
       StorageKeys.credential: jsonEncode(credential.toDto.toJson()),
-      if (session.refreshToken case final refresh?)
-        StorageKeys.refreshToken: refresh,
+      StorageKeys.refreshToken: ?session.refreshToken,
       if (expiry != null)
         StorageKeys.sessionExpiry: expiry.toUtc().toIso8601String(),
     });
@@ -215,7 +214,7 @@ final class SessionStore implements Disposable {
   /// Reads one vault entry from its JSON text.
   ///
   /// Returns null when the stored row is not the shape a credential expects.
-  
+
   /// Writes [credential] into the vault, leaving every other account alone.
   Future<void> _writeVaultEntry(UserCredential credential) async {
     final accounts = await readAccounts();
@@ -234,8 +233,10 @@ final class SessionStore implements Disposable {
   Future<void> _publish() async {
     if (_activeChanges.isClosed) return;
     _activeChanges.add(await readActiveCredential());
-  }  /// Reads a stored credential from its JSON text.
-  
+  }
+
+  /// Reads a stored credential from its JSON text.
+
   UserCredential? _decode(String raw) {
     try {
       final decoded = jsonDecode(raw);

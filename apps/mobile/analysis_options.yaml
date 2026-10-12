@@ -25,7 +25,6 @@ linter:
     avoid_unnecessary_containers: true
     cancel_subscriptions: true
     comment_references: true
-    diagnostic_describe_all_properties: true
     directives_ordering: true
     empty_statements: true
     hash_and_equals: true
@@ -74,6 +73,8 @@ linter:
     void_checks: true
 
 analyzer:
+  errors:
+    avoid_positional_boolean_parameters: ignore
   exclude:
     - lib/**/*.freezed.dart
     - lib/**/*.mocks.dart

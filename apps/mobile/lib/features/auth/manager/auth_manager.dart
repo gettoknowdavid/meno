@@ -7,26 +7,11 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
 
-/// Every account the app can act as, and what it can do to them.
-///
-/// The manager owns the *answer* to "who is signed in"; the bytes live in
-/// [SessionStore]. That split is what lets the session interceptor renew a
-/// token in the background: it writes to the store, the store publishes, and
-/// this manager adopts the result — no callback from the transport layer into
-/// business logic, and no second copy of the credentials.
-///
-/// [accounts] is the vault — every account signed in on this device — and
-/// [activeCredential] is the one every request is made as. [switchAccount]
-/// moves between them without a network call, which is the whole point of
-/// keeping the vault: a switch is a copy, not a sign-in.
-///
-/// Everything that talks to the API is a [Command], so a screen gets
-/// `isRunning`, `errors` and a success signal for free, and every failure
-/// takes the same route through [menoExceptionFilter].
+/// A manager for the authentication state of the app.
 final class AuthManager implements Disposable {
   /// Creates a manager over its service, its store and the log.
   new({required this._http, required this._store, required this._logger}) {
-    login = Command.createAsync<LoginArgs, UserCredential>(
+    login = .createAsync<LoginArgs, UserCredential>(
       (args) => _accept(
         () => _http.login(
           email: args.email.getOrCrash,
@@ -38,7 +23,7 @@ final class AuthManager implements Disposable {
       debugName: 'auth.login',
     );
 
-    register = Command.createAsync<RegisterArgs, UserCredential>(
+    register = .createAsync<RegisterArgs, UserCredential>(
       (args) => _accept(
         () => _http.register(
           fullName: args.fullName.getOrCrash,
@@ -51,7 +36,7 @@ final class AuthManager implements Disposable {
       debugName: 'auth.register',
     );
 
-    signInWithGoogle = Command.createAsync<GoogleSignInArgs, UserCredential>(
+    signInWithGoogle = .createAsync<GoogleSignInArgs, UserCredential>(
       (args) => _accept(
         () => _http.signInWithGoogle(
           idToken: args.idToken,
@@ -63,31 +48,31 @@ final class AuthManager implements Disposable {
       debugName: 'auth.signInWithGoogle',
     );
 
-    logout = Command.createAsyncNoParamNoResult(
+    logout = .createAsyncNoParamNoResult(
       _logout,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.logout',
     );
 
-    logOutEverywhere = Command.createAsyncNoParamNoResult(
+    logOutEverywhere = .createAsyncNoParamNoResult(
       _logOutEverywhere,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.logOutEverywhere',
     );
 
-    switchAccount = Command.createAsyncNoResult<String>(
+    switchAccount = .createAsyncNoResult<String>(
       _switchAccount,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.switchAccount',
     );
 
-    addAccount = Command.createAsyncNoParamNoResult(
+    addAccount = .createAsyncNoParamNoResult(
       _store.clearActive,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.addAccount',
     );
 
-    verifyEmail = Command.createAsync<VerifyEmailArgs, UserCredential>(
+    verifyEmail = .createAsync<VerifyEmailArgs, UserCredential>(
       (args) => _accept(
         () => _http.verifyEmail(email: args.email.getOrCrash, code: args.code),
       ),
@@ -96,19 +81,19 @@ final class AuthManager implements Disposable {
       debugName: 'auth.verifyEmail',
     );
 
-    resendOtp = Command.createAsyncNoResult<OtpRequestArgs>(
+    resendOtp = .createAsyncNoResult<OtpRequestArgs>(
       (args) => _http.resendOtp(email: args.email.getOrCrash, type: args.type),
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.resendOtp',
     );
 
-    forgotPassword = Command.createAsyncNoResult<Email>(
+    forgotPassword = .createAsyncNoResult<Email>(
       (email) => _http.forgotPassword(email.getOrCrash),
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.forgotPassword',
     );
 
-    resetPassword = Command.createAsyncNoResult<ResetPasswordArgs>(
+    resetPassword = .createAsyncNoResult<ResetPasswordArgs>(
       (args) => _http.resetPassword(
         email: args.email.getOrCrash,
         code: args.code,
@@ -118,14 +103,14 @@ final class AuthManager implements Disposable {
       debugName: 'auth.resetPassword',
     );
 
-    loadSessions = Command.createAsyncNoParam<List<SessionInfo>>(
+    loadSessions = .createAsyncNoParam<List<SessionInfo>>(
       _http.sessions,
       initialValue: const [],
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.loadSessions',
     );
 
-    revokeSession = Command.createAsyncNoResult<String>(
+    revokeSession = .createAsyncNoResult<String>(
       _http.revokeSession,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.revokeSession',
@@ -141,40 +126,6 @@ final class AuthManager implements Disposable {
   final _lastKnown = ValueNotifier<User>(User.empty);
 
   StreamSubscription<UserCredential?>? _storeSubscription;
-
-  // ======================================================================
-  // STATE
-  // ======================================================================
-
-  /// The account every request is made as, or [UserCredential.empty].
-  ValueListenable<UserCredential> get activeCredential => _active;
-
-  /// Whether an account is signed in.
-  ///
-  /// Derived, so there is no second flag that can disagree with
-  /// [activeCredential].
-  ValueListenable<bool> get isAuthenticated =>
-      _active.select((credential) => !credential.isEmpty);
-
-  /// Whether the active account's address has been confirmed.
-  ValueListenable<bool> get emailVerified =>
-      _active.select((credential) => credential.user.verified);
-
-  /// Every account on this device, keyed by user id.
-  ///
-  /// This is what a switch-account sheet renders: the active account plus
-  /// the others, with no request in between.
-  ValueListenable<Map<String, UserCredential>> get accounts => _accounts;
-
-  /// The last account that signed in, kept across a sign-out.
-  ///
-  /// A sign-in screen uses it to greet the returning user and to offer the
-  /// accounts already on the device before any request is made.
-  ValueListenable<User> get lastKnownUser => _lastKnown;
-
-  // ======================================================================
-  // COMMANDS
-  // ======================================================================
 
   /// Signs an account in with an email address and a password.
   late final Command<LoginArgs, UserCredential> login;
@@ -218,9 +169,31 @@ final class AuthManager implements Disposable {
   /// Ends one device's session.
   late final Command<String, void> revokeSession;
 
-  // ======================================================================
-  // LIFECYCLE
-  // ======================================================================
+  /// Every account on this device, keyed by user id.
+  ///
+  /// This is what a switch-account sheet renders: the active account plus
+  /// the others, with no request in between.
+  ValueListenable<Map<String, UserCredential>> get accounts => _accounts;
+
+  /// The account every request is made as, or [UserCredential.empty].
+  ValueListenable<UserCredential> get activeCredential => _active;
+
+  /// Whether the active account's address has been confirmed.
+  ValueListenable<bool> get emailVerified =>
+      _active.select((credential) => credential.user.verified);
+
+  /// Whether an account is signed in.
+  ///
+  /// Derived, so there is no second flag that can disagree with
+  /// [activeCredential].
+  ValueListenable<bool> get isAuthenticated =>
+      _active.select((credential) => !credential.isEmpty);
+
+  /// The last account that signed in, kept across a sign-out.
+  ///
+  /// A sign-in screen uses it to greet the returning user and to offer the
+  /// accounts already on the device before any request is made.
+  ValueListenable<User> get lastKnownUser => _lastKnown;
 
   /// Adopts the stored accounts and subscribes to storage changes.
   /// Returns `this` so the locator can register it with the `init()` pattern:
@@ -230,23 +203,6 @@ final class AuthManager implements Disposable {
     _startListening();
     await _restore();
     return this;
-  }
-
-  /// Re-reads the vault.
-  ///
-  /// Cheap (one secure-storage read) and called after every mutation that can
-  /// change it, so [accounts] is never a stale snapshot of the sheet.
-  Future<void> refreshAccounts() async {
-    _accounts.value = await _store.readAccounts();
-  }
-
-  /// Signs the active account out locally.
-  ///
-  /// Deliberately not a [Command]: it is the reaction to a session the API has
-  /// already refused, so it must not surface a second failure of its own.
-  Future<void> signOut() async {
-    _logger.i('Signing out locally', tag: MenoLogTag.lifecycle.label);
-    await _store.clearActive();
   }
 
   @override
@@ -272,6 +228,23 @@ final class AuthManager implements Disposable {
     _lastKnown.dispose();
   }
 
+  /// Re-reads the vault.
+  ///
+  /// Cheap (one secure-storage read) and called after every mutation that can
+  /// change it, so [accounts] is never a stale snapshot of the sheet.
+  Future<void> refreshAccounts() async {
+    _accounts.value = await _store.readAccounts();
+  }
+
+  /// Signs the active account out locally.
+  ///
+  /// Deliberately not a [Command]: it is the reaction to a session the API has
+  /// already refused, so it must not surface a second failure of its own.
+  Future<void> signOut() async {
+    _logger.i('Signing out locally', tag: MenoLogTag.lifecycle.label);
+    await _store.clearActive();
+  }
+
   /// Runs [request] and makes its account the active one.
   Future<UserCredential> _accept(
     Future<UserCredential> Function() request,
@@ -282,6 +255,20 @@ final class AuthManager implements Disposable {
     _adopt(credential);
     await refreshAccounts();
     return credential;
+  }
+
+  /// Publishes [credential] as the active account.
+  ///
+  /// Idempotent: the store publishes after every write, so this runs twice for
+  /// a sign-in (once from the command, once from the stream) and the second run
+  /// must not rebuild the app for nothing.
+  void _adopt(UserCredential credential) {
+    if (_active.value == credential) return;
+
+    _active.value = credential;
+    if (credential.isEmpty) return;
+
+    _lastKnown.value = credential.user;
   }
 
   /// Ends the active session on the server, then locally.
@@ -327,39 +314,6 @@ final class AuthManager implements Disposable {
     await signOut();
   }
 
-  /// Makes [userId] the active account.
-  Future<void> _switchAccount(String userId) async {
-    final switched = await _store.activate(userId);
-    if (!switched) {
-      throw const NotFoundException(
-        message: 'That account is no longer signed in on this device.',
-      );
-    }
-    await refreshAccounts();
-  }
-
-  /// Subscribes to the store, which is how a token renewed by the interceptor —
-  /// or a session it had to drop — reaches the UI.
-  void _startListening() {
-    _storeSubscription = _store.activeChanges.listen(
-      (credential) => _adopt(credential ?? UserCredential.empty),
-    );
-  }
-
-  /// Publishes [credential] as the active account.
-  ///
-  /// Idempotent: the store publishes after every write, so this runs twice for
-  /// a sign-in (once from the command, once from the stream) and the second run
-  /// must not rebuild the app for nothing.
-  void _adopt(UserCredential credential) {
-    if (_active.value == credential) return;
-
-    _active.value = credential;
-    if (credential.isEmpty) return;
-
-    _lastKnown.value = credential.user;
-  }
-
   /// Loads what is on disk, if anything.
   Future<void> _restore() async {
     await refreshAccounts();
@@ -385,6 +339,37 @@ final class AuthManager implements Disposable {
 
     _adopt(credential);
   }
+
+  /// Subscribes to the store, which is how a token renewed by the interceptor —
+  /// or a session it had to drop — reaches the UI.
+  void _startListening() {
+    _storeSubscription = _store.activeChanges.listen(
+      (credential) => _adopt(credential ?? UserCredential.empty),
+    );
+  }
+
+  /// Makes [userId] the active account.
+  Future<void> _switchAccount(String userId) async {
+    final switched = await _store.activate(userId);
+    if (!switched) {
+      throw const NotFoundException(
+        message: 'That account is no longer signed in on this device.',
+      );
+    }
+    await refreshAccounts();
+  }
+}
+
+/// The parameters of [AuthManager.signInWithGoogle].
+final class GoogleSignInArgs {
+  /// Creates Google sign-in arguments.
+  const new({required this.idToken, this.deviceLabel});
+
+  /// The ID token the platform SDK produced.
+  final String idToken;
+
+  /// What the user calls this device, for the account's device list.
+  final String? deviceLabel;
 }
 
 /// The parameters of [AuthManager.login].
@@ -397,6 +382,18 @@ final class LoginArgs {
 
   /// The password, checked only for presence.
   final Password password;
+}
+
+/// The parameters of [AuthManager.resendOtp].
+final class OtpRequestArgs {
+  /// Creates resend arguments.
+  const new({required this.email, required this.type});
+
+  /// The address to send to.
+  final Email email;
+
+  /// Which kind of code to resend.
+  final OtpType type;
 }
 
 /// The parameters of [AuthManager.register].
@@ -418,42 +415,6 @@ final class RegisterArgs {
   final Password password;
 }
 
-/// The parameters of [AuthManager.signInWithGoogle].
-final class GoogleSignInArgs {
-  /// Creates Google sign-in arguments.
-  const new({required this.idToken, this.deviceLabel});
-
-  /// The ID token the platform SDK produced.
-  final String idToken;
-
-  /// What the user calls this device, for the account's device list.
-  final String? deviceLabel;
-}
-
-/// The parameters of [AuthManager.verifyEmail].
-final class VerifyEmailArgs {
-  /// Creates verification arguments.
-  const new({required this.email, required this.code});
-
-  /// The address the code was sent to.
-  final Email email;
-
-  /// The six-digit code.
-  final String code;
-}
-
-/// The parameters of [AuthManager.resendOtp].
-final class OtpRequestArgs {
-  /// Creates resend arguments.
-  const new({required this.email, required this.type});
-
-  /// The address to send to.
-  final Email email;
-
-  /// Which kind of code to resend.
-  final OtpType type;
-}
-
 /// The parameters of [AuthManager.resetPassword].
 final class ResetPasswordArgs {
   /// Creates reset arguments.
@@ -471,4 +432,16 @@ final class ResetPasswordArgs {
 
   /// The replacement password.
   final Password newPassword;
+}
+
+/// The parameters of [AuthManager.verifyEmail].
+final class VerifyEmailArgs {
+  /// Creates verification arguments.
+  const new({required this.email, required this.code});
+
+  /// The address the code was sent to.
+  final Email email;
+
+  /// The six-digit code.
+  final String code;
 }

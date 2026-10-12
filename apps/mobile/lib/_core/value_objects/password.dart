@@ -17,6 +17,15 @@ class Password extends ValueObject<String> {
   final String input;
   final PasswordMode mode;
 
+  /// How many rules a chosen password is measured against.
+  static const int ruleCount = 5;
+
+  /// How much of the policy the current input satisfies, from 0 to 1.
+  double get strength {
+    if (input.isEmpty) return 0;
+    return (ruleCount - brokenRules.length) / ruleCount;
+  }
+
   List<ValueException<String>> get brokenRules => _collectBrokenRules(input);
 
   bool isRuleBroken(ValueException<String> rule) {

@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -27,18 +26,18 @@ class ResetPasswordOtpPage extends WatchingWidget {
   Widget build(BuildContext context) {
     registerHandler<AuthManager, void>(
       select: (manager) => manager.resendOtp,
-      handler: (context, _, _) =>
-          context.showSuccessToast('A new code is on its way.'),
+      handler: (ctx, _, _) => ctx.showSuccessToast('A new code is on its way.'),
     );
+
     registerHandler<AuthManager, CommandError<OtpRequestArgs>?>(
       select: (manager) => manager.resendOtp.errors,
-      handler: (context, error, _) =>
-          context.showErrorToast(errorMessage(error?.error)),
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
 
     final account = watchValue<UserManager, User>(
       (manager) => manager.lastKnownUser,
     );
+
     final isResending = watchValue<AuthManager, bool>(
       (manager) => manager.resendOtp.isRunning,
     );
@@ -47,21 +46,20 @@ class ResetPasswordOtpPage extends WatchingWidget {
     final address = email ?? account.email;
     final isValidAddress = Email(address).isValid;
 
+    final textTheme = MTextTheme.of(context);
+
     return MScaffold(
       appBar: MAppBar.primary(title: 'Reset Password'),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: Insets.xl),
+        padding: const .symmetric(vertical: Insets.xl),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
-            MText(
-              'Enter the 6-digit code',
-              style: MTextTheme.of(context).heading2Medium,
-            ),
+            MText('Enter the 6-digit code', style: textTheme.heading2Medium),
             Spaces.verticalSmall,
             MText(
               'We sent it to $address. Enter it to choose a new password.',
-              style: MTextTheme.of(context).bodyRegular,
+              style: textTheme.bodyRegular,
               maxLines: 3,
             ),
             Spaces.verticalXXLarge,
@@ -99,11 +97,5 @@ class ResetPasswordOtpPage extends WatchingWidget {
         ),
       ),
     );
-  }
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties.add(StringProperty('email', email));
   }
 }

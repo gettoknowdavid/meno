@@ -32,6 +32,9 @@ class MInlineActionText extends StatelessWidget {
     super.key,
     this.onAction,
     this.mainAxisAlignment = MainAxisAlignment.center,
+    this.enabled = true,
+    this.labelTextStyle,
+    this.actionLabelTextStyle,
   });
 
   /// The statement, in the muted style.
@@ -46,6 +49,15 @@ class MInlineActionText extends StatelessWidget {
   /// How the pair is distributed across the line.
   final MainAxisAlignment mainAxisAlignment;
 
+  /// Whether the action is enabled.
+  final bool enabled;
+
+  /// The style of the label text.
+  final TextStyle? labelTextStyle;
+
+  /// The style of the action label text.
+  final TextStyle? actionLabelTextStyle;
+
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
@@ -54,13 +66,13 @@ class MInlineActionText extends StatelessWidget {
     return Row(
       mainAxisAlignment: mainAxisAlignment,
       children: [
-        MText(label, style: textTheme.captionMedium),
+        MText(label, style: labelTextStyle ?? textTheme.captionMedium),
         Spaces.horizontalMicro,
         InkWell(
-          onTap: onAction,
+          onTap: enabled ? onAction : null,
           child: MText(
             actionLabel,
-            style: textTheme.captionMedium,
+            style: actionLabelTextStyle ?? textTheme.captionMedium,
             color: colors.primary,
           ),
         ),

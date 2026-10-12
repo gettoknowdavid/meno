@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/onboarding/model/onboarding_item.dart';
 import 'package:meno_mobile/features/onboarding/widgets/onboarding_subtitle.dart';
@@ -34,11 +33,5 @@ class OnboardingBody extends StatelessWidget {
         ],
       ),
     );
-  }
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<OnboardingItem>('item', item));
   }
 }

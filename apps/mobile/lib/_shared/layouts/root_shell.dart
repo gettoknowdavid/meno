@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -50,7 +49,8 @@ const List<_ShellTab> _tabs = [
   ),
 ];
 
-/// The root navigation layout: bottom bar on phones, side rail on wider screens.
+/// The root navigation layout: bottom bar on phones, side rail on wider
+/// screens.
 ///
 /// Presentation only. Taps are reported to the router through
 /// [StatefulNavigationShell.goBranch], so branch state, deep links and the
@@ -73,40 +73,41 @@ class RootShell extends StatelessWidget {
     final index = navigationShell.currentIndex;
     final useSideNavRail = ResponsiveBreakpoints.of(context).largerThan(MOBILE);
 
+    Widget body = Row(
+      children: [
+        MSideNavRail(
+          selectedIndex: index,
+          onDestinationSelected: _onTabSelected,
+          destinations: [
+            for (final tab in _tabs)
+              MSideNavRailDestination(icon: Icon(tab.icon), label: tab.label),
+          ],
+        ),
+        Expanded(child: navigationShell),
+      ],
+    );
+    Widget? bottomNavigationBar;
+
+    if (!useSideNavRail) {
+      body = navigationShell;
+      bottomNavigationBar = MBottomNavigationBar(
+        currentIndex: index,
+        onTap: _onTabSelected,
+        items: [
+          for (final tab in _tabs)
+            BottomNavigationBarItem(
+              icon: Icon(tab.icon),
+              activeIcon: Icon(tab.activeIcon),
+              label: tab.label,
+            ),
+        ],
+      );
+    }
+
     return MScaffold(
       padding: .zero,
-      body: useSideNavRail
-          ? Row(
-              children: [
-                MSideNavRail(
-                  selectedIndex: index,
-                  onDestinationSelected: _onTabSelected,
-                  destinations: [
-                    for (final tab in _tabs)
-                      MSideNavRailDestination(
-                        icon: Icon(tab.icon),
-                        label: tab.label,
-                      ),
-                  ],
-                ),
-                Expanded(child: navigationShell),
-              ],
-            )
-          : navigationShell,
-      bottomNavigationBar: useSideNavRail
-          ? null
-          : MBottomNavigationBar(
-              currentIndex: index,
-              onTap: _onTabSelected,
-              items: [
-                for (final tab in _tabs)
-                  BottomNavigationBarItem(
-                    icon: Icon(tab.icon),
-                    activeIcon: Icon(tab.activeIcon),
-                    label: tab.label,
-                  ),
-              ],
-            ),
+      body: body,
+      bottomNavigationBar: bottomNavigationBar,
     );
   }
 
@@ -115,17 +116,4 @@ class RootShell extends StatelessWidget {
     index,
     initialLocation: index == navigationShell.currentIndex,
   );
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties
-      ..add(
-        DiagnosticsProperty<StatefulNavigationShell>(
-          'navigationShell',
-          navigationShell,
-        ),
-      )
-      ..add(IntProperty('currentIndex', navigationShell.currentIndex));
-  }
 }

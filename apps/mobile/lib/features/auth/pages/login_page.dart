@@ -1,4 +1,3 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
@@ -22,11 +21,6 @@ import 'package:meno_ui/meno_ui.dart';
 /// user to wherever they belong — the same path every other way of becoming
 /// signed in takes, including a session restored at startup.
 class LoginPage extends WatchingWidget {
-  /// Creates the sign-in page.
-  ///
-  /// [implyLeading] shows a back affordance. It is false when the page was
-  /// opened from a tab, where there is nothing to go back to, and true when it
-  /// was pushed from the intro carousel.
   const new({super.key, this.implyLeading = false});
 
   /// Whether the app bar shows a back affordance.
@@ -36,12 +30,12 @@ class LoginPage extends WatchingWidget {
   Widget build(BuildContext context) {
     registerHandler<AuthManager, CommandError<LoginArgs>?>(
       select: (manager) => manager.login.errors,
-      handler: (context, error, _) =>
-          context.showErrorToast(errorMessage(error?.error)),
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
+
     registerHandler<AuthManager, CommandResult<LoginArgs?, UserCredential>>(
       select: (manager) => manager.login.results,
-      handler: (context, result, _) {
+      handler: (ctx, result, _) {
         if (result.isSuccess) di<OnboardingManager>().completeOnboarding.run();
       },
     );
@@ -49,13 +43,14 @@ class LoginPage extends WatchingWidget {
     final account = watchValue<UserManager, User>(
       (manager) => manager.lastKnownUser,
     );
+
     final isRunning = watchValue<AuthManager, bool>(
       (manager) => manager.login.isRunning,
     );
 
     final formKey = createOnce(GlobalKey<FormState>.new);
-    final passwordController = createOnce(TextEditingController.new);
-    final emailController = createOnce(TextEditingController.new);
+    final emailCtrl = createOnce(TextEditingController.new);
+    final passwordCtrl = createOnce(TextEditingController.new);
 
     /// Sends the attempt, with the address the screen is showing.
     void submit() {
@@ -63,8 +58,8 @@ class LoginPage extends WatchingWidget {
 
       di<AuthManager>().login.run(
         LoginArgs(
-          email: Email(account.isEmpty ? emailController.text : account.email),
-          password: Password.login(passwordController.text),
+          email: Email(account.isEmpty ? emailCtrl.text : account.email),
+          password: Password.login(passwordCtrl.text),
         ),
       );
     }
@@ -73,11 +68,11 @@ class LoginPage extends WatchingWidget {
       appBar: MAppBar.primary(title: 'Log in', implyLeading: implyLeading),
       body: Form(
         key: formKey,
-        autovalidateMode: AutovalidateMode.onUserInteraction,
+        autovalidateMode: .onUserInteraction,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: Insets.xl),
+          padding: const .symmetric(vertical: Insets.xl),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: .stretch,
             children: [
               if (account.isEmpty)
                 MTextFormField(
@@ -85,10 +80,10 @@ class LoginPage extends WatchingWidget {
                   label: 'Email Address',
                   hint: 'example@gmail.com',
                   prefixIcon: MIcons.mail,
-                  keyboardType: TextInputType.emailAddress,
-                  controller: emailController,
+                  keyboardType: .emailAddress,
+                  controller: emailCtrl,
                   enabled: !isRunning,
-                  validator: (_) => Email(emailController.text).errorMessage,
+                  validator: (_) => Email(emailCtrl.text).errorMsg,
                 )
               else
                 UserAccountDetails(
@@ -102,16 +97,15 @@ class LoginPage extends WatchingWidget {
                 hint: 'Enter your password',
                 prefixIcon: MIcons.key,
                 isPassword: true,
-                controller: passwordController,
+                controller: passwordCtrl,
                 enabled: !isRunning,
-                textInputAction: TextInputAction.done,
+                textInputAction: .done,
                 onFieldSubmitted: (_) => submit(),
-                validator: (_) =>
-                    Password.login(passwordController.text).errorMessage,
+                validator: (_) => Password.login(passwordCtrl.text).errorMsg,
               ),
               Spaces.verticalSmall,
               Align(
-                alignment: Alignment.centerRight,
+                alignment: .centerRight,
                 child: MTextButton(
                   label: 'Forgot password?',
                   onPressed: () => context.push(MRoutes.forgotPassword),
@@ -128,20 +122,13 @@ class LoginPage extends WatchingWidget {
               MInlineActionText(
                 label: "Don't have an account?",
                 actionLabel: 'Create an account',
-                onAction: isRunning
-                    ? null
-                    : () => context.push(MRoutes.registerRoute()),
+                enabled: !isRunning,
+                onAction: () => context.push(MRoutes.registerRoute()),
               ),
             ],
           ),
         ),
       ),
     );
-  }
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<bool>('implyLeading', implyLeading));
   }
 }

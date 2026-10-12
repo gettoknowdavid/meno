@@ -24,26 +24,26 @@ import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 /// Command.createAsyncNoResult(request, errorFilter: menoExceptionFilter);
 /// ```
 ErrorReaction menoExceptionFilter(Object error, StackTrace stackTrace) {
-  if (error is! MenoException) return ErrorReaction.globalHandler;
+  if (error is! MenoException) return .globalHandler;
 
   return switch (error) {
-    CancelledException() => ErrorReaction.none,
-    ValidationException() => ErrorReaction.localHandler,
+    CancelledException() => .none,
+    ValidationException() => .localHandler,
     UnauthenticatedException() =>
       error.code == MenoErrorCode.invalidCredentials
-          ? ErrorReaction.localHandler
-          : ErrorReaction.globalHandler,
+          ? .localHandler
+          : .globalHandler,
     BadRequestException() ||
     ForbiddenException() ||
     NotFoundException() ||
     ConflictException() ||
-    RateLimitedException() => ErrorReaction.firstLocalThenGlobalHandler,
+    RateLimitedException() => .firstLocalThenGlobalHandler,
     NetworkException() ||
     RequestTimeoutException() ||
     UpstreamUnavailableException() ||
     ServerException() ||
     StorageException() ||
     MalformedResponseException() ||
-    UnknownException() => ErrorReaction.globalHandler,
+    UnknownException() => .globalHandler,
   };
 }

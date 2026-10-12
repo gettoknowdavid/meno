@@ -1,10 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -18,10 +16,6 @@ import 'package:meno_ui/meno_ui.dart';
 /// The password rules the tracker shows are the API's own
 /// (`password_problems` in `apps/api/src/modules/auth/validators.rs`).
 class RegisterPage extends WatchingWidget {
-  /// Creates the registration page.
-  ///
-  /// [implyLeading] shows a back affordance, for when the page was pushed from
-  /// the sign-in screen or the intro carousel.
   const new({super.key, this.implyLeading = true});
 
   /// Whether the app bar shows a back affordance.
@@ -30,26 +24,167 @@ class RegisterPage extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     pushScope(
-      init: (getIt) =>
-          getIt.registerSingleton<RegisterFormManager>(RegisterFormManager()),
+      init: (getIt) {
+        getIt.registerSingleton<RegisterFormManager>(RegisterFormManager());
+      },
     );
 
     registerHandler<AuthManager, CommandError<RegisterArgs>?>(
       select: (manager) => manager.register.errors,
-      handler: (context, error, _) =>
-          context.showErrorToast(errorMessage(error?.error)),
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
+
     registerHandler<AuthManager, CommandResult<RegisterArgs?, UserCredential>>(
       select: (manager) => manager.register.results,
-      handler: (context, result, _) {
+      handler: (ctx, result, _) {
         if (result.isSuccess) di<OnboardingManager>().completeOnboarding.run();
       },
     );
 
-    final form = watchValue<RegisterFormManager, RegisterForm>(
-      (manager) => manager.form,
+    final isOnboarded = watchValue<OnboardingManager, bool>(
+      (manager) => manager.isOnboarded,
     );
+
     final isRunning = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
+
+    return MScaffold(
+      appBar: MAppBar.primary(
+        title: 'New Account',
+        backText: !isOnboarded ? 'Onboarding' : 'Log in',
+        implyLeading: implyLeading,
+      ),
+      body: SingleChildScrollView(
+        padding: const .symmetric(vertical: Insets.xl),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            const _RegisterForm(),
+            Spaces.verticalXXLarge,
+            const GoogleDivider(title: 'Or'),
+            Spaces.verticalXLarge,
+            const MGoogleButton(title: 'Create with Google'),
+            const SizedBox(height: 44),
+            MInlineActionText(
+              label: 'Already have an account?',
+              actionLabel: 'Log in',
+              enabled: !isRunning,
+              onAction: () => onRedirectPressed(context, isOnboarded),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void onRedirectPressed(BuildContext context, bool isOnboarded) {
+    if (isOnboarded) {
+      context.replace(MRoutes.login);
+    } else {
+      context.replace(MRoutes.loginRoute(implyLeading: true));
+    }
+  }
+}
+
+class _RegisterForm extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final formKey = createOnce(GlobalKey<FormState>.new);
+
+    return Form(
+      key: formKey,
+      child: const Column(
+        crossAxisAlignment: .stretch,
+        children: [
+          _FullNameField(),
+          Spaces.verticalXLarge,
+          _EmailField(),
+          Spaces.verticalXLarge,
+          _PasswordField(),
+          Spaces.verticalXLarge,
+          _TermsAndConditionsCheckBox(),
+          Spaces.verticalXXLarge,
+          _RegisterButton(),
+        ],
+      ),
+    );
+  }
+}
+
+class _FullNameField extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final focusNode = createOnce(FocusNode.new);
+
+    final fullName = watchValue<RegisterFormManager, FullName>(
+      (manager) => manager.fullName,
+    );
+
+    final isLoading = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
+
+    return MTextFormField(
+      label: 'Full Name',
+      hint: 'Jim Halpert',
+      prefixIcon: MIcons.user,
+      focusNode: focusNode,
+      enabled: !isLoading,
+      onChanged: di<RegisterFormManager>().onFullNameChanged,
+      validator: (_) => fullName.errorMsg,
+    );
+  }
+}
+
+class _EmailField extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final focusNode = createOnce(FocusNode.new);
+
+    final email = watchValue<RegisterFormManager, Email>(
+      (manager) => manager.email,
+    );
+
+    final isLoading = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
+
+    return MTextFormField(
+      label: 'Email Address',
+      hint: 'example@gmail.com',
+      prefixIcon: MIcons.mail,
+      keyboardType: .emailAddress,
+      focusNode: focusNode,
+      enabled: !isLoading,
+      onChanged: di<RegisterFormManager>().onEmailChanged,
+      validator: (_) => email.errorMsg,
+    );
+  }
+}
+
+class _PasswordField extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final focusNode = createOnce(FocusNode.new);
+
+    final password = watchValue<RegisterFormManager, Password>(
+      (manager) => manager.password,
+    );
+
+    final strength = watchValue<RegisterFormManager, double>(
+      (manager) => manager.strength,
+    );
+
+    final isLoading = watchValue<AuthManager, bool>(
       (manager) => manager.register.isRunning,
     );
 
@@ -57,108 +192,122 @@ class RegisterPage extends WatchingWidget {
       MPasswordRule(
         title: '8+',
         caption: 'Characters',
-        isMet:
-            !form.password.breaks(ValueRule.tooShort) &&
-            !form.password.breaks(ValueRule.tooLong),
-      ),
-      MPasswordRule(
-        title: 'a-z',
-        caption: 'Lowercase',
-        isMet: !form.password.breaks(ValueRule.missingLowercase),
+        isMet: !password.isRuleBroken(const PasswordTooShort()),
       ),
       MPasswordRule(
         title: 'A-Z',
         caption: 'Uppercase',
-        isMet: !form.password.breaks(ValueRule.missingUppercase),
+        isMet: !password.isRuleBroken(const PasswordMissingUppercase()),
+      ),
+      MPasswordRule(
+        title: 'a-z',
+        caption: 'Lowercase',
+        isMet: !password.isRuleBroken(const PasswordMissingLowercase()),
+      ),
+      MPasswordRule(
+        title: '%',
+        caption: 'Symbol',
+        isMet: !password.isRuleBroken(const PasswordMissingSpecialCharacter()),
+      ),
+      MPasswordRule(
+        title: '123',
+        caption: 'Number',
+        isMet: !password.isRuleBroken(const PasswordMissingNumber()),
       ),
     ];
 
+    return Column(
+      crossAxisAlignment: .stretch,
+      mainAxisSize: .min,
+      children: [
+        MTextFormField(
+          key: const Key('register_form_password_input'),
+          hint: 'Must be at least 8 characters',
+          label: 'Be secure',
+          isPassword: true,
+          prefixIcon: MIcons.key,
+          onChanged: di<RegisterFormManager>().onPasswordChanged,
+          enabled: !isLoading,
+          focusNode: focusNode,
+        ),
+        const SizedBox(height: Insets.sm),
+        MPasswordRuleTracker(
+          strength: strength,
+          touched: password.input.isNotEmpty,
+          rules: rules,
+        ),
+      ],
+    );
+  }
+}
+
+class _TermsAndConditionsCheckBox extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final terms = watchValue<RegisterFormManager, TermsAcceptance>(
+      (manager) => manager.terms,
+    );
+
+    final isRunning = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
+
+    return Row(
+      children: [
+        SizedBox.square(
+          dimension: 20,
+          child: Checkbox(
+            value: terms.input,
+            onChanged: di<RegisterFormManager>().onTermsChanged,
+          ),
+        ),
+        const SizedBox(width: 10),
+        MInlineActionText(
+          label: 'By continuing you agree to our ',
+          actionLabel: 'Terms of Service',
+          enabled: !isRunning,
+          onAction: () {},
+        ),
+      ],
+    );
+  }
+}
+
+class _RegisterButton extends WatchingWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = di<RegisterFormManager>();
+
+    final isLoading = watchValue<AuthManager, bool>(
+      (manager) => manager.register.isRunning,
+    );
+
+    final isFormValid = watchValue<RegisterFormManager, bool>(
+      (manager) => manager.isValid,
+    );
+
     /// Sends the registration, then empties the form.
     void submit() {
-      if (!form.isValid) return;
-
-      di<AuthManager>().register.run(
-        RegisterArgs(
-          fullName: form.fullName,
-          email: form.email,
-          password: form.password,
-        ),
+      FocusScope.of(context).unfocus();
+      final args = RegisterArgs(
+        fullName: manager.fullName.value,
+        email: manager.email.value,
+        password: manager.password.value,
       );
+      di<AuthManager>().register.run(args);
       di<RegisterFormManager>().reset();
     }
 
-    return MScaffold(
-      appBar: MAppBar.primary(title: 'New Account', implyLeading: implyLeading),
-      body: Form(
-        autovalidateMode: AutovalidateMode.onUserInteraction,
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: Insets.xl),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              MTextFormField(
-                key: const Key('register_full_name'),
-                label: 'Full Name',
-                hint: 'Ada Lovelace',
-                prefixIcon: MIcons.user,
-                enabled: !isRunning,
-                onChanged: di<RegisterFormManager>().onFullNameChanged,
-                validator: (_) => form.fullName.errorMessage,
-              ),
-              Spaces.verticalXLarge,
-              MTextFormField(
-                key: const Key('register_email'),
-                label: 'Email Address',
-                hint: 'example@gmail.com',
-                prefixIcon: MIcons.mail,
-                keyboardType: TextInputType.emailAddress,
-                enabled: !isRunning,
-                onChanged: di<RegisterFormManager>().onEmailChanged,
-                validator: (_) => form.email.errorMessage,
-              ),
-              Spaces.verticalXLarge,
-              MTextFormField(
-                key: const Key('register_password'),
-                label: 'Be secure',
-                hint: 'At least 8 characters',
-                prefixIcon: MIcons.key,
-                isPassword: true,
-                enabled: !isRunning,
-                onChanged: di<RegisterFormManager>().onPasswordChanged,
-                validator: (_) => form.password.errorMessage,
-              ),
-              Spaces.verticalSmall,
-              MPasswordRuleTracker(
-                strength: form.password.strength,
-                touched: form.password.input.isNotEmpty,
-                rules: rules,
-              ),
-              Spaces.verticalXLarge,
-              MPrimaryButton(
-                key: const Key('register_submit'),
-                label: 'Create your account',
-                loading: isRunning,
-                disabled: isRunning || !form.isValid,
-                onPressed: submit,
-              ),
-              Spaces.verticalXXLarge,
-              MInlineActionText(
-                label: 'Already have an account?',
-                actionLabel: 'Log in',
-                onAction: isRunning
-                    ? null
-                    : () => context.replace(MRoutes.loginRoute()),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return MPrimaryButton(
+      key: const Key('register_submit'),
+      label: 'Create Your Account',
+      loading: isLoading,
+      disabled: isLoading || !isFormValid,
+      onPressed: submit,
     );
-  }
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties.add(DiagnosticsProperty<bool>('implyLeading', implyLeading));
   }
 }

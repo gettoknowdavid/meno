@@ -1,10 +1,8 @@
-import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -28,12 +26,12 @@ class ResetPasswordPage extends WatchingWidget {
   Widget build(BuildContext context) {
     registerHandler<AuthManager, void>(
       select: (manager) => manager.resetPassword,
-      handler: (context, _, _) => context.go(MRoutes.resetPasswordSuccess),
+      handler: (ctx, _, _) => ctx.go(MRoutes.resetPasswordSuccess),
     );
+
     registerHandler<AuthManager, CommandError<ResetPasswordArgs>?>(
       select: (manager) => manager.resetPassword.errors,
-      handler: (context, error, _) =>
-          context.showErrorToast(errorMessage(error?.error)),
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
 
     final isSaving = watchValue<AuthManager, bool>(
@@ -41,8 +39,8 @@ class ResetPasswordPage extends WatchingWidget {
     );
 
     final formKey = createOnce(GlobalKey<FormState>.new);
-    final passwordController = createOnce(TextEditingController.new);
-    final confirmationController = createOnce(TextEditingController.new);
+    final passwordCtl = createOnce(TextEditingController.new);
+    final confirmationCtrl = createOnce(TextEditingController.new);
 
     final address = email ?? '';
     final resetCode = code ?? '';
@@ -56,7 +54,7 @@ class ResetPasswordPage extends WatchingWidget {
         ResetPasswordArgs(
           email: Email(address),
           code: resetCode,
-          newPassword: Password.register(passwordController.text),
+          newPassword: .register(passwordCtl.text),
         ),
       );
     }
@@ -65,11 +63,11 @@ class ResetPasswordPage extends WatchingWidget {
       appBar: MAppBar.primary(title: 'New Password'),
       body: Form(
         key: formKey,
-        autovalidateMode: AutovalidateMode.onUserInteraction,
+        autovalidateMode: .onUserInteraction,
         child: SingleChildScrollView(
-          padding: const EdgeInsets.symmetric(vertical: Insets.xl),
+          padding: const .symmetric(vertical: Insets.xl),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: .stretch,
             children: [
               if (address.isEmpty || resetCode.isEmpty) ...[
                 MText(
@@ -87,9 +85,8 @@ class ResetPasswordPage extends WatchingWidget {
                 prefixIcon: MIcons.key,
                 isPassword: true,
                 enabled: !isSaving,
-                controller: passwordController,
-                validator: (_) =>
-                    Password.register(passwordController.text).errorMessage,
+                controller: passwordCtl,
+                validator: (_) => Password.register(passwordCtl.text).errorMsg,
               ),
               Spaces.verticalXLarge,
               MTextFormField(
@@ -99,19 +96,18 @@ class ResetPasswordPage extends WatchingWidget {
                 prefixIcon: MIcons.shield,
                 isPassword: true,
                 enabled: !isSaving,
-                controller: confirmationController,
-                validator: (_) => confirmationController.text ==
-                        passwordController.text
+                controller: confirmationCtrl,
+                validator: (_) => confirmationCtrl.text == passwordCtl.text
                     ? null
                     : 'The two passwords do not match',
               ),
               Spaces.verticalSmall,
               MPasswordRuleTracker(
-                strength: Password.register(passwordController.text).strength,
-                touched: passwordController.text.isNotEmpty,
+                strength: Password.register(passwordCtl.text).strength,
+                touched: passwordCtl.text.isNotEmpty,
                 rules: [
                   for (final rule in _passwordRules(
-                    Password.register(passwordController.text),
+                    Password.register(passwordCtl.text),
                   ))
                     rule,
                 ],
@@ -129,32 +125,34 @@ class ResetPasswordPage extends WatchingWidget {
         ),
       ),
     );
-  }    /// The policy chips for [password].
+  }
+
+  /// The policy chips for [password].
   static List<MPasswordRule> _passwordRules(Password password) => [
     MPasswordRule(
       title: '8+',
       caption: 'Characters',
-      isMet:
-          !password.breaks(ValueRule.tooShort) &&
-          !password.breaks(ValueRule.tooLong),
-    ),
-    MPasswordRule(
-      title: 'a-z',
-      caption: 'Lowercase',
-      isMet: !password.breaks(ValueRule.missingLowercase),
+      isMet: !password.isRuleBroken(const PasswordTooShort()),
     ),
     MPasswordRule(
       title: 'A-Z',
       caption: 'Uppercase',
-      isMet: !password.breaks(ValueRule.missingUppercase),
+      isMet: !password.isRuleBroken(const PasswordMissingUppercase()),
+    ),
+    MPasswordRule(
+      title: 'a-z',
+      caption: 'Lowercase',
+      isMet: !password.isRuleBroken(const PasswordMissingLowercase()),
+    ),
+    MPasswordRule(
+      title: '%',
+      caption: 'Symbol',
+      isMet: !password.isRuleBroken(const PasswordMissingSpecialCharacter()),
+    ),
+    MPasswordRule(
+      title: '123',
+      caption: 'Number',
+      isMet: !password.isRuleBroken(const PasswordMissingNumber()),
     ),
   ];
-
-  @override
-  void debugFillProperties(DiagnosticPropertiesBuilder properties) {
-    super.debugFillProperties(properties);
-    properties
-      ..add(StringProperty('email', email))
-      ..add(StringProperty('code', code));
-  }
 }

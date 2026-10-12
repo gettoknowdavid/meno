@@ -38,28 +38,15 @@ final class UserScopeManager implements Disposable {
   /// right account.
   Future<UserScopeManager> init() async {
     _subscription = _auth.activeCredential.listen(_onActiveCredentialChanged);
-    // Deferred by a microtask rather than awaited: this runs while the locator is
-    // still starting the container, and pushing a scope from inside another
+    // Deferred by a microtask rather than awaited: this runs while the locator
+    // is still starting the container, and pushing a scope from inside another
     // registration's initializer would change the scope stack under it. By the
-    // time the app's startup gate finishes there is a scope in place either way.
+    // time the app's startup gate finishes there is a scope in place
+    // either way.
     scheduleMicrotask(() {
       unawaited(_apply(_auth.activeCredential.value));
     });
     return this;
-  }
-
-  /// Releases the subscription.
-  @override
-  FutureOr<dynamic> onDispose() {
-    _subscription?.cancel();
-  }
-
-  /// Follows the active account.
-  void _onActiveCredentialChanged(
-    UserCredential credential,
-    ListenableSubscription subscription,
-  ) {
-    unawaited(_apply(credential));
   }
 
   /// Pushes the scope for [credential], or pops it when nobody is signed in.
@@ -71,16 +58,19 @@ final class UserScopeManager implements Disposable {
 
     await di.pushNewScopeAsync(
       scopeName: Scope.authenticated,
-      init: (getIt) async => _registerDependencies(getIt, credential),
+      init: (getIt) async {
+        getIt.registerSingleton<UserCredential>(credential);
+      },
     );
     _scopedUserId = credential.userId;
   }
 
-  /// Registers everything that belongs to one account. A screen that needs the
-  /// signed-in user's tokens reads them from here rather than reaching into
-  /// storage.
-  void _registerDependencies(GetIt getIt, UserCredential credential) {
-    getIt.registerSingleton<UserCredential>(credential);
+  /// Follows the active account.
+  void _onActiveCredentialChanged(
+    UserCredential credential,
+    ListenableSubscription subscription,
+  ) {
+    unawaited(_apply(credential));
   }
 
   /// Pops the account scope, if it is the one on top.
@@ -92,5 +82,11 @@ final class UserScopeManager implements Disposable {
 
     await di.popScopesTill(Scope.root, inclusive: false);
     _scopedUserId = null;
+  }
+
+  /// Releases the subscription.
+  @override
+  FutureOr<dynamic> onDispose() {
+    _subscription?.cancel();
   }
 }

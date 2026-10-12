@@ -1,16 +1,7 @@
-import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// The auth module's endpoints, one method each.
-///
-/// Transcribed from `apps/api/src/routes/auth.rs`, including its snake_case
-/// field names and its split between the public half and the guarded one. Paths
-/// are absolute (`/auth/…`) because the API mounts the module at the root.
-///
-/// Transport only: it returns domain objects and throws [MenoException]s — the
-/// envelope, retries and error taxonomy are [HttpClient]'s job, so nothing here
-/// re-checks a status code.
 final class AuthHttpService {
   /// Creates a service over [_client].
   const new(this._client);
@@ -48,8 +39,8 @@ final class AuthHttpService {
   /// `POST /auth/google/mobile` — exchanges a Google ID token for a session.
   ///
   /// The mobile half of the Google flow: the platform SDK produces the ID
-  /// token and the API verifies it, so no browser round trip and no web
-  /// `state` token is involved. [deviceLabel] is what the account's device
+  /// token and the API verifies it, so there is no browser round trip and no
+  /// web `state` token involved. [deviceLabel] is what the account's device
   /// list shows later.
   Future<UserCredential> signInWithGoogle({
     required String idToken,
@@ -65,8 +56,8 @@ final class AuthHttpService {
   /// `POST /auth/logout` — ends one session.
   ///
   /// Both tokens travel in the body, so this endpoint works without a header
-  /// and without a live access token: the refresh token is what identifies
-  /// the session to end.
+  /// and without a live access token: the refresh token identifies the
+  /// session to end.
   Future<void> logout({required String refreshToken, String? accessToken}) {
     return _client.postUnit(
       '/auth/logout',
@@ -94,10 +85,6 @@ final class AuthHttpService {
       _client.postUnit('/auth/sessions/$sessionId');
 
   /// `POST /auth/verify-email` — confirms the address with a code.
-  ///
-  /// Returns a *new* token pair rather than nothing: verification changes the
-  /// account (the `verified` flag, and with it what the app is allowed to show),
-  /// so the session the app is holding is replaced by the one that reflects it.
   Future<UserCredential> verifyEmail({
     required String email,
     required String code,

@@ -17,10 +17,10 @@ class ResetPasswordSuccessPage extends StatelessWidget {
     final textTheme = MTextTheme.of(context);
 
     return MScaffold(
-      padding: EdgeInsets.zero,
+      padding: .zero,
       body: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisAlignment: .center,
+        crossAxisAlignment: .stretch,
         children: [
           Assets.images.success.image(
             height: 240,
@@ -28,24 +28,20 @@ class ResetPasswordSuccessPage extends StatelessWidget {
             package: 'meno_ui',
           ),
           Spaces.verticalXXXLarge,
-          MText(
-            'Success!',
-            style: textTheme.heading2Bold,
-            textAlign: TextAlign.center,
-          ),
+          MText('Success!', style: textTheme.heading2Bold, textAlign: .center),
           Spaces.verticalSmall,
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Insets.xxxl),
+            padding: const .symmetric(horizontal: Insets.xxxl),
             child: MText(
               'Your password has been reset. Sign in with your new password.',
               style: textTheme.bodyRegular,
-              textAlign: TextAlign.center,
+              textAlign: .center,
               maxLines: 3,
             ),
           ),
           Spaces.verticalXXXLarge,
           Padding(
-            padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+            padding: const .symmetric(horizontal: Insets.lg),
             child: MPrimaryButton(
               label: 'Back to log in',
               onPressed: () => context.go(MRoutes.login),

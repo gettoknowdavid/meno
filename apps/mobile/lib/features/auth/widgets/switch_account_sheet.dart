@@ -40,7 +40,7 @@ final class SwitchAccountSheet {
         final colors = MColorScheme.of(sheetContext);
 
         return Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: .min,
           children: [
             MText('Accounts', style: textTheme.heading3Medium),
             Spaces.verticalSmall,
@@ -49,13 +49,13 @@ final class SwitchAccountSheet {
                 title: MText(
                   credential.user.fullName,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: .ellipsis,
                 ),
                 subtitle: MText(
                   credential.user.email,
                   style: textTheme.captionMedium,
                   maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  overflow: .ellipsis,
                 ),
                 trailing: credential.userId == activeUserId
                     ? Icon(MIcons.check, color: colors.primary)

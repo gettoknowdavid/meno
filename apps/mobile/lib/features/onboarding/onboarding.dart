@@ -1,5 +1,3 @@
-library;
-
 export 'manager/onboarding_manager.dart';
 export 'model/onboarding_item.dart';
 export 'pages/onboarding_page.dart';
