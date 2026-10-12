@@ -26,102 +26,96 @@ final GetIt di = GetIt.instance;
 /// either synchronous or an async one the app's startup gate waits for.
 void configureDependencies(Config config) {
   di.pushNewScope(scopeName: Scope.root);
+
   _registerCore(config);
+  _registerOnboarding();
+  _registerAuth();
+  _registerProfile();
+
+  di.registerLazySingleton<GoRouter>(_createRouter);
 }
 
 void _registerCore(Config config) {
-  di
-    ..registerSingleton<Config>(config)
-    ..registerSingleton<MenoLogger>(MenoLoggerImpl(config.env))
-    ..registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage())
-    // Registered asynchronously so the app's startup gate waits for the
-    // preference cache to load; every read after that is synchronous.
-    ..registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance)
-    ..registerLazySingleton<LocalStorage>(
-      () => LocalStorage(di<SharedPreferences>()),
-      dispose: (storage) => storage.onDispose(),
-    )
-    ..registerLazySingleton<SecureStorage>(
-      () => SecureStorage(di<FlutterSecureStorage>()),
-      dispose: (storage) => storage.onDispose(),
-    )
-    // The accounts on this device, and the active one among them.
-    ..registerLazySingleton<SessionStore>(
-      () => SessionStore(di<SecureStorage>()),
-      dispose: (store) => store.onDispose(),
-    )
-    // The client owns the interceptor that attaches — and renews — the active
-    // account's token, so no feature has to think about authentication.
-    ..registerLazySingleton<HttpClient>(
-      () => HttpClient(
-        baseUrl: di<Config>().menoApiUrl,
-        logger: di<MenoLogger>(),
-        interceptors: [
-          SessionInterceptor(
-            store: di<SessionStore>(),
-            baseUrl: di<Config>().menoApiUrl,
-            logger: di<MenoLogger>(),
-          ),
-        ],
-      ),
-      dispose: (client) => client.onDispose(),
-    )
-    ..registerLazySingleton<OnboardingService>(
-      () => OnboardingService(di<LocalStorage>()),
-    )
-    // Picks images from the device, for every feature that asks for one.
-    ..registerLazySingleton<MediaService>(MediaService.new)
-    ..registerLazySingleton<OnboardingManager>(
-      () => OnboardingManager(di<OnboardingService>()),
-      dispose: (manager) => manager.onDispose(),
-    )
-    ..registerLazySingleton<AuthHttpService>(
-      () => AuthHttpService(di<HttpClient>()),
-    )
-    // Async, because startup waits for the stored account to be restored: the
-    // router must not build against "nobody is signed in" and then navigate
-    // away from the sign-in screen a frame later.
-    //
-    // `dependsOn` is deliberately not used to spell out that ordering: it lists
-    // other *async* singletons to wait for, and the service and the store are
-    // lazy ones that exist the moment they are asked for. Naming them would
-    // stop the container from ever becoming ready.
-    ..registerSingletonAsync<AuthManager>(
-      () => AuthManager(
-        http: di<AuthHttpService>(),
-        store: di<SessionStore>(),
-        logger: di<MenoLogger>(),
-      ).init(),
-      dispose: (manager) => manager.onDispose(),
-    )
-    // The read-only view other features take, so they never get the ability to
-    // sign an account out.
-    ..registerLazySingleton<UserManager>(() => UserManager(di<AuthManager>()))
-    // Follows the active account and keeps the authenticated scope in step.
-    ..registerSingletonAsync<UserScopeManager>(
-      () => UserScopeManager(di<AuthManager>()).init(),
-      dependsOn: [AuthManager],
-      dispose: (manager) => manager.onDispose(),
-    )
-    // The profile feature: the endpoints, the device's copy of them, and the
-    // manager that keeps the signed-in account's own profile in step with the
-    // account it belongs to.
-    ..registerLazySingleton<ProfileHttpService>(
-      () => ProfileHttpService(di<HttpClient>()),
-    )
-    ..registerLazySingleton<ProfileCacheService>(
-      () => ProfileCacheService(di<LocalStorage>()),
-    )
-    ..registerSingletonAsync<MyProfileManager>(
-      () => MyProfileManager(
-        http: di<ProfileHttpService>(),
-        cache: di<ProfileCacheService>(),
-        user: di<UserManager>(),
-      ).init(),
-      dependsOn: [AuthManager],
-      dispose: (manager) => manager.onDispose(),
-    )
-    ..registerLazySingleton<GoRouter>(_createRouter);
+  di.registerSingleton<Config>(config);
+  di.registerSingleton<MenoLogger>(MenoLoggerImpl(config.env));
+  di.registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage());
+  di.registerLazySingleton<SecureStorage>(
+    () => SecureStorage(di<FlutterSecureStorage>()),
+    dispose: (storage) => storage.onDispose(),
+  );
+  di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
+  di.registerSingletonWithDependencies<LocalStorage>(
+    () => LocalStorage(di<SharedPreferences>()),
+    dispose: (storage) => storage.onDispose(),
+    dependsOn: [SharedPreferences],
+  );
+  di.registerLazySingleton<HttpClient>(
+    () => HttpClient(
+      baseUrl: di<Config>().menoApiUrl,
+      logger: di<MenoLogger>(),
+      interceptors: [
+        SessionInterceptor(
+          store: di<SessionStore>(),
+          baseUrl: di<Config>().menoApiUrl,
+          logger: di<MenoLogger>(),
+        ),
+      ],
+    ),
+    dispose: (client) => client.onDispose(),
+  );
+  di.registerLazySingleton<MediaService>(MediaService.new);
+}
+
+void _registerOnboarding() {
+  di.registerLazySingleton<OnboardingService>(
+    () => OnboardingService(di<LocalStorage>()),
+  );
+  di.registerLazySingleton<OnboardingManager>(
+    () => OnboardingManager(di<OnboardingService>()),
+    dispose: (manager) => manager.onDispose(),
+  );
+}
+
+void _registerAuth() {
+  di.registerLazySingleton<SessionStore>(
+    () => SessionStore(di<SecureStorage>()),
+    dispose: (store) => store.onDispose(),
+  );
+  di.registerLazySingleton<AuthHttpService>(
+    () => AuthHttpService(di<HttpClient>()),
+  );
+  di.registerSingletonAsync<AuthManager>(
+    () => AuthManager(
+      http: di<AuthHttpService>(),
+      store: di<SessionStore>(),
+      logger: di<MenoLogger>(),
+    ).init(),
+    dispose: (manager) => manager.onDispose(),
+  );
+  di.registerLazySingleton<UserManager>(() => UserManager(di<AuthManager>()));
+  di.registerSingletonAsync<UserScopeManager>(
+    () => UserScopeManager(di<AuthManager>()).init(),
+    dependsOn: [AuthManager],
+    dispose: (manager) => manager.onDispose(),
+  );
+}
+
+void _registerProfile() {
+  di.registerLazySingleton<ProfileHttpService>(
+    () => ProfileHttpService(di<HttpClient>()),
+  );
+  di.registerLazySingleton<ProfileCacheService>(
+    () => ProfileCacheService(di<LocalStorage>()),
+  );
+  di.registerSingletonAsync<MyProfileManager>(
+    () => MyProfileManager(
+      http: di<ProfileHttpService>(),
+      cache: di<ProfileCacheService>(),
+      user: di<UserManager>(),
+    ).init(),
+    dependsOn: [AuthManager],
+    dispose: (manager) => manager.onDispose(),
+  );
 }
 
 GoRouter _createRouter() {
