@@ -49,6 +49,8 @@ class MOtpField extends StatelessWidget {
     this.obscureText = false,
     this.onChanged,
     this.validator,
+    this.constraints,
+    this.padding,
   });
 
   /// An optional controller for managing the text input.
@@ -73,13 +75,20 @@ class MOtpField extends StatelessWidget {
   /// An optional function for validating the OTP input.
   final FormFieldValidator<String>? validator;
 
+  /// The constraints for the OTP field.
+  final BoxConstraints? constraints;
+
+  /// The padding for the OTP field.
+  final EdgeInsetsGeometry? padding;
+
   @override
   Widget build(BuildContext context) {
     final styles = MOtpFieldStyles.of(context);
     final textTheme = MTextTheme.of(context);
     final defaultPinTheme = PinTheme(
-      constraints: const BoxConstraints(maxHeight: 88, maxWidth: 88),
-      padding: const .all(24),
+      constraints:
+          constraints ?? const BoxConstraints(maxHeight: 88, maxWidth: 88),
+      padding: padding ?? const .all(24),
       decoration: BoxDecoration(
         color: styles.fillColor,
         border: styles.border,

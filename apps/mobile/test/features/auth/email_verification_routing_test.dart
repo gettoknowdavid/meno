@@ -69,8 +69,8 @@ void main() {
   ) async {
     await bootWith(tester, _account(verified: false));
 
-    expect(find.text('Verify Your Email'), findsOneWidget);
-    expect(find.widgetWithText(AppBar, 'Verify Your Email'), findsOneWidget);
+    expect(find.text('Verify your email'), findsOneWidget);
+    expect(find.widgetWithText(AppBar, 'Verify your email'), findsOneWidget);
   });
 
   testWidgets('a verified account lands in the app', (tester) async {

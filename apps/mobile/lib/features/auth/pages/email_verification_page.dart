@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -10,6 +12,10 @@ import 'package:meno_ui/meno_ui.dart';
 /// Verifying replaces the session: the API returns a fresh token pair for the
 /// now-verified account, so [AuthManager.verifyEmail] adopts it and the router
 /// guard sees [AuthManager.emailVerified] flip and moves the user on.
+///
+/// After a resend the "Send again" link is disabled for one minute so the user
+/// cannot flood the address with codes. The countdown is a screen-local concern
+/// and lives only as long as the page.
 class EmailVerificationPage extends WatchingWidget {
   /// Creates the verification page.
   ///
@@ -52,46 +58,103 @@ class EmailVerificationPage extends WatchingWidget {
     final address = email ?? account.email;
     final isValidAddress = Email(address).isValid;
 
+    final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
+
+    // One minute after the last resend the link and button are usable again.
+    final resendCooldown = createOnce(
+      () => ValueNotifier<Duration>(Duration.zero),
+    );
+
+    registerHandler<AuthManager, CommandError<OtpRequestArgs>?>(
+      select: (manager) => manager.resendOtp.errors,
+      handler: (ctx, error, _) {
+        ctx.showErrorToast(errorMessage(error?.error));
+
+        // A failed resend still means the user asked for a new code, so the
+        // cooldown still starts: the timer is about rate-limiting the link,
+        // not about whether the network answered.
+        const remaining = Duration(minutes: 1);
+        resendCooldown.value = remaining;
+        Timer.periodic(
+          const Duration(seconds: 1),
+          (timer) {
+            final next =
+                resendCooldown.value - const Duration(seconds: 1);
+            if (next.isNegative) {
+              resendCooldown.value = Duration.zero;
+              timer.cancel();
+            } else {
+              resendCooldown.value = next;
+            }
+          },
+        );
+      },
+    );
+
+    final onResend =
+        isResending || !isValidAddress || resendCooldown.value > Duration.zero
+        ? null
+        : () => di<AuthManager>().resendOtp.run(
+            OtpRequestArgs(email: Email(address), type: .verifyEmail),
+          );
+
+    final canVerify = isValidAddress && !isVerifying;
+
     return MScaffold(
-      appBar: MAppBar.primary(title: 'Verify Your Email'),
+      appBar: MAppBar.primary(title: 'Verify your email'),
       body: SingleChildScrollView(
         padding: const EdgeInsets.symmetric(vertical: Insets.xl),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
-            MText(
-              'Check your inbox',
-              style: MTextTheme.of(context).heading2Medium,
-            ),
-            Spaces.verticalSmall,
-            MText(
-              'Enter the 6-digit code we sent to $address to continue.',
-              style: MTextTheme.of(context).bodyRegular,
-              maxLines: 3,
+            MText.rich(
+              TextSpan(
+                children: [
+                  const TextSpan(
+                    text: 'Enter the 6-digit code we just sent to ',
+                  ),
+                  TextSpan(text: address, style: textTheme.captionMedium),
+                  const TextSpan(text: ' to continue.'),
+                ],
+                style: textTheme.captionRegular.copyWith(
+                  color: colors.inActive,
+                ),
+              ),
             ),
             Spaces.verticalXXLarge,
             MOtpField(
               key: const Key('verify_code'),
               length: 6,
-              enabled: !isVerifying,
+              enabled: canVerify,
               controller: codeController,
+              padding: const .all(12),
+              constraints: const BoxConstraints(maxHeight: 66, maxWidth: 88),
             ),
             Spaces.verticalXLarge,
-            MInlineActionText(
-              label: "Didn't receive a code?",
-              actionLabel: isResending ? 'Sending…' : 'Send again',
-              onAction: isResending || !isValidAddress
-                  ? null
-                  : () => di<AuthManager>().resendOtp.run(
-                      OtpRequestArgs(email: Email(address), type: .verifyEmail),
-                    ),
-            ),
+            if (resendCooldown.value > Duration.zero)
+              MText(
+                'Resend code in ${_formatCountdown(resendCooldown.value)}',
+                style: textTheme.captionRegular.copyWith(
+                  color: colors.inActive,
+                ),
+              )
+            else
+              MInlineActionText(
+                label: "Didn't receive a code?",
+                actionLabel: isResending ? 'Sending…' : 'Send again',
+                labelTextStyle: textTheme.captionRegular.copyWith(
+                  color: colors.inActive,
+                ),
+                actionLabelTextStyle: textTheme.captionMedium,
+                onAction: onResend,
+              ),
             Spaces.verticalXXLarge,
             MPrimaryButton(
               key: const Key('verify_submit'),
               label: 'Verify',
               loading: isVerifying,
-              disabled: isVerifying || !isValidAddress,
+              disabled: !canVerify,
               onPressed: () => di<AuthManager>().verifyEmail.run(
                 VerifyEmailArgs(
                   email: Email(address),
@@ -104,4 +167,13 @@ class EmailVerificationPage extends WatchingWidget {
       ),
     );
   }
+}
+
+/// Formats a countdown duration as `MM:SS`, always two digits each.
+String _formatCountdown(Duration duration) {
+  final totalSeconds =
+      duration.inSeconds.remainder(60).abs().clamp(0, 59);
+  final minutes =
+      duration.inMinutes.remainder(60).clamp(0, 59);
+  return '${minutes.toString().padLeft(2, '0')}:${totalSeconds.toString().padLeft(2, '0')}';
 }
