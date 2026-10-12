@@ -1,5 +1,5 @@
-import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -15,38 +15,16 @@ const List<Breakpoint> menoBreakpoints = [
   Breakpoint(start: 801, end: 1920, name: DESKTOP),
 ];
 
-/// One tab of the root shell.
-///
-/// A single list feeds both the bottom bar and the side rail so the two
-/// presentations can never drift apart.
-class _ShellTab {
-  const new({
-    required this.label,
-    required this.icon,
-    required this.activeIcon,
-  });
-
-  final String label;
-  final IconData icon;
-  final IconData activeIcon;
-}
-
 /// The app's top-level tabs, in branch order.
-
-/// The order must match the router's `StatefulShellBranch` order.
-const List<_ShellTab> _tabs = [
-  _ShellTab(label: 'Home', icon: MIcons.home_01, activeIcon: MIcons.home),
-  _ShellTab(
-    label: 'Discover',
-    icon: MIcons.compass,
-    activeIcon: MIcons.compass,
-  ),
-  _ShellTab(label: 'Notes', icon: MIcons.file_02, activeIcon: MIcons.file_02),
-  _ShellTab(
-    label: 'Profile',
-    icon: MIcons.user,
-    activeIcon: MIcons.user_circle,
-  ),
+///
+/// A single list of [MDestination]s feeds both the bottom bar and the side
+/// rail so the two presentations can never drift apart. The order must match
+/// the router's `StatefulShellBranch` order.
+const List<MDestination> _tabs = [
+  MDestination(icon: Icon(MIcons.home_01), label: 'Home'),
+  MDestination(icon: Icon(MIcons.compass), label: 'Discover'),
+  MDestination(icon: Icon(MIcons.file_02), label: 'Notes'),
+  MDestination(icon: Icon(MIcons.user), label: 'Profile'),
 ];
 
 /// The root navigation layout: bottom bar on phones, side rail on wider
@@ -78,10 +56,7 @@ class RootShell extends StatelessWidget {
         MSideNavRail(
           selectedIndex: index,
           onDestinationSelected: _onTabSelected,
-          destinations: [
-            for (final tab in _tabs)
-              MSideNavRailDestination(icon: Icon(tab.icon), label: tab.label),
-          ],
+          destinations: _tabs,
         ),
         Expanded(child: navigationShell),
       ],
@@ -93,14 +68,10 @@ class RootShell extends StatelessWidget {
       bottomNavigationBar = MBottomNavigationBar(
         currentIndex: index,
         onTap: _onTabSelected,
-        items: [
-          for (final tab in _tabs)
-            BottomNavigationBarItem(
-              icon: Icon(tab.icon),
-              activeIcon: Icon(tab.activeIcon),
-              label: tab.label,
-            ),
-        ],
+        destinations: _tabs,
+        centerItem: MMicrophone(
+          onTap: () => context.push(MRoutes.webCreateBroadcast),
+        ),
       );
     }
 
