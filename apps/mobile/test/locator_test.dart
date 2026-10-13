@@ -1,8 +1,10 @@
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
+import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -56,6 +58,22 @@ void main() {
 
       expect(di<OnboardingService>().isOnboarded, isTrue);
       expect(di<OnboardingManager>().isOnboarded.value, isTrue);
+    });
+
+    test("the theme manager follows the account's display setting", () async {
+      configureDependencies(_config);
+      await di.allReady();
+
+      final theme = di<ThemeManager>();
+      expect(theme.themeMode.value, ThemeMode.system);
+
+      di<SettingsManager>().toggleDarkMode.run(true);
+      await pumpEventQueue();
+      expect(theme.themeMode.value, ThemeMode.dark);
+
+      di<SettingsManager>().toggleDarkMode.run(false);
+      await pumpEventQueue();
+      expect(theme.themeMode.value, ThemeMode.light);
     });
 
     test('wires the logger policy to the config environment', () {

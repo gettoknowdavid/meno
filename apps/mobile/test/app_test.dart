@@ -35,6 +35,9 @@ void main() {
 
     expect(find.byType(MaterialApp), findsOneWidget);
     expect(find.text('Get started'), findsOneWidget);
+    // The theme the settings manager publishes reaches the app.
+    expect(tester.widget<MaterialApp>(find.byType(MaterialApp)).themeMode,
+        ThemeMode.system);
 
     await unmountTree(tester);
   });

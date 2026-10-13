@@ -6,6 +6,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
+import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -44,6 +45,12 @@ class MenoApp extends WatchingWidget {
       },
     );
 
+    // Registered eagerly, so it is watchable on every build — including the
+    // ones that render before the container is ready.
+    final themeMode = watchValue<ThemeManager, ThemeMode>(
+      (manager) => manager.themeMode,
+    );
+
     final readiness = createOnce(
       () => ValueNotifier<Future<void>>(di.allReady(timeout: _kInitTimeout)),
     );
@@ -57,6 +64,7 @@ class MenoApp extends WatchingWidget {
 
     if (snapshot.hasError) {
       return _AppFrame(
+        themeMode: themeMode,
         child: MScaffold(
           body: Center(
             child: MErrorState(
@@ -71,13 +79,14 @@ class MenoApp extends WatchingWidget {
     }
 
     if (snapshot.connectionState != .done) {
-      return const _AppFrame(child: MLoadingPage());
+      return _AppFrame(themeMode: themeMode, child: const MLoadingPage());
     }
 
     return MaterialApp.router(
       debugShowCheckedModeBanner: false,
       theme: MTheme.light,
       darkTheme: MTheme.dark,
+      themeMode: themeMode,
       routerConfig: di<GoRouter>(),
       builder: (context, child) => ResponsiveBreakpoints.builder(
         breakpoints: menoBreakpoints,
@@ -122,7 +131,10 @@ class MenoApp extends WatchingWidget {
 
 /// A themed frame for the states shown before the router exists.
 class _AppFrame extends StatelessWidget {
-  const new({required this.child});
+  const new({required this.themeMode, required this.child});
+
+  /// The theme the account's settings ask for.
+  final ThemeMode themeMode;
 
   final Widget child;
 
@@ -131,6 +143,7 @@ class _AppFrame extends StatelessWidget {
     debugShowCheckedModeBanner: false,
     theme: MTheme.light,
     darkTheme: MTheme.dark,
+    themeMode: themeMode,
     home: child,
   );
 }

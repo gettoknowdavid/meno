@@ -1,3 +1,4 @@
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -6,6 +7,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/onboarding.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
+import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 /// The app's service locator.
@@ -28,9 +30,11 @@ void configureDependencies(Config config) {
   di.pushNewScope(scopeName: Scope.root);
 
   _registerCore(config);
+  _registerPlatformServices();
   _registerOnboarding();
   _registerAuth();
   _registerProfile();
+  _registerSettings();
 
   di.registerLazySingleton<GoRouter>(_createRouter);
 }
@@ -64,6 +68,28 @@ void _registerCore(Config config) {
     dispose: (client) => client.onDispose(),
   );
   di.registerLazySingleton<MediaService>(MediaService.new);
+}
+
+/// Registers the services that wrap a platform capability.
+///
+/// All three are lazy: nothing is constructed, and no permission is asked for,
+/// until a screen that needs them resolves one. That is what keeps a cold start
+/// free of prompts.
+void _registerPlatformServices() {
+  di.registerLazySingleton<PermissionsService>(
+    () => PermissionsService(di<MenoLogger>()),
+    dispose: (service) => service.onDispose(),
+  );
+  di.registerLazySingleton<PushNotificationsService>(
+    () => PushNotificationsService(
+      FirebaseMessaging.instance,
+      di<MenoLogger>(),
+    ),
+    dispose: (service) => service.onDispose(),
+  );
+  di.registerLazySingleton<LocalNotificationsService>(
+    () => LocalNotificationsService(di<MenoLogger>()),
+  );
 }
 
 void _registerOnboarding() {
@@ -112,6 +138,29 @@ void _registerProfile() {
       http: di<ProfileHttpService>(),
       cache: di<ProfileCacheService>(),
       user: di<UserManager>(),
+    ).init(),
+    dependsOn: [AuthManager],
+    dispose: (manager) => manager.onDispose(),
+  );
+}
+
+void _registerSettings() {
+  di.registerLazySingleton<SettingsHttpService>(
+    () => SettingsHttpService(di<HttpClient>()),
+  );
+  di.registerLazySingleton<SettingsLocalService>(
+    () => SettingsLocalService(di<LocalStorage>()),
+  );
+  // Eager: the theme has to be known before the first frame, and before the
+  // account whose settings carry it has been loaded.
+  di.registerSingleton<ThemeManager>(ThemeManager());
+  di.registerSingletonAsync<SettingsManager>(
+    () => SettingsManager(
+      http: di<SettingsHttpService>(),
+      local: di<SettingsLocalService>(),
+      user: di<UserManager>(),
+      theme: di<ThemeManager>(),
+      logger: di<MenoLogger>(),
     ).init(),
     dependsOn: [AuthManager],
     dispose: (manager) => manager.onDispose(),

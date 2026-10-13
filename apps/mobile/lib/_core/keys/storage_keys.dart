@@ -28,6 +28,12 @@ final class StorageKeys {
   /// accounts shows that account's profile rather than the previous one's.
   static const String profile = 'profile.me';
 
+  /// The signed-in account's settings, as they were last fetched.
+  ///
+  /// Scoped to the account it describes through [forUser], so switching
+  /// accounts shows that account's switches rather than the previous one's.
+  static const String settings = 'settings.me';
+
   /// A profile that has been opened, kept so returning to it is instant.
   static const String publicProfile = 'profile.public';
 

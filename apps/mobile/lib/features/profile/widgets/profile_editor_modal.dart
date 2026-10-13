@@ -39,6 +39,8 @@ class ProfileEditorModal extends WatchingWidget {
       },
     );
 
+    final formKey = createOnce(GlobalKey<FormState>.new);
+
     // The command itself is watched rather than its results: it notifies only
     // when it finishes successfully, so there is no state to disentangle.
     registerHandler<ProfileEditorManager, MyProfile>(
@@ -56,9 +58,11 @@ class ProfileEditorModal extends WatchingWidget {
     );
 
     final manager = di<ProfileEditorManager>();
+
     final isSaving = watchValue<ProfileEditorManager, bool>(
       (manager) => manager.save.isRunning,
     );
+
     final isValid = watch(manager.isValid).value;
     final hasChanges = watch(manager.hasChanges).value;
 
@@ -67,7 +71,7 @@ class ProfileEditorModal extends WatchingWidget {
       builder: (context) => SingleChildScrollView(
         padding: MediaQuery.viewInsetsOf(context),
         child: Form(
-          key: createOnce(GlobalKey<FormState>.new),
+          key: formKey,
           autovalidateMode: .onUserInteraction,
           child: Column(
             crossAxisAlignment: .stretch,
@@ -146,9 +150,7 @@ class _Avatar extends StatelessWidget {
   /// to upload, so nothing about the save changes.
   Future<void> _pick(BuildContext context, {required bool fromGallery}) async {
     try {
-      final file = await di<MediaService>().getImage(
-        fromGallery: fromGallery,
-      );
+      final file = await di<MediaService>().getImage(fromGallery: fromGallery);
       if (file != null) manager.onAvatarChanged(file);
     } on Exception {
       if (context.mounted) {

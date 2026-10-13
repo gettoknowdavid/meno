@@ -8,6 +8,7 @@ enum MenoLogTag {
   auth('Auth'),
   chat('Chat'),
   push('Push'),
+  permissions('Permissions'),
   di('DI'),
   lifecycle('Lifecycle'),
   debug('Debug');
