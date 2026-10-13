@@ -1,173 +1,134 @@
-use crate::modules::notifications::model::codes;
-use crate::modules::notifications::service::NotificationService;
-use crate::modules::subscribers::dto::SubscriberItem;
-use crate::modules::subscribers::errors::SubscribersError;
-use crate::modules::subscribers::repository::{SubscribersRepo, SubscribersRepository};
-use crate::shared::identity::IdentityReader;
-use crate::shared::middleware::auth::AuthUser;
-use crate::shared::pagination::{Cursor, CursorPage, CursorParams};
-use crate::shared::types::dto::UserSummary;
-use sqlx::PgPool;
+//! The subscribers rules, as orchestration (§5.1's `service` row).
+//!
+//! # What changed from `master`
+//!
+//! - **It holds one trait object, not a pool and two collaborators.** `master`'s service
+//!   carried `Arc<dyn SubscribersRepo>`, an `Arc<dyn IdentityReader>` and an
+//!   `Arc<NotificationService>`; the last two existed for a user lookup and a notification,
+//!   and the lookup is now a method on the repository. One dependency, one thing to
+//!   substitute — which is what lets `tests/subscribers_service.rs` run the whole rule set
+//!   with no Postgres.
+//! - **One page method, not four.** `get_my_subscribers`, `get_my_subscriptions`,
+//!   `get_user_subscribers` and `get_user_subscriptions` were the same body four times,
+//!   differing in which direction they read and whether the owner was the caller. [`page`]
+//!   takes both, and the handler passes `auth.id` twice when they are equal.
+//! - **The 404 costs a query only when nothing happened.** Both writes answer whether they
+//!   changed a row; the second query, which turns "nothing changed" into "there is no such
+//!   user", runs only in that case.
+//! - **Unfollowing yourself is a success.** `master` answered
+//!   `CANNOT_SUBSCRIBE_TO_SELF` here too — a copy-paste of the subscribe guard, with a
+//!   message about subscribing. There is no row to delete (the migration's CHECK constraint
+//!   makes one impossible), so the postcondition the caller asked for already holds and
+//!   `DELETE` stays idempotent. Only [`subscribe`] refuses, and only for the verb it names.
+//!
+//! [`page`]: SubscribersService::page
+//! [`subscribe`]: SubscribersService::subscribe
+
 use std::sync::Arc;
-use tracing::instrument;
+
+use meno_core::{Cursor, CursorPage, CursorParams, Error as MenoError};
 use uuid::Uuid;
 
+use super::dto::{FollowDirection, SubscriberDto};
+use super::error;
+use super::repository::{FollowFilter, SubscribersRepo};
+
+/// The subscribers rules.
 #[derive(Clone)]
 pub struct SubscribersService {
     repo: Arc<dyn SubscribersRepo>,
-    identity: Arc<dyn IdentityReader>,
-    notifications: Arc<NotificationService>,
 }
+
 impl SubscribersService {
-    pub fn new(
-        db: PgPool,
-        identity: Arc<dyn IdentityReader>,
-        notifications: NotificationService,
-    ) -> Self {
-        let repo: Arc<dyn SubscribersRepo> = Arc::new(SubscribersRepository::new(db));
-        let notifications = Arc::new(notifications);
-        Self {
-            repo: Arc::clone(&repo),
-            identity,
-            notifications,
-        }
+    /// Build the service over its repository.
+    #[must_use]
+    pub fn new(repo: Arc<dyn SubscribersRepo>) -> Self {
+        Self { repo }
     }
 
-    #[instrument(skip(self, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
-    pub async fn subscribe(
-        &self,
-        auth_user: AuthUser,
-        subscription_id: Uuid,
-    ) -> Result<(), SubscribersError> {
-        if auth_user.id == subscription_id {
-            return Err(SubscribersError::CannotSubscribeToSelf);
+    /// Follow `target_id`.
+    ///
+    /// Idempotent: following somebody twice is one row, and the counters the trigger
+    /// maintains do not move twice. This is also the call site the `notifications` module
+    /// attaches to when it lands (`master` sent a `USER_SUBSCRIBED` row from here).
+    ///
+    /// # Errors
+    ///
+    /// [`error::cannot_subscribe_to_self`] as a `400`; [`error::user_not_found`] as a `404`
+    /// when no live account carries `target_id`.
+    pub async fn subscribe(&self, follower_id: Uuid, target_id: Uuid) -> Result<(), MenoError> {
+        if follower_id == target_id {
+            return Err(error::cannot_subscribe_to_self());
         }
 
-        let user = self
-            .identity
-            .find_user_by_id(subscription_id)
-            .await
-            .map_err(SubscribersError::Database)?
-            .ok_or(SubscribersError::SubscriberNotFound)?;
-
-        self.repo.create(auth_user.id, subscription_id).await?;
-
-        self.notifications
-            .notify(
-                subscription_id,
-                codes::USER_SUBSCRIBED,
-                Some(&UserSummary::from(user)),
-                None,
-                None,
-            )
-            .await
-            .unwrap_or_else(|e| {
-                tracing::warn!(error=%e, "Failed to send subscribe notification");
-            });
-
-        tracing::info!("Subscription created successfully");
+        if !self.repo.create(follower_id, target_id).await?
+            && !self.repo.user_exists(target_id).await?
+        {
+            return Err(error::user_not_found());
+        }
         Ok(())
     }
 
-    #[instrument(skip(self, auth_user), fields(auth_user_id = %auth_user.id, subscription_id = %subscription_id))]
-    pub async fn unsubscribe(
-        &self,
-        auth_user: AuthUser,
-        subscription_id: Uuid,
-    ) -> Result<(), SubscribersError> {
-        if auth_user.id == subscription_id {
-            return Err(SubscribersError::CannotSubscribeToSelf);
+    /// Stop following `target_id`.
+    ///
+    /// Idempotent: a follow that is not there is not an error, so a retried tap is a
+    /// success rather than a `404` the client would have to interpret.
+    ///
+    /// # Errors
+    ///
+    /// [`error::user_not_found`] as a `404` when no live account carries `target_id`.
+    pub async fn unsubscribe(&self, follower_id: Uuid, target_id: Uuid) -> Result<(), MenoError> {
+        if !self.repo.remove(follower_id, target_id).await?
+            && !self.repo.user_exists(target_id).await?
+        {
+            return Err(error::user_not_found());
         }
-
-        self.identity
-            .find_user_by_id(subscription_id)
-            .await
-            .map_err(SubscribersError::Database)?
-            .ok_or(SubscribersError::SubscriberNotFound)?;
-
-        self.repo.delete(auth_user.id, subscription_id).await?;
         Ok(())
     }
 
-    #[instrument(skip(self, params), fields(auth_id = %auth_id))]
-    pub async fn get_my_subscribers(
+    /// One page of `owner_id`'s followers or followees, annotated for `viewer_id`.
+    ///
+    /// The cursor decodes here, where a bad one becomes a `400` through
+    /// `From<CursorError> for Error`, and binds in `repository` — a half-decoded cursor
+    /// never reaches SQL.
+    ///
+    /// # Errors
+    ///
+    /// [`error::user_not_found`] when no live account carries `owner_id`; a `400`
+    /// `INVALID_CURSOR` for a malformed cursor; a repository failure otherwise.
+    pub async fn page(
         &self,
-        auth_id: Uuid,
+        direction: FollowDirection,
+        owner_id: Uuid,
+        viewer_id: Uuid,
         params: &CursorParams,
-    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
-        if !self.repo.user_exists(auth_id).await? {
-            return Err(SubscribersError::SubscriberNotFound);
-        }
+    ) -> Result<CursorPage<SubscriberDto>, MenoError> {
+        let cursor = params
+            .cursor
+            .as_ref()
+            .map(Cursor::to_timestamp_id)
+            .transpose()?;
 
         let rows = self
             .repo
-            .find_subscribers(auth_id, Some(auth_id), params)
+            .find_follows(&FollowFilter {
+                owner_id,
+                viewer_id,
+                direction,
+                cursor,
+                limit_plus_one: params.limit_plus_one(),
+            })
             .await?;
 
-        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
-            Cursor::from_timestamp_id(r.subscribed_at, r.id)
-        }))
-    }
-
-    #[instrument(skip(self, params), fields(auth_id = %auth_id))]
-    pub async fn get_my_subscriptions(
-        &self,
-        auth_id: Uuid,
-        params: &CursorParams,
-    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
-        if !self.repo.user_exists(auth_id).await? {
-            return Err(SubscribersError::SubscriberNotFound);
+        // An empty page is either the end of a list or a user who does not exist, and only
+        // the second is a 404. Asking only when the page came back empty is what keeps the
+        // common path at one query.
+        if rows.is_empty() && !self.repo.user_exists(owner_id).await? {
+            return Err(error::user_not_found());
         }
 
-        let rows = self
-            .repo
-            .find_subscriptions(auth_id, Some(auth_id), params)
-            .await?;
-
-        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
-            Cursor::from_timestamp_id(r.subscribed_at, r.id)
-        }))
-    }
-
-    #[instrument(skip(self, params), fields(auth_id = %auth_id, user_id = %user_id))]
-    pub async fn get_user_subscribers(
-        &self,
-        auth_id: Uuid,
-        user_id: Uuid,
-        params: &CursorParams,
-    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
-        if !self.repo.user_exists(user_id).await? {
-            return Err(SubscribersError::SubscriberNotFound);
-        }
-
-        let rows = self
-            .repo
-            .find_subscribers(user_id, Some(auth_id), params)
-            .await?;
-
-        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
-            Cursor::from_timestamp_id(r.subscribed_at, r.id)
-        }))
-    }
-
-    #[instrument(skip(self, params), fields(auth_id = %auth_id, user_id = %user_id))]
-    pub async fn get_user_subscriptions(
-        &self,
-        auth_id: Uuid,
-        user_id: Uuid,
-        params: &CursorParams,
-    ) -> Result<CursorPage<SubscriberItem>, SubscribersError> {
-        if !self.repo.user_exists(user_id).await? {
-            return Err(SubscribersError::SubscriberNotFound);
-        }
-
-        let rows = self
-            .repo
-            .find_subscriptions(user_id, Some(auth_id), params)
-            .await?;
-
-        Ok(CursorPage::from_rows(rows, params.limit(), |r| {
-            Cursor::from_timestamp_id(r.subscribed_at, r.id)
+        Ok(CursorPage::from_rows(rows, params.limit(), |row| {
+            Cursor::from_timestamp_id(row.subscribed_at, row.id)
         }))
     }
 }

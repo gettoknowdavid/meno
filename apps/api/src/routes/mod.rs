@@ -46,6 +46,7 @@ mod metrics;
 mod notes;
 mod profile;
 mod settings;
+mod subscribers;
 mod ws;
 
 use std::sync::Arc;
@@ -65,6 +66,7 @@ pub use health::HEALTH_PATHS;
 pub use notes::NOTES_PATHS;
 pub use profile::PROFILE_PATHS;
 pub use settings::SETTINGS_PATHS;
+pub use subscribers::SUBSCRIBERS_PATHS;
 
 /// Build the application's routes.
 ///
@@ -89,6 +91,7 @@ pub fn build_routes(state: MenoState) -> Router {
     let redis_for_notes = Arc::clone(&redis);
     let redis_for_profile = Arc::clone(&redis);
     let redis_for_settings = Arc::clone(&redis);
+    let redis_for_subscribers = Arc::clone(&redis);
 
     let router = Router::new()
         .route("/health", get(health::liveness))
@@ -148,6 +151,14 @@ pub fn build_routes(state: MenoState) -> Router {
             profile::routes(state.auth_guard.clone(), redis_for_profile)
                 .with_state(state.profile.clone()),
         )
+        // Subscribers is merged for the same reason notes is: its paths are written
+        // `/subscribers/...` in full inside its own table. It is *not* nested under
+        // `/users` even though it describes users — `/subscribers/{creatorId}` is the path
+        // the clients were given.
+        .merge(
+            subscribers::routes(state.auth_guard.clone(), redis_for_subscribers)
+                .with_state(state.subscribers.clone()),
+        )
         .nest(
             "/settings",
             settings::routes(state.auth_guard.clone(), redis_for_settings)
@@ -186,6 +197,7 @@ mod tests {
             .chain(HEALTH_PATHS)
             .chain(NOTES_PATHS)
             .chain(PROFILE_PATHS)
+            .chain(SUBSCRIBERS_PATHS)
             .chain(SETTINGS_PATHS)
             .copied()
             .collect()
@@ -227,9 +239,9 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            38,
+            43,
             "fourteen auth endpoints, nine broadcast ones, one chat, six notes/folders, \
-             four profile, two settings and two probes"
+             five subscribers, four profile, two settings and two probes"
         );
     }
 
@@ -248,6 +260,7 @@ mod tests {
             (HEALTH_PATHS, "/health"),
             (NOTES_PATHS, "/"),
             (PROFILE_PATHS, "/users"),
+            (SUBSCRIBERS_PATHS, "/"),
             (SETTINGS_PATHS, "/settings"),
         ] {
             for &path in paths {

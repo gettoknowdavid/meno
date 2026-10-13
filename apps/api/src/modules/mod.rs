@@ -15,10 +15,10 @@
 //!
 //! # What has landed
 //!
-//! [`auth`], [`broadcast`], [`profile`], [`settings`], [`chat`] and [`notes`]. The rest of
-//! §2's tree — `subscribers`, `notifications` — is declared as it is written rather than
-//! stubbed, because a `pub mod` with an empty body is a module that compiles and does
-//! nothing.
+//! [`auth`], [`broadcast`], [`profile`], [`settings`], [`chat`], [`notes`] and
+//! [`subscribers`]. The rest of §2's tree — `notifications` — is declared as it is written
+//! rather than stubbed, because a `pub mod` with an empty body is a module that compiles
+//! and does nothing.
 //!
 //! [`broadcast`] landed second and shows the pattern at its clearest: a module that
 //! needs an external dependency it may not have (LiveKit, §4.6) takes that as a
@@ -28,13 +28,20 @@
 //! arrive together because `/users/me` embeds the settings block: neither module is
 //! honest on its own.
 //!
-//! [`chat`] landed last and is the one that shows the layer rule under pressure: it
+//! [`chat`] landed next and is the one that shows the layer rule under pressure: it
 //! needs the same two tables `broadcast` owns (`broadcasts` for "is this live",
 //! `broadcast_participants` for "is this person in the room"), and it reads them through
 //! its own SQL rather than through that module's repository. A sideways import would
 //! make chat's behaviour depend on broadcast's internals — and the alternative, a
 //! service that both call, is the god object §9.3 rules out. The duplication is two
 //! `EXISTS` clauses; the coupling it avoids is a module boundary.
+//!
+//! [`notes`] and [`subscribers`] landed after it. Subscribers is the smallest of the set —
+//! one join table, one read, two writes — and the module where a `master`-era collaborator
+//! (`IdentityReader`) was deleted rather than carried, because the one fact it supplied was
+//! an `EXISTS` against a table the module already knew. Notes is the largest, and the one
+//! whose transactions had to move into the adapter before any of its rules could be tested
+//! without Postgres.
 //!
 //! # The two modules that reference each other
 //!
@@ -66,3 +73,4 @@ pub mod chat;
 pub mod notes;
 pub mod profile;
 pub mod settings;
+pub mod subscribers;
