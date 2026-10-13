@@ -32,12 +32,15 @@
 //! frame dispatch through [`WsEvent::is_client_to_server`], and the cleanup that
 //! unregisters the socket and clears presence.
 //!
-//! **Not** wired, because the modules they belong to do not exist in the monorepo yet:
-//! room join/leave, the host grace period, and the chat events' real handlers.
-//! `master`'s equivalent reached into `modules::broadcast`, `modules::chat` and
-//! `jobs/`; here those four events are answered with an honest "not available yet"
-//! connection error, and the room bookkeeping attaches to [`handle_socket`] at the
-//! same points `master` used when those modules land.
+//! Wired since the chat module landed: the four chat frames are parsed, validated and
+//! dispatched into [`crate::modules::chat::service`] by [`handle_chat_frame`], and a
+//! refusal comes back as the socket code the client can act on.
+//!
+//! **Still not wired**, because the modules they belong to do not exist in the monorepo
+//! yet: room join/leave and the host grace period. `master`'s equivalent reached into
+//! `modules::broadcast` and `jobs/`; those events are answered with an honest "not
+//! available yet" connection error, and the room bookkeeping attaches to
+//! [`handle_socket`] at the same points `master` used when those modules land.
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -51,19 +54,26 @@ use axum::response::Response;
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use meno_core::{Error as MenoError, ErrorCode};
-use serde_json::json;
+use serde::de::DeserializeOwned;
+use serde_json::{Value, json};
 use tokio::sync::{Mutex, mpsc};
 use tokio::task::JoinHandle;
 use tokio::time::{interval, timeout};
 use uuid::Uuid;
+use validator::Validate;
 
 use crate::infrastructure::constants::MAX_WS_CONNECTIONS_PER_USER;
 use crate::infrastructure::redis::keys::{RedisKey, ttl};
+use crate::infrastructure::ws::dto::{
+    WsDeleteMessage, WsEditMessage, WsSendMessage, WsSendReaction,
+};
 use crate::infrastructure::ws::{
     ClientMessage, HeartbeatConfig, WsEvent, WsPayload, WsQuery, WsService,
 };
 use crate::middleware::auth::AuthUser;
 use crate::modules::auth::handlers::Failure;
+use crate::modules::chat::error as chat_error;
+use crate::modules::chat::service::ChatMember;
 use crate::state::MenoState;
 
 /// Reconnect attempts one user may make inside [`ttl::RECONNECT_RATE`].
@@ -475,9 +485,10 @@ async fn run_read_loop(
 /// is a property of the variant, not of an allow-list someone has to remember to
 /// extend.
 ///
-/// The four chat events parse as themselves and then answer honestly — `modules::chat`
-/// is not ported, and a connection error saying so is the truthful response until it
-/// is. `master` routed them into `modules::chat::handlers` here.
+/// The chat frames are handed to [`handle_chat_frame`], which parses them into their
+/// own types and calls the chat service — the same shape `master` used when it routed
+/// them into `modules::chat::handlers`, minus the handler functions that existed only
+/// to be called from here.
 async fn handle_client_message(state: &MenoState, user_id: Uuid, raw: &str) {
     let message: ClientMessage = match serde_json::from_str(raw) {
         Ok(message) => message,
@@ -533,15 +544,7 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw: &str) {
         | WsEvent::EditMessage
         | WsEvent::DeleteMessage
         | WsEvent::SendReaction => {
-            tracing::debug!(
-                user.id = %user_id,
-                event = %message.event,
-                "chat event received; the chat module is not ported yet"
-            );
-            state
-                .ws
-                .send_connection_error(user_id, format!("{} is not available yet", message.event))
-                .await;
+            handle_chat_frame(state, user_id, &message).await;
         }
         // Unreachable behind `is_client_to_server` — and that is the point: a variant
         // added to that predicate without a handler lands here as a refusal the client
@@ -554,6 +557,213 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw: &str) {
                 .await;
         }
     }
+}
+
+/// Parse one chat frame, call the rule it names, and answer honestly.
+///
+/// # Why the parse lives here rather than in the chat module
+///
+/// The frame *shape* is a fact about the socket ([`crate::infrastructure::ws::dto`]), and
+/// the identity that fills in `sender_id` is a fact about the connection. Both are this
+/// file's concerns; the chat module is handed a [`ChatMember`] and a body and knows
+/// nothing about envelopes.
+///
+/// # A refusal is an error frame, never a dropped message
+///
+/// Every failure path answers on the socket: a malformed frame gets a connection error
+/// (`UNSUPPORTED`, non-fatal), and a rule refusal gets the code
+/// [`chat_error::ws_code`] chooses. Silence would leave the client showing a message the
+/// room never received.
+async fn handle_chat_frame(state: &MenoState, user_id: Uuid, message: &ClientMessage) {
+    let member = |broadcast_id: Uuid| ChatMember {
+        broadcast_id,
+        user_id,
+    };
+
+    match message.event {
+        WsEvent::SendMessage => {
+            let Ok(request) = parse_frame::<WsSendMessage>(state, user_id, message).await else {
+                return;
+            };
+            match state
+                .chat
+                .service
+                .send_message(member(request.broadcast_id), &request.content)
+                .await
+            {
+                Ok(sent) => {
+                    tracing::debug!(user.id = %user_id, message_id = %sent.id, "chat message sent")
+                }
+                Err(failure) => {
+                    send_chat_error(
+                        state,
+                        user_id,
+                        request.broadcast_id,
+                        message.event,
+                        &failure,
+                    )
+                    .await;
+                }
+            }
+        }
+        WsEvent::EditMessage => {
+            let Ok(request) = parse_frame::<WsEditMessage>(state, user_id, message).await else {
+                return;
+            };
+            match state
+                .chat
+                .service
+                .edit_message(
+                    member(request.broadcast_id),
+                    request.message_id,
+                    &request.content,
+                )
+                .await
+            {
+                Ok(edited) => {
+                    tracing::debug!(user.id = %user_id, message_id = %edited.id, "chat message edited")
+                }
+                Err(failure) => {
+                    send_chat_error(
+                        state,
+                        user_id,
+                        request.broadcast_id,
+                        message.event,
+                        &failure,
+                    )
+                    .await;
+                }
+            }
+        }
+        WsEvent::DeleteMessage => {
+            let Ok(request) = parse_frame::<WsDeleteMessage>(state, user_id, message).await else {
+                return;
+            };
+            match state
+                .chat
+                .service
+                .delete_message(member(request.broadcast_id), request.message_id)
+                .await
+            {
+                Ok(()) => {
+                    tracing::debug!(user.id = %user_id, message_id = %request.message_id, "chat message deleted")
+                }
+                Err(failure) => {
+                    send_chat_error(
+                        state,
+                        user_id,
+                        request.broadcast_id,
+                        message.event,
+                        &failure,
+                    )
+                    .await;
+                }
+            }
+        }
+        WsEvent::SendReaction => {
+            let Ok(request) = parse_frame::<WsSendReaction>(state, user_id, message).await else {
+                return;
+            };
+            match state
+                .chat
+                .service
+                .send_reaction(member(request.broadcast_id), &request.content)
+                .await
+            {
+                Ok(reaction) => {
+                    tracing::debug!(user.id = %user_id, reaction_id = %reaction.id, "chat reaction sent")
+                }
+                Err(failure) => {
+                    send_chat_error(
+                        state,
+                        user_id,
+                        request.broadcast_id,
+                        message.event,
+                        &failure,
+                    )
+                    .await;
+                }
+            }
+        }
+        // Unreachable: the caller matches these four variants before it gets here.
+        other => {
+            tracing::warn!(user.id = %user_id, event = %other, "non-chat frame reached the chat dispatcher")
+        }
+    }
+}
+
+/// Read and validate a chat frame's body.
+///
+/// The pure half of [`parse_frame`], split out so the boundary can be tested without a
+/// [`MenoState`]: deserialise into the frame's own type, then run its `Validate` rules.
+/// Both failures come back as one message, because a client can act on neither.
+///
+/// # Errors
+///
+/// A body that is not the frame it claims to be, or one whose fields break the length
+/// rules stated on the type.
+fn read_frame<T: DeserializeOwned + Validate>(data: &Value) -> Result<T, String> {
+    let request: T = serde_json::from_value(data.clone())
+        .map_err(|error| format!("unreadable body ({error})"))?;
+    request
+        .validate()
+        .map_err(|error| format!("invalid body ({error})"))?;
+
+    Ok(request)
+}
+
+/// Read a chat frame, answering the client itself when it cannot be read.
+///
+/// `Err(())` is returned only after the failure has been reported on the socket, so the
+/// caller's `let Ok(…) = … else { return }` is the whole error path — and a frame is
+/// never dropped in silence, which would leave the client showing a message the room
+/// never received.
+async fn parse_frame<T: DeserializeOwned + Validate>(
+    state: &MenoState,
+    user_id: Uuid,
+    message: &ClientMessage,
+) -> Result<T, ()> {
+    match read_frame::<T>(&message.data) {
+        Ok(request) => Ok(request),
+        Err(problem) => {
+            tracing::warn!(
+                user.id = %user_id,
+                event = %message.event,
+                detail = %problem,
+                "malformed chat frame"
+            );
+            state
+                .ws
+                .send_connection_error(user_id, format!("{}: {problem}", message.event))
+                .await;
+            Err(())
+        }
+    }
+}
+
+/// Report a refused chat frame on the socket it arrived on.
+///
+/// The code comes from [`chat_error::ws_code`], so a client's reaction — retry, rejoin,
+/// or drop the frame — is decided by the taxonomy rather than by each call site.
+async fn send_chat_error(
+    state: &MenoState,
+    user_id: Uuid,
+    broadcast_id: Uuid,
+    event: WsEvent,
+    failure: &MenoError,
+) {
+    let code = chat_error::ws_code(failure);
+    tracing::debug!(
+        user.id = %user_id,
+        event = %event,
+        code = ?code,
+        detail = %failure,
+        "chat frame refused"
+    );
+    state
+        .ws
+        .send_error(user_id, broadcast_id, code, failure.to_string())
+        .await;
 }
 
 #[cfg(test)]
@@ -613,6 +823,31 @@ mod tests {
             .expect("a token is present");
 
         assert_eq!(token, "abc.def.ghi");
+    }
+
+    #[test]
+    fn a_chat_frame_reads_its_body_or_is_refused() {
+        // `parse_frame` is the seam between the envelope and the chat module, and the
+        // interesting case is the one that must *not* reach the service: a body that
+        // deserialises but fails validation, which is a message the column could not
+        // hold.
+        let body = |content: &str| json!({ "broadcastId": Uuid::from_u128(1), "content": content });
+
+        let ok: Result<WsSendMessage, String> = read_frame(&body("hello"));
+        assert!(ok.is_ok());
+
+        let too_long: Result<WsSendMessage, String> = read_frame(&body(&"a".repeat(257)));
+        assert!(too_long.is_err(), "257 characters is wider than the column");
+
+        let empty: Result<WsSendMessage, String> = read_frame(&body(""));
+        assert!(empty.is_err(), "an empty message is not a message");
+
+        // A body that is not the frame it claims to be, and a body that is not an
+        // object at all, are both read errors rather than panics.
+        let wrong_shape: Result<WsDeleteMessage, String> = read_frame(&body("hi"));
+        assert!(wrong_shape.is_err());
+        let not_an_object: Result<WsSendMessage, String> = read_frame(&json!("hi"));
+        assert!(not_an_object.is_err());
     }
 
     #[test]

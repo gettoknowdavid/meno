@@ -10,23 +10,28 @@
 //! module, so the file was dead: a description of an application rather than part of one.
 //!
 //! This is the same idea rebuilt around what actually exists. **Auth, broadcasts,
-//! profile and settings are the refactored modules**, so [`MenoState`] carries those
-//! four plus the infrastructure every module will need. When the next module lands it
-//! adds a field here, and nothing else in this file changes — which is the property
-//! worth preserving.
+//! profile, settings and chat are the refactored modules**, so [`MenoState`] carries
+//! those five plus the infrastructure every module will need. When the next module
+//! lands it adds a field here, and nothing else in this file changes — which is the
+//! property worth preserving.
 //!
 //! # Why not the other modules
 //!
 //! Three reasons, and the third is the one that matters:
 //!
-//! 1. **They do not exist.** There is no `modules::subscribers`, no `modules::chat`,
+//! 1. **They do not exist.** There is no `modules::subscribers`, no `modules::notes`,
 //!    no `jobs/`. Naming them would not compile.
-//! 2. **A field is a promise.** `pub chat: ChatState` would assert that the chat
-//!    routes work, that the adapter is wired, and that someone can review it. With no
-//!    implementation behind it the field is a lie the type system cannot catch.
+//! 2. **A field is a promise.** A field asserts that the module's routes work, that
+//!    its adapters are wired, and that someone can review it. With no implementation
+//!    behind it the field is a lie the type system cannot catch — which is why `chat
+//!    : ChatState` was left out until the module behind it existed.
 //! 3. **The alternative already failed once.** `master` shipped all thirteen and the
 //!    result was a wiring layer that could not be compiled, tested, or reasoned about
 //!    without the modules underneath it. Rebuilding it incrementally is the point.
+//!
+//! [`ChatState`](crate::modules::chat::state::ChatState) is the newest of the five and
+//! the one that needed the least: one pool and the pub/sub bridge, because a chat event
+//! has to reach sockets on *other* replicas ([`Self::ws_bridge`]) and nothing else.
 //!
 //! # No handler takes `&MenoState`
 //!
@@ -54,6 +59,7 @@ use crate::infrastructure::storage::ObjectStore;
 use crate::modules::auth::mailer::AuthMailer;
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::chat::state::ChatState;
 use crate::modules::profile::state::ProfileState;
 use crate::modules::settings::state::SettingsState;
 
@@ -89,6 +95,13 @@ pub struct MenoState {
     /// contract, two directories, and two fields that must be wired together or
     /// neither answers honestly.
     pub settings: SettingsState,
+    /// Broadcast chat: history, messages and reactions (§2's tree).
+    ///
+    /// Built from a pool and the pub/sub bridge, and nothing else — which is the whole
+    /// of what chat needs. The bridge rather than [`Self::ws`] on purpose: a message
+    /// published to the local registry only would reach the sender's neighbours and
+    /// nobody else, and a room's participants are spread across replicas.
+    pub chat: ChatState,
     /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
     ///
     /// Built here rather than in `routes.rs` because it is fallible — a blank
@@ -172,6 +185,15 @@ impl axum::extract::FromRef<MenoState> for SettingsState {
     }
 }
 
+/// The same projection for chat — the fifth, and the last one that needs an `impl`
+/// rather than a merge: chat's paths live under `/broadcasts/{id}/...`, so it is merged
+/// at the root like the broadcast table and lifted with `with_state` at the same time.
+impl axum::extract::FromRef<MenoState> for ChatState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.chat.clone()
+    }
+}
+
 impl std::fmt::Debug for MenoState {
     /// Names the fields and nothing else.
     ///
@@ -189,6 +211,7 @@ impl std::fmt::Debug for MenoState {
             .field("broadcast", &self.broadcast)
             .field("profile", &self.profile)
             .field("settings", &self.settings)
+            .field("chat", &self.chat)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
             .field("metrics", &self.metrics)
@@ -308,6 +331,14 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         redis: parts.redis.clone(),
     });
 
+    // Chat: one pool and the bridge. The bridge is passed as an `Arc` because chat is
+    // not its only user — the broadcast module publishes room events through it too —
+    // and a second subscriber connection per module would be a connection nobody needs.
+    let chat = ChatState::new(crate::modules::chat::state::Wiring {
+        pool: parts.db.clone(),
+        bridge: Arc::new(ws_bridge.clone()),
+    });
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
@@ -323,6 +354,9 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         // avatar upload with a 503.
         profile,
         settings,
+        // Chat (§2's tree). A pool and the bridge, so a message stored on this replica
+        // is announced to the room wherever its sockets live.
+        chat,
         auth_guard,
         push: parts.push,
         storage: parts.storage,

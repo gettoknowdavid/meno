@@ -327,6 +327,26 @@ pub struct ParticipantWsResponseData {
     pub avatar_url: Option<String>,
 }
 
+/// `sendMessage` request body.
+///
+/// The counterpart to [`WsEditMessage`], and the frame a client sends most often. Its
+/// absence was the reason the socket's send path could only answer "not available yet":
+/// the event existed (`WsEvent::SendMessage`) but there was no type to parse its `data`
+/// into.
+///
+/// There is no `senderId` field, by design: the identity is filled in by the read loop
+/// from the authenticated socket, so a client cannot post as somebody else by adding one.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Validate)]
+#[serde(rename_all = "camelCase")]
+pub struct WsSendMessage {
+    /// Broadcast to post in.
+    pub broadcast_id: Uuid,
+    /// Message body. 1–256 characters, the width of the `chat_messages.content` column,
+    /// enforced by `Validate` so the bound is stated next to the field it protects.
+    #[validate(length(min = 1, max = 256))]
+    pub content: String,
+}
+
 /// `editMessage` request body.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
@@ -535,6 +555,50 @@ mod tests {
 
         // Missing `data` is likewise rejected.
         assert!(serde_json::from_str::<ClientMessage>(r#"{"event":"heartbeat"}"#).is_err());
+    }
+
+    #[test]
+    fn send_message_bounds_the_content_length() {
+        // The bound lives in the `Validate` attribute; this proves it is wired up, and
+        // that the limit is the column's width rather than a number chosen twice.
+        let ok = WsSendMessage {
+            broadcast_id: id(1),
+            content: "a".repeat(256),
+        };
+        assert!(validator::Validate::validate(&ok).is_ok());
+
+        let empty = WsSendMessage {
+            content: String::new(),
+            ..ok.clone()
+        };
+        assert!(validator::Validate::validate(&empty).is_err());
+
+        let too_long = WsSendMessage {
+            content: "a".repeat(257),
+            ..ok
+        };
+        assert!(validator::Validate::validate(&too_long).is_err());
+    }
+
+    #[test]
+    fn send_message_deserialises_from_the_camel_case_wire_shape() {
+        let raw = r#"{
+            "broadcastId": "00000000-0000-0000-0000-000000000001",
+            "content": "hello"
+        }"#;
+        let parsed: WsSendMessage = serde_json::from_str(raw).expect("deserialise");
+        assert_eq!(parsed.broadcast_id, id(1));
+        assert_eq!(parsed.content, "hello");
+
+        // A snake_case body is refused rather than half-parsed: the module's own field
+        // would be `missing`, and silently posting an empty message is worse than an
+        // error the client can see.
+        assert!(
+            serde_json::from_str::<WsSendMessage>(
+                r#"{"broadcast_id":"00000000-0000-0000-0000-000000000001","content":"hi"}"#
+            )
+            .is_err()
+        );
     }
 
     #[test]

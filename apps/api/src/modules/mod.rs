@@ -15,8 +15,8 @@
 //!
 //! # What has landed
 //!
-//! [`auth`], [`broadcast`], [`profile`] and [`settings`]. The rest of §2's tree —
-//! `subscribers`, `notifications`, `chat`, `notes` — is declared as it is written
+//! [`auth`], [`broadcast`], [`profile`], [`settings`] and [`chat`]. The rest of §2's
+//! tree — `subscribers`, `notifications`, `notes` — is declared as it is written
 //! rather than stubbed, because a `pub mod` with an empty body is a module that
 //! compiles and does nothing.
 //!
@@ -27,6 +27,14 @@
 //! same shape — `Wiring { pool, redis, storage }` and `Wiring { pool, redis }` — and
 //! arrive together because `/users/me` embeds the settings block: neither module is
 //! honest on its own.
+//!
+//! [`chat`] landed last and is the one that shows the layer rule under pressure: it
+//! needs the same two tables `broadcast` owns (`broadcasts` for "is this live",
+//! `broadcast_participants` for "is this person in the room"), and it reads them through
+//! its own SQL rather than through that module's repository. A sideways import would
+//! make chat's behaviour depend on broadcast's internals — and the alternative, a
+//! service that both call, is the god object §9.3 rules out. The duplication is two
+//! `EXISTS` clauses; the coupling it avoids is a module boundary.
 //!
 //! # The two modules that reference each other
 //!
@@ -54,5 +62,6 @@
 
 pub mod auth;
 pub mod broadcast;
+pub mod chat;
 pub mod profile;
 pub mod settings;

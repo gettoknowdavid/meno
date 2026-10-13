@@ -39,6 +39,7 @@
 
 mod auth;
 mod broadcasts;
+mod chat;
 mod health;
 mod layers;
 mod metrics;
@@ -58,6 +59,7 @@ use crate::state::MenoState;
 // than re-declared: a list written twice is a list that will disagree with the router.
 pub use auth::{AUTH_PATHS, PROTECTED_PATHS};
 pub use broadcasts::BROADCAST_PATHS;
+pub use chat::CHAT_PATHS;
 pub use health::HEALTH_PATHS;
 pub use profile::PROFILE_PATHS;
 pub use settings::SETTINGS_PATHS;
@@ -81,6 +83,7 @@ pub fn build_routes(state: MenoState) -> Router {
     let redis = Arc::new(state.redis.clone());
     let idempotency_for_auth = Arc::clone(&redis);
     let redis_for_broadcasts = Arc::clone(&redis);
+    let redis_for_chat = Arc::clone(&redis);
     let redis_for_profile = Arc::clone(&redis);
     let redis_for_settings = Arc::clone(&redis);
 
@@ -123,6 +126,12 @@ pub fn build_routes(state: MenoState) -> Router {
             broadcasts::routes(state.auth_guard.clone(), redis_for_broadcasts)
                 .with_state(state.broadcast.clone()),
         )
+        // Chat is merged for the same reason broadcast is: its one path is written
+        // `/broadcasts/{id}/chat/messages` in full inside its own table, so nesting it
+        // under `/broadcasts` would strip the prefix and serve `/broadcasts/broadcasts/…`.
+        .merge(
+            chat::routes(state.auth_guard.clone(), redis_for_chat).with_state(state.chat.clone()),
+        )
         .nest(
             "/users",
             // Relative paths inside, the nest carries the prefix — the auth pattern,
@@ -164,6 +173,7 @@ mod tests {
         AUTH_PATHS
             .iter()
             .chain(BROADCAST_PATHS)
+            .chain(CHAT_PATHS)
             .chain(HEALTH_PATHS)
             .chain(PROFILE_PATHS)
             .chain(SETTINGS_PATHS)
@@ -207,8 +217,9 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            31,
-            "fourteen auth endpoints, nine broadcast ones, four profile, two settings and two probes"
+            32,
+            "fourteen auth endpoints, nine broadcast ones, one chat, four profile, \
+             two settings and two probes"
         );
     }
 
@@ -223,6 +234,7 @@ mod tests {
         for (paths, prefix) in [
             (AUTH_PATHS, "/auth"),
             (BROADCAST_PATHS, "/"),
+            (CHAT_PATHS, "/"),
             (HEALTH_PATHS, "/health"),
             (PROFILE_PATHS, "/users"),
             (SETTINGS_PATHS, "/settings"),
