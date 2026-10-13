@@ -43,6 +43,7 @@ mod chat;
 mod health;
 mod layers;
 mod metrics;
+mod notes;
 mod profile;
 mod settings;
 mod ws;
@@ -61,6 +62,7 @@ pub use auth::{AUTH_PATHS, PROTECTED_PATHS};
 pub use broadcasts::BROADCAST_PATHS;
 pub use chat::CHAT_PATHS;
 pub use health::HEALTH_PATHS;
+pub use notes::NOTES_PATHS;
 pub use profile::PROFILE_PATHS;
 pub use settings::SETTINGS_PATHS;
 
@@ -84,6 +86,7 @@ pub fn build_routes(state: MenoState) -> Router {
     let idempotency_for_auth = Arc::clone(&redis);
     let redis_for_broadcasts = Arc::clone(&redis);
     let redis_for_chat = Arc::clone(&redis);
+    let redis_for_notes = Arc::clone(&redis);
     let redis_for_profile = Arc::clone(&redis);
     let redis_for_settings = Arc::clone(&redis);
 
@@ -132,6 +135,12 @@ pub fn build_routes(state: MenoState) -> Router {
         .merge(
             chat::routes(state.auth_guard.clone(), redis_for_chat).with_state(state.chat.clone()),
         )
+        // Notes and folders are merged at the root for the same reason broadcast is: their
+        // paths are written `/notes/...` and `/folders/...` in full inside their own table.
+        .merge(
+            notes::routes(state.auth_guard.clone(), redis_for_notes)
+                .with_state(state.notes.clone()),
+        )
         .nest(
             "/users",
             // Relative paths inside, the nest carries the prefix — the auth pattern,
@@ -175,6 +184,7 @@ mod tests {
             .chain(BROADCAST_PATHS)
             .chain(CHAT_PATHS)
             .chain(HEALTH_PATHS)
+            .chain(NOTES_PATHS)
             .chain(PROFILE_PATHS)
             .chain(SETTINGS_PATHS)
             .copied()
@@ -217,9 +227,9 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            32,
-            "fourteen auth endpoints, nine broadcast ones, one chat, four profile, \
-             two settings and two probes"
+            38,
+            "fourteen auth endpoints, nine broadcast ones, one chat, six notes/folders, \
+             four profile, two settings and two probes"
         );
     }
 
@@ -236,6 +246,7 @@ mod tests {
             (BROADCAST_PATHS, "/"),
             (CHAT_PATHS, "/"),
             (HEALTH_PATHS, "/health"),
+            (NOTES_PATHS, "/"),
             (PROFILE_PATHS, "/users"),
             (SETTINGS_PATHS, "/settings"),
         ] {

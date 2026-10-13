@@ -60,6 +60,7 @@ use crate::modules::auth::mailer::AuthMailer;
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
 use crate::modules::chat::state::ChatState;
+use crate::modules::notes::state::NotesState;
 use crate::modules::profile::state::ProfileState;
 use crate::modules::settings::state::SettingsState;
 
@@ -71,30 +72,37 @@ use crate::modules::settings::state::SettingsState;
 pub struct MenoState {
     /// Validated configuration (§4.6). Shared rather than cloned per module.
     pub config: Arc<Config>,
+
     /// The Postgres pool, for migrations, health checks and future modules.
     pub db: PgPool,
+
     /// Redis, for the auth token blocklist and the OAuth state store.
     pub redis: Redis,
+
     /// Authentication (§4.7).
     pub auth: AuthState,
+
     /// Broadcasts — create, schedule, go live, join, participants (§2's tree).
     ///
     /// The second module to land, and the one that shows why a module carries its own
     /// state rather than reaching into the application: this field is a projection of a
     /// repository and a media adapter, and nothing outside `state` names either.
     pub broadcast: BroadcastState,
+
     /// The caller's own profile, other people's, search, and avatar upload (§2's tree).
     ///
     /// A projection of a repository, a cache and the object store — chosen in
     /// `profile::state::Wiring`, so `STORAGE_ENABLED=false` makes avatar upload a
     /// 503 rather than a compile failure (§4.6).
     pub profile: ProfileState,
+
     /// The caller's notification, theme, language and preference switches (§2's tree).
     ///
     /// Arrives with `profile` because `GET /users/me` embeds this block — one wire
     /// contract, two directories, and two fields that must be wired together or
     /// neither answers honestly.
     pub settings: SettingsState,
+
     /// Broadcast chat: history, messages and reactions (§2's tree).
     ///
     /// Built from a pool and the pub/sub bridge, and nothing else — which is the whole
@@ -102,6 +110,14 @@ pub struct MenoState {
     /// published to the local registry only would reach the sender's neighbours and
     /// nobody else, and a room's participants are spread across replicas.
     pub chat: ChatState,
+
+    /// Notes and folders, with their offline sync (§2's tree).
+    ///
+    /// A projection of a repository over one pool and nothing else — which is the whole
+    /// of what notes needs. Built from [`NotesState::new`], so this file never names
+    /// `PgNotesRepo`.
+    pub notes: NotesState,
+
     /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
     ///
     /// Built here rather than in `routes.rs` because it is fallible — a blank
@@ -110,14 +126,17 @@ pub struct MenoState {
     /// blocklist); no handler takes it, which is the point of keeping it beside — but
     /// separate from — [`Self::auth`].
     pub auth_guard: crate::middleware::auth::AuthState,
+
     /// Push notifications. Optional (§4.6); a no-op sender when disabled.
     ///
     /// Held here rather than by a module because no module uses it yet. It is the first
     /// thing `notifications/` will need, and wiring it at that point is a one-line
     /// change to this struct.
     pub push: Arc<dyn PushSender>,
+
     /// Object storage. Optional (§4.6); a no-op store when disabled.
     pub storage: Arc<dyn ObjectStore>,
+
     /// The Prometheus handle `GET /metrics` renders (§7.5, §4.8).
     ///
     /// Cloned from the process-wide recorder; whether the endpoint *answers* is
@@ -125,6 +144,7 @@ pub struct MenoState {
     /// recorder keeps counting either way, so enabling the endpoint later shows
     /// history from the moment it started counting.
     pub metrics: crate::infrastructure::metrics::Metrics,
+
     /// The local socket registry behind `GET /ws` (plan §4.7's realtime surface).
     ///
     /// "Local" is the point: which sockets live on *this* replica, and nothing about
@@ -132,6 +152,7 @@ pub struct MenoState {
     /// the two apart is what lets the registry be I/O-free — and therefore tested
     /// without a Redis.
     pub ws: crate::infrastructure::ws::WsService,
+
     /// Redis pub/sub fan-out for events that must reach other replicas (§3.1).
     ///
     /// Built eagerly rather than on first publish: a bridge that cannot reach Redis
@@ -194,6 +215,14 @@ impl axum::extract::FromRef<MenoState> for ChatState {
     }
 }
 
+/// The same projection for notes — the sixth, merged at the root like the broadcast
+/// table because its paths span two prefixes (`/notes` and `/folders`).
+impl axum::extract::FromRef<MenoState> for NotesState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.notes.clone()
+    }
+}
+
 impl std::fmt::Debug for MenoState {
     /// Names the fields and nothing else.
     ///
@@ -212,6 +241,7 @@ impl std::fmt::Debug for MenoState {
             .field("profile", &self.profile)
             .field("settings", &self.settings)
             .field("chat", &self.chat)
+            .field("notes", &self.notes)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
             .field("metrics", &self.metrics)
@@ -339,6 +369,11 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         bridge: Arc::new(ws_bridge.clone()),
     });
 
+    // Notes and folders (§2's tree): one pool, no external service.
+    let notes = NotesState::new(crate::modules::notes::state::Wiring {
+        pool: parts.db.clone(),
+    });
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
@@ -357,6 +392,8 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         // Chat (§2's tree). A pool and the bridge, so a message stored on this replica
         // is announced to the room wherever its sockets live.
         chat,
+        // Notes and folders (§2's tree). One pool.
+        notes,
         auth_guard,
         push: parts.push,
         storage: parts.storage,
