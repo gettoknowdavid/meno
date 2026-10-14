@@ -28,4 +28,13 @@ final class Scope {
 
   static const String root = 'root';
   static const String authenticated = 'authenticated';
+
+  /// The prefix of one live broadcast's scope.
+  static const String livePrefix = 'live';
+
+  /// The scope the broadcast [broadcastId] is live in.
+  ///
+  /// Named for the broadcast rather than a single `live` layer so a session
+  /// that replaces another cannot inherit the first one's registrations.
+  static String liveFor(String broadcastId) => '$livePrefix:$broadcastId';
 }
