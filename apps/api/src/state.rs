@@ -345,6 +345,9 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
     let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
         pool: parts.db.clone(),
         livekit: parts.config.livekit.clone(),
+        // Cover images proxy through the object store (§3.3), exactly as avatars do
+        // below — one handle, two modules.
+        storage: Arc::clone(&parts.storage),
     });
 
     // Profile and settings, for the same reason and in the same shape: `Wiring`

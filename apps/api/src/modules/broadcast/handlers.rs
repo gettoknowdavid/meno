@@ -27,30 +27,54 @@ use uuid::Uuid;
 use super::dto::{
     AddCohostRequest, BroadcastQuery, BroadcastSessionResponse, CreateBroadcastRequest,
     EndBroadcastResponse, LeaveBroadcastResponse, ParticipantQuery, RemoveCohostRequest,
-    UpdateBroadcastRequest, Validatable,
+    UpdateBroadcastRequest, UploadBroadcastImageForm, Validatable,
 };
+use super::error;
 use super::service::{BroadcastService, summary_of};
+use super::storage::BroadcastStorage;
 use crate::middleware::auth::AuthUser;
+use crate::middleware::extractors::MenoMultipartForm;
 use crate::types::meno_response::{MenoResponse, Outcome};
 use meno_core::CursorPage;
 
 /// The broadcast module's rules, as a handler sees them.
+///
+/// Two collaborators rather than one because the cover upload needs both and they answer
+/// different questions: the service decides *whether* a caller may replace a cover and
+/// keeps the row in step ([`BroadcastService::set_image`]), and the handler needs the ids
+/// it was handed to name the object that flow already wrote. Nothing here holds a
+/// concrete adapter — both are the module's own types, built in `state.rs`.
 #[derive(Clone)]
 pub struct Handlers {
     service: BroadcastService,
+    storage: BroadcastStorage,
+}
+
+impl Handlers {
+    /// Project the module's service and store for the routing layer.
+    #[must_use]
+    pub const fn new(service: BroadcastService, storage: BroadcastStorage) -> Self {
+        Self { service, storage }
+    }
 }
 
 impl std::fmt::Debug for Handlers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Handlers")
             .field("service", &self.service)
+            .field("storage", &self.storage)
             .finish()
     }
 }
 
 impl From<BroadcastService> for Handlers {
+    /// A service on its own, with no object store.
+    ///
+    /// Kept because a `Handlers` built this way is exactly a deployment with
+    /// `STORAGE_ENABLED` unset: every route works and the cover upload answers 503 — the
+    /// §4.6 behaviour, not a broken state.
     fn from(service: BroadcastService) -> Self {
-        Self { service }
+        Self::new(service, BroadcastStorage::disabled())
     }
 }
 
@@ -118,6 +142,40 @@ pub async fn update(
 
     let broadcast = handlers.service.update(id, request, &actor).await?;
     Ok(MenoResponse::ok("Broadcast updated", broadcast))
+}
+
+/// `POST /broadcasts/{id}/image` — upload the cover in one call (§3.3).
+///
+/// The multipart extractor has already separated text fields from files, so this
+/// handler's only judgement is *which* part counts as the image — `file`, by name — and
+/// then handing the bytes to [`BroadcastService::set_image`], which is where "is it an
+/// image" and "may this caller replace it" live. The response is the updated broadcast,
+/// so the client that just uploaded can drop it straight into its state rather than
+/// re-fetching the row it already has.
+///
+/// # Errors
+///
+/// 422 with field `file` when the part is missing, empty, oversized or not an image; 403
+/// when the caller is not the creator; 409 when the broadcast is live; 503 when the
+/// object store refuses.
+pub async fn upload_image(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+    form: MenoMultipartForm<UploadBroadcastImageForm>,
+) -> Outcome<super::dto::BroadcastResponse> {
+    let file = form
+        .files
+        .get("file")
+        .ok_or_else(error::image_part_missing)?;
+    if file.is_empty() {
+        return Err(error::image_empty().into());
+    }
+
+    let actor = summary_of(&auth);
+
+    let broadcast = handlers.service.set_image(id, &file.bytes, &actor).await?;
+    Ok(MenoResponse::ok("Broadcast image uploaded", broadcast))
 }
 
 /// `DELETE /broadcasts/{id}` — soft-delete, as the creator.

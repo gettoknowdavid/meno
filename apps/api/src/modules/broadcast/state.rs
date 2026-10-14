@@ -34,7 +34,9 @@ use super::handlers::Handlers;
 use super::media::{BroadcastMedia, DisabledMedia, LivekitMedia};
 use super::repository::{BroadcastRepo, PgBroadcastRepo, RepoDeps};
 use super::service::{BroadcastService, ServiceDeps};
+use super::storage::BroadcastStorage;
 use crate::config::LivekitSettings;
+use crate::infrastructure::storage::ObjectStore;
 
 /// Everything the broadcast endpoints need, wired and ready.
 ///
@@ -44,6 +46,10 @@ use crate::config::LivekitSettings;
 pub struct BroadcastState {
     /// The rules. A handler receives the [`Handlers`] projection of this.
     pub service: Arc<BroadcastService>,
+    /// The object store the cover-image flow writes through (§3.3). Separate from the
+    /// service because a handler addresses an object by key; the *flow* that keeps the
+    /// row in step lives in [`super::service::BroadcastService::set_image`].
+    pub storage: BroadcastStorage,
 }
 
 impl std::fmt::Debug for BroadcastState {
@@ -51,6 +57,7 @@ impl std::fmt::Debug for BroadcastState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("BroadcastState")
             .field("service", &self.service)
+            .field("storage", &self.storage)
             .finish_non_exhaustive()
     }
 }
@@ -65,6 +72,11 @@ pub struct Wiring {
     /// `None` is a supported deployment, not a mistake: drafts, schedules and the
     /// catalogue work without a media server, and only going live and joining need one.
     pub livekit: Option<LivekitSettings>,
+    /// The object store — S3 when enabled, `NoopObjectStore` when not (§4.6).
+    ///
+    /// The same handle `profile` receives: cover images and avatars are the same kind of
+    /// asset, and giving each module its own store would be two clients to configure.
+    pub storage: Arc<dyn ObjectStore>,
 }
 
 impl BroadcastState {
@@ -86,9 +98,7 @@ impl BroadcastState {
             }
         };
 
-        Self {
-            service: Arc::new(BroadcastService::new(ServiceDeps { repo, media })),
-        }
+        Self::from_parts_with_storage(repo, media, BroadcastStorage::new(deps.storage))
     }
 
     /// Wire the module from trait objects, with no infrastructure.
@@ -99,8 +109,28 @@ impl BroadcastState {
     /// §10's service tests run without Postgres, Redis or a LiveKit project.
     #[must_use]
     pub fn from_parts(repo: Arc<dyn BroadcastRepo>, media: Arc<dyn BroadcastMedia>) -> Self {
+        Self::from_parts_with_storage(repo, media, BroadcastStorage::disabled())
+    }
+
+    /// The same, with a store the caller chose.
+    ///
+    /// The two-argument [`Self::from_parts`] is the common case — a test about joining a
+    /// room has no opinion about a bucket — and this is for the one flow that does: the
+    /// cover upload, which wants [`crate::infrastructure::storage::InMemoryObjectStore`]
+    /// so it can assert what was written without MinIO.
+    #[must_use]
+    pub fn from_parts_with_storage(
+        repo: Arc<dyn BroadcastRepo>,
+        media: Arc<dyn BroadcastMedia>,
+        storage: BroadcastStorage,
+    ) -> Self {
         Self {
-            service: Arc::new(BroadcastService::new(ServiceDeps { repo, media })),
+            service: Arc::new(BroadcastService::new(ServiceDeps {
+                repo,
+                media,
+                storage: storage.clone(),
+            })),
+            storage,
         }
     }
 }
@@ -113,7 +143,7 @@ impl BroadcastState {
 /// place the module's concrete state appears in the routing path.
 impl axum::extract::FromRef<BroadcastState> for Handlers {
     fn from_ref(state: &BroadcastState) -> Self {
-        Handlers::from((*state.service).clone())
+        Handlers::new((*state.service).clone(), state.storage.clone())
     }
 }
 

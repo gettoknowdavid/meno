@@ -27,6 +27,9 @@ use uuid::Uuid;
 
 use super::error;
 use crate::infrastructure::storage::{ObjectKey, ObjectStore};
+// The magic-number rules are shared with `broadcast::storage` — one definition of what
+// an image is, so the avatar path and the cover-image path cannot drift apart.
+use crate::infrastructure::storage::sniff_image_extension as sniff;
 use meno_core::Error as MenoError;
 
 /// The largest avatar the API will accept, in bytes.
@@ -106,7 +109,7 @@ impl ProfileStorage {
     ///
     /// [`super::error::upstream`] when the store itself errors (503).
     pub async fn delete_avatar(&self, key: &str) -> Result<(), MenoError> {
-        let Some(object) = parse_key(key) else {
+        let Some(object) = ObjectKey::from_stored(key) else {
             tracing::warn!(
                 avatar_key = key,
                 "cannot address a legacy avatar key; leaving it"
@@ -117,76 +120,94 @@ impl ProfileStorage {
     }
 }
 
-/// Rebuild an [`ObjectKey`] from the string the database stored.
-///
-/// `split_once` rather than assuming the prefix: the key is data at this point, and a
-/// key that does not round-trip through [`ObjectKey::new`] (nested, empty, trailing
-/// slash) returns `None` instead of being silently mangled into a different object.
-fn parse_key(key: &str) -> Option<ObjectKey> {
-    let (prefix, leaf) = key.split_once('/')?;
-    ObjectKey::new(prefix, leaf).ok()
-}
-
-/// The file's real extension, from its magic number.
-///
-/// `None` for anything else — the caller turns that into a 422 before any I/O.
-fn sniff(bytes: &[u8]) -> Option<&'static str> {
-    if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
-        return Some("jpg");
-    }
-    if bytes.starts_with(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A]) {
-        return Some("png");
-    }
-    if bytes.len() >= 12 && bytes[0..4] == *b"RIFF" && bytes[8..12] == *b"WEBP" {
-        return Some("webp");
-    }
-    None
-}
-
 #[cfg(test)]
 mod tests {
-    //! The sniffing rules, asserted against real magic numbers.
+    //! What this module adds on top of the shared pieces: the *wiring* between a
+    //! sniffed extension, a key, and the store.
     //!
-    //! These are the boundary between "a file" and "a 422", so they are checked with
-    //! the bytes a real encoder writes rather than with fixtures that only look
-    //! plausible to the function being tested.
+    //! The sniffing rules themselves are asserted once, in
+    //! [`crate::infrastructure::storage::image`], and key parsing once, in
+    //! [`crate::infrastructure::storage::store`] — the point of extracting them was that
+    //! this file should not be a second place they are tested.
 
     use super::*;
+    use crate::infrastructure::storage::InMemoryObjectStore;
 
-    #[test]
-    fn sniff_recognises_the_three_allowed_formats() {
-        assert_eq!(sniff(&[0xFF, 0xD8, 0xFF, 0xE0, 0x00]), Some("jpg"));
-        assert_eq!(
-            sniff(&[0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00]),
-            Some("png")
+    fn store() -> (Arc<InMemoryObjectStore>, ProfileStorage) {
+        let memory = Arc::new(InMemoryObjectStore::new("https://cdn.test"));
+        let storage = ProfileStorage::new(Arc::clone(&memory) as Arc<dyn ObjectStore>);
+        (memory, storage)
+    }
+
+    #[tokio::test]
+    async fn a_put_avatar_keys_the_object_by_user_and_sniffed_extension() {
+        let (memory, storage) = store();
+        let user_id = uuid::Uuid::from_u128(7);
+        let png = [0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A, 0x00];
+
+        let stored = storage
+            .put_avatar(user_id, &png)
+            .await
+            .expect("a real PNG header is accepted");
+
+        let key = ObjectKey::avatar(user_id, "png").expect("a valid key");
+        assert_eq!(stored.key, key.as_str());
+        assert_eq!(stored.url, Some(format!("https://cdn.test/{key}")));
+        assert!(
+            memory.contents(&key).is_some(),
+            "the bytes reached the store"
         );
-        let mut webp = b"RIFF\x00\x00\x00\x00WEBPVP8 ".to_vec();
-        webp.extend_from_slice(&[0x00; 4]);
-        assert_eq!(sniff(&webp), Some("webp"));
     }
 
-    #[test]
-    fn sniff_refuses_everything_else() {
-        assert_eq!(sniff(&[]), None);
-        assert_eq!(sniff(b"<html><body>login required</body></html>"), None);
-        assert_eq!(sniff(b"GIF89a"), None);
-        assert_eq!(sniff(b"RIFF\x00\x00\x00\x00WAVEfmt "), None);
-        // A truncated PNG header is not a PNG.
-        assert_eq!(sniff(&[0x89, b'P', b'N', b'G']), None);
+    #[tokio::test]
+    async fn a_put_avatar_refuses_bytes_that_are_not_an_image() {
+        let (memory, storage) = store();
+
+        let error = storage
+            .put_avatar(uuid::Uuid::from_u128(7), b"<html>nope</html>")
+            .await
+            .expect_err("HTML is not an avatar");
+
+        assert_eq!(error.code(), meno_core::ErrorCode::ValidationFailed);
+        assert!(
+            memory.is_empty(),
+            "nothing is written before the sniff passes"
+        );
     }
 
-    #[test]
-    fn a_legacy_nested_key_cannot_be_parsed() {
-        // `master`'s presigned shape: one level deeper than ObjectKey accepts.
-        assert!(parse_key("avatars/9d1f/abc.png").is_none());
-        assert!(parse_key("no-slash-at-all").is_none());
-        assert!(parse_key("/leading-slash").is_none() || parse_key("/leading-slash").is_some());
+    #[tokio::test]
+    async fn a_legacy_key_is_left_alone_rather_than_mangled_into_another_object() {
+        // `master`'s presigned shape is one level deeper than `ObjectKey` accepts, so the
+        // only safe answer is "skip it" — parsing it loosely would delete a real object.
+        let (memory, storage) = store();
+        let real = ObjectKey::avatar(uuid::Uuid::from_u128(7), "png").expect("a valid key");
+        memory
+            .put(&real, bytes::Bytes::from_static(b"x"))
+            .await
+            .expect("seeding the store");
+
+        storage
+            .delete_avatar("avatars/9d1f/abc.png")
+            .await
+            .expect("a legacy key is logged, not an error");
+
+        assert!(memory.contents(&real).is_some(), "the live avatar survives");
     }
 
-    #[test]
-    fn a_current_key_round_trips() {
-        let key = ObjectKey::avatar(uuid::Uuid::nil(), "png").expect("a valid key");
-        let parsed = parse_key(key.as_str()).expect("the stored key parses back");
-        assert_eq!(parsed.as_str(), key.as_str());
+    #[tokio::test]
+    async fn a_current_key_is_deleted() {
+        let (memory, storage) = store();
+        let key = ObjectKey::avatar(uuid::Uuid::from_u128(7), "png").expect("a valid key");
+        memory
+            .put(&key, bytes::Bytes::from_static(b"x"))
+            .await
+            .expect("seeding the store");
+
+        storage
+            .delete_avatar(key.as_str())
+            .await
+            .expect("deleting the replaced avatar");
+
+        assert!(memory.contents(&key).is_none());
     }
 }

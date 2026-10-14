@@ -11,6 +11,7 @@
 //! | [`model`] | what do the rows say? | the schema changes |
 //! | [`repository`] | what exists? | storage does |
 //! | [`media`] | what does the media server allow? | the vendor does |
+//! | [`storage`] | what does the object store hold? | the bucket does |
 //! | [`service`] | in what order? | a *flow* changes |
 //! | [`state`] | which adapter is real here? | wiring changes |
 //! | [`handlers`] | how does a request become a response? | the wire contract changes |
@@ -54,6 +55,15 @@
 //! - **Bookmarks and subscriptions.** `is_bookmarked` is reported as `false` because the
 //!   module does not read `broadcast_bookmarks` yet; it is a wire field the client
 //!   already renders, and filling it wrongly would be worse than leaving it.
+//! - **Bookmark *writes*.** The read side is deferred above; there is no endpoint to add
+//!   or remove one, which is why the mobile client keeps favourites on the device.
+//!
+//! # Cover images are *not* deferred
+//!
+//! `POST /broadcasts/{id}/image` exists and proxies the upload through the API (§3.3),
+//! because a broadcast without a cover is not a feature gap a client can paper over: the
+//! catalogue renders one and the create flow collects one. [`storage`] holds the seam,
+//! and [`service::BroadcastService::set_image`] is the flow that keeps the row in step.
 //! - **WebSocket fan-out of broadcast events.** [`crate::infrastructure::ws`] can carry
 //!   them; deciding which events matter to which sockets is a protocol decision, not a
 //!   wiring one.
@@ -69,6 +79,7 @@ pub mod model;
 pub mod repository;
 pub mod service;
 pub mod state;
+pub mod storage;
 
 // The module's contract tests live in `apps/api/tests/broadcast_service.rs` and
 // `apps/api/tests/broadcast_router.rs`, outside the crate, where every path starts at

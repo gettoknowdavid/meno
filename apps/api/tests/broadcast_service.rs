@@ -48,6 +48,7 @@ use meno_api::modules::broadcast::model::BroadcastState as ModelBroadcastState;
 use meno_api::modules::broadcast::model::{EndReason, ParticipantRole, UserSummary};
 use meno_api::modules::broadcast::repository::InMemoryBroadcastRepo;
 use meno_api::modules::broadcast::service::{self, BroadcastService};
+use meno_api::modules::broadcast::storage::BroadcastStorage;
 use meno_core::to_body;
 
 /// A fixture identity, reduced to what a broadcast service needs.
@@ -99,6 +100,9 @@ fn service() -> (
     let svc = BroadcastService::new(service::ServiceDeps {
         repo: Arc::clone(&repo) as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
         media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        // No bucket: the cover-upload flow is asserted in `broadcast_router`, which wires
+        // the in-memory store so it can read back what was written.
+        storage: BroadcastStorage::disabled(),
     });
     (svc, repo, media)
 }

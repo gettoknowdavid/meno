@@ -107,6 +107,13 @@ impl ObjectKey {
     /// object behind forever. One key per user makes the delete unconditional.
     pub const AVATAR_PREFIX: &'static str = "avatars/";
 
+    /// The key under which a broadcast's cover image is stored.
+    ///
+    /// `broadcasts/{broadcast_id}.{extension}` for the same reason avatars are flat:
+    /// the cover is one per broadcast, so re-uploading replaces the object rather than
+    /// leaving the old one behind under a filename the client chose.
+    pub const BROADCAST_IMAGE_PREFIX: &'static str = "broadcasts/";
+
     /// Build a key under a named prefix, e.g. `avatars`.
     ///
     /// # Errors
@@ -144,10 +151,52 @@ impl ObjectKey {
         )
     }
 
+    /// The key for `broadcast_id`'s cover image.
+    ///
+    /// # Errors
+    ///
+    /// Propagates [`Self::new`]'s validation failure.
+    pub fn broadcast_image(broadcast_id: Uuid, extension: &str) -> Result<Self, StorageError> {
+        Self::new(
+            Self::BROADCAST_IMAGE_PREFIX.trim_end_matches('/'),
+            &format!("{broadcast_id}.{extension}"),
+        )
+    }
+
     /// The key as a plain string.
     #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
+    }
+
+    /// Rebuild a key from a string that was stored earlier.
+    ///
+    /// `split_once` rather than assuming the prefix: the key is data at this point, and
+    /// a key that does not round-trip (nested, empty, trailing slash) returns `None`
+    /// instead of being silently mangled into a *different* object — which is how a
+    /// cleanup path deletes the wrong file.
+    ///
+    /// Lives here rather than beside either caller because both the avatar and the
+    /// broadcast-cover paths have to address an object the database named, and a second
+    /// copy of this rule is a second chance to get the `None` case wrong.
+    #[must_use]
+    pub fn from_stored(key: &str) -> Option<Self> {
+        let (prefix, leaf) = key.split_once('/')?;
+        Self::new(prefix, leaf).ok()
+    }
+
+    /// Whether this key is the cover image for `broadcast_id`.
+    ///
+    /// The same use as [`Self::is_avatar_of`]: a caller replacing a cover can skip a
+    /// pointless delete round-trip when the key it is about to overwrite is the one
+    /// the row already names.
+    #[must_use]
+    pub fn is_broadcast_image_of(&self, broadcast_id: Uuid) -> bool {
+        let Some(rest) = self.0.strip_prefix(Self::BROADCAST_IMAGE_PREFIX) else {
+            return false;
+        };
+        rest.strip_prefix(&broadcast_id.to_string())
+            .is_some_and(|extension| extension.starts_with('.'))
     }
 
     /// Whether this key is the avatar for `user_id`.

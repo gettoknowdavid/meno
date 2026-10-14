@@ -30,6 +30,7 @@
 use std::sync::Arc;
 
 use axum::Router;
+use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 
@@ -39,6 +40,7 @@ use crate::middleware::idempotency::idempotency_middleware;
 use crate::middleware::rate_limit::{LimitPolicy, RateLimitState, rate_limit_middleware};
 use crate::modules::broadcast::handlers;
 use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::broadcast::storage::MAX_BROADCAST_IMAGE_BYTES;
 
 /// Every path this nest serves, written out.
 ///
@@ -54,7 +56,14 @@ pub const BROADCAST_PATHS: &[&str] = &[
     "/broadcasts/00000000-0000-0000-0000-000000000000/cohosts",
     "/broadcasts/00000000-0000-0000-0000-000000000000/cohosts/00000000-0000-0000-0000-000000000000",
     "/broadcasts/00000000-0000-0000-0000-000000000000/participants",
+    "/broadcasts/00000000-0000-0000-0000-000000000000/image",
 ];
+
+/// Body limit for the cover route: the image itself plus a megabyte of multipart framing
+/// (boundary, headers, the discarded text fields). The *content* limit stays
+/// [`MAX_BROADCAST_IMAGE_BYTES`] — this one only decides when axum stops reading a body
+/// that cannot possibly be a legal upload, which is cheaper than a 422 after the fact.
+const IMAGE_BODY_LIMIT: usize = MAX_BROADCAST_IMAGE_BYTES + 1024 * 1024;
 
 /// The broadcast sub-router, before it is lifted to [`BroadcastState`] by the caller.
 pub fn routes(
@@ -112,8 +121,25 @@ pub fn routes(
             rate_limit_middleware,
         ));
 
+    // The upload sits apart for one reason: the body limit. A PATCH carries a few hundred
+    // bytes and should keep axum's default ceiling; an upload carries five megabytes and
+    // must not be cut off by it. Applying the limit to this router alone keeps that
+    // difference a routing decision rather than a handler-sized special case.
+    //
+    // No idempotency layer: the service writes the object under a key derived from the
+    // broadcast id and the sniffed extension, so a replay lands on the same end state as
+    // not replaying — the same reasoning `routes::profile` records for the avatar.
+    let uploads = Router::new()
+        .route("/broadcasts/{id}/image", post(handlers::upload_image))
+        .layer(DefaultBodyLimit::max(IMAGE_BODY_LIMIT))
+        .layer(from_fn_with_state(
+            RateLimitState::new(Redis::clone(&redis), LimitPolicy::write()),
+            rate_limit_middleware,
+        ));
+
     reads
         .merge(join)
         .merge(writes)
+        .merge(uploads)
         .layer(from_fn_with_state(guard, auth_middleware))
 }

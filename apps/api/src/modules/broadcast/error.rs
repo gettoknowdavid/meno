@@ -208,6 +208,47 @@ pub fn media_unavailable() -> MenoError {
     }
 }
 
+/// The object store is off, unreachable, or failed the write.
+///
+/// 503 `UPSTREAM_UNAVAILABLE` — also what `STORAGE_ENABLED=false` (`NoopObjectStore`)
+/// produces, because a disabled upload path is a deployment condition, not a client
+/// mistake. `detail` reaches the log and never the client, the same rule as
+/// [`media_unavailable`].
+#[must_use]
+pub fn storage_unavailable(detail: impl std::fmt::Display) -> MenoError {
+    MenoError::Upstream {
+        service: "storage",
+        detail: detail.to_string(),
+    }
+}
+
+/// The uploaded cover exceeds
+/// [`MAX_BROADCAST_IMAGE_BYTES`](super::storage::MAX_BROADCAST_IMAGE_BYTES). 422, field
+/// `file`.
+#[must_use]
+pub fn image_too_large(limit_bytes: usize) -> MenoError {
+    invalid_field("file", format!("must be at most {limit_bytes} bytes"))
+}
+
+/// The cover bytes are not a JPEG, PNG or WebP. 422, field `file`.
+#[must_use]
+pub fn image_not_an_image() -> MenoError {
+    invalid_field("file", "must be a JPEG, PNG or WebP image")
+}
+
+/// The multipart body carried no file part named `file`. 422, field `file`.
+#[must_use]
+pub fn image_part_missing() -> MenoError {
+    invalid_field("file", "a file part named `file` is required")
+}
+
+/// The file part was present but empty — a client bug worth catching before a zero-byte
+/// object is written. 422, field `file`.
+#[must_use]
+pub fn image_empty() -> MenoError {
+    invalid_field("file", "the uploaded file is empty")
+}
+
 /// A driver or adapter failure inside the broadcast module. Always `500`, always logged.
 ///
 /// `context` names the operation and is never user input; `detail` is the driver's own
@@ -242,6 +283,36 @@ mod tests {
         );
         assert_eq!(already_live().code(), ErrorCode::Conflict);
         assert_eq!(media_unavailable().code(), ErrorCode::UpstreamUnavailable);
+        assert_eq!(
+            storage_unavailable("bucket refused").code(),
+            ErrorCode::UpstreamUnavailable
+        );
+        assert_eq!(image_not_an_image().code(), ErrorCode::ValidationFailed);
+        assert_eq!(image_too_large(10).code(), ErrorCode::ValidationFailed);
+    }
+
+    #[test]
+    fn an_image_refusal_names_the_field_a_client_renders() {
+        // The whole point of §4.2's validation shape: one code, and a map that says which
+        // input to mark. `master` shipped three bespoke codes for this and the client
+        // could not put any of them next to the picker.
+        assert_eq!(to_body(&image_not_an_image()).http_status, 422);
+        assert_eq!(to_body(&image_empty()).http_status, 422);
+        assert_eq!(to_body(&image_part_missing()).http_status, 422);
+        let body = to_body(&image_too_large(1024));
+        assert_eq!(body.code, ErrorCode::ValidationFailed.as_str());
+        assert!(
+            body.data.is_some_and(|fields| fields.contains_key("file")),
+            "the client has to know it is the file that failed"
+        );
+    }
+
+    #[test]
+    fn a_storage_outage_never_leaks_the_driver_text() {
+        let body = to_body(&storage_unavailable("connection to 10.0.0.4:9000 refused"));
+
+        assert_eq!(body.http_status, 503);
+        assert!(!body.message.contains("10.0.0.4"), "{}", body.message);
     }
 
     #[test]

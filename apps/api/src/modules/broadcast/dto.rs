@@ -641,6 +641,16 @@ pub fn cohost_response(
     }
 }
 
+/// The text fields of `POST /broadcasts/{id}/image`.
+///
+/// The upload takes a single file part named `file` and no text fields; the type exists
+/// because [`crate::middleware::extractors::MenoMultipartForm`] deserialises whatever
+/// text parts *are* sent, and `{}` is the honest shape for "there are none". The
+/// broadcast id comes from the path, so it is not a field either — and anything a client
+/// sends as a file part is the handler's business, never this type's.
+#[derive(Debug, Default, Deserialize)]
+pub struct UploadBroadcastImageForm {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

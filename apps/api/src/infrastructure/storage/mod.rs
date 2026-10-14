@@ -27,10 +27,13 @@
 //! - [`store`] — the [`ObjectStore`] trait and [`ObjectKey`].
 //! - [`s3`] — [`S3ObjectStore`], parameterised by [`S3Flavor`].
 //! - [`memory`] — [`InMemoryObjectStore`], the in-memory double.
+//! - [`image`] — [`sniff_image_extension`], the magic-number check every image upload
+//!   shares.
 //! - [`error`] — [`StorageError`].
 //!
 //! [`S3Flavor`]: s3::S3Flavor
 //! [`S3ObjectStore`]: s3::S3ObjectStore
+//! [`sniff_image_extension`]: image::sniff_image_extension
 //!
 //! # Testing
 //!
@@ -47,11 +50,13 @@ use crate::config::{Config, StorageSettings};
 use crate::infrastructure::storage::s3::{S3Flavor, S3ObjectStore};
 
 pub mod error;
+pub mod image;
 pub mod memory;
 pub mod s3;
 pub mod store;
 
 pub use error::StorageError;
+pub use image::sniff_image_extension;
 pub use memory::InMemoryObjectStore;
 pub use store::{ObjectKey, ObjectStore};
 

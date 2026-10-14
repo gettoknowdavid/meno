@@ -37,6 +37,7 @@ use super::model::{
     ParticipantRole, UserSummary, now,
 };
 use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
+use super::storage::BroadcastStorage;
 use crate::modules::broadcast::dto::{
     AddCohostRequest, BroadcastListItem, BroadcastQuery, BroadcastResponse,
     BroadcastSessionResponse, CohostResponse, CreateBroadcastRequest, EndBroadcastResponse,
@@ -52,6 +53,8 @@ pub struct ServiceDeps {
     pub repo: Arc<dyn BroadcastRepo>,
     /// The media server seam (§5.5).
     pub media: Arc<dyn BroadcastMedia>,
+    /// The object store seam (§5.5), for cover images.
+    pub storage: BroadcastStorage,
 }
 
 impl std::fmt::Debug for ServiceDeps {
@@ -67,6 +70,7 @@ impl std::fmt::Debug for ServiceDeps {
 pub struct BroadcastService {
     repo: Arc<dyn BroadcastRepo>,
     media: Arc<dyn BroadcastMedia>,
+    storage: BroadcastStorage,
 }
 
 impl std::fmt::Debug for BroadcastService {
@@ -74,6 +78,7 @@ impl std::fmt::Debug for BroadcastService {
         f.debug_struct("BroadcastService")
             .field("repo", &self.repo)
             .field("media", &self.media)
+            .field("storage", &self.storage)
             .finish()
     }
 }
@@ -85,6 +90,7 @@ impl BroadcastService {
         Self {
             repo: deps.repo,
             media: deps.media,
+            storage: deps.storage,
         }
     }
 
@@ -266,6 +272,89 @@ impl BroadcastService {
                 },
             )
             .await?;
+
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+        self.render(row, Some(creator), Some(viewer)).await
+    }
+
+    /// `POST /broadcasts/{id}/image` — replace the cover, as the creator (§3.3).
+    ///
+    /// One call rather than a pre-signed PUT plus a PATCH: the client sends the bytes and
+    /// the API decides the key, so the row can never be made to point at an object that
+    /// was never written, and a failed write can be undone before anything references it.
+    /// That is what lets the create and edit flows collect a title, a description and a
+    /// picture as one action (§3.3 retired pre-signing for exactly this).
+    ///
+    /// # Ordering, and why this order
+    ///
+    /// Authorise (creator, not live) → store → write the row → delete the *previous*
+    /// object. Storing before the row write means a store failure leaves the row
+    /// untouched; writing the row before the delete means the worst case is an orphaned
+    /// blob rather than a cover that does not load. A failed row write deletes the object
+    /// it just stored, so a retry starts from a clean slate instead of leaking one object
+    /// per attempt.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], [`error::broadcast_is_live`], the image rules in
+    /// [`super::storage`] (422 with field `file`), or [`error::storage_unavailable`]
+    /// (503).
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn set_image(
+        &self,
+        id: Uuid,
+        bytes: &[u8],
+        actor: &UserSummary,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
+        if existing.is_live() {
+            return Err(error::broadcast_is_live());
+        }
+
+        let previous = existing.image_id.clone();
+        let stored = self.storage.put_image(id, bytes).await?;
+
+        let row = match self
+            .repo
+            .update(
+                id,
+                BroadcastPatch {
+                    title: None,
+                    description: None,
+                    time_zone: None,
+                    image_id: Some(stored.key.clone()),
+                    image_url: stored.url.clone(),
+                    start_time: None,
+                    recording_enabled: None,
+                    cohosts: None,
+                },
+            )
+            .await
+        {
+            Ok(row) => row,
+            Err(failure) => {
+                // Nothing references the new object yet, so leaving it would be a leak
+                // with no row to find it by.
+                if let Err(error) = self.storage.delete_image(&stored.key).await {
+                    tracing::warn!(
+                        %error,
+                        key = %stored.key,
+                        "could not undo a cover upload after a failed write"
+                    );
+                }
+                return Err(failure);
+            }
+        };
+
+        // Only a *different* previous key is worth deleting: the same key was overwritten
+        // by the upload above, and deleting it would remove the cover we just stored.
+        if let Some(previous) = previous.filter(|previous| previous != &stored.key)
+            && let Err(error) = self.storage.delete_image(&previous).await
+        {
+            tracing::warn!(%error, key = %previous, "replaced cover image could not be deleted");
+        }
 
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
