@@ -28,8 +28,12 @@ void configureGlobalExceptionHandler() {
       return;
     }
 
+    // A transport failure says why it happened in its message, and that
+    // message is the only record of the reason: unlike the failures above,
+    // there is no code and no request id to search a server log by.
+    final reason = error is InfrastructureFailure ? ': ${error.message}' : '';
     logger.e(
-      'Unhandled ${error.runtimeType}',
+      'Unhandled ${error.runtimeType}$reason',
       tag: MenoLogTag.debug.label,
       error: error,
       stackTrace: stackTrace,

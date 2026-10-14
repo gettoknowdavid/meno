@@ -1,12 +1,15 @@
 /// The app's error taxonomy.
 ///
-/// Every failure the app surfaces is a [MenoException]. Each carries a stable
-/// code — the value the API documents as the one clients branch on — plus a
-/// human-readable message the server may reword at any time. Failures the app
-/// detects itself (no connectivity, a cancelled request, a failed write) use
-/// the client-side codes at the bottom of [MenoErrorCode], so one vocabulary
-/// covers the whole app.
+/// Every failure the app surfaces is a [MenoException], or one of the transport
+/// failures in `exceptions.dart` that carry a message but no code. Each
+/// [MenoException] carries a stable code — the value the API documents as the
+/// one clients branch on — plus a human-readable message the server may reword
+/// at any time. Failures the app detects itself (no connectivity, a cancelled
+/// request, a failed write) use the client-side codes at the bottom of
+/// [MenoErrorCode], so one vocabulary covers the whole app.
 library;
+
+import 'package:meno_mobile/_core/exceptions/exceptions.dart';
 
 /// Wire error codes, mirroring `ErrorCode` in `crates/core/src/error.rs`.
 ///
@@ -396,10 +399,13 @@ final class UnknownException extends MenoException {
 
 /// The message to show a person for [error].
 ///
-/// Failures the app recognises carry a message written for users. Anything else
-/// is unclassified, and a raw `toString()` would leak internals into the UI —
-/// so the fallback is a generic sentence and the detail goes to the log.
+/// Failures the app recognises carry a message written for users: the
+/// [MenoException]s the API produced and the [InfrastructureFailure]s a
+/// transport client raised. Anything else is unclassified, and a raw
+/// `toString()` would leak internals into the UI — so the fallback is a generic
+/// sentence and the detail goes to the log.
 String errorMessage(Object? error) {
   if (error is MenoException) return error.message;
+  if (error is InfrastructureFailure) return error.message;
   return 'Something went wrong. Please try again.';
 }

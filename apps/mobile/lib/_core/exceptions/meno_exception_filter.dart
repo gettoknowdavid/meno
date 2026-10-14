@@ -1,4 +1,5 @@
 import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/exceptions/exceptions.dart';
 import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 
 /// Decides how a failed command is reported.
@@ -11,6 +12,11 @@ import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 /// * infrastructure failures — no connectivity, a timeout, the API or a
 ///   dependency being down, a bad response, a failed write — go global. No
 ///   widget can do anything better with them than say so.
+/// * a transport failure (see [InfrastructureFailure]) goes to a local handler
+///   when one exists and to a toast when none does, because the manager that
+///   raised it usually owns the outcome — a room connection is retried and
+///   shown in place, and one toast per attempt would report a single failure
+///   several times.
 /// * `VALIDATION_FAILED` goes local: the message belongs on the fields.
 /// * rejected credentials go local too — the sign-in form is the only sensible
 ///   place to show "that email and password do not match".
@@ -24,6 +30,12 @@ import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 /// Command.createAsyncNoResult(request, errorFilter: menoExceptionFilter);
 /// ```
 ErrorReaction menoExceptionFilter(Object error, StackTrace stackTrace) {
+  // Raised by one of the app's own transport clients rather than answered by
+  // the API: a room that would not open, a socket that is not up, an
+  // acknowledgement that never came. There is no response to read a code off,
+  // so these are classified by family rather than by status.
+  if (error is InfrastructureFailure) return .firstLocalThenGlobalHandler;
+
   if (error is! MenoException) return .globalHandler;
 
   return switch (error) {
