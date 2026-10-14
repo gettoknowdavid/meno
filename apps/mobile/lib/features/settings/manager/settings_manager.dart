@@ -323,11 +323,26 @@ final class SettingsManager implements Disposable {
     unawaited(_local.saveSettings(userId, _settings.value));
   }
 
-  /// Repaints the app in whatever theme the current settings ask for.
+  /// Repaints the app in whatever theme the current account's settings ask for.
   ///
   /// Called on every settings change rather than only on the toggle, so a
-  /// sign-in, a sign-out and an account switch all repaint too.
-  void _applyDisplay() => _theme.apply(_settings.value.display);
+  /// sign-in and an account switch repaint too — that is what puts a returning
+  /// account's own choice back on screen.
+  ///
+  /// It deliberately paints nothing when nobody is signed in. Appearance is a
+  /// device preference on both platforms — Android recommends "follow system"
+  /// as the default with Light and Dark as overrides, and the choice is kept
+  /// per install — and the app keeps it that way: signing out leaves the app in
+  /// the theme the user was already looking at rather than flashing the system
+  /// one back over the sign-in screen. A device that has never signed in is
+  /// following the system by [ThemeManager]'s own default, and the next account
+  /// to sign in repaints from its own cached settings.
+
+  void _applyDisplay() {
+    final userId = _userId;
+    if (userId == null || userId.isEmpty) return;
+    _theme.apply(_settings.value.display);
+  }
 
   /// Follows the active account, putting its cached settings in place.
   void _onAccountChanged(String? userId, ListenableSubscription _) {

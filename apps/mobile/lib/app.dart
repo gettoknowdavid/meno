@@ -6,6 +6,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
+import 'package:meno_mobile/features/auth/manager/user_scope_manager.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -15,10 +16,11 @@ const Duration _kInitTimeout = Duration(seconds: 30);
 
 /// The Meno app.
 ///
-/// The router is held back until get_it reports every registration ready, so no
-/// route renders against half-initialised services. While the container starts
-/// the design system's [MLoadingPage] is shown; if a service fails to start, an
-/// [MErrorState] offers a retry that re-runs the wait.
+/// The router is held back until get_it reports every registration ready and
+/// the signed-in account's own scope is in place, so no route renders against
+/// half-initialised services. While the container starts the design system's
+/// [MLoadingPage] is shown; if a service fails to start, an [MErrorState] offers
+/// a retry that re-runs the wait.
 ///
 /// The gate uses `watchFuture` rather than watch_it's `allReady()` helper
 /// because only the former hands the widget the error itself (to render) and
@@ -51,9 +53,7 @@ class MenoApp extends WatchingWidget {
       (manager) => manager.themeMode,
     );
 
-    final readiness = createOnce(
-      () => ValueNotifier<Future<void>>(di.allReady(timeout: _kInitTimeout)),
-    );
+    final readiness = createOnce(() => ValueNotifier<Future<void>>(_startup()));
 
     final snapshot = watchFuture<ValueNotifier<Future<void>>, void>(
       (notifier) => notifier.value,
@@ -95,9 +95,22 @@ class MenoApp extends WatchingWidget {
     );
   }
 
+  /// Waits for the container and for the account's own scope.
+  ///
+  /// The account's services are registered in a get_it scope that
+  /// [UserScopeManager] pushes while the container is still starting, so
+  /// waiting on the container alone would let the router build an account's
+  /// first screen against a scope that is still being pushed — a manager that
+  /// is not registered yet. Waiting costs nothing when the scope is already
+  /// there, and a container that fails to start never reaches the second wait.
+  Future<void> _startup() async {
+    await di.allReady(timeout: _kInitTimeout);
+    await di<UserScopeManager>().ready;
+  }
+
   /// Re-runs the readiness wait by swapping in a fresh future.
   void _retry(ValueNotifier<Future<void>> readiness) {
-    readiness.value = di.allReady(timeout: _kInitTimeout);
+    readiness.value = _startup();
   }
 
   /// Tells the user a command failed, and ends a session that has expired.

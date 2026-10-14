@@ -22,6 +22,8 @@ class SocketClient implements Disposable {
 
   final _connectionContr = StreamController<SocketConnectionState>.broadcast();
 
+  final _reconnectedContr = StreamController<void>.broadcast();
+
   /// Every handler registered with [on], keyed by event name.
   ///
   /// The handlers are kept here and not only on the socket because a socket
@@ -34,6 +36,16 @@ class SocketClient implements Disposable {
 
   /// Stream of connection state changes
   Stream<SocketConnectionState> get connectionState => _connectionContr.stream;
+
+  /// Published when a socket that had dropped is connected again.
+  ///
+  /// Separate from [connectionState] because that stream cannot tell the two
+  /// apart: a first connect and a reconnect both report `connected`. The
+  /// difference matters to whoever was in a room — a reconnect hands the client
+  /// a socket the server has no membership for, so what it was subscribed to
+  /// has to be said again — while a client connecting for the first time has
+  /// nothing to re-announce.
+  Stream<void> get onReconnected => _reconnectedContr.stream;
 
   /// Current connection status
   bool get isConnected => _socket?.connected ?? false;
@@ -80,6 +92,7 @@ class SocketClient implements Disposable {
     _socket?.onReconnect((_) {
       _logger.i('SocketClient: Reconnected');
       _updateState(.connected);
+      if (!_reconnectedContr.isClosed) _reconnectedContr.add(null);
     });
 
     _socket?.onReconnectAttempt((attempt) {
@@ -176,12 +189,16 @@ class SocketClient implements Disposable {
     // timer of our own, which keeps the two failure modes — never acked, and
     // acked late — from overlapping.
     final acknowledgment = Completer<Object?>();
-    socket.emitWithAck(event.value, data, ack: (Object? response) {
-      if (!acknowledgment.isCompleted) {
-        _logger.d('SocketClient: Received ack for event ${event.value}');
-        acknowledgment.complete(response);
-      }
-    });
+    socket.emitWithAck(
+      event.value,
+      data,
+      ack: (Object? response) {
+        if (!acknowledgment.isCompleted) {
+          _logger.d('SocketClient: Received ack for event ${event.value}');
+          acknowledgment.complete(response);
+        }
+      },
+    );
 
     return await acknowledgment.future.timeout(
       timeout,
@@ -226,7 +243,7 @@ class SocketClient implements Disposable {
     _logger.d('SocketClient: Disposing');
     _disposeSocket();
     _eventHandlers.clear();
-    await _connectionContr.close();
+    await Future.wait([_connectionContr.close(), _reconnectedContr.close()]);
   }
 }
 

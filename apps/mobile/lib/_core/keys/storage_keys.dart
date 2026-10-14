@@ -37,6 +37,15 @@ final class StorageKeys {
   /// A profile that has been opened, kept so returning to it is instant.
   static const String publicProfile = 'profile.public';
 
+  /// The live broadcast this account was in when the app stopped.
+  ///
+  /// Scoped to the account it belongs to through [forUser]: a session is
+  /// entered with a token minted for one account, and re-entering it as another
+  /// would join the room under the wrong identity. Written when a session opens
+  /// and cleared when it ends, so what is here is only ever a session that was
+  /// still running the last time the process stopped.
+  static const String liveSession = 'broadcast.live_session';
+
   /// [key] scoped to [userId].
   ///
   /// Device storage is shared by every account that signs in on it, so anything
