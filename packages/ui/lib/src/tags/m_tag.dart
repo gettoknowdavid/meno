@@ -23,7 +23,18 @@ class MTag extends StatelessWidget {
   /// - [key]: An optional key to identify the widget.
   /// - [style]: An optional style merged over the theme's caption style. If
   ///   null, the caption medium style is used.
-  const new({required this.title, super.key, this.style});
+  const new({
+    required this.title,
+    super.key,
+    this.style,
+    this.height,
+    this.width,
+    this.constraints = const BoxConstraints(minHeight: 20, maxHeight: 20),
+    this.padding = const .symmetric(horizontal: Insets.sm),
+    this.alignment = .centerLeft,
+    this.decoration,
+    this.textColor,
+  });
 
   /// The text drawn inside the pill.
   final String title;
@@ -31,25 +42,50 @@ class MTag extends StatelessWidget {
   /// An optional style merged over the theme's caption style.
   final TextStyle? style;
 
+  /// The height of the tag.
+  final double? height;
+
+  /// The width of the tag.
+  final double? width;
+
+  /// The constraints of the tag.
+  final BoxConstraints? constraints;
+
+  /// The padding of the tag.
+  final EdgeInsets? padding;
+
+  /// The alignment of the tag.
+  final Alignment? alignment;
+
+  /// The decoration of the tag.
+  final Decoration? decoration;
+
+  /// The text color of the tag.
+  final Color? textColor;
+
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
 
+    final effectiveTextStyle = (style ?? textTheme.nanoRegular).copyWith(
+      height: 1,
+      color: textColor ?? colors.onInActiveContainer,
+    );
+
     return Container(
-      height: 20,
-      constraints: const BoxConstraints(minHeight: 20, maxHeight: 20),
-      padding: const EdgeInsets.symmetric(horizontal: Insets.sm),
-      alignment: Alignment.centerLeft,
-      decoration: ShapeDecoration(
-        color: colors.inActiveContainer,
-        shape: const RoundedRectangleBorder(borderRadius: Corners.xs),
-      ),
-      child: MText(
-        title,
-        style: style ?? textTheme.captionMedium,
-        color: colors.onInActiveContainer,
-      ),
+      height: height ?? 20,
+      constraints: constraints,
+      width: width,
+      padding: padding,
+      alignment: alignment,
+      decoration:
+          decoration ??
+          ShapeDecoration(
+            color: colors.inActiveContainer,
+            shape: const RoundedRectangleBorder(borderRadius: Corners.xs),
+          ),
+      child: MText(title, style: effectiveTextStyle),
     );
   }
 }
