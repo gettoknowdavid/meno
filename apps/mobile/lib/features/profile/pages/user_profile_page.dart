@@ -32,6 +32,7 @@ class UserProfilePage extends WatchingWidget {
             userId: userIdStr,
             http: di<ProfileHttpService>(),
             cache: di<ProfileCacheService>(),
+            profiles: di<UserProfileRepository>(),
           ),
         );
       },
@@ -43,11 +44,18 @@ class UserProfilePage extends WatchingWidget {
     );
 
     final manager = di<UserProfileManager>();
-    final profile = watchValue<UserProfileManager, Profile>(
-      (manager) => manager.profile,
-    );
-    final isFetching = watchValue<UserProfileManager, bool>(
-      (manager) => manager.fetch.isRunning,
+    // The proxy, not a value: watching it is what makes an optimistic follow
+    // repaint this screen, and what keeps it in step with any card behind it
+    // that already holds the same proxy.
+    final profile = watch(manager.profile);
+    final isFetching = watch(manager.fetch.isRunning).value;
+
+    // A refused follow is the visitor's business, so it is reported where they
+    // are looking; the proxy has already rolled the label back by then.
+    registerHandler(
+      select: (UserProfileManager m) => m.profile.toggleFollow.errors,
+      handler: (ctx, error, _) =>
+          ctx.showErrorToast(errorMessage(error?.error)),
     );
 
     callOnce((_) => manager.fetch.run());
@@ -67,7 +75,7 @@ class UserProfilePage extends WatchingWidget {
 class _Content extends StatelessWidget {
   const new({required this.profile, required this.onRefresh});
 
-  final Profile profile;
+  final UserProfileProxy profile;
   final Future<void> Function() onRefresh;
 
   @override
@@ -111,7 +119,7 @@ class _ProfileAppBar extends StatelessWidget {
     required this.innerBoxIsScrolled,
   });
 
-  final Profile profile;
+  final UserProfileProxy profile;
   final bool innerBoxIsScrolled;
 
   @override

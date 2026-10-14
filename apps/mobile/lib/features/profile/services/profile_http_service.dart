@@ -28,6 +28,22 @@ final class ProfileHttpService {
     );
   }
 
+  /// `POST /subscribers/{id}` — follows [userId].
+  ///
+  /// Answers with no body: the row the API wrote is the whole result, and the
+  /// client already knows what it asked for. A caller that wants the *new*
+  /// follower count reads the profile again.
+  Future<void> follow(String userId) =>
+      _client.postUnit('/subscribers/$userId');
+
+  /// `DELETE /subscribers/{id}` — stops following [userId].
+  ///
+  /// Not following them is a success, so this is idempotent from a client's
+  /// point of view; the undoable follow command decides from the *previous*
+  /// state, not from a second read.
+  Future<void> unfollow(String userId) =>
+      _client.deleteUnit('/subscribers/$userId');
+
   /// `PATCH /users/me` — a partial update, answering with the fresh record.
   ///
   /// A field left null is untouched by the API; [bio] set to the empty string

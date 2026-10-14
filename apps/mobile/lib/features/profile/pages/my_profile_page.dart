@@ -14,12 +14,11 @@ const double _kTabBarHeight = 32;
 
 /// The signed-in account's profile.
 ///
-/// The record itself lives in [MyProfileManager], which is registered once and
-/// follows the active account, so this screen only has to read it: whatever is
-/// on disk for the account shows immediately and the fetch that follows
-/// replaces it. Reading is started here rather than at startup because a
-/// signed-in account that never opens this screen has no reason to be asked
-/// for.
+/// The record itself lives in [MyProfileManager], which is registered once,
+/// follows the active account and reads that account's record as it becomes
+/// active, so this screen only has to read it: whatever is on disk for the
+/// account shows immediately and the read already on its way replaces it. The
+/// read it starts itself is the one a retry or a pull to refresh asks for.
 class MyProfilePage extends WatchingWidget {
   /// Creates the page.
   const new({super.key});
@@ -40,8 +39,8 @@ class MyProfilePage extends WatchingWidget {
       (manager) => manager.currentUser,
     );
 
-    final isFetching = watchValue<MyProfileManager, bool>(
-      (manager) => manager.fetch.isRunning,
+    final isLoading = watchValue<MyProfileManager, bool>(
+      (manager) => manager.isLoading,
     );
 
     // The vault already knows who signed in, so the title can greet them while
@@ -52,17 +51,7 @@ class MyProfilePage extends WatchingWidget {
       _ => 'Unknown User',
     };
 
-    // Opening the screen reads; so does switching accounts while it is open —
-    // the manager has already put the new account's cached profile in place,
-    // and this is what replaces it with its record.
-    callOnce((_) => manager.fetch.run());
-
-    registerHandler<UserManager, String?>(
-      select: (auth) => auth.currentUserId,
-      handler: (ctx, _, _) => di<MyProfileManager>().fetch.run(),
-    );
-
-    if (profile.isEmpty && !isFetching) {
+    if (profile.isEmpty && !isLoading) {
       return MScaffold(
         padding: .zero,
         body: Center(

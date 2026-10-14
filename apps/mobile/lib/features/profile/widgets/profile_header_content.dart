@@ -72,12 +72,16 @@ class MyProfileHeaderContent extends StatelessWidget {
 
 /// The header of somebody else's profile: avatar, counters, bio and the two
 /// actions a visitor has.
+///
+/// It takes the [UserProfileProxy] rather than the entity because two of the
+/// things it draws are the viewer's, not the account's: whether they follow
+/// them, and a follower count that moves with that decision.
 class UserProfileHeaderContent extends StatelessWidget {
   /// Creates the header for [profile].
   const new({required this.profile, super.key});
 
-  /// The profile being viewed.
-  final Profile profile;
+  /// The profile being viewed, as a live proxy.
+  final UserProfileProxy profile;
 
   @override
   Widget build(BuildContext context) {
@@ -105,13 +109,11 @@ class UserProfileHeaderContent extends StatelessWidget {
               height: 32,
               child: Row(
                 children: [
-                  // Subscribing is the subscriptions feature's to build: the
-                  // follower endpoints and the button's states belong to it.
-                  // Until then the slot shows the Meno mark rather than a
-                  // button that would pretend to have done something.
-                  const Expanded(child: SubscribePlaceholder()),
+                  Expanded(child: SubscribeButton(profile: profile)),
                   Spaces.horizontalLarge,
-                  Expanded(child: ShareProfileButton(profile: profile)),
+                  Expanded(
+                    child: ShareProfileButton(profile: profile.target),
+                  ),
                 ],
               ),
             ),
@@ -121,19 +123,6 @@ class UserProfileHeaderContent extends StatelessWidget {
       ),
     );
   }
-}
-
-/// Where a subscribe button will go.
-///
-/// A placeholder rather than a disabled control: a button that cannot work yet
-/// invites taps and explains nothing.
-class SubscribePlaceholder extends StatelessWidget {
-  /// Creates the placeholder.
-  const new({super.key});
-
-  @override
-  Widget build(BuildContext context) =>
-      const Center(child: MPlaceholder(dimension: 24));
 }
 
 /// The three counters, side by side.

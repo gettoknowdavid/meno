@@ -16,30 +16,51 @@ import 'package:meno_mobile/features/profile/services/_services.dart';
 /// active account means every switch puts that account's own profile on
 /// screen, from disk first and from the API a moment later.
 ///
-/// It never starts a request of its own: the screens that show it ask for a
-/// read, so a signed-in account that never opens the profile is never asked
-/// for one.
+/// An account's record is read as soon as that account becomes active, so the
+/// screen opens on it instead of waiting for a request of its own. That read is
+/// a background one — its failure is logged, not raised, because nobody asked
+/// for it. [fetch] stays the door the screens use for a retry or a pull to
+/// refresh, and it is where a failure reaches the user.
 final class MyProfileManager implements Disposable {
-  /// Creates a manager over its service, its cache and the active account.
-  new({required this._http, required this._cache, required this._user});
+  /// Creates a manager over its service, its cache, the active account and the
+  /// log.
+  new({
+    required this._http,
+    required this._cache,
+    required this._user,
+    required this._logger,
+  }) {
+    fetch = .createAsyncNoParamNoResult(
+      _load,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'myProfile.fetch',
+    );
+  }
 
   final ProfileHttpService _http;
   final ProfileCacheService _cache;
   final UserManager _user;
+  final MenoLogger _logger;
 
-  final ValueNotifier<MyProfile> _profile = ValueNotifier(MyProfile.empty);
+  final ValueNotifier<MyProfile> _profile = ValueNotifier(.empty);
+  final ValueNotifier<bool> _isLoading = ValueNotifier(false);
 
   ListenableSubscription? _subscription;
+  String? _loadingUserId;
+  bool _disposed = false;
 
   /// The signed-in account's profile, or [MyProfile.empty] when there is none.
   ValueListenable<MyProfile> get profile => _profile;
 
+  /// Whether a read is in flight — whoever started it.
+  ///
+  /// The screen shows its skeleton on this rather than on `fetch.isRunning`:
+  /// the read that started when the account became active is the same read it
+  /// would otherwise ask for.
+  ValueListenable<bool> get isLoading => _isLoading;
+
   /// Reads the signed-in account's record and saves it for next time.
-  late final Command<void, void> fetch = Command.createAsyncNoParamNoResult(
-    _fetch,
-    errorFilterFn: menoExceptionFilter,
-    debugName: 'profile.fetch',
-  );
+  late final Command<void, void> fetch;
 
   /// Adopts the account already signed in, then follows the active one.
   ///
@@ -49,6 +70,7 @@ final class MyProfileManager implements Disposable {
   Future<MyProfileManager> init() async {
     _subscription = _user.currentUserId.listen(_onAccountChanged);
     _adopt(_user.currentUserId.value);
+    unawaited(_read());
     return this;
   }
 
@@ -65,44 +87,76 @@ final class MyProfileManager implements Disposable {
 
   @override
   FutureOr<dynamic> onDispose() {
+    _disposed = true;
     _subscription?.cancel();
     fetch.dispose();
     _profile.dispose();
+    _isLoading.dispose();
   }
 
   /// Loads the record for whoever is signed in.
-  Future<void> _fetch() async {
+  ///
+  /// This is the only door to the API: [fetch] runs it for the screens, and the
+  /// background read runs it when an account becomes active. A read already in
+  /// flight for the same account is left to finish rather than doubled, which
+  /// is what makes opening the screen while it is still on its way free.
+  Future<void> _load() async {
     final userId = _user.currentUserId.value;
     // Nobody is signed in: there is no record to read, and a request would be
     // answered with a 401.
-    if (userId == null || userId.isEmpty) return;
+    if (_disposed || userId == null || userId.isEmpty) return;
+    if (_loadingUserId == userId) return;
 
-    final remote = await _http.me();
+    _loadingUserId = userId;
+    _isLoading.value = true;
+    try {
+      final remote = await _http.me();
 
-    // The account can change while the request is in flight. The answer then
-    // belongs to the account that asked rather than the one signed in now, so
-    // it is dropped instead of shown under the wrong name.
-    if (_user.currentUserId.value != userId) return;
+      // The account can change, or the manager be torn down, while the request
+      // is in flight. The answer then belongs to a moment that has passed, so it
+      // is dropped instead of shown under the wrong name.
+      if (_disposed || _user.currentUserId.value != userId) return;
 
-    _profile.value = remote;
-    await _cache.saveMyProfile(remote);
+      _profile.value = remote;
+      await _cache.saveMyProfile(remote);
+    } finally {
+      if (!_disposed && _loadingUserId == userId) {
+        _loadingUserId = null;
+        _isLoading.value = false;
+      }
+    }
   }
 
-  /// Follows the active account, putting its cached profile in place.
+  /// Reads the record in the background.
   ///
-  /// The screen re-reads when this happens; the manager only swaps the state,
-  /// so signing in somewhere else is never a request nobody asked for.
+  /// A failure here is logged rather than raised: the screen is already showing
+  /// whatever was on disk, and nobody asked for this.
+  Future<void> _read() async {
+    try {
+      await _load();
+    } on MenoException catch (error) {
+      _logger.w(
+        'Could not read the profile (${error.code}); showing the cached copy',
+        tag: MenoLogTag.lifecycle.label,
+      );
+    }
+  }
+
+  /// Follows the active account, putting its cached profile in place and then
+  /// reading the account's own record.
   void _onAccountChanged(String? userId, ListenableSubscription subscription) {
+    if (_disposed) return;
     _adopt(userId);
+    unawaited(_read());
   }
 
   /// Puts [userId]'s cached profile in place, or clears the screen when nobody
   /// is signed in.
   void _adopt(String? userId) {
     if (userId == null || userId.isEmpty) {
-      _profile.value = MyProfile.empty;
+      _profile.value = .empty;
       return;
     }
-    _profile.value = _cache.myProfile(userId) ?? MyProfile.empty;
+    _profile.value = _cache.myProfile(userId) ?? .empty;
   }
 }
