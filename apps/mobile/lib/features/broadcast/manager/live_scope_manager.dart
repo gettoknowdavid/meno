@@ -58,16 +58,16 @@ typedef LiveScopeRegistrar = FutureOr<void> Function(
 /// previous session must not close the one that replaced it.
 ///
 /// # Why this manager outlives the session
-  ///
-  /// This manager is registered in the account's scope and answers for the
-  /// account — *is a room open, and which one* — while the session's own
-  /// services answer only inside a room's scope. That split is what lets a
-  /// screen outside the room (the home page's banner, a card, the details
-  /// sheet) ask whether the account is on air without resolving anything that
-  /// does not exist yet: everything a widget needs to draw that answer is
-  /// registered for as long as the account is. Registering a session object in
-  /// the account's scope instead would put a room's identity where it can never
-  /// be disposed with the room.
+///
+/// This manager is registered in the account's scope and answers for the
+/// account — *is a room open, and which one* — while the session's own
+/// services answer only inside a room's scope. That split is what lets a
+/// screen outside the room (the home page's banner, a card, the details
+/// sheet) ask whether the account is on air without resolving anything that
+/// does not exist yet: everything a widget needs to draw that answer is
+/// registered for as long as the account is. Registering a session object in
+/// the account's scope instead would put a room's identity where it can never
+/// be disposed with the room.
 final class LiveScopeManager implements Disposable {
   new(
     this._userId, {
