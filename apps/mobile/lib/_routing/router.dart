@@ -42,11 +42,17 @@ GoRouter createRouter({
       auth.emailVerified,
     ]),
     redirect: guard.redirect,
-    routes: _routes,
+    routes: [
+      ..._publicRoutes,
+      ..._standaloneRoutes,
+      ..._broadcastFlow,
+      ..._settingsRoutes,
+      ..._bottomNavShell,
+    ],
   );
 }
 
-List<RouteBase> get _routes => [
+List<RouteBase> get _publicRoutes => [
   GoRoute(path: MRoutes.loading, builder: (_, _) => const StubPage('Loading')),
   GoRoute(path: MRoutes.onboarding, builder: (_, _) => const OnboardingPage()),
   GoRoute(
@@ -108,6 +114,13 @@ List<RouteBase> get _routes => [
     builder: (_, _) => const StubPage('Google Sign-in'),
   ),
   GoRoute(
+    path: MRoutes.liveSessionInit,
+    builder: (_, _) => const LiveSessionInitPage(),
+  ),
+];
+
+List<RouteBase> get _standaloneRoutes => [
+  GoRoute(
     path: MRoutes.notifications,
     builder: (_, _) => const StubPage('Notifications'),
   ),
@@ -136,9 +149,12 @@ List<RouteBase> get _routes => [
     },
   ),
   GoRoute(
-    path: MRoutes.liveSessionInit,
-    builder: (_, _) => const LiveSessionInitPage(),
+    path: MRoutes.webCreateBroadcast,
+    builder: (_, _) => const StubPage('Create Broadcast (Web)'),
   ),
+];
+
+List<RouteBase> get _broadcastFlow => [
   GoRoute(
     path: MRoutes.broadcasts,
     builder: (_, _) => const BroadcastsPage(queryParameters: {}),
@@ -218,10 +234,9 @@ List<RouteBase> get _routes => [
       ),
     ],
   ),
-  GoRoute(
-    path: MRoutes.webCreateBroadcast,
-    builder: (_, _) => const StubPage('Create Broadcast (Web)'),
-  ),
+];
+
+List<RouteBase> get _settingsRoutes => [
   GoRoute(
     path: MRoutes.settings,
     builder: (_, _) => const SettingsPage(),
@@ -237,6 +252,9 @@ List<RouteBase> get _routes => [
       GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
     ],
   ),
+];
+
+List<RouteBase> get _bottomNavShell => [
   StatefulShellRoute.indexedStack(
     builder: (_, _, navigationShell) {
       return RootShell(navigationShell: navigationShell);
@@ -244,10 +262,7 @@ List<RouteBase> get _routes => [
     branches: [
       StatefulShellBranch(
         routes: [
-          GoRoute(
-            path: MRoutes.home,
-            builder: (_, _) => const StubPage('Home'),
-          ),
+          GoRoute(path: MRoutes.home, builder: (_, _) => const HomePage()),
         ],
       ),
       StatefulShellBranch(

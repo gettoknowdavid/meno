@@ -139,7 +139,11 @@ class _LiveForYouSection extends WatchingWidget {
 
     return MSection(
       title: 'Live For You',
-      titleIcon: Assets.images.sparkles.image(height: 24, width: 24),
+      titleIcon: Assets.images.sparkles.image(
+        height: 24,
+        width: 24,
+        package: 'meno_ui',
+      ),
       onSeeAll: () =>
           context.pushNamed(MRoutes.broadcasts, queryParameters: params),
       builder: (context) => FeedWidget(
@@ -177,7 +181,11 @@ class _NowLiveSection extends WatchingWidget {
 
     return MSection(
       title: 'Now Live',
-      titleIcon: Assets.images.flame.image(height: 24, width: 24),
+      titleIcon: Assets.images.flame.image(
+        height: 24,
+        width: 24,
+        package: 'meno_ui',
+      ),
       onSeeAll: () => context.pushNamed(
         MRoutes.broadcasts,
         queryParameters: feedSource.query.toRouterParams(),
@@ -217,7 +225,11 @@ class _RecentlyLiveSection extends WatchingWidget {
 
     return MSection(
       title: 'Recently Live',
-      titleIcon: Assets.images.highVoltage.image(height: 24, width: 24),
+      titleIcon: Assets.images.highVoltage.image(
+        height: 24,
+        width: 24,
+        package: 'meno_ui',
+      ),
       onSeeAll: () => context.pushNamed(
         MRoutes.broadcasts,
         queryParameters: const BroadcastQuery.recentlyLive().toRouterParams(),
