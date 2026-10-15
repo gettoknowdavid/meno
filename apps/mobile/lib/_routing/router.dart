@@ -11,6 +11,7 @@ import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
+import 'package:meno_mobile/features/settings/settings.dart';
 
 /// The key of the router's root navigator.
 ///
@@ -220,6 +221,21 @@ List<RouteBase> get _routes => [
   GoRoute(
     path: MRoutes.webCreateBroadcast,
     builder: (_, _) => const StubPage('Create Broadcast (Web)'),
+  ),
+  GoRoute(
+    path: MRoutes.settings,
+    builder: (_, _) => const SettingsPage(),
+    routes: [
+      GoRoute(
+        path: 'notifications',
+        builder: (_, _) => const NotificationsSettingsPage(),
+      ),
+      GoRoute(
+        path: 'security',
+        builder: (_, _) => const SecuritySettingsPage(),
+      ),
+      GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
+    ],
   ),
   StatefulShellRoute.indexedStack(
     builder: (_, _, navigationShell) {
