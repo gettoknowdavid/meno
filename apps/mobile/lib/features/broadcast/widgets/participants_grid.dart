@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/features.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -22,7 +23,7 @@ class ParticipantsGrid extends WatchingWidget {
   Widget build(BuildContext context) {
     if (isSearching && participants.isEmpty) return const MEmptyState();
 
-    final currentUserId = watchValue<UserManager, String?>(
+    final currentUserId = watchValue<UserManager, Id?>(
       (manager) => manager.currentUserId,
     );
 

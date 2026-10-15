@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -38,7 +39,12 @@ class EndedBroadcastParticipantsWidget extends StatelessWidget {
         // Avatar stack
         MAvatarStack(
           participants: recentParticipants
-              .map((p) => ParticipantAvatar(id: p.id, avatarUrl: p.avatarUrl))
+              .map(
+                (p) => ParticipantAvatar(
+                  id: p.id.getOrCrash,
+                  avatarUrl: p.avatar?.getUrl,
+                ),
+              )
               .toList(),
           totalCount: allTimeCount,
         ),

@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
@@ -23,7 +24,7 @@ class AddCohostModal extends WatchingWidget {
 
     final manager = di<BroadcastEditorManager>();
 
-    final cohostsIds = watchValue<BroadcastEditorManager, List<String>>(
+    final cohostsIds = watchValue<BroadcastEditorManager, List<Id>>(
       (manager) => manager.cohosts,
     );
 
@@ -90,7 +91,7 @@ class CohostListTile extends StatelessWidget {
   });
 
   final Profile profile;
-  final void Function(String) onSelect;
+  final void Function(Id) onSelect;
   final bool isDisabled;
 
   @override
@@ -111,7 +112,7 @@ class CohostListTile extends StatelessWidget {
                 mainAxisAlignment: .center,
                 children: [
                   MText(
-                    profile.fullName,
+                    profile.fullName.getOrElse((_) => ''),
                     style: textTheme.captionMedium,
                     overflow: .ellipsis,
                     maxLines: 1,

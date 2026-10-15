@@ -46,7 +46,7 @@ final class MyProfileManager implements Disposable {
   final ValueNotifier<bool> _isLoading = ValueNotifier(false);
 
   ListenableSubscription? _subscription;
-  String? _loadingUserId;
+  Id? _loadingUserId;
   bool _disposed = false;
 
   /// The signed-in account's profile, or [MyProfile.empty] when there is none.
@@ -144,7 +144,7 @@ final class MyProfileManager implements Disposable {
 
   /// Follows the active account, putting its cached profile in place and then
   /// reading the account's own record.
-  void _onAccountChanged(String? userId, ListenableSubscription subscription) {
+  void _onAccountChanged(Id? userId, ListenableSubscription subscription) {
     if (_disposed) return;
     _adopt(userId);
     unawaited(_read());
@@ -152,11 +152,11 @@ final class MyProfileManager implements Disposable {
 
   /// Puts [userId]'s cached profile in place, or clears the screen when nobody
   /// is signed in.
-  void _adopt(String? userId) {
+  void _adopt(Id? userId) {
     if (userId == null || userId.isEmpty) {
       _profile.value = .empty;
       return;
     }
-    _profile.value = _cache.myProfile(userId) ?? .empty;
+    _profile.value = _cache.myProfile(userId.getOrCrash) ?? .empty;
   }
 }

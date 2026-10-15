@@ -14,7 +14,7 @@ final class FavouritesManager implements Disposable {
   new({required this._local, required this._userId, required this._logger}) {
     fetch = .createSyncNoParamNoResult(
       () {
-        final stored = _local.favourites(_userId);
+        final stored = _local.favourites(_userId.getOrCrash);
         favourites.startTransAction();
         favourites.clear();
         favourites.addAll(stored);
@@ -27,14 +27,14 @@ final class FavouritesManager implements Disposable {
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.favourites.fetch',
     );
-    remove = .createAsyncNoResult<String>(
+    remove = .createAsyncNoResult<Id>(
       (broadcastId) async {
         final stored = _local
-            .favourites(_userId)
+            .favourites(_userId.getOrCrash)
             .firstWhere((favourite) => favourite.broadcastId == broadcastId);
         await _local.toggleIsFavourite(
           broadcast: Broadcast(id: stored.broadcastId, title: stored.title),
-          ownerId: _userId,
+          ownerId: _userId.getOrCrash,
         );
         fetch.run();
       },
@@ -44,7 +44,7 @@ final class FavouritesManager implements Disposable {
   }
 
   final BroadcastLocalService _local;
-  final String _userId;
+  final Id _userId;
   final MenoLogger _logger;
 
   /// The account's kept broadcasts, most recently saved first.
@@ -54,7 +54,7 @@ final class FavouritesManager implements Disposable {
   late final Command<void, void> fetch;
 
   /// Forgets `broadcastId`, then re-reads the list.
-  late final Command<String, void> remove;
+  late final Command<Id, void> remove;
 
   @override
   FutureOr<dynamic> onDispose() {

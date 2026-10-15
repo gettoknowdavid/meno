@@ -1,4 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_core/value_objects/text_value_objects.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
 
 part 'dtos.freezed.dart';
@@ -159,11 +161,11 @@ abstract class UserSummaryDto with _$UserSummaryDto {
 /// The domain view of a [BroadcastDto].
 extension BroadcastDtoX on BroadcastDto {
   Broadcast get toDomain => Broadcast(
-    id: id,
-    title: title,
-    description: description,
+    id: Id.fromString(id),
+    title: SingleLineString(title),
+    description: description == null ? null : MultiLineString(description!),
     timeZone: timeZone,
-    imageUrl: imageUrl,
+    image: ImageInput.fromUrl(imageUrl),
     imageId: imageId,
     createdAt: createdAt,
     startTime: startTime,
@@ -189,11 +191,11 @@ extension BroadcastDtoX on BroadcastDto {
 /// The domain view of a [BroadcastListItemDto].
 extension BroadcastListItemDtoX on BroadcastListItemDto {
   BroadcastSummary get toDomain => BroadcastSummary(
-    id: id,
-    title: title,
-    description: description,
+    id: Id.fromString(id),
+    title: SingleLineString(title),
+    description: description == null ? null : MultiLineString(description!),
     timeZone: timeZone,
-    imageUrl: imageUrl,
+    image: ImageInput.fromUrl(imageUrl),
     imageId: imageId,
     status: BroadcastStatus.fromWire(status),
     state: BroadcastState.fromWire(state),
@@ -201,10 +203,10 @@ extension BroadcastListItemDtoX on BroadcastListItemDto {
     startTime: startTime,
     endTime: endTime,
     totalParticipants: totalParticipants,
-    creatorId: creatorId,
-    creatorName: creatorName,
+    creatorId: Id.fromString(creatorId),
+    creatorName: FullName(creatorName),
     creatorAvatarId: creatorAvatarId,
-    creatorAvatarUrl: creatorAvatarUrl,
+    creatorAvatar: ImageInput.fromUrl(creatorAvatarUrl),
   );
 }
 
@@ -212,7 +214,7 @@ extension BroadcastListItemDtoX on BroadcastListItemDto {
 extension BroadcastSessionDtoX on BroadcastSessionDto {
   /// This session as the app models it, under [userId].
   BroadcastSession toDomain(String userId) => BroadcastSession(
-    userId: userId,
+    userId: Id.fromString(userId),
     broadcast: broadcast.toDomain,
     token: token,
     canPublish: broadcast.toDomain.canPublish,
@@ -223,11 +225,11 @@ extension BroadcastSessionDtoX on BroadcastSessionDto {
 /// The wire view of a [Broadcast], for the cache.
 extension BroadcastX on Broadcast {
   BroadcastDto get toDto => BroadcastDto(
-    id: id,
-    title: title,
-    description: description,
+    id: id.getOrCrash,
+    title: title.getOrCrash,
+    description: description?.getOrNull,
     timeZone: timeZone,
-    imageUrl: imageUrl,
+    imageUrl: image?.toUrlOrFilePathOrNull,
     imageId: imageId,
     createdAt: createdAt,
     startTime: startTime,
@@ -260,12 +262,12 @@ extension CohostDtoX on CohostDto {
 /// The domain view of an [EndBroadcastDto].
 extension EndBroadcastDtoX on EndBroadcastDto {
   EndedBroadcast get toDomain => EndedBroadcast(
-    broadcastId: broadcastId,
-    title: broadcastTitle,
-    creatorId: creatorId,
-    creatorName: creatorName,
+    broadcastId: Id.fromString(broadcastId),
+    title: SingleLineString(broadcastTitle),
+    creatorId: Id.fromString(creatorId),
+    creatorName: FullName(creatorName),
     endedAt: endedAt,
-    imageUrl: broadcastImageUrl,
+    image: ImageInput.fromUrl(broadcastImageUrl),
     reason: EndReason.fromWire(endedReason),
     duration: Duration(seconds: durationSecs),
     totalParticipants: totalParticipants,
@@ -276,10 +278,10 @@ extension EndBroadcastDtoX on EndBroadcastDto {
 /// The domain view of a [ParticipantDto].
 extension ParticipantDtoX on ParticipantDto {
   Participant get toDomain => Participant(
-    id: id,
-    fullName: fullName,
+    id: Id.fromString(id),
+    fullName: FullName(fullName),
     avatarId: avatarId,
-    avatarUrl: avatarUrl,
+    avatar: ImageInput.fromUrl(avatarUrl),
     role: ParticipantRole.fromWire(role),
     joinedAt: joinedAt,
     isJoined: isJoined,
@@ -289,20 +291,20 @@ extension ParticipantDtoX on ParticipantDto {
 /// The wire view of a [Participant].
 extension ParticipantX on Participant {
   UserSummaryDto get toDto => UserSummaryDto(
-    id: id,
-    fullName: fullName,
+    id: id.getOrCrash,
+    fullName: fullName.getOrCrash,
     avatarId: avatarId,
-    avatarUrl: avatarUrl,
+    avatarUrl: avatar?.toUrlOrFilePathOrNull,
   );
 }
 
 /// The domain view of a [UserSummaryDto].
 extension UserSummaryDtoX on UserSummaryDto {
   Participant get toDomain => Participant(
-    id: id,
-    fullName: fullName,
+    id: Id.fromString(id),
+    fullName: FullName(fullName),
     avatarId: avatarId,
-    avatarUrl: avatarUrl,
+    avatar: ImageInput.fromUrl(avatarUrl),
   );
 
   /// This account as the API writes it.

@@ -58,7 +58,7 @@ class LoginPage extends WatchingWidget {
 
       di<AuthManager>().login.run(
         LoginArgs(
-          email: Email(account.isEmpty ? emailCtrl.text : account.email),
+          email: account.isEmpty ? Email(emailCtrl.text) : account.email,
           password: Password.login(passwordCtrl.text),
         ),
       );

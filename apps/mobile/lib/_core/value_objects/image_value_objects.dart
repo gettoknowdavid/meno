@@ -78,4 +78,12 @@ extension ImageInputX on ImageInput {
   String? get getUrl => (getOrNull as NetworkImageOrigin?)?.url;
 
   File? get getFile => (getOrNull as LocalImageOrigin?)?.file;
+
+  String? get toUrlOrFilePathOrNull {
+    return switch (getOrNull) {
+      NetworkImageOrigin(:final url) => url,
+      LocalImageOrigin(:final file) => file.path,
+      _ => null,
+    };
+  }
 }

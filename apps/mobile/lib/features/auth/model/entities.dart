@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/value_objects/_value_objects.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 
 part 'entities.freezed.dart';
@@ -26,7 +27,7 @@ enum OtpType {
 @freezed
 abstract class SessionInfo with _$SessionInfo {
   const factory({
-    required String id,
+    required Id id,
     required String deviceLabel,
     DateTime? createdAt,
     DateTime? lastUsedAt,
@@ -51,7 +52,7 @@ abstract class UserCredential with _$UserCredential {
   );
 
   /// The account id, or an empty string when there is no account.
-  String get userId => user.id;
+  Id get userId => user.id;
 
   /// Whether this is [empty] rather than a real account.
   bool get isEmpty => user.isEmpty;

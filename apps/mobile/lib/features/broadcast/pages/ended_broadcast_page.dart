@@ -1,9 +1,9 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 
 import 'package:meno_ui/meno_ui.dart';
 
@@ -32,11 +32,12 @@ class EndedBroadcastPage extends WatchingWidget {
       (manager) => manager.endedBroadcast,
     );
 
-    final currentUserId = watchValue<UserManager, String?>(
+    final currentUserId = watchValue<UserManager, Id?>(
       (manager) => manager.currentUserId,
     );
 
-    final isOwnBroadcastEnded = ended?.isHostedBy(currentUserId ?? '') ?? false;
+    final isOwnBroadcastEnded =
+        ended?.isHostedBy(currentUserId ?? .empty) ?? false;
 
     Widget? child;
 
@@ -88,7 +89,7 @@ class _PageView extends StatelessWidget {
               ),
             ),
             Spaces.verticalXLarge,
-            BroadcastArtworkWidget(imageUrl: ended.imageUrl),
+            BroadcastArtworkWidget(image: ended.image),
             Spaces.verticalLarge,
             MTimerDisplay(
               formattedTime: formattedDuration,

@@ -35,7 +35,7 @@ final class ProfileCacheService {
 
   /// Stores [profile] as the signed-in account's own.
   Future<void> saveMyProfile(MyProfile profile) => _write(
-    StorageKeys.forUser(StorageKeys.profile, profile.id),
+    StorageKeys.forUser(StorageKeys.profile, profile.id.getOrCrash),
     profile.toDto.toJson(),
   );
 
@@ -47,7 +47,7 @@ final class ProfileCacheService {
 
   /// Stores [profile] as the profile of the account it belongs to.
   Future<void> saveProfile(Profile profile) => _write(
-    StorageKeys.forUser(StorageKeys.publicProfile, profile.id),
+    StorageKeys.forUser(StorageKeys.publicProfile, profile.id.getOrCrash),
     profile.toDto.toJson(),
   );
 

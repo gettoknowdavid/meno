@@ -1,10 +1,10 @@
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
@@ -13,15 +13,18 @@ class PreStreamModal extends WatchingWidget {
 
   final String id;
 
-  static Future<void> show(BuildContext context, String id) {
+  static Future<void> show(BuildContext context, Id id) {
     final activeId = di<LiveScopeManager>().activeBroadcastId.value;
-    if (activeId == id) return context.push(MRoutes.liveBroadcastRoute(id));
-    return context.push(MRoutes.preStreamRoute(id));
+    final broadcastId = id.getOrCrash;
+    if (activeId == id) {
+      return context.push(MRoutes.liveBroadcastRoute(broadcastId));
+    }
+    return context.push(MRoutes.preStreamRoute(broadcastId));
   }
 
   @override
   Widget build(BuildContext context) {
-    callOnce((_) => di<StreamManager>().fetchBroadcast.run(id));
+    callOnce((_) => di<StreamManager>().fetchBroadcast.run(Id.fromString(id)));
 
     final isLoading = watchValue<StreamManager, bool>(
       (manager) => manager.fetchBroadcast.isRunning,
@@ -69,13 +72,13 @@ class _LoadedSheet extends WatchingWidget {
           const SliverToBoxAdapter(child: Spaces.verticalXLarge),
           SliverToBoxAdapter(
             child: PreStreamDescriptionSection(
-              description: broadcast.description,
+              description: broadcast.description?.getOrNull,
             ),
           ),
           const SliverToBoxAdapter(child: Spaces.verticalXLarge),
           SliverToBoxAdapter(
             child: PreStreamRecentBroadcastsSection(
-              creatorId: broadcast.hostId,
+              creatorId: broadcast.hostId.getOrCrash,
             ),
           ),
         ],
@@ -112,7 +115,7 @@ class _TopSection extends StatelessWidget {
         enabled: isLoading,
         child: Row(
           children: [
-            PreStreamArtwork(url: broadcast.imageUrl),
+            PreStreamArtwork(url: broadcast.image?.getUrl),
             Spaces.horizontalLarge,
             Expanded(
               child: Column(
@@ -120,7 +123,7 @@ class _TopSection extends StatelessWidget {
                 mainAxisAlignment: .center,
                 children: [
                   MText(
-                    broadcast.title,
+                    broadcast.title.getOrElse((_) => ''),
                     style: textTheme.subheadingMedium,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -129,7 +132,7 @@ class _TopSection extends StatelessWidget {
                   const MBadge.live(),
                   const SizedBox(height: 6),
                   MText(
-                    broadcast.hostName,
+                    broadcast.hostName.getOrElse((_) => ''),
                     style: textTheme.captionRegular,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -286,7 +289,10 @@ class PreStreamRecentBroadcastsSection extends WatchingWidget {
           return BroadcastCard.rLive(
             broadcast,
             key: ValueKey(broadcast.id),
-            onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+            onTap: () async {
+              final id = broadcast.id.getOrCrash;
+              await context.push(MRoutes.broadcastRoute(id));
+            },
           );
         },
       ),

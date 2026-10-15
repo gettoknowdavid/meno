@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_session_manager.dart';
@@ -32,7 +33,7 @@ class LiveSessionBanner extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    final activeId = watchValue<LiveScopeManager, String?>(
+    final activeId = watchValue<LiveScopeManager, Id?>(
       (manager) => manager.activeBroadcastId,
     );
 
@@ -52,11 +53,14 @@ class LiveSessionBanner extends WatchingWidget {
     return _Banner(
       key: ValueKey('broadcastBanner-${broadcast.id}'),
       badgeTitle: status.label,
-      broadcastTitle: broadcast.title,
-      broadcastCreatorName: broadcast.hostName,
+      broadcastTitle: broadcast.title.getOrElse((_) => ''),
+      broadcastCreatorName: broadcast.hostName.getOrElse((_) => ''),
       actionButtonLabel: isHost ? 'End' : 'Leave',
       action: () => _handleAction(context),
-      onTap: () => context.push<void>(MRoutes.liveBroadcastRoute(broadcast.id)),
+      onTap: () async {
+        final id = broadcast.id.getOrCrash;
+        await context.push<void>(MRoutes.liveBroadcastRoute(id));
+      },
     );
   }
 

@@ -7,7 +7,6 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
-import 'package:uuid/uuid.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
 ///
@@ -40,10 +39,10 @@ final class BroadcastEditorManager implements Disposable {
         }
 
         final created = await _http.create(
-          title: draft.title,
-          description: draft.description,
+          title: draft.title.getOrCrash,
+          description: draft.description.getOrNull,
           imageId: draft.imageId,
-          cohosts: draft.cohosts,
+          cohosts: draft.cohosts.map((id) => id.getOrElse((_) => '')).toList(),
           recordingEnabled: draft.record,
         );
         _createdBroadcastId = created.id;
@@ -63,7 +62,8 @@ final class BroadcastEditorManager implements Disposable {
         _isRunning.value = true;
         final BroadcastSession created;
         try {
-          created = (await _http.goLive(broadcastId)).toDomain(_userId);
+          created = (await _http.goLive(broadcastId.getOrCrash))
+              .toDomain(_userId.getOrCrash);
         } finally {
           _isRunning.value = false;
         }
@@ -77,8 +77,8 @@ final class BroadcastEditorManager implements Disposable {
     );
 
     resetForm = .createSyncNoParamNoResult(() {
-      title.value = '';
-      description.value = '';
+      title.value = SingleLineString.empty;
+      description.value = MultiLineString.empty;
       imagePath.value = null;
       cohosts.startTransAction();
       cohosts.clear();
@@ -104,9 +104,9 @@ final class BroadcastEditorManager implements Disposable {
       step.value = draft.creationStep;
     });
 
-    deleteDraft = .createAsyncNoResult<String>(
+    deleteDraft = .createAsyncNoResult<Id>(
       (draftId) async {
-        await _local.deleteDraft(draftId);
+        await _local.deleteDraft(draftId.getOrCrash);
         if (_draftId == draftId) resetForm.run();
         _loadDrafts();
       },
@@ -119,12 +119,12 @@ final class BroadcastEditorManager implements Disposable {
   final BroadcastLocalService _local;
   final MediaService _media;
   final LiveScopeManager _live;
-  final String _userId;
+  final Id _userId;
   final MenoLogger _logger;
 
   /// The draft being edited, or null while the form is new.
-  String? _draftId;
-  String? _createdBroadcastId;
+  Id? _draftId;
+  Id? _createdBroadcastId;
 
   /// The account's drafts, newest edit first.
   final drafts = ListNotifier<BroadcastDraft>(data: []);
@@ -132,13 +132,13 @@ final class BroadcastEditorManager implements Disposable {
   /// How far the creation this draft describes has got.
   final ValueNotifier<BroadcastCreationStep> step = ValueNotifier(.none);
 
-  final ValueNotifier<String> title = ValueNotifier('');
-  final ValueNotifier<String> description = ValueNotifier('');
+  final ValueNotifier<SingleLineString> title = ValueNotifier(.empty);
+  final ValueNotifier<MultiLineString> description = ValueNotifier(.empty);
 
   /// The locally picked image, until the API has one.
-  final imagePath = ValueNotifier<String?>(null);
+  final imagePath = ValueNotifier<ImageInput?>(null);
 
-  final cohosts = ListNotifier<String>(data: []);
+  final cohosts = ListNotifier<Id>(data: []);
   final ValueNotifier<bool> record = ValueNotifier(false);
 
   /// The session going live produced, once there is one.
@@ -149,12 +149,13 @@ final class BroadcastEditorManager implements Disposable {
   /// A title and a description are what the API requires; the cohost limit is
   /// the editor's own rule and is enforced by [toggleCohost].
   late final ValueListenable<bool> canSubmit = title.map(
-    (value) => value.trim().isNotEmpty,
+    (value) => value.isValid,
   );
 
-  void onTitleChanged(String input) => title.value = input;
+  void onTitleChanged(String input) => title.value = SingleLineString(input);
 
-  void onDescriptionChanged(String input) => description.value = input;
+  void onDescriptionChanged(String input) =>
+      description.value = MultiLineString(input);
 
   void onToggleRecord(bool input) => record.value = input;
 
@@ -163,7 +164,7 @@ final class BroadcastEditorManager implements Disposable {
   /// Capped at two: the API accepts more, but the pre-stream lobby and the
   /// broadcast card both draw slots for two, so the form stops at what can be
   /// seen.
-  void toggleCohost(String cohostId) {
+  void toggleCohost(Id cohostId) {
     if (cohosts.contains(cohostId)) {
       cohosts.remove(cohostId);
       return;
@@ -175,7 +176,8 @@ final class BroadcastEditorManager implements Disposable {
   /// Picks an image with the platform picker.
   Future<void> pickImage({bool fromGallery = true}) async {
     final file = await _media.getImage(fromGallery: fromGallery);
-    imagePath.value = file?.path;
+    if (file == null) return;
+    imagePath.value = ImageInput.fromFile(file);
   }
 
   void removeImage() => imagePath.value = null;
@@ -201,12 +203,12 @@ final class BroadcastEditorManager implements Disposable {
   late final Command<BroadcastDraft, void> selectDraft;
 
   /// Forgets draftId`` and re-reads the list.
-  late final Command<String, void> deleteDraft;
+  late final Command<Id, void> deleteDraft;
 
   /// The form as a draft, writing it to the device first.
   Future<BroadcastDraft> saveDraft() async {
     final draft = BroadcastDraft(
-      id: _draftId ??= const Uuid().v4(),
+      id: _draftId ??= Id.unique(),
       ownerId: _userId,
       title: title.value,
       description: description.value,
@@ -252,7 +254,7 @@ final class BroadcastEditorManager implements Disposable {
   static const int _maxCohosts = 2;
 
   void _loadDrafts() {
-    final stored = _local.drafts(_userId);
+    final stored = _local.drafts(_userId.getOrCrash);
     drafts.startTransAction();
     drafts.clear();
     drafts.addAll(stored);
@@ -272,13 +274,13 @@ final class BroadcastEditorManager implements Disposable {
   }
 
   Future<void> _persistCreationState(
-    String broadcastId,
+    Id broadcastId,
     BroadcastCreationStep currentStep,
   ) async {
     final draftId = _draftId;
     if (draftId == null) return;
 
-    final existing = _local.draft(draftId);
+    final existing = _local.draft(draftId.getOrCrash);
     if (existing == null) return;
 
     await _local.saveDraft(

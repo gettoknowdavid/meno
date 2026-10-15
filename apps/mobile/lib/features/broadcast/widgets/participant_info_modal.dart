@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
 import 'package:meno_mobile/features/profile/model/entities.dart';
@@ -29,7 +30,7 @@ class ParticipantInfoModal extends WatchingWidget {
         id: participant.id,
         fullName: participant.fullName,
         bio: participant.bio,
-        avatarUrl: participant.avatarUrl,
+        avatarUrl: participant.avatar,
       );
       return UserProfileProxy(profile);
     });
@@ -41,7 +42,7 @@ class ParticipantInfoModal extends WatchingWidget {
         mainAxisSize: .min,
         crossAxisAlignment: .stretch,
         children: [
-          MAvatar(radius: 36, url: participant.avatarUrl),
+          MAvatar(radius: 36, url: participant.avatar?.getUrl),
           Spaces.verticalLarge,
           Padding(
             padding: const .symmetric(horizontal: 40),
@@ -51,7 +52,7 @@ class ParticipantInfoModal extends WatchingWidget {
               spacing: Insets.sm,
               children: [
                 MText(
-                  participant.fullName,
+                  participant.fullName.getOrElse((_) => ''),
                   style: textTheme.heading3Medium,
                   maxLines: 1,
                   overflow: .ellipsis,
@@ -67,7 +68,7 @@ class ParticipantInfoModal extends WatchingWidget {
           Spaces.verticalMicro,
           if (participant.bio != null) ...[
             MText(
-              participant.bio ?? BoneMock.paragraph,
+              participant.bio?.getOrNull ?? BoneMock.paragraph,
               style: textTheme.subheadingRegular,
               textAlign: .center,
               maxLines: 2,
@@ -80,7 +81,10 @@ class ParticipantInfoModal extends WatchingWidget {
           Spaces.verticalSmall,
           MTextButton(
             label: 'View account',
-            onPressed: () => ctx.push(MRoutes.userProfileRoute(participant.id)),
+            onPressed: () async {
+              final id = participant.id.getOrElse((_) => '');
+              await ctx.push(MRoutes.userProfileRoute(id));
+            },
           ),
         ],
       ),

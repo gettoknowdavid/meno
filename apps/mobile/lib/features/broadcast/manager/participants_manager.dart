@@ -38,7 +38,7 @@ final class ParticipantsManager implements Disposable {
     }, errorFilterFn: menoExceptionFilter)..pipeToCommand(_fetchParticipants);
 
     _fetchParticipants = Command.createAsyncNoParamNoResult(() async {
-      final page = await _http.participants(_broadcastId);
+      final page = await _http.participants(_broadcastId.getOrCrash);
       _handleInitialList(page.items);
     }, errorFilterFn: menoExceptionFilter);
 
@@ -80,7 +80,7 @@ final class ParticipantsManager implements Disposable {
   /// An id rather than the whole [BroadcastSession]: the roster needs to know
   /// *which* room, and taking only that is what lets a room's scope build this
   /// manager without the token that entering the room needs.
-  final String _broadcastId;
+  final Id _broadcastId;
 
   static const int _initialDisplayCount = 50;
   static const int _pageSize = 50;
@@ -93,11 +93,11 @@ final class ParticipantsManager implements Disposable {
   bool _isInitialized = false;
 
   /// Every account currently in the room, by id — the O(1) half of `left`.
-  final _participantsMap = <String, Participant>{};
+  final _participantsMap = <Id, Participant>{};
 
   /// Ids that joined at any point in this broadcast's life. A set, because the
   /// all-time count must not be inflated by somebody reloading the screen.
-  final Set<String> _allTimeIds = {};
+  final Set<Id> _allTimeIds = {};
 
   /// Current participants, host first.
   final _sortedParticipants = ListNotifier<Participant>(data: []);
@@ -177,7 +177,12 @@ final class ParticipantsManager implements Disposable {
             final filtered = trimmed.isEmpty
                 ? participants
                 : participants
-                      .where((p) => p.fullName.toLowerCase().contains(trimmed))
+                      .where(
+                        (p) => p.fullName
+                            .getOrElse((_) => '')
+                            .toLowerCase()
+                            .contains(trimmed),
+                      )
                       .toList();
 
             return filtered.sublist(0, count.clamp(0, filtered.length));

@@ -1,10 +1,10 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -86,7 +86,10 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                   mainAxisSize: .min,
                   children: [
                     MText('Hello,', style: textTheme.captionRegular),
-                    MText(user.fullName, style: textTheme.subheadingMedium),
+                    MText(
+                      user.fullName.getOrElse((_) => ''),
+                      style: textTheme.subheadingMedium,
+                    ),
                   ],
                 ),
               ),
@@ -107,7 +110,7 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                   const SizedBox(width: 24),
                   MAvatar(
                     radius: Insets.lg,
-                    url: user.avatarUrl,
+                    url: user.image?.getUrl,
                     onTap: () => context.go(MRoutes.myProfile),
                     hasBorder: false,
                   ),
@@ -245,7 +248,10 @@ class _RecentlyLiveSection extends WatchingWidget {
           return BroadcastCard.rLive(
             broadcast,
             key: ValueKey(broadcast.id),
-            onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+            onTap: () async {
+              final id = broadcast.id.getOrCrash;
+              await context.push(MRoutes.broadcastRoute(id));
+            },
           );
         },
       ),

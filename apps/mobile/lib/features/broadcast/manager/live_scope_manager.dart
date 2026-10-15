@@ -11,8 +11,8 @@ import 'package:meno_mobile/features/broadcast/services/_services.dart';
 final class LiveSession {
   const new({required this.broadcastId, required this.userId});
 
-  final String broadcastId;
-  final String userId;
+  final Id broadcastId;
+  final Id userId;
 
   @override
   bool operator ==(Object other) =>
@@ -78,7 +78,7 @@ final class LiveScopeManager implements Disposable {
     this._register,
   });
 
-  final String _userId;
+  final Id _userId;
   final MenoLogger _logger;
   final LiveSessionStore _store;
   final BroadcastHttpService _http;
@@ -93,7 +93,7 @@ final class LiveScopeManager implements Disposable {
   StreamSubscription<EndedBroadcast>? _endedSubscription;
   bool _disposed = false;
 
-  final ValueNotifier<String?> _broadcastId = ValueNotifier(null);
+  final ValueNotifier<Id?> _broadcastId = ValueNotifier(.empty);
 
   /// Whether the open scope was opened with the API's session for its room.
   ///
@@ -105,7 +105,7 @@ final class LiveScopeManager implements Disposable {
   Future<void> _queue = Future<void>.value();
 
   /// The broadcast on air, or null when there is none.
-  ValueListenable<String?> get activeBroadcastId => _broadcastId;
+  ValueListenable<Id?> get activeBroadcastId => _broadcastId;
 
   /// Whether a session is open.
   ValueListenable<bool> get isLive => _broadcastId.select((id) => id != null);
@@ -116,8 +116,9 @@ final class LiveScopeManager implements Disposable {
   /// absent — not merely empty — until the room is entered: this is the
   /// question to ask before resolving anything of the room's, which is why
   /// there is no untyped `isRegistered` for callers to get wrong.
-  bool isInRoom(String broadcastId) =>
-      _broadcastId.value == broadcastId && di.isRegistered<LiveSession>();
+  bool isInRoom(Id broadcastId) {
+    return _broadcastId.value == broadcastId && di.isRegistered<LiveSession>();
+  }
 
   /// Restores the session this device was in, then follows the socket.
   ///
@@ -147,12 +148,12 @@ final class LiveScopeManager implements Disposable {
   /// link to a broadcast is in before the join answers, and it is why the
   /// registrations that need a token are conditional in
   /// [`_registerLiveScope`](../../../locator.dart).
-  Future<void> start(String broadcastId, {BroadcastSession? session}) =>
-      _enqueue(() => _open(broadcastId, session));
+  Future<void> start(Id broadcastId, {BroadcastSession? session}) {
+    return _enqueue(() => _open(broadcastId, session));
+  }
 
   /// Closes the session, or the one [broadcastId] names.
-  Future<void> end([String? broadcastId]) =>
-      _enqueue(() => _close(broadcastId));
+  Future<void> end([Id? broadcastId]) => _enqueue(() => _close(broadcastId));
 
   @override
   FutureOr<dynamic> onDispose() async {
@@ -162,7 +163,7 @@ final class LiveScopeManager implements Disposable {
 
     final broadcastId = _broadcastId.value;
     _broadcastId.value = null;
-    if (broadcastId != null) await _drop(Scope.liveFor(broadcastId));
+    if (broadcastId != null) await _drop(Scope.liveFor(broadcastId.getOrCrash));
     _broadcastId.dispose();
   }
 
@@ -183,7 +184,9 @@ final class LiveScopeManager implements Disposable {
     }
 
     try {
-      final broadcast = await _http.getBroadcast(stored.broadcast.id);
+      final broadcast = await _http.getBroadcast(
+        stored.broadcast.id.getOrCrash,
+      );
       // The account can be signed out while the API is answering, and a scope
       // must not be pushed on top of a stack that is being taken down.
       if (_disposed) return;
@@ -267,7 +270,7 @@ final class LiveScopeManager implements Disposable {
   /// there is nothing to keep, and re-registering into a live scope from here
   /// would land in whatever scope happens to be current rather than this
   /// room's.
-  Future<void> _open(String broadcastId, BroadcastSession? broadcast) async {
+  Future<void> _open(Id broadcastId, BroadcastSession? broadcast) async {
     if (_broadcastId.value == broadcastId) {
       if (broadcast == null || _hasSession) return;
     }
@@ -276,7 +279,7 @@ final class LiveScopeManager implements Disposable {
 
     final live = LiveSession(broadcastId: broadcastId, userId: _userId);
     await di.pushNewScopeAsync(
-      scopeName: Scope.liveFor(broadcastId),
+      scopeName: Scope.liveFor(broadcastId.getOrCrash),
       init: (scope) async {
         scope.registerSingleton<LiveSession>(live);
         // Only when the room is being entered: a scope opened from a deep link
@@ -297,12 +300,12 @@ final class LiveScopeManager implements Disposable {
   }
 
   /// Pops the open session, unless [broadcastId] names a different one.
-  Future<void> _close([String? broadcastId]) async {
+  Future<void> _close([Id? broadcastId]) async {
     final live = _broadcastId.value;
     if (live == null) return;
     if (broadcastId != null && broadcastId != live) return;
 
-    await _drop(Scope.liveFor(live));
+    await _drop(Scope.liveFor(live.getOrCrash));
     _broadcastId.value = null;
 
     // The session is over, so nothing is left to recover.

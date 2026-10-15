@@ -35,10 +35,10 @@ class BroadcastInfoModal extends WatchingWidget {
       builder: (context) => Column(
         mainAxisSize: .min,
         children: [
-          BroadcastArtworkWidget(imageUrl: broadcast.imageUrl),
+          BroadcastArtworkWidget(image: broadcast.image),
           Spaces.verticalSmall,
           BroadcastTitleWidget(
-            title: broadcast.title,
+            title: broadcast.title.getOrElse((_) => ''),
             maxLines: 1,
             padding: const .symmetric(horizontal: 40),
           ),
@@ -48,7 +48,9 @@ class BroadcastInfoModal extends WatchingWidget {
             child: Row(
               mainAxisAlignment: .center,
               children: [
-                BroadcastCreatorWidget(name: broadcast.hostName),
+                BroadcastCreatorWidget(
+                  name: broadcast.hostName.getOrElse((_) => ''),
+                ),
                 Spaces.horizontalSmall,
                 const BroadcastStatusWidget(),
               ],

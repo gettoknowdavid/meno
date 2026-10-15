@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -34,7 +35,10 @@ class UserAccountDetails extends StatelessWidget {
             mainAxisAlignment: .center,
             children: [
               MText('Welcome back,', style: textTheme.subheadingMedium),
-              MText(user.fullName, style: textTheme.heading2Medium),
+              MText(
+                user.fullName.getOrElse((_) => ''),
+                style: textTheme.heading2Medium,
+              ),
             ],
           ),
         ),
@@ -44,7 +48,7 @@ class UserAccountDetails extends StatelessWidget {
           children: [
             MAvatar(
               radius: Insets.xl,
-              url: user.avatarUrl,
+              url: user.image?.getUrl,
               onTap: onSwitchAccount,
               hasBorder: false,
             ),

@@ -44,12 +44,14 @@ class EmailVerificationPage extends WatchingWidget {
       handler: (ctx, _, cancel) {
         // if (cancel) return;
 
-        final address = email ?? di<UserManager>().currentUser.value.email;
+        final address = email != null
+            ? Email(email!)
+            : di<UserManager>().currentUser.value.email;
 
-        if (!Email(address).isValid) return;
+        if (!address.isValid) return;
         di<EmailVerificationManager>().startCooldown();
         di<AuthManager>().resendOtp.run(
-          OtpRequestArgs(email: Email(address), type: .verifyEmail),
+          OtpRequestArgs(email: address, type: .verifyEmail),
         );
       },
     );
@@ -115,8 +117,8 @@ class EmailVerificationPage extends WatchingWidget {
     );
 
     final codeController = createOnce(TextEditingController.new);
-    final address = email ?? account.email;
-    final isValidAddress = Email(address).isValid;
+    final address = email != null ? Email(email!) : account.email;
+    final isValidAddress = address.isValid;
 
     final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
@@ -140,7 +142,10 @@ class EmailVerificationPage extends WatchingWidget {
                   const TextSpan(
                     text: 'Enter the 6-digit code we just sent to ',
                   ),
-                  TextSpan(text: address, style: textTheme.captionMedium),
+                  TextSpan(
+                    text: address.getOrElse((_) => ''),
+                    style: textTheme.captionMedium,
+                  ),
                   const TextSpan(text: ' to continue.'),
                 ],
                 style: textTheme.captionRegular.copyWith(
@@ -185,10 +190,7 @@ class EmailVerificationPage extends WatchingWidget {
               loading: isVerifying,
               disabled: !canVerify,
               onPressed: () => di<AuthManager>().verifyEmail.run(
-                VerifyEmailArgs(
-                  email: Email(address),
-                  code: codeController.text,
-                ),
+                VerifyEmailArgs(email: address, code: codeController.text),
               ),
             ),
             Spaces.verticalLarge,

@@ -1,3 +1,4 @@
+import 'package:meno_mobile/_core/_core.dart' as core;
 import 'package:meno_mobile/_shared/services/database.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_rows.dart';
@@ -32,7 +33,7 @@ final class BroadcastLocalService {
 
   /// Stores [draft], replacing the stored copy of the same draft.
   Future<void> saveDraft(BroadcastDraft draft) async {
-    final stored = _findDraft(draft.id);
+    final stored = _findDraft(draft.id.getOrCrash);
     final row = draft.copyWith(lastModified: DateTime.now()).toRow;
     if (stored != null) row.id = stored.id;
     await _database.draftBox.putAsync(row);
@@ -47,9 +48,9 @@ final class BroadcastLocalService {
   /// Whether [ownerId] keeps [broadcastId] for later.
   bool isFavourited({required String broadcastId, required String ownerId}) {
     return _query(
-      broadcastId: broadcastId,
-      ownerId: ownerId,
-    ).build().findFirst() !=
+          broadcastId: broadcastId,
+          ownerId: ownerId,
+        ).build().findFirst() !=
         null;
   }
 
@@ -73,7 +74,7 @@ final class BroadcastLocalService {
     required String ownerId,
   }) async {
     final existing = _query(
-      broadcastId: broadcast.id,
+      broadcastId: broadcast.id.getOrCrash,
       ownerId: ownerId,
     ).build().findFirst();
 
@@ -85,10 +86,10 @@ final class BroadcastLocalService {
     await _database.favouriteBroadcastBox.putAsync(
       FavouriteBroadcast(
         broadcastId: broadcast.id,
-        ownerId: ownerId,
+        ownerId: core.Id.fromString(ownerId),
         title: broadcast.title,
         creatorName: broadcast.hostName,
-        imageUrl: broadcast.imageUrl,
+        image: broadcast.image,
         savedAt: DateTime.now(),
       ).toRow,
     );

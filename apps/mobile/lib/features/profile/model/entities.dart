@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 
 part 'entities.freezed.dart';
@@ -6,28 +7,28 @@ part 'entities.freezed.dart';
 /// Sample public profiles for cards, lists, and placeholder states.
 final List<Profile> fakeProfileList = [
   Profile(
-    id: 'b1b1b1b1-0001-4b1b-8b1b-1b1b1b1b1b1b',
-    fullName: 'Grace Okonkwo',
-    bio: 'Sharing moments of worship, prayer, and testimony.',
+    id: Id.fromString('b1b1b1b1-0001-4b1b-8b1b-1b1b1b1b1b1b'),
+    fullName: FullName('Grace Okonkwo'),
+    bio: MultiLineString('Sharing moments of worship, prayer, and testimony.'),
     isFollowing: true,
     stats: const ProfileStats(broadcasts: 5, followers: 120, following: 34),
     createdAt: DateTime(2023, 9, 20),
   ),
-  const Profile(
-    id: 'b1b1b1b1-0002-4b1b-8b1b-2b1b1b1b1b1b',
-    fullName: 'Daniel Cho',
-    bio: 'Teacher, speaker, and lifelong learner.',
-    stats: ProfileStats(broadcasts: 1, followers: 8, following: 2),
+  Profile(
+    id: Id.fromString('b1b1b1b1-0002-4b1b-8b1b-2b1b1b1b1b1b'),
+    fullName: FullName('Daniel Cho'),
+    bio: MultiLineString('Teacher, speaker, and lifelong learner.'),
+    stats: const ProfileStats(broadcasts: 1, followers: 8, following: 2),
   ),
   Profile(
-    id: 'b1b1b1b1-0003-4b1b-8b1b-3b1b1b1b1b1b',
-    fullName: 'Sofia Bianchi',
+    id: Id.fromString('b1b1b1b1-0003-4b1b-8b1b-3b1b1b1b1b1b'),
+    fullName: FullName('Sofia Bianchi'),
     stats: const ProfileStats(broadcasts: 10, followers: 90, following: 3),
     createdAt: DateTime(2026, 1, 15),
   ),
-  const Profile(
-    id: 'b1b1b1b1-0004-4b1b-8b1b-4b1b1b1b1b1b',
-    fullName: 'Aisha Rahman',
+  Profile(
+    id: Id.fromString('b1b1b1b1-0004-4b1b-8b1b-4b1b1b1b1b1b'),
+    fullName: FullName('Aisha Rahman'),
     isFollowing: true,
   ),
 ];
@@ -62,13 +63,13 @@ abstract class MyProfile with _$MyProfile {
   /// Creates the signed-in account's profile.
   const factory({
     /// The account id, as the API's UUID string.
-    required String id,
+    required Id id,
 
     /// The name shown next to the account.
-    required String fullName,
+    required FullName fullName,
 
     /// The address the account signs in with.
-    required String email,
+    required Email email,
 
     /// Whether that address has been confirmed.
     @Default(false) bool emailVerified,
@@ -77,14 +78,14 @@ abstract class MyProfile with _$MyProfile {
     @Default(<AuthProvider>[]) List<AuthProvider> providers,
 
     /// The account's biography, when it has one.
-    String? bio,
+    MultiLineString? bio,
 
     /// The storage key of the current avatar, when one was uploaded.
     String? avatarId,
 
     /// The resolved avatar URL, when one was uploaded and the deployment
     /// publishes a base URL for object storage.
-    String? avatarUrl,
+    ImageInput? avatarUrl,
 
     /// The account's counters.
     @Default(ProfileStats.zero) ProfileStats stats,
@@ -96,7 +97,11 @@ abstract class MyProfile with _$MyProfile {
   const new _();
 
   /// A profile with nobody behind it: the state before a sign-in.
-  static const MyProfile empty = MyProfile(id: '', fullName: '', email: '');
+  static const MyProfile empty = MyProfile(
+    id: .empty,
+    fullName: .empty,
+    email: .empty,
+  );
 
   /// This account as everybody else sees it.
   ///
@@ -124,16 +129,16 @@ abstract class Profile with _$Profile {
   /// Creates a public profile.
   const factory({
     /// The account id, as the API's UUID string.
-    required String id,
+    required Id id,
 
     /// The name shown next to the account.
-    required String fullName,
+    required FullName fullName,
 
     /// The account's biography, when it has one.
-    String? bio,
+    MultiLineString? bio,
 
     /// The resolved avatar URL, when the account has an avatar.
-    String? avatarUrl,
+    ImageInput? avatarUrl,
 
     /// Whether the signed-in account follows this one.
     @Default(false) bool isFollowing,
@@ -148,7 +153,7 @@ abstract class Profile with _$Profile {
   const new _();
 
   /// A profile with no account behind it: the state before anything is known.
-  static const Profile empty = Profile(id: '', fullName: '');
+  static const Profile empty = Profile(id: .empty, fullName: .empty);
 
   /// Whether this is [empty] rather than a real profile.
   bool get isEmpty => id.isEmpty;

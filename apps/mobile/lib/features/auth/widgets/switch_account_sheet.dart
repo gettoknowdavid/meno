@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -31,7 +32,7 @@ final class SwitchAccountSheet {
     final accounts = auth.accounts.value.values.toList();
     final activeUserId = auth.activeCredential.value.userId;
 
-    final chosen = await showModalBottomSheet<String>(
+    final chosen = await showModalBottomSheet<Id?>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
@@ -47,12 +48,12 @@ final class SwitchAccountSheet {
             for (final credential in accounts)
               ListTile(
                 title: MText(
-                  credential.user.fullName,
+                  credential.user.fullName.getOrElse((_) => ''),
                   maxLines: 1,
                   overflow: .ellipsis,
                 ),
                 subtitle: MText(
-                  credential.user.email,
+                  credential.user.email.getOrElse((_) => ''),
                   style: textTheme.captionMedium,
                   maxLines: 1,
                   overflow: .ellipsis,

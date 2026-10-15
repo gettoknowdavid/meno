@@ -1,12 +1,10 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// What a required field says while it is empty.
@@ -51,7 +49,7 @@ class BroadcastEditorPage extends WatchingWidget {
         if (broadcastId == null || broadcastId.isEmpty) return;
 
         manager.resetForm.run();
-        context.go(MRoutes.liveBroadcastRoute(broadcastId));
+        context.go(MRoutes.liveBroadcastRoute(broadcastId.getOrCrash));
       },
     );
 
@@ -155,10 +153,10 @@ class _AvatarField extends WatchingWidget {
     final isLoading = watchValue<BroadcastEditorManager, bool>(
       (m) => m.isRunning,
     );
-    final imagePath = watchValue<BroadcastEditorManager, String?>(
+    final imagePath = watchValue<BroadcastEditorManager, ImageInput?>(
       (m) => m.imagePath,
     );
-    final imageFile = imagePath == null ? null : File(imagePath);
+    final imageFile = imagePath?.getFile;
 
     return Column(
       children: [
@@ -201,18 +199,25 @@ class _TitleField extends WatchingWidget {
   Widget build(BuildContext context) {
     final manager = di<BroadcastEditorManager>();
 
-    final controller = createOnce(
-      () => TextEditingController(text: manager.title.value),
-    );
+    final controller = createOnce(() {
+      return TextEditingController(
+        text: manager.title.value.getOrElse((e) => ''),
+      );
+    });
 
-    registerHandler<BroadcastEditorManager, String>(
+    registerHandler<BroadcastEditorManager, SingleLineString>(
       select: (manager) => manager.title,
       handler: (context, title, _) {
-        if (controller.text != title) controller.text = title;
+        if (controller.text != title.getOrNull) {
+          controller.text = title.getOrElse((e) => '');
+        }
       },
     );
 
-    final title = watchValue<BroadcastEditorManager, String>((m) => m.title);
+    final title = watchValue<BroadcastEditorManager, SingleLineString>(
+      (m) => m.title,
+    );
+
     final isLoading = watchValue<BroadcastEditorManager, bool>(
       (m) => m.isRunning,
     );
@@ -225,7 +230,8 @@ class _TitleField extends WatchingWidget {
       onChanged: manager.onTitleChanged,
       textInputAction: TextInputAction.next,
       enabled: !isLoading,
-      validator: (_) => title.trim().isEmpty ? _emptyFieldMessage : null,
+      validator: (_) =>
+          title.getOrElse((e) => '').isEmpty ? _emptyFieldMessage : null,
     );
   }
 }
@@ -238,19 +244,24 @@ class _DescriptionField extends WatchingWidget {
     final manager = di<BroadcastEditorManager>();
 
     final controller = createOnce(
-      () => TextEditingController(text: manager.description.value),
+      () => TextEditingController(
+        text: manager.description.value.getOrElse((e) => ''),
+      ),
     );
 
-    registerHandler<BroadcastEditorManager, String>(
+    registerHandler<BroadcastEditorManager, MultiLineString>(
       select: (manager) => manager.description,
       handler: (context, description, _) {
-        if (controller.text != description) controller.text = description;
+        if (controller.text != description.getOrNull) {
+          controller.text = description.getOrElse((e) => '');
+        }
       },
     );
 
-    final description = watchValue<BroadcastEditorManager, String>(
+    final description = watchValue<BroadcastEditorManager, MultiLineString>(
       (m) => m.description,
     );
+
     final isLoading = watchValue<BroadcastEditorManager, bool>(
       (m) => m.isRunning,
     );
@@ -264,7 +275,7 @@ class _DescriptionField extends WatchingWidget {
       controller: controller,
       onChanged: manager.onDescriptionChanged,
       enabled: !isLoading,
-      validator: (_) => description.trim().isEmpty ? _emptyFieldMessage : null,
+      validator: (_) => description.isEmpty ? _emptyFieldMessage : null,
     );
   }
 }

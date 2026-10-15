@@ -23,19 +23,20 @@ final class StreamManager implements Disposable {
     required this._userId,
     required this._logger,
   }) {
-    fetchBroadcast = .createAsyncNoResult<String>(
+    fetchBroadcast = .createAsyncNoResult<Id>(
       (broadcastId) async {
-        broadcast.value = await _http.getBroadcast(broadcastId);
+        broadcast.value = await _http.getBroadcast(broadcastId.getOrCrash);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.fetchBroadcast',
     );
 
-    joinBroadcast = .createAsyncNoResult<String>(
+    joinBroadcast = .createAsyncNoResult<Id>(
       (broadcastId) async {
         _isRunning.value = true;
         try {
-          final joined = (await _http.join(broadcastId)).toDomain(_userId);
+          final joined = (await _http.join(broadcastId.getOrCrash))
+              .toDomain(_userId.getOrCrash);
           session.value = joined;
           broadcast.value = joined.broadcast;
           _logger.d(
@@ -54,7 +55,7 @@ final class StreamManager implements Disposable {
 
   final BroadcastHttpService _http;
   final LiveScopeManager _live;
-  final String _userId;
+  final Id _userId;
   final MenoLogger _logger;
 
   /// The broadcast the lobby is about.
@@ -64,14 +65,14 @@ final class StreamManager implements Disposable {
   final session = ValueNotifier<BroadcastSession?>(null);
 
   /// `GET /broadcasts/{id}` for the lobby.
-  late final Command<String, void> fetchBroadcast;
+  late final Command<Id, void> fetchBroadcast;
 
   /// `POST /broadcasts/{id}/join`, answering with the session to enter with.
   ///
   /// The join is also what opens the room's scope: the session is the only
   /// thing carrying a token, so the registrations that need one can only happen
   /// once this answers.
-  late final Command<String, void> joinBroadcast;
+  late final Command<Id, void> joinBroadcast;
 
   /// Whether a read or a join is in flight.
   ValueListenable<bool> get isRunning => _isRunning;

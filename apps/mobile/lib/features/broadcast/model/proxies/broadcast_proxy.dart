@@ -14,8 +14,8 @@ import 'package:meno_mobile/features/broadcast/services/broadcast_local_service.
 final class BroadcastProxy extends ChangeNotifier {
   new(this._broadcast, this._ownerId) {
     _isFavourited = _storage.isFavourited(
-      broadcastId: _broadcast.id,
-      ownerId: _ownerId,
+      broadcastId: _broadcast.id.getOrCrash,
+      ownerId: _ownerId.getOrCrash,
     );
 
     toggleIsFavourite = .createUndoableNoParamNoResult<bool>(
@@ -25,7 +25,7 @@ final class BroadcastProxy extends ChangeNotifier {
         notifyListeners();
         await _storage.toggleIsFavourite(
           broadcast: _broadcast,
-          ownerId: _ownerId,
+          ownerId: _ownerId.getOrCrash,
         );
       },
       undo: (stack, _) {
@@ -37,7 +37,7 @@ final class BroadcastProxy extends ChangeNotifier {
     );
   }
 
-  final String _ownerId;
+  final Id _ownerId;
   Broadcast _broadcast;
 
   late bool _isFavourited;
@@ -51,17 +51,17 @@ final class BroadcastProxy extends ChangeNotifier {
 
   bool get isFavourited => _isFavourited;
 
-  String get id => _broadcast.id;
+  Id get id => _broadcast.id;
 
-  String get ownerId => _ownerId;
+  Id get ownerId => _ownerId;
 
-  String get title => _broadcast.title;
+  SingleLineString get title => _broadcast.title;
 
-  String get description => _broadcast.description ?? '';
+  MultiLineString get description => _broadcast.description ?? .empty;
 
-  String get creatorName => _broadcast.hostName;
+  FullName get creatorName => _broadcast.hostName;
 
-  String? get imageUrl => _broadcast.imageUrl;
+  ImageInput? get image => _broadcast.image;
 
   bool get isLive => _broadcast.isLive;
 

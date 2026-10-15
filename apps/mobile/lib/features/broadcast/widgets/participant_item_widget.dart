@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -35,7 +36,9 @@ class ParticipantItemWidget extends StatelessWidget {
                 _ParticipantAvatar(participant: participant, isEmpty: isEmpty),
                 Spaces.verticalSmall,
                 MText(
-                  isEmpty ? 'Add Co-host' : participant!.fullName,
+                  isEmpty
+                      ? 'Add Co-host'
+                      : participant!.fullName.getOrElse((_) => ''),
                   style: textTheme.microMedium.copyWith(height: 1),
                   maxLines: 1,
                   overflow: .ellipsis,
@@ -94,7 +97,7 @@ class _ParticipantAvatar extends StatelessWidget {
         children: [
           MAvatar(
             radius: 24,
-            url: participant?.avatarUrl,
+            url: participant?.avatar?.getUrl,
             hasBorder: false,
             child: isEmpty ? const Icon(MIcons.user, size: 16) : null,
           ),
@@ -125,11 +128,11 @@ class _ParticipantAvatar extends StatelessWidget {
 class _HostTag extends WatchingWidget {
   const new({required this.participantId});
 
-  final String participantId;
+  final Id participantId;
 
   @override
   Widget build(BuildContext context) {
-    final currentUserId = watchValue<UserManager, String?>(
+    final currentUserId = watchValue<UserManager, Id?>(
       (manager) => manager.currentUserId,
     );
     final isYou = participantId == currentUserId;
@@ -140,11 +143,11 @@ class _HostTag extends WatchingWidget {
 class _CoHostTag extends WatchingWidget {
   const new({required this.participantId});
 
-  final String participantId;
+  final Id participantId;
 
   @override
   Widget build(BuildContext context) {
-    final currentUserId = watchValue<UserManager, String?>(
+    final currentUserId = watchValue<UserManager, Id?>(
       (manager) => manager.currentUserId,
     );
     final isYou = participantId == currentUserId;

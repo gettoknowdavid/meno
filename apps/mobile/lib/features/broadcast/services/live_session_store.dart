@@ -22,7 +22,7 @@ final class LiveSessionStore {
   const new(this._storage, {required this._userId});
 
   final LocalStorage _storage;
-  final String _userId;
+  final Id _userId;
 
   /// The session this account was in, or null when it ended cleanly.
   ///
@@ -44,7 +44,7 @@ final class LiveSessionStore {
 
       return BroadcastSessionDto.fromJson(
         record['session'] as Map<String, dynamic>,
-      ).toDomain(_userId).copyWith(timestamp: savedAt);
+      ).toDomain(_userId.getOrCrash).copyWith(timestamp: savedAt);
     } on Object {
       return null;
     }
@@ -67,5 +67,6 @@ final class LiveSessionStore {
   /// Forgets the session.
   Future<void> clear() => _storage.remove(_key);
 
-  String get _key => StorageKeys.forUser(StorageKeys.liveSession, _userId);
+  String get _key =>
+      StorageKeys.forUser(StorageKeys.liveSession, _userId.getOrCrash);
 }

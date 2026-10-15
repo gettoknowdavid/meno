@@ -89,7 +89,7 @@ class _Content extends WatchingWidget {
       return BroadcastFeedDataSource(
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery.recentlyLive(creatorId: profile.id),
+        query: BroadcastQuery.recentlyLive(creatorId: profile.id.getOrNull),
       );
     });
 
@@ -97,7 +97,7 @@ class _Content extends WatchingWidget {
       return BroadcastFeedDataSource(
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery(creatorId: profile.id),
+        query: BroadcastQuery(creatorId: profile.id.getOrNull),
       );
     });
 
@@ -166,7 +166,7 @@ class _ProfileAppBar extends StatelessWidget {
       forceElevated: innerBoxIsScrolled,
       elevation: innerBoxIsScrolled ? 1 : 0,
       shadowColor: colors.onBackground.withValues(alpha: 0.08),
-      title: MText(profile.fullName),
+      title: MText(profile.fullName.getOrElse((_) => '')),
       titleTextStyle: textTheme.bodyMedium,
       leading: MIconButton(
         icon: const Icon(MIcons.chevron_left),
@@ -221,7 +221,10 @@ class _AllBroadcastsTab extends WatchingWidget {
         return BroadcastCard.rLiveTile(
           broadcast,
           key: ValueKey(broadcast.id),
-          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+          onTap: () async {
+            final id = broadcast.id.getOrElse((_) => '');
+            await context.push(MRoutes.broadcastRoute(id));
+          },
         );
       },
     );
@@ -244,7 +247,10 @@ class _RecentBroadcastsTab extends WatchingWidget {
         return BroadcastCard.rLiveTile(
           broadcast,
           key: ValueKey(broadcast.id),
-          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+          onTap: () async {
+            final id = broadcast.id.getOrElse((_) => '');
+            await context.push(MRoutes.broadcastRoute(id));
+          },
         );
       },
     );

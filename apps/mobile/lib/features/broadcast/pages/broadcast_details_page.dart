@@ -21,8 +21,8 @@ class BroadcastDetailsPage extends WatchingWidget {
     final manager = createOnce(
       () => BroadcastDetailsManager(
         http: di<BroadcastHttpService>(),
-        userId: di<UserManager>().currentUserId.value ?? '',
-        broadcastId: broadcastId,
+        userId: di<UserManager>().currentUserId.value ?? .empty,
+        broadcastId: Id.fromString(broadcastId),
         logger: di<MenoLogger>(),
       ),
     );
@@ -84,7 +84,7 @@ class BroadcastDetailsView extends WatchingWidget {
 
     return MScaffold(
       appBar: MAppBar.secondary(
-        title: proxy.title,
+        title: proxy.title.getOrElse((e) => ''),
         actions: [
           MIconButton(
             icon: proxy.isFavourited
@@ -104,13 +104,14 @@ class BroadcastDetailsView extends WatchingWidget {
         child: Column(
           children: [
             Spaces.verticalLarge,
-            Align(child: _Artwork(imageUrl: proxy.imageUrl)),
+            Align(child: _Artwork(imageUrl: proxy.image?.getUrl)),
             Spaces.verticalSmall,
-            _Title(title: proxy.title),
+            _Title(title: proxy.title.getOrElse((e) => '')),
             Spaces.verticalMicro,
             _Creator(
-              name: proxy.creatorName,
-              onPressed: () => context.push(MRoutes.userProfileRoute(proxy.id)),
+              name: proxy.creatorName.getOrElse((e) => ''),
+              onPressed: () =>
+                  context.push(MRoutes.userProfileRoute(proxy.id.getOrCrash)),
             ),
             Spaces.verticalLarge,
             MPrimaryButton.icon(
@@ -121,7 +122,7 @@ class BroadcastDetailsView extends WatchingWidget {
             Spaces.verticalLarge,
             const MDivider(),
             Spaces.verticalXLarge,
-            _Description(description: proxy.description),
+            _Description(description: proxy.description.getOrElse((e) => '')),
           ],
         ),
       ),
@@ -212,11 +213,11 @@ class _OptionsModal extends StatelessWidget {
       builder: (context) => Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          _Artwork(imageUrl: broadcast.imageUrl),
+          _Artwork(imageUrl: broadcast.image?.getUrl),
           Spaces.verticalSmall,
-          _Title(title: broadcast.title),
+          _Title(title: broadcast.title.getOrElse((e) => '')),
           Spaces.verticalMicro,
-          _Creator(name: broadcast.hostName),
+          _Creator(name: broadcast.hostName.getOrElse((e) => '')),
           Spaces.verticalXLarge,
           MModalListTile(
             leading: const Icon(MIcons.user),

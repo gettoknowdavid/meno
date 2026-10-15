@@ -39,9 +39,9 @@ final class UserProfileProxy extends ChangeNotifier {
         _setFollowing(!isFollowing);
         final service = di<ProfileHttpService>();
         if (isFollowing) {
-          await service.follow(id);
+          await service.follow(id.getOrCrash);
         } else {
-          await service.unfollow(id);
+          await service.unfollow(id.getOrCrash);
         }
       },
       undo: (stack, _) => _setFollowing(stack.pop()),
@@ -74,13 +74,13 @@ final class UserProfileProxy extends ChangeNotifier {
   }
 
   /// The account's id, or the empty string before anything is known.
-  String get id => _profile.id;
+  Id get id => _profile.id;
 
-  String get fullName => _profile.fullName;
+  FullName get fullName => _profile.fullName;
 
-  String? get bio => _profile.bio;
+  MultiLineString? get bio => _profile.bio;
 
-  String? get avatarUrl => _profile.avatarUrl;
+  ImageInput? get avatarUrl => _profile.avatarUrl;
 
   DateTime? get createdAt => _profile.createdAt;
 
@@ -160,7 +160,7 @@ final class UserProfileProxy extends ChangeNotifier {
 /// practice is a page's manager. Counting is not decoration: without it, the
 /// first page to close would dispose a proxy a second page is still drawing.
 final class UserProfileRepository {
-  final _proxies = <String, UserProfileProxy>{};
+  final _proxies = <Id, UserProfileProxy>{};
 
   /// The proxy for [profile]'s account, for one more holder.
   ///

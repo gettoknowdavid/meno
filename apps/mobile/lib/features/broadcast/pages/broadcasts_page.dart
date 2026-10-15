@@ -4,7 +4,6 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 const _debounceTime = Duration(milliseconds: 400);
@@ -68,7 +67,7 @@ class BroadcastsPage extends WatchingWidget {
         padding: const .all(16),
         itemBuilder: broadcastItemBuilder(
           feedSource: feedSource,
-          onTap: (b) => context.push(MRoutes.broadcastRoute(b.id)),
+          onTap: (b) => context.push(MRoutes.broadcastRoute(b.id.getOrCrash)),
         ),
       ),
     );

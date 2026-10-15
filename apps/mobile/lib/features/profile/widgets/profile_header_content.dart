@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_mobile/features/profile/widgets/profile_buttons.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -38,7 +39,7 @@ class MyProfileHeaderContent extends StatelessWidget {
             children: [
               Row(
                 children: [
-                  MAvatar(radius: 40, url: profile.avatarUrl),
+                  MAvatar(radius: 40, url: profile.avatarUrl?.getUrl),
                   const SizedBox(width: Insets.xl),
                   Expanded(child: ProfileStatsRow(stats: profile.stats)),
                 ],
@@ -96,7 +97,7 @@ class UserProfileHeaderContent extends StatelessWidget {
           children: [
             Row(
               children: [
-                MAvatar(radius: 40, url: profile.avatarUrl),
+                MAvatar(radius: 40, url: profile.avatarUrl?.getUrl),
                 const SizedBox(width: Insets.xl),
                 Expanded(child: ProfileStatsRow(stats: profile.stats)),
               ],
@@ -183,7 +184,7 @@ class ProfileBio extends StatelessWidget {
   const new(this.bio, {super.key});
 
   /// The text to show.
-  final String bio;
+  final MultiLineString bio;
 
   @override
   Widget build(BuildContext context) {
@@ -193,7 +194,7 @@ class ProfileBio extends StatelessWidget {
       color: colors.onBackgroundVariant,
     );
     return ReadMoreText(
-      bio,
+      bio.getOrElse((_) => ''),
       style: textTheme.captionRegular,
       trimLines: 3,
       trimMode: TrimMode.Line,

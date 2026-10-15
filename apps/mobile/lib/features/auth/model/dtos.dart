@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/value_objects/id.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 import 'package:meno_mobile/features/auth/model/entities.dart';
 
@@ -59,7 +60,7 @@ extension UserCredentialDtoX on UserCredential {
 extension SessionInfoDtoX on SessionInfoDto {
   /// This row as the app models it.
   SessionInfo get toDomain => SessionInfo(
-    id: id,
+    id: Id.fromString(id),
     deviceLabel: deviceLabel,
     createdAt: createdAt,
     lastUsedAt: lastUsedAt,

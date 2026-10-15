@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
@@ -29,7 +30,7 @@ final class UserManager {
       _auth.activeCredential.select((credential) => credential.user);
 
   /// The id of the signed-in account, or null.
-  ValueListenable<String?> get currentUserId =>
+  ValueListenable<Id?> get currentUserId =>
       _auth.activeCredential.select((credential) => credential.userId);
 
   /// Whether an account is signed in.
@@ -42,5 +43,5 @@ final class UserManager {
   ValueListenable<User> get lastKnownUser => _auth.lastKnownUser;
 
   /// Every account signed in on this device, keyed by user id.
-  ValueListenable<Map<String, UserCredential>> get accounts => _auth.accounts;
+  ValueListenable<Map<Id, UserCredential>> get accounts => _auth.accounts;
 }

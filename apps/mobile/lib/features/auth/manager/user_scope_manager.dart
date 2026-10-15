@@ -6,8 +6,10 @@ import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Registers the services that belong to one account, in that account's scope.
-typedef AccountScopeRegistrar =
-    FutureOr<void> Function(GetIt scope, UserCredential credential);
+typedef AccountScopeRegistrar = FutureOr<void> Function(
+  GetIt scope,
+  UserCredential credential,
+);
 
 /// Keeps a get_it scope in step with the signed-in account.
 ///
@@ -44,7 +46,7 @@ final class UserScopeManager implements Disposable {
   ListenableSubscription? _subscription;
   Future<void> _queue = Future<void>.value();
   final _seeded = Completer<void>();
-  String? _scopedUserId;
+  Id? _scopedUserId;
 
   /// Subscribes to the active account, then applies the one already in effect.
   ///

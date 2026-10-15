@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 import 'package:meno_mobile/features/profile/model/entities.dart';
 
@@ -76,14 +77,14 @@ extension AvatarDtoX on AvatarDto {
 /// The domain view of a [MeDto].
 extension MeDtoX on MeDto {
   MyProfile get toDomain => MyProfile(
-    id: id,
-    fullName: fullName,
-    email: email,
+    id: Id.fromString(id),
+    fullName: FullName(fullName),
+    email: Email(email),
     emailVerified: emailVerified,
     providers: [for (final wire in providers) ?AuthProvider.fromWire(wire)],
-    bio: bio,
+    bio: bio != null ? MultiLineString(bio!) : null,
     avatarId: avatarId,
-    avatarUrl: avatarUrl,
+    avatarUrl: ImageInput.fromUrl(avatarUrl),
     stats: ProfileStats(
       broadcasts: broadcasts,
       followers: followers,
@@ -96,14 +97,14 @@ extension MeDtoX on MeDto {
 /// The wire view of a [MyProfile].
 extension MyProfileDtoX on MyProfile {
   MeDto get toDto => MeDto(
-    id: id,
-    fullName: fullName,
-    email: email,
+    id: id.getOrCrash,
+    fullName: fullName.getOrCrash,
+    email: email.getOrCrash,
     emailVerified: emailVerified,
     providers: [for (final provider in providers) provider.wire],
-    bio: bio,
+    bio: bio?.getOrNull,
     avatarId: avatarId,
-    avatarUrl: avatarUrl,
+    avatarUrl: avatarUrl?.toUrlOrFilePathOrNull,
     followers: stats.followers,
     following: stats.following,
     broadcasts: stats.broadcasts,
@@ -115,10 +116,10 @@ extension MyProfileDtoX on MyProfile {
 extension ProfileDtoX on ProfileDto {
   /// This profile as the app models another account.
   Profile get toDomain => Profile(
-    id: id,
-    fullName: fullName,
-    bio: bio,
-    avatarUrl: avatarUrl,
+    id: Id.fromString(id),
+    fullName: FullName(fullName),
+    bio: bio != null ? MultiLineString(bio!) : null,
+    avatarUrl: ImageInput.fromUrl(avatarUrl),
     isFollowing: isFollowing,
     stats: ProfileStats(
       broadcasts: broadcasts,
@@ -133,10 +134,10 @@ extension ProfileDtoX on ProfileDto {
 extension ProfileEntityDtoX on Profile {
   /// This profile as the API writes it, for the cache.
   ProfileDto get toDto => ProfileDto(
-    id: id,
-    fullName: fullName,
-    bio: bio,
-    avatarUrl: avatarUrl,
+    id: id.getOrCrash,
+    fullName: fullName.getOrCrash,
+    bio: bio?.getOrNull,
+    avatarUrl: avatarUrl?.toUrlOrFilePathOrNull,
     isFollowing: isFollowing,
     followers: stats.followers,
     following: stats.following,

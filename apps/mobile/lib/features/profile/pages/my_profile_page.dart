@@ -1,6 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
@@ -42,14 +43,14 @@ class MyProfilePage extends WatchingWidget {
       (manager) => manager.isLoading,
     );
 
-    final hasProfile = profile.id.isNotEmpty;
+    final hasProfile = profile.id.isValid;
 
     // The vault already knows who signed in, so the title can greet them while
     // the record is still on its way instead of saying "Unknown User".
     final title = switch (profile.fullName) {
-      final name when name.isNotEmpty => name,
-      _ when signedIn.fullName.isNotEmpty => signedIn.fullName,
-      _ => 'Unknown User',
+      final name when name.isValid => name,
+      _ when signedIn.fullName.isValid => signedIn.fullName,
+      _ => FullName('Unknown User'),
     };
 
     if (!hasProfile && !isLoading) {
@@ -105,7 +106,7 @@ class _ProfileAppBar extends StatelessWidget {
     required this.innerBoxIsScrolled,
   });
 
-  final String title;
+  final FullName title;
   final MyProfile profile;
   final bool isSkeleton;
   final bool innerBoxIsScrolled;
@@ -165,7 +166,7 @@ class _ProfileAppBar extends StatelessWidget {
 class _ProfileTitle extends StatelessWidget {
   const new({required this.title});
 
-  final String title;
+  final FullName title;
 
   @override
   Widget build(BuildContext context) {
@@ -187,7 +188,7 @@ class _ProfileTitle extends StatelessWidget {
             ),
             Spaces.horizontalMicro,
             MText(
-              title,
+              title.getOrElse((_) => ''),
               style: textTheme.heading3Bold,
               color: colors.onBackground,
             ),
@@ -219,13 +220,13 @@ class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
       return BroadcastFeedDataSource(
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery.recentlyLive(creatorId: creatorId),
+        query: BroadcastQuery.recentlyLive(creatorId: creatorId?.getOrNull),
       );
     });
 
     return FeedWidget(
       feedSource: feedSource,
-      padding: const .all(16),
+      padding: const .all(Insets.lg),
       topSlivers: [
         SliverOverlapInjector(
           handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
@@ -237,7 +238,10 @@ class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
         return BroadcastCard.rLiveTile(
           broadcast,
           key: ValueKey(broadcast.id),
-          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+          onTap: () async {
+            final id = broadcast.id.getOrElse((_) => '');
+            await context.push(MRoutes.broadcastRoute(id));
+          },
         );
       },
     );
@@ -266,13 +270,13 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
       return BroadcastFeedDataSource(
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
-        query: BroadcastQuery(creatorId: creatorId),
+        query: BroadcastQuery(creatorId: creatorId?.getOrNull),
       );
     });
 
     return FeedWidget(
       feedSource: feedSource,
-      padding: const .all(16),
+      padding: const .all(Insets.lg),
       topSlivers: [
         SliverOverlapInjector(
           handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
@@ -284,7 +288,10 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
         return BroadcastCard.rLiveTile(
           broadcast,
           key: ValueKey(broadcast.id),
-          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+          onTap: () async {
+            final id = broadcast.id.getOrElse((_) => '');
+            await context.push(MRoutes.broadcastRoute(id));
+          },
         );
       },
     );
@@ -329,11 +336,12 @@ class __FavouritesTabState extends State<_FavouritesTab>
             itemBuilder: (ctx, index) {
               final favourite = favourites[index];
               return MRecentlyLiveListTile(
-                title: favourite.title,
-                creator: favourite.creatorName,
-                imageUrl: favourite.imageUrl,
+                title: favourite.title.getOrElse((_) => ''),
+                creator: favourite.creatorName.getOrElse((_) => ''),
+                imageUrl: favourite.image?.getUrl,
                 onTap: () async {
-                  await ctx.push(MRoutes.broadcastRoute(favourite.broadcastId));
+                  final id = favourite.broadcastId.getOrElse((_) => '');
+                  await ctx.push(MRoutes.broadcastRoute(id));
                 },
               );
             },

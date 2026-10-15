@@ -1,12 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 class BroadcastArtworkWidget extends StatelessWidget {
   const new({
-    required this.imageUrl,
+    required this.image,
     this.radius = 48,
     this.outerBoxHeight = 144,
     this.outerBoxWidth = 152,
@@ -14,7 +14,7 @@ class BroadcastArtworkWidget extends StatelessWidget {
     super.key,
   });
 
-  final String? imageUrl;
+  final ImageInput? image;
   final double radius;
   final double? outerBoxHeight;
   final double? outerBoxWidth;
@@ -27,7 +27,7 @@ class BroadcastArtworkWidget extends StatelessWidget {
       width: outerBoxWidth,
       padding: boxPadding,
       alignment: Alignment.center,
-      child: MAvatar(radius: radius, url: imageUrl),
+      child: MAvatar(radius: radius, url: image?.getUrl),
     );
   }
 }
@@ -123,7 +123,7 @@ class BroadcastAboutTab extends WatchingWidget {
           ),
           const MSpacer.v(Insets.lg),
           MText(
-            broadcast.description ?? '',
+            broadcast.description?.getOrElse((_) => '') ?? '',
             style: MTextTheme.of(context).captionRegular.copyWith(height: 1.4),
           ),
         ],

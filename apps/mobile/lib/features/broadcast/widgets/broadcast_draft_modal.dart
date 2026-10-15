@@ -1,7 +1,6 @@
-import 'dart:io';
-
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:timeago/timeago.dart' as timeago;
@@ -197,7 +196,7 @@ class _DraftItem extends StatelessWidget {
                   ),
                   image: hasImage
                       ? DecorationImage(
-                          image: FileImage(File(draft.imagePath!)),
+                          image: FileImage(draft.imagePath!.getFile!),
                           fit: .cover,
                         )
                       : null,
@@ -222,9 +221,7 @@ class _DraftItem extends StatelessWidget {
                       children: [
                         Expanded(
                           child: MText(
-                            draft.title.isEmpty
-                                ? 'Untitled Broadcast'
-                                : draft.title,
+                            draft.title.getOrElse((_) => 'Untitled Broadcast'),
                             style: textTheme.captionMedium,
                             maxLines: 1,
                             overflow: .ellipsis,
@@ -238,9 +235,7 @@ class _DraftItem extends StatelessWidget {
                     ),
                     Spaces.verticalMicro,
                     MText(
-                      draft.description.isEmpty
-                          ? 'No description'
-                          : draft.description,
+                      draft.description.getOrElse((_) => 'No description'),
                       style: textTheme.captionRegular,
                       color: colors.onBackgroundVariant,
                       maxLines: 1,

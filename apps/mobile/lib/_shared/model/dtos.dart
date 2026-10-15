@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/entities.dart';
 
 part 'dtos.freezed.dart';
@@ -32,12 +33,12 @@ abstract class UserDto with _$UserDto {
 extension UserDtoX on UserDto {
   /// This user as the app models it.
   User get toDomain => User(
-    id: id,
-    fullName: fullName,
-    email: email,
-    bio: bio,
+    id: Id.fromString(id),
+    email: Email(email),
+    fullName: FullName(fullName),
+    bio: bio == null ? null : MultiLineString(bio!),
     verified: verified,
-    avatarUrl: avatarUrl,
+    image: avatarUrl != null ? ImageInput.fromUrl(avatarUrl) : null,
     providers: [for (final wire in providers) ?AuthProvider.fromWire(wire)],
     role: UserRole.fromWire(role),
     createdAt: createdAt,
@@ -48,12 +49,12 @@ extension UserDtoX on UserDto {
 extension UserX on User {
   /// This user as the API writes it.
   UserDto get toDto => UserDto(
-    id: id,
-    fullName: fullName,
-    email: email,
-    bio: bio,
+    id: id.getOrCrash,
+    fullName: fullName.getOrCrash,
+    email: email.getOrCrash,
+    bio: bio?.getOrNull,
     verified: verified,
-    avatarUrl: avatarUrl,
+    avatarUrl: image?.toUrlOrFilePathOrNull,
     providers: [for (final provider in providers) provider.wire],
     role: role.wire,
     createdAt: createdAt,

@@ -94,7 +94,7 @@ class LiveSessionShellState extends State<LiveSessionShell>
         if (!didPop) context.go(MRoutes.home);
       },
       child: _LiveSessionScaffold(
-        title: broadcast.title,
+        title: broadcast.title.getOrElse((_) => ''),
         status: status,
         controller: controller,
         children: widget.children,

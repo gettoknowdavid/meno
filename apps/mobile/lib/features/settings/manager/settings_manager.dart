@@ -96,9 +96,8 @@ final class SettingsManager implements Disposable {
           notificationPreferences: _settings.value.notificationPreferences,
         );
       },
-      undo: (stack, _) => _apply(
-        _updatedPreferences(liveBroadcastStarted: stack.pop()),
-      ),
+      undo: (stack, _) =>
+          _apply(_updatedPreferences(liveBroadcastStarted: stack.pop())),
       errorFilterFn: menoExceptionFilter,
       debugName: 'settings.setLiveBroadcastNotifications',
     );
@@ -212,7 +211,7 @@ final class SettingsManager implements Disposable {
     final userId = _user.currentUserId.value;
     _adopt(userId);
     _applyDisplay();
-    if (userId != null && userId.isNotEmpty) {
+    if (userId != null && userId.isValid) {
       unawaited(_load(userId));
     }
     return this;
@@ -237,19 +236,19 @@ final class SettingsManager implements Disposable {
   }
 
   /// The active account's id, or null when nobody is signed in.
-  String? get _userId => _user.currentUserId.value;
+  Id? get _userId => _user.currentUserId.value;
 
   /// Reads the settings for [userId] and saves them for next time.
   ///
   /// The account can change while the request is in flight; the answer then
   /// belongs to the account that asked, so it is dropped rather than shown
   /// under the wrong account.
-  Future<void> _load(String userId) async {
+  Future<void> _load(Id userId) async {
     try {
       final remote = await _http.getSettings();
       if (_user.currentUserId.value != userId) return;
       _settings.value = remote;
-      await _local.saveSettings(userId, remote);
+      await _local.saveSettings(userId.getOrCrash, remote);
     } on MenoException catch (error) {
       _logger.w(
         'Could not load settings (${error.code}); showing the cached copy',
@@ -320,7 +319,7 @@ final class SettingsManager implements Disposable {
   void _persistLocally() {
     final userId = _userId;
     if (userId == null || userId.isEmpty) return;
-    unawaited(_local.saveSettings(userId, _settings.value));
+    unawaited(_local.saveSettings(userId.getOrCrash, _settings.value));
   }
 
   /// Repaints the app in whatever theme the current account's settings ask for.
@@ -345,20 +344,21 @@ final class SettingsManager implements Disposable {
   }
 
   /// Follows the active account, putting its cached settings in place.
-  void _onAccountChanged(String? userId, ListenableSubscription _) {
+  void _onAccountChanged(Id? userId, ListenableSubscription _) {
     _adopt(userId);
-    if (userId != null && userId.isNotEmpty) {
+    if (userId != null && userId.isValid) {
       unawaited(_load(userId));
     }
   }
 
   /// Puts [userId]'s cached settings in place, or the defaults when nobody is
   /// signed in.
-  void _adopt(String? userId) {
+  void _adopt(Id? userId) {
     if (userId == null || userId.isEmpty) {
       _settings.value = UserSettings.empty;
       return;
     }
-    _settings.value = _local.getSettings(userId) ?? UserSettings.empty;
+    _settings.value =
+        _local.getSettings(userId.getOrCrash) ?? UserSettings.empty;
   }
 }

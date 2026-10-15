@@ -90,7 +90,7 @@ final class SessionInterceptor extends Interceptor {
   final String refreshPath;
 
   /// Renewals in flight, keyed by the account they belong to.
-  final Map<String, Future<UserCredential?>> _renewals = {};
+  final Map<Id, Future<UserCredential?>> _renewals = {};
 
   @override
   Future<void> onRequest(

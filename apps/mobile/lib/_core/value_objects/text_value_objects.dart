@@ -101,4 +101,7 @@ class MultiLineString extends ValueObject<String> {
 
     return Right(input);
   }
+
+  bool get isEmpty => value.getOrElse((_) => '').isEmpty;
+  bool get isNotEmpty => value.getOrElse((_) => '').isNotEmpty;
 }

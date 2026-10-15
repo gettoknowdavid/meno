@@ -114,7 +114,7 @@ class _Avatar extends StatelessWidget {
           MAvatar(
             radius: 49,
             // A picture picked on this visit wins over the saved one.
-            url: manager.currentAvatarUrl,
+            url: manager.currentAvatarUrl?.getUrl,
             file: manager.avatar.value.getFile,
             hasBorder: false,
             onTap: () => context.showModal<void>(

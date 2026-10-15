@@ -1,7 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 class LiveBroadcastTab extends WatchingStatefulWidget {
@@ -51,7 +50,7 @@ class _LiveBroadcastTabState extends State<LiveBroadcastTab>
           child: Column(
             crossAxisAlignment: .stretch,
             children: [
-              BroadcastArtworkWidget(imageUrl: broadcast.imageUrl),
+              BroadcastArtworkWidget(image: broadcast.image),
               Spaces.verticalSmall,
               MTimerDisplay(
                 formattedTime: time,
@@ -59,12 +58,14 @@ class _LiveBroadcastTabState extends State<LiveBroadcastTab>
                 timeAgo: timeAgo,
               ),
               Spaces.verticalSmall,
-              BroadcastTitleWidget(title: broadcast.title),
+              BroadcastTitleWidget(title: broadcast.title.getOrElse((_) => '')),
               Spaces.verticalSmall,
               Row(
                 mainAxisAlignment: .center,
                 children: [
-                  BroadcastCreatorWidget(name: broadcast.hostName),
+                  BroadcastCreatorWidget(
+                    name: broadcast.hostName.getOrElse((_) => ''),
+                  ),
                   Spaces.horizontalSmall,
                   const BroadcastStatusWidget(),
                 ],

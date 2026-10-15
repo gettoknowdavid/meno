@@ -1,4 +1,5 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -53,31 +54,31 @@ class BroadcastCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final title = broadcast.title;
     final creator = broadcast.hostName;
-    final imageUrl = broadcast.imageUrl;
+    final image = broadcast.image;
     final liveCount = broadcast.totalParticipants;
     final endTime = broadcast.endTime;
 
     return switch (type) {
       _CardType.nLive => MCard.live(
         key: key,
-        title: title,
-        host: creator,
-        imageUrl: imageUrl,
+        title: title.getOrElse((_) => ''),
+        host: creator.getOrElse((_) => ''),
+        imageUrl: image?.getUrl,
         liveCount: liveCount,
         onTap: onTap,
       ),
       _CardType.rLive => MCard.recentlyLive(
         key: key,
-        title: title,
-        host: creator,
-        imageUrl: imageUrl,
+        title: title.getOrElse((_) => ''),
+        host: creator.getOrElse((_) => ''),
+        imageUrl: image?.getUrl,
         onTap: onTap,
       ),
       _CardType.rLiveTile => MRecentlyLiveListTile(
         key: key,
-        title: title,
-        creator: creator,
-        imageUrl: imageUrl,
+        title: title.getOrElse((_) => ''),
+        creator: creator.getOrElse((_) => ''),
+        imageUrl: image?.getUrl,
         endTime: endTime,
         onTap: onTap,
       ),
@@ -106,27 +107,27 @@ class _BroadcastCardSkeleton extends StatelessWidget {
       _SkeletonType.nLive => Skeletonizer(
         child: MCard.live(
           key: key,
-          title: broadcast.title,
-          host: broadcast.hostName,
-          imageUrl: broadcast.imageUrl,
+          title: broadcast.title.getOrElse((_) => ''),
+          host: broadcast.hostName.getOrElse((_) => ''),
+          imageUrl: broadcast.image?.getUrl,
           liveCount: broadcast.liveParticipantsCount,
         ),
       ),
       _SkeletonType.rLive => Skeletonizer(
         child: MCard.recentlyLive(
           key: key,
-          title: broadcast.title,
-          host: broadcast.hostName,
-          imageUrl: broadcast.imageUrl,
+          title: broadcast.title.getOrElse((_) => ''),
+          host: broadcast.hostName.getOrElse((_) => ''),
+          imageUrl: broadcast.image?.getUrl,
         ),
       ),
       _SkeletonType.rLiveTile => Skeletonizer(
         child: MRecentlyLiveListTile(
           key: key,
-          title: broadcast.title,
-          creator: broadcast.hostName,
+          title: broadcast.title.getOrElse((_) => ''),
+          creator: broadcast.hostName.getOrElse((_) => ''),
           endTime: broadcast.endTime,
-          imageUrl: broadcast.imageUrl,
+          imageUrl: broadcast.image?.getUrl,
         ),
       ),
     };

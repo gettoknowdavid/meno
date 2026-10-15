@@ -20,7 +20,7 @@ final class BroadcastDetailsManager implements Disposable {
   }) {
     fetch = .createAsyncNoParamNoResult(
       () async {
-        final broadcast = await _http.getBroadcast(_broadcastId);
+        final broadcast = await _http.getBroadcast(_broadcastId.getOrCrash);
         final existing = _proxy.value;
         if (existing == null) {
           _proxy.value = BroadcastProxy(broadcast, _userId);
@@ -38,8 +38,8 @@ final class BroadcastDetailsManager implements Disposable {
   }
 
   final BroadcastHttpService _http;
-  final String _userId;
-  final String _broadcastId;
+  final Id _userId;
+  final Id _broadcastId;
   final MenoLogger _logger;
 
   final _proxy = ValueNotifier<BroadcastProxy?>(null);

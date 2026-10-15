@@ -1,36 +1,37 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/value_objects/_value_objects.dart';
 
 part 'entities.freezed.dart';
 
 /// Sample accounts for skeletonizers, empty-state tests, and previews.
 final List<User> fakeUserList = [
-  const User(
-    id: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
-    fullName: 'Elena Vasquez',
-    email: 'elena@example.com',
+  User(
+    id: Id.fromString('a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a'),
+    fullName: FullName('Elena Vasquez'),
+    email: Email('elena@example.com'),
     verified: true,
-    bio: 'Building things for the web and mobile.',
+    bio: MultiLineString('Building things for the web and mobile.'),
     providers: [.password, .google],
     role: .creator,
   ),
-  const User(
-    id: 'a1a1a1a1-0002-4a1a-8a1a-2a1a1a1a1a1a',
-    fullName: 'Marcus Reed',
-    email: 'marcus@example.com',
+  User(
+    id: Id.fromString('a1a1a1a1-0002-4a1a-8a1a-2a1a1a1a1a1a'),
+    fullName: FullName('Marcus Reed'),
+    email: Email('marcus@example.com'),
     verified: true,
     providers: [.google],
     role: .admin,
   ),
-  const User(
-    id: 'a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a',
-    fullName: 'Priya Nair',
-    email: 'priya@example.com',
-    bio: 'Early adopter, always learning.',
+  User(
+    id: Id.fromString('a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a'),
+    fullName: FullName('Priya Nair'),
+    email: Email('priya@example.com'),
+    bio: MultiLineString('Early adopter, always learning.'),
   ),
-  const User(
-    id: 'a1a1a1a1-0004-4a1a-8a1a-4a1a1a1a1a1a',
-    fullName: 'Jordan Smith',
-    email: 'jordan@example.com',
+  User(
+    id: Id.fromString('a1a1a1a1-0004-4a1a-8a1a-4a1a1a1a1a1a'),
+    fullName: FullName('Jordan Smith'),
+    email: Email('jordan@example.com'),
   ),
 ];
 
@@ -71,22 +72,22 @@ abstract class User with _$User {
   /// Creates a user.
   const factory({
     /// The account id, as the API's UUID string.
-    required String id,
+    required Id id,
 
     /// The name shown next to the account.
-    required String fullName,
+    required FullName fullName,
 
     /// The address the account signs in with.
-    required String email,
+    required Email email,
 
     /// The account's biography, when it has one.
-    String? bio,
+    MultiLineString? bio,
 
     /// Whether the address has been confirmed with a code.
     @Default(false) bool verified,
 
     /// The resolved avatar URL, when the account has an avatar.
-    String? avatarUrl,
+    ImageInput? image,
 
     /// The providers this account can sign in with.
     @Default(<AuthProvider>[]) List<AuthProvider> providers,
@@ -101,12 +102,17 @@ abstract class User with _$User {
   const new _();
 
   /// A user with no fields set: nobody is signed in.
-  static const User empty = User(id: '', fullName: '', email: '');
+  static const User empty = User(
+    id: Id.empty,
+    fullName: FullName.empty,
+    email: Email.empty,
+    bio: MultiLineString.empty,
+  );
 
   /// The first name, for greetings.
   String get firstName {
-    final parts = fullName.trim().split(RegExp(r'\s+'));
-    return parts.isEmpty ? fullName : parts.first;
+    final parts = fullName.getOrCrash.trim().split(RegExp(r'\s+'));
+    return parts.isEmpty ? fullName.getOrCrash : parts.first;
   }
 
   /// Whether this is [empty] rather than a real account.

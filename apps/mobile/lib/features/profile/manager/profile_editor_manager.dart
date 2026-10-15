@@ -17,17 +17,10 @@ import 'package:meno_mobile/features/profile/services/profile_http_service.dart'
 /// sheet's own starting point in step.
 final class ProfileEditorManager implements Disposable {
   /// Creates the form for [profile].
-  new({
-    required MyProfile profile,
-    required this._http,
-    required this._owner,
-  }) : _original = profile,
-       fullName = ValueNotifier(SingleLineString(profile.fullName)),
-       bio = ValueNotifier(
-         profile.bio == null
-             ? null
-             : MultiLineString(profile.bio!, maxLength: bioMax),
-       );
+  new({required MyProfile profile, required this._http, required this._owner})
+    : _original = profile,
+      fullName = ValueNotifier(profile.fullName),
+      bio = ValueNotifier(profile.bio);
 
   /// The longest bio the API accepts (`BIO_MAX` in the profile DTO).
   static const int bioMax = 244;
@@ -43,7 +36,7 @@ final class ProfileEditorManager implements Disposable {
   /// re-typing a name the API already accepted must not fail the app's own
   /// stricter signup validation. The length rule the API does apply arrives as
   /// a validation failure naming the field.
-  final ValueNotifier<SingleLineString> fullName;
+  final ValueNotifier<FullName> fullName;
 
   /// The bio field, or null when it is to be removed.
   ///
@@ -55,7 +48,7 @@ final class ProfileEditorManager implements Disposable {
   final ValueNotifier<ImageInput> avatar = ValueNotifier(ImageInput.empty);
 
   /// The avatar the account has right now, before anything picked here.
-  String? get currentAvatarUrl => _original.avatarUrl;
+  ImageInput? get currentAvatarUrl => _original.avatarUrl;
 
   /// Whether every field currently holds something acceptable.
   late final ValueListenable<bool> isValid = fullName.select(
@@ -71,24 +64,22 @@ final class ProfileEditorManager implements Disposable {
     bio,
     avatar,
     (name, bioValue, image) =>
-        name.getOrNull != _original.fullName ||
+        name != _original.fullName ||
         (bioValue?.getOrNull ?? '') != (_original.bio ?? '') ||
         image.getFile != null,
   );
 
   /// Writes the form to the API and adopts the answer.
-  late final Command<void, MyProfile> save = Command.createAsyncNoParam<
-    MyProfile
-  >(
-    _save,
-    initialValue: MyProfile.empty,
-    errorFilterFn: menoExceptionFilter,
-    debugName: 'profile.save',
-  );
+  late final Command<void, MyProfile> save =
+      Command.createAsyncNoParam<MyProfile>(
+        _save,
+        initialValue: MyProfile.empty,
+        errorFilterFn: menoExceptionFilter,
+        debugName: 'profile.save',
+      );
 
   /// Records a new name.
-  void onFullNameChanged(String value) =>
-      fullName.value = SingleLineString(value);
+  void onFullNameChanged(String value) => fullName.value = FullName(value);
 
   /// Records a new bio, or its removal when the field is emptied.
   void onBioChanged(String value) {
@@ -125,11 +116,11 @@ final class ProfileEditorManager implements Disposable {
       // public base URL the API answers null and the key alone is all there is.
       profile = profile.copyWith(
         avatarId: uploaded.id,
-        avatarUrl: uploaded.url,
+        avatarUrl: ImageInput.fromUrl(uploaded.url),
       );
     }
 
-    final name = fullName.value.getOrNull;
+    final name = fullName.value.getOrCrash;
     // Only what moved travels: a field left alone is null, and an emptied bio
     // is the empty string the API reads as "remove it".
     final bioValue = bio.value?.getOrNull;
@@ -137,7 +128,7 @@ final class ProfileEditorManager implements Disposable {
         ? null
         : (bioValue ?? '');
 
-    if (name == _original.fullName) {
+    if (name == _original.fullName.getOrCrash) {
       if (bioField != null) profile = await _http.updateMe(bio: bioField);
     } else {
       profile = await _http.updateMe(fullName: name, bio: bioField);

@@ -45,7 +45,10 @@ final class SessionStore implements Disposable {
   Stream<UserCredential?> get activeChanges => _activeChanges.stream;
 
   /// The id of the active account, or null when nobody is signed in.
-  Future<String?> readActiveUserId() => _storage.read(StorageKeys.userId);
+  Future<Id?> readActiveUserId() async {
+    final userIdStr = await _storage.read(StorageKeys.userId);
+    return userIdStr != null ? Id.fromString(userIdStr) : null;
+  }
 
   /// The tokens of the active account.
   ///
@@ -75,15 +78,15 @@ final class SessionStore implements Disposable {
   /// An entry that cannot be read is skipped rather than fatal: a vault written
   /// by an older build must not stop the accounts that still parse from being
   /// listed.
-  Future<Map<String, UserCredential>> readAccounts() async {
+  Future<Map<Id, UserCredential>> readAccounts() async {
     final raw = await _storage.read(StorageKeys.accounts);
     if (raw == null || raw.isEmpty) return {};
 
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! Map<String, dynamic>) return {};
+      if (decoded is! Map<Id, dynamic>) return {};
 
-      final accounts = <String, UserCredential>{};
+      final accounts = <Id, UserCredential>{};
       for (final entry in decoded.entries) {
         final stored = entry.value;
         if (stored is! Map<String, dynamic>) continue;
@@ -125,7 +128,7 @@ final class SessionStore implements Disposable {
   /// Returns whether the switch happened. A switch is just a copy from the
   /// vault into the active keys, which is why it needs no network call and no
   /// re-authentication.
-  Future<bool> activate(String userId) async {
+  Future<bool> activate(Id userId) async {
     final accounts = await readAccounts();
     final credential = accounts[userId];
     if (credential == null) return false;
@@ -155,7 +158,7 @@ final class SessionStore implements Disposable {
   /// The active account is cleared with it when it was the active one, so
   /// removing an account never leaves the app acting as an account it no
   /// longer knows.
-  Future<void> remove(String userId) async {
+  Future<void> remove(Id userId) async {
     final accounts = await readAccounts()
       ..remove(userId);
 
@@ -202,7 +205,7 @@ final class SessionStore implements Disposable {
     final expiry = session.expiresAt;
 
     return _storage.writeAll({
-      StorageKeys.userId: credential.userId,
+      StorageKeys.userId: credential.userId.getOrCrash,
       StorageKeys.accessToken: session.accessToken,
       StorageKeys.credential: jsonEncode(credential.toDto.toJson()),
       StorageKeys.refreshToken: ?session.refreshToken,

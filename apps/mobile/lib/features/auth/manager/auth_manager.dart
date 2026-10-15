@@ -60,7 +60,7 @@ final class AuthManager implements Disposable {
       debugName: 'auth.logOutEverywhere',
     );
 
-    switchAccount = .createAsyncNoResult<String>(
+    switchAccount = .createAsyncNoResult<Id>(
       _switchAccount,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.switchAccount',
@@ -122,7 +122,7 @@ final class AuthManager implements Disposable {
   final MenoLogger _logger;
 
   final _active = ValueNotifier<UserCredential>(UserCredential.empty);
-  final _accounts = ValueNotifier<Map<String, UserCredential>>({});
+  final _accounts = ValueNotifier<Map<Id, UserCredential>>({});
   final _lastKnown = ValueNotifier<User>(User.empty);
 
   StreamSubscription<UserCredential?>? _storeSubscription;
@@ -143,7 +143,7 @@ final class AuthManager implements Disposable {
   late final Command<void, void> logOutEverywhere;
 
   /// Makes another account in the vault the active one.
-  late final Command<String, void> switchAccount;
+  late final Command<Id, void> switchAccount;
 
   /// Clears the active account so a different one can sign in.
   ///
@@ -173,7 +173,7 @@ final class AuthManager implements Disposable {
   ///
   /// This is what a switch-account sheet renders: the active account plus
   /// the others, with no request in between.
-  ValueListenable<Map<String, UserCredential>> get accounts => _accounts;
+  ValueListenable<Map<Id, UserCredential>> get accounts => _accounts;
 
   /// The account every request is made as, or [UserCredential.empty].
   ValueListenable<UserCredential> get activeCredential => _active;
@@ -349,7 +349,7 @@ final class AuthManager implements Disposable {
   }
 
   /// Makes [userId] the active account.
-  Future<void> _switchAccount(String userId) async {
+  Future<void> _switchAccount(Id userId) async {
     final switched = await _store.activate(userId);
     if (!switched) {
       throw const NotFoundException(

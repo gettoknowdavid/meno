@@ -43,8 +43,8 @@ class ResetPasswordOtpPage extends WatchingWidget {
     );
 
     final codeController = createOnce(TextEditingController.new);
-    final address = email ?? account.email;
-    final isValidAddress = Email(address).isValid;
+    final address = email != null ? Email(email!) : account.email;
+    final isValidAddress = address.isValid;
 
     final textTheme = MTextTheme.of(context);
 
@@ -75,10 +75,7 @@ class ResetPasswordOtpPage extends WatchingWidget {
               onAction: isResending || !isValidAddress
                   ? null
                   : () => di<AuthManager>().resendOtp.run(
-                      OtpRequestArgs(
-                        email: Email(address),
-                        type: OtpType.resetPassword,
-                      ),
+                      OtpRequestArgs(email: address, type: .resetPassword),
                     ),
             ),
             Spaces.verticalXXLarge,
@@ -88,7 +85,7 @@ class ResetPasswordOtpPage extends WatchingWidget {
               disabled: !isValidAddress,
               onPressed: () => context.push(
                 MRoutes.createNewPasswordRoute(
-                  email: address,
+                  email: address.getOrElse((_) => ''),
                   code: codeController.text,
                 ),
               ),
