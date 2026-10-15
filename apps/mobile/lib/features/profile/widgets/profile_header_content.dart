@@ -2,6 +2,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_mobile/features/profile/widgets/profile_buttons.dart';
 import 'package:meno_ui/meno_ui.dart';
+import 'package:readmore/readmore.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 /// The header of the signed-in account's own profile: avatar, counters, the
@@ -45,7 +46,7 @@ class MyProfileHeaderContent extends StatelessWidget {
               Spaces.verticalLarge,
               const AccountUpgradeSection(),
               Spaces.verticalLarge,
-              if (profile.bio != null) ...[
+              if (profile.bio != null && profile.bio!.isNotEmpty) ...[
                 ProfileBio(profile.bio!),
                 Spaces.verticalLarge,
               ],
@@ -101,7 +102,7 @@ class UserProfileHeaderContent extends StatelessWidget {
               ],
             ),
             Spaces.verticalLarge,
-            if (profile.bio != null) ...[
+            if (profile.bio != null && profile.bio!.isNotEmpty) ...[
               ProfileBio(profile.bio!),
               Spaces.verticalLarge,
             ],
@@ -111,9 +112,7 @@ class UserProfileHeaderContent extends StatelessWidget {
                 children: [
                   Expanded(child: SubscribeButton(profile: profile)),
                   Spaces.horizontalLarge,
-                  Expanded(
-                    child: ShareProfileButton(profile: profile.target),
-                  ),
+                  Expanded(child: ShareProfileButton(profile: profile.target)),
                 ],
               ),
             ),
@@ -140,8 +139,6 @@ class ProfileStatsRow extends StatelessWidget {
       child: Row(
         children: [
           const SizedBox(width: 2),
-          // The API counts followers and following; the screens have always
-          // called them subscribers and subscriptions.
           _StatItem(title: 'Broadcasts', count: stats.broadcasts),
           const Spacer(),
           _StatItem(title: 'Subscribers', count: stats.followers),
@@ -192,12 +189,18 @@ class ProfileBio extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
-
-    return MReadMoreText(
+    final style = textTheme.captionMedium.copyWith(
+      color: colors.onBackgroundVariant,
+    );
+    return ReadMoreText(
       bio,
-      style: textTheme.captionRegular.copyWith(
-        color: colors.onBackgroundVariant,
-      ),
+      style: textTheme.captionRegular,
+      trimLines: 3,
+      trimMode: TrimMode.Line,
+      trimExpandedText: '\nless',
+      trimCollapsedText: '\nmore',
+      moreStyle: style,
+      lessStyle: style,
     );
   }
 }

@@ -45,7 +45,6 @@ void configureDependencies(Config config) {
   _registerPlatformServices();
   _registerOnboarding();
   _registerAuth();
-  _registerBroadcast();
   _registerAppearance();
 
   di.registerLazySingleton<GoRouter>(_createRouter);
@@ -59,6 +58,7 @@ void _registerCore(Config config) {
     () => SecureStorage(di<FlutterSecureStorage>()),
     dispose: (storage) => storage.onDispose(),
   );
+  di.registerSingletonAsync<Database>(Database.create);
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
   di.registerSingletonWithDependencies<LocalStorage>(
     () => LocalStorage(di<SharedPreferences>()),
@@ -190,6 +190,11 @@ Future<void> _registerAccountScope(
   // because nothing that uses it is reachable without an account.
   scope.registerLazySingleton<BroadcastHttpService>(
     () => BroadcastHttpService(di<HttpClient>()),
+  );
+
+  di.registerSingletonWithDependencies<BroadcastLocalService>(
+    () => BroadcastLocalService(di<Database>()),
+    dependsOn: [Database],
   );
 
   // The account's own broadcasts. A draft carries the id that wrote it and a
@@ -340,28 +345,6 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
       logger: di<MenoLogger>(),
     ),
     dispose: (manager) => manager.onDispose(),
-  );
-}
-
-/// Registers what the broadcast feature needs before any account exists.
-///
-/// The device's store: the database, and the service that reads drafts and kept
-/// broadcasts out of it. Neither belongs to an account — the store is the
-/// device's, and a draft written by one account must survive that account
-/// signing out, which is what the per-account keys
-/// [`BroadcastLocalService`] queries on are for.
-///
-/// The database is a *lazy* async singleton on purpose. Opening ObjectBox
-/// touches a platform channel and a directory, and a test that never shows a
-/// draft should not pay for it or fail on it; the first screen that reads a
-/// draft is what triggers the open.
-void _registerBroadcast() {
-  di.registerLazySingletonAsync<Database>(
-    Database.create,
-    dispose: (database) => database.onDispose(),
-  );
-  di.registerLazySingleton<BroadcastLocalService>(
-    () => BroadcastLocalService(di<Database>()),
   );
 }
 

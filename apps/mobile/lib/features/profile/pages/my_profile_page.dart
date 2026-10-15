@@ -2,11 +2,10 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/_shared/model/_model.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
-import 'package:meno_mobile/features/profile/manager/_manager.dart';
-import 'package:meno_mobile/features/profile/model/_model.dart';
-import 'package:meno_mobile/features/profile/widgets/_widgets.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// The height the screen's tab bar occupies under the toolbar.
@@ -26,7 +25,7 @@ class MyProfilePage extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
-    
+
     final scrollCtrl = createOnce(ScrollController.new);
 
     final manager = di<MyProfileManager>();
@@ -43,6 +42,8 @@ class MyProfilePage extends WatchingWidget {
       (manager) => manager.isLoading,
     );
 
+    final hasProfile = profile.id.isNotEmpty;
+
     // The vault already knows who signed in, so the title can greet them while
     // the record is still on its way instead of saying "Unknown User".
     final title = switch (profile.fullName) {
@@ -51,7 +52,7 @@ class MyProfilePage extends WatchingWidget {
       _ => 'Unknown User',
     };
 
-    if (profile.isEmpty && !isLoading) {
+    if (!hasProfile && !isLoading) {
       return MScaffold(
         padding: .zero,
         body: Center(
@@ -68,8 +69,6 @@ class MyProfilePage extends WatchingWidget {
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        // Switching accounts rebuilds the screen, so the tabs of the previous
-        // account are not left selected for the new one.
         key: ValueKey(signedIn.id),
         backgroundColor: colors.background,
         body: RefreshIndicator(
@@ -80,18 +79,15 @@ class MyProfilePage extends WatchingWidget {
               _ProfileAppBar(
                 title: title,
                 profile: profile,
-                isSkeleton: profile.isEmpty,
+                isSkeleton: !hasProfile,
                 innerBoxIsScrolled: innerBoxIsScrolled,
               ),
             ],
             body: const TabBarView(
               children: [
-                // Every tab is a feed owned by another feature — recent
-                // broadcasts, all broadcasts, favourites — so each shows the
-                // Meno mark until that feature exists.
-                ProfileTabPlaceholder(injectOverlap: true),
-                ProfileTabPlaceholder(injectOverlap: true),
-                ProfileTabPlaceholder(injectOverlap: true),
+                _RecentBroadcastsTab(),
+                _AllBroadcastsTab(),
+                _FavouritesTab(),
               ],
             ),
           ),
@@ -101,8 +97,6 @@ class MyProfilePage extends WatchingWidget {
   }
 }
 
-/// The screen's collapsible header: the account's name and switcher, the
-/// header content, and the tab bar that stays pinned under the toolbar.
 class _ProfileAppBar extends StatelessWidget {
   const new({
     required this.title,
@@ -168,7 +162,6 @@ class _ProfileAppBar extends StatelessWidget {
   }
 }
 
-/// The account's name in the toolbar, and the way to another account.
 class _ProfileTitle extends StatelessWidget {
   const new({required this.title});
 
@@ -205,4 +198,151 @@ class _ProfileTitle extends StatelessWidget {
       ),
     );
   }
+}
+
+/// [_RecentBroadcastsTab] displays the user's recent broadcasts.
+class _RecentBroadcastsTab extends WatchingStatefulWidget {
+  const new();
+
+  @override
+  State<_RecentBroadcastsTab> createState() => __RecentBroadcastsTabState();
+}
+
+class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final feedSource = createOnce(() {
+      final creatorId = di<UserManager>().currentUserId.value;
+      return BroadcastFeedDataSource(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        query: BroadcastQuery.recentlyLive(creatorId: creatorId),
+      );
+    });
+
+    return FeedWidget(
+      feedSource: feedSource,
+      padding: const .all(16),
+      topSlivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+      ],
+      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
+      skeletonItemCount: 4,
+      itemBuilder: (context, broadcast) {
+        return BroadcastCard.rLiveTile(
+          broadcast,
+          key: ValueKey(broadcast.id),
+          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+        );
+      },
+    );
+  }
+
+  @override
+  bool get wantKeepAlive => true;
+}
+
+/// [_AllBroadcastsTab] displays the user's all broadcasts feed.
+class _AllBroadcastsTab extends WatchingStatefulWidget {
+  const new();
+
+  @override
+  State<_AllBroadcastsTab> createState() => __AllBroadcastsTabState();
+}
+
+class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final feedSource = createOnce(() {
+      final creatorId = di<UserManager>().currentUserId.value;
+      return BroadcastFeedDataSource(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        query: BroadcastQuery(creatorId: creatorId),
+      );
+    });
+
+    return FeedWidget(
+      feedSource: feedSource,
+      padding: const .all(16),
+      topSlivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+      ],
+      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
+      skeletonItemCount: 4,
+      itemBuilder: (context, broadcast) {
+        return BroadcastCard.rLiveTile(
+          broadcast,
+          key: ValueKey(broadcast.id),
+          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+        );
+      },
+    );
+  }
+
+  @override
+  bool get wantKeepAlive => false;
+}
+
+/// [_FavouritesTab] displays the user's favourite broadcasts.
+class _FavouritesTab extends WatchingStatefulWidget {
+  const new();
+
+  @override
+  State<_FavouritesTab> createState() => __FavouritesTabState();
+}
+
+class __FavouritesTabState extends State<_FavouritesTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final favourites = watchValue<FavouritesManager, List<FavouriteBroadcast>>(
+      (manager) => manager.favourites,
+    );
+
+    if (favourites.isEmpty) {
+      return const MEmptyState(title: 'No favourite broadcasts yet');
+    }
+
+    return CustomScrollView(
+      slivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+        SliverPadding(
+          padding: const .all(Insets.lg),
+          sliver: SliverList.separated(
+            separatorBuilder: (_, _) => Spaces.verticalLarge,
+            itemCount: favourites.length,
+            itemBuilder: (ctx, index) {
+              final favourite = favourites[index];
+              return MRecentlyLiveListTile(
+                title: favourite.title,
+                creator: favourite.creatorName,
+                imageUrl: favourite.imageUrl,
+                onTap: () async {
+                  await ctx.push(MRoutes.broadcastRoute(favourite.broadcastId));
+                },
+              );
+            },
+          ),
+        ),
+      ],
+    );
+  }
+
+  @override
+  bool get wantKeepAlive => false;
 }

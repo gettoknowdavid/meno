@@ -41,11 +41,12 @@ class ProfileEditorModal extends WatchingWidget {
 
     final formKey = createOnce(GlobalKey<FormState>.new);
 
-    // The command itself is watched rather than its results: it notifies only
-    // when it finishes successfully, so there is no state to disentangle.
-    registerHandler<ProfileEditorManager, MyProfile>(
-      select: (manager) => manager.save,
-      handler: (ctx, _, _) {
+    final manager = di<ProfileEditorManager>();
+
+    registerHandler<ProfileEditorManager, CommandResult<void, MyProfile>>(
+      select: (manager) => manager.save.results,
+      handler: (ctx, result, _) {
+        if (!result.hasData) return;
         ctx
           ..showSuccessToast('Profile updated')
           ..pop();
@@ -56,8 +57,6 @@ class ProfileEditorModal extends WatchingWidget {
       select: (manager) => manager.save.errors,
       handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
-
-    final manager = di<ProfileEditorManager>();
 
     final isSaving = watchValue<ProfileEditorManager, bool>(
       (manager) => manager.save.isRunning,

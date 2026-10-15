@@ -128,10 +128,9 @@ class BroadcastQuery with Equatable {
   /// later and ended earlier. The socket prepends an end as it happens, which
   /// is what the section mostly shows; a feed that only reads history is when
   /// the difference is visible.
-  const new recentlyLive({this.limit = defaultLimit})
+  const new recentlyLive({this.limit = defaultLimit, this.creatorId})
     : type = BroadcastsType.recentlyLive,
       status = BroadcastStatus.inactive,
-      creatorId = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -141,10 +140,9 @@ class BroadcastQuery with Equatable {
   /// `creatorId` and has no notion of "the accounts I follow", so there is
   /// nothing narrower to ask for. The type still travels with the query, so the
   /// socket and the screen behave as the section means to.
-  const new forYou({this.limit = defaultLimit})
+  const new forYou({this.limit = defaultLimit, this.creatorId})
     : type = BroadcastsType.forYou,
       status = BroadcastStatus.active,
-      creatorId = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
