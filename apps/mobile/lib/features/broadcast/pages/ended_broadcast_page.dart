@@ -1,43 +1,77 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/features/auth/manager/user_manager.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/broadcast/widgets/_widgets.dart';
-import 'package:meno_mobile/features/features.dart';
+
 import 'package:meno_ui/meno_ui.dart';
 
+/// The screen a host lands on after their broadcast ends.
+///
+/// It is reached in two ways: the live shell hands the client here when
+/// the room does (`LiveSessionShell` watches `LiveSessionManager.state`),
+/// and the editor hands the host here when going live succeeds
+/// (`BroadcastEditorPage` chains`createBroadcast` → `startBroadcast`
+/// and navigates on the latter's success).
+///
+/// What it draws comes from the ended broadcast the API minted when
+/// it was taken off air — that answer is what
+/// [LiveSessionManager.endedBroadcast] holds once the host's `end`
+/// call answered, and what the socket's `endedBroadcast` event
+/// carries for a listener whose room vanished under them. Both roads
+/// ship the same shape, so this page reads from the manager that
+/// already has it rather than from a repository method the new
+/// implementation does not have.
 class EndedBroadcastPage extends WatchingWidget {
   const new({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Get current user ID
-    final userId = watchValue<UserManager, String?>(
+    final ended = watchValue<LiveSessionManager, EndedBroadcast?>(
+      (manager) => manager.endedBroadcast,
+    );
+
+    final currentUserId = watchValue<UserManager, String?>(
       (manager) => manager.currentUserId,
     );
 
-    // Get summary from repository (user scope - still available!)
-    final repository = di<BroadcastLocalService>();
-    final summary = repository.getLatestBroadcastSummary(userId);
+    final isOwnBroadcastEnded = ended?.isHostedBy(currentUserId ?? '') ?? false;
+
+    Widget? child;
+
+    if (ended == null || ended.isEmpty) {
+      child = const _ErrorView(message: 'No broadcast summary available');
+    } else {
+      child = _PageView(ended: ended, isOwnBroadcastEnded: isOwnBroadcastEnded);
+    }
 
     return PopScope(
       onPopInvokedWithResult: (didPop, result) {
-        if (didPop) return context.go(MRoutes.home);
+        if (didPop) context.go(MRoutes.home);
       },
-      child: summary == null
-          ? const _ErrorView(message: 'No broadcast summary available')
-          : _PageView(summary: summary),
+      child: child,
     );
   }
 }
 
 class _PageView extends StatelessWidget {
-  const new({required this.summary});
+  const new({required this.ended, required this.isOwnBroadcastEnded});
 
-  final BroadcastSummary summary;
+  final EndedBroadcast ended;
+  final bool isOwnBroadcastEnded;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = MTextTheme.of(context);
+
+    final formattedDuration = _formatDuration(ended.duration);
+
+    // The recent joiner avatars are not wired yet: the ended broadcast
+    // the API returns carries a total count and a duration, but
+    // not the join roster. The widget still gets a stack to draw,
+    // so pass an empty list and keep the count.
+    final recentParticipants = <Participant>[];
 
     return MScaffold(
       body: Center(
@@ -50,24 +84,27 @@ class _PageView extends StatelessWidget {
               child: MText(
                 'Your live broadcast is complete! Great job.',
                 style: textTheme.heading2Bold,
-                textAlign: TextAlign.center,
+                textAlign: .center,
               ),
             ),
             Spaces.verticalXLarge,
-            BroadcastArtworkWidget(imageUrl: summary.broadcast.imageUrl),
+            BroadcastArtworkWidget(imageUrl: ended.imageUrl),
             Spaces.verticalLarge,
-            BroadcastTimerWidget(
-              formattedTime: summary.formattedDuration,
+            MTimerDisplay(
+              formattedTime: formattedDuration,
               showTimeAgo: false,
               textStyle: textTheme.heading2Bold,
             ),
             Spaces.verticalXLarge,
             EndedBroadcastParticipantsWidget(
-              allTimeCount: summary.allTimeParticipants,
-              recentParticipants: summary.recentParticipants,
+              allTimeCount: ended.totalParticipants,
+              recentParticipants: recentParticipants,
             ),
             const SizedBox(height: 40),
-            MPrimaryButton(label: 'Publish Broadcast', onPressed: () {}),
+            MPrimaryButton(
+              label: isOwnBroadcastEnded ? 'Publish Broadcast' : 'Listen Back',
+              onPressed: () {},
+            ),
             Spaces.verticalLarge,
             const _ActionButtons(),
           ],
@@ -75,6 +112,17 @@ class _PageView extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Turns an [EndedBroadcast.duration] into the HH:MM:SS the timer widget
+/// expects. The old summary carried a pre-formatted string; the new
+/// one carries a [Duration], so this keeps the screen's contract without
+/// adding one to the entity.
+String _formatDuration(Duration duration) {
+  final hours = duration.inHours.toString().padLeft(2, '0');
+  final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');
+  final seconds = (duration.inSeconds % 60).toString().padLeft(2, '0');
+  return '$hours:$minutes:$seconds';
 }
 
 class _ActionButtons extends StatelessWidget {

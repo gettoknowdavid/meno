@@ -113,8 +113,8 @@ final class MyProfileManager implements Disposable {
       final remote = await _http.me();
 
       // The account can change, or the manager be torn down, while the request
-      // is in flight. The answer then belongs to a moment that has passed, so it
-      // is dropped instead of shown under the wrong name.
+      // is in flight. The answer then belongs to a moment that has passed,
+      // so it is dropped instead of shown under the wrong name.
       if (_disposed || _user.currentUserId.value != userId) return;
 
       _profile.value = remote;

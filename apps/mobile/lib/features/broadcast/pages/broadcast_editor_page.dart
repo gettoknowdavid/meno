@@ -129,7 +129,7 @@ class _EditorFormWidget extends WatchingWidget {
           Spaces.verticalXLarge,
           const CoHostSection(),
           Spaces.verticalXLarge,
-          BroadcastEditorListTile(
+          _BroadcastEditorListTile(
             leadingText: 'Remaining time today',
             subtitleText: 'Your daily broadcast time will reset in 24hrs',
             trailing: MText('0hr 30min', style: textTheme.captionRegular),
@@ -292,7 +292,7 @@ class RecordToggleSwitchField extends WatchingWidget {
       (m) => m.isRunning,
     );
 
-    return BroadcastEditorListTile(
+    return _BroadcastEditorListTile(
       leadingText: 'Enable recording',
       subtitleText: 'Record your broadcast to listen back to later',
       trailing: SizedBox(
@@ -349,6 +349,27 @@ class StartBroadcastButton extends WatchingWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _BroadcastEditorListTile extends StatelessWidget {
+  const new({
+    required this.leadingText,
+    required this.subtitleText,
+    this.trailing,
+  });
+
+  final String leadingText;
+  final String subtitleText;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return MInfoListTile(
+      leadingText: leadingText,
+      subtitleText: subtitleText,
+      trailing: trailing,
     );
   }
 }

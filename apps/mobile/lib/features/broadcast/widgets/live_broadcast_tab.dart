@@ -53,7 +53,7 @@ class _LiveBroadcastTabState extends State<LiveBroadcastTab>
             children: [
               BroadcastArtworkWidget(imageUrl: broadcast.imageUrl),
               Spaces.verticalSmall,
-              BroadcastTimerWidget(
+              MTimerDisplay(
                 formattedTime: time,
                 isRunning: isRunning,
                 timeAgo: timeAgo,

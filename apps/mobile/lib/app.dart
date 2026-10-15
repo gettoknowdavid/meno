@@ -19,8 +19,8 @@ const Duration _kInitTimeout = Duration(seconds: 30);
 /// The router is held back until get_it reports every registration ready and
 /// the signed-in account's own scope is in place, so no route renders against
 /// half-initialised services. While the container starts the design system's
-/// [MLoadingPage] is shown; if a service fails to start, an [MErrorState] offers
-/// a retry that re-runs the wait.
+/// [MLoadingPage] is shown; if a service fails to start, an [MErrorState]
+/// offers a retry that re-runs the wait.
 ///
 /// The gate uses `watchFuture` rather than watch_it's `allReady()` helper
 /// because only the former hands the widget the error itself (to render) and

@@ -34,7 +34,10 @@ final class MRoutes {
     resetPasswordOtp,
     createNewPassword,
     resetPasswordSuccess,
+    liveSessionInit,
   ];
+
+  static bool isPublic(String location) => publicRoutes.contains(location);
 
   static const String loading = '/loading';
   static const String onboarding = '/onboarding';
@@ -212,6 +215,18 @@ final class MRoutes {
 
   static String endedBroadcastRoute(String broadcastId) {
     return '/broadcasts/${Uri.encodeComponent(broadcastId)}/ended';
+  }
+
+  /// The transition page that sits between the router and a live room.
+  ///
+  /// A room is opened asynchronously — the scope exists before it is ready — so
+  /// the router shows this page in between and lets it wait on the scope. It is
+  /// a named route so the pre-stream modal and the live shell can hand a client
+  /// here by address rather than by reconstructing the path.
+  static const String liveSessionInit = '/broadcasts/:broadcastId/live-session-initialization';
+
+  static String liveSessionInitRoute(String broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live-session-initialization';
   }
 
   static const String notes = '/notes';

@@ -36,7 +36,7 @@ class BroadcastTabWidget extends WatchingWidget {
               children: [
                 BroadcastArtworkWidget(imageUrl: broadcast.imageUrl),
                 Spaces.verticalSmall,
-                BroadcastTimerWidget(
+                MTimerDisplay(
                   formattedTime: time,
                   isRunning: isRunning,
                   timeAgo: timeAgo,

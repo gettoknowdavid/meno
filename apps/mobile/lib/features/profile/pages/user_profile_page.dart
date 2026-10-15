@@ -52,10 +52,9 @@ class UserProfilePage extends WatchingWidget {
 
     // A refused follow is the visitor's business, so it is reported where they
     // are looking; the proxy has already rolled the label back by then.
-    registerHandler(
-      select: (UserProfileManager m) => m.profile.toggleFollow.errors,
-      handler: (ctx, error, _) =>
-          ctx.showErrorToast(errorMessage(error?.error)),
+    registerHandler<UserProfileProxy, CommandError<void>?>(
+      select: (m) => m.toggleFollow.errors,
+      handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
 
     callOnce((_) => manager.fetch.run());
@@ -114,10 +113,7 @@ class _Content extends StatelessWidget {
 /// The header of a visited profile: back button, name, overflow menu, the
 /// header content and the pinned tab bar.
 class _ProfileAppBar extends StatelessWidget {
-  const new({
-    required this.profile,
-    required this.innerBoxIsScrolled,
-  });
+  const new({required this.profile, required this.innerBoxIsScrolled});
 
   final UserProfileProxy profile;
   final bool innerBoxIsScrolled;

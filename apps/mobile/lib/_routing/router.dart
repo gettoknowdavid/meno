@@ -5,10 +5,12 @@ import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
+import 'package:meno_mobile/features/broadcast/widgets/broadcast_tab_widget.dart';
+import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
-import 'package:meno_mobile/features/settings/settings.dart';
 
 /// The key of the router's root navigator.
 ///
@@ -133,63 +135,48 @@ List<RouteBase> get _routes => [
     },
   ),
   GoRoute(
-    path: MRoutes.settings,
-    builder: (_, _) => const SettingsPage(),
-    routes: [
-      GoRoute(
-        path: 'notifications',
-        builder: (_, _) => const NotificationsSettingsPage(),
-      ),
-      GoRoute(
-        path: 'security',
-        builder: (_, _) => const SecuritySettingsPage(),
-      ),
-      GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
-    ],
-  ),
-  GoRoute(
-    path: MRoutes.folders,
-    builder: (_, _) => const StubPage('Folders'),
-    routes: [
-      GoRoute(
-        path: ':folderId',
-        builder: (_, state) {
-          final folderId = state.pathParameters['folderId'] ?? '';
-          return StubPage('Folder $folderId');
-        },
-      ),
-    ],
+    path: MRoutes.liveSessionInit,
+    builder: (_, _) => const LiveSessionInitPage(),
   ),
   GoRoute(
     path: MRoutes.broadcasts,
-    builder: (_, _) => const StubPage('Broadcasts'),
+    builder: (_, _) => const BroadcastsPage(queryParameters: {}),
     routes: [
-      GoRoute(
-        path: 'new',
-        builder: (_, _) => const StubPage('Create Broadcast'),
-      ),
+      GoRoute(path: 'new', builder: (_, _) => const BroadcastEditorPage()),
       GoRoute(
         path: ':broadcastId',
         builder: (_, state) {
           final broadcastId = state.pathParameters['broadcastId'] ?? '';
-          return StubPage('Broadcast $broadcastId');
+          return BroadcastDetailsPage(broadcastId: broadcastId);
         },
         routes: [
-          GoRoute(
-            path: 'edit',
-            builder: (_, _) => const StubPage('Edit Broadcast'),
-          ),
+          GoRoute(path: 'edit', builder: (_, _) => const BroadcastEditorPage()),
           GoRoute(
             path: 'pre-stream',
-            pageBuilder: (_, state) => ModalPage<dynamic>(
-              child: StubPage(
-                'Pre-stream ${state.pathParameters['broadcastId'] ?? ''}',
-              ),
-            ),
+            pageBuilder: (_, state) {
+              final broadcastId = state.pathParameters['broadcastId'] ?? '';
+              return ModalPage<dynamic>(child: PreStreamModal(id: broadcastId));
+            },
           ),
           GoRoute(
             path: 'live',
-            builder: (_, _) => const StubPage('Live Broadcast'),
+            pageBuilder: (context, state) {
+              final navigationShell = state as StatefulNavigationShell;
+              return CustomTransitionPage<void>(
+                key: const ValueKey('liveSessionShell'),
+                transitionsBuilder: (_, _, _, _) => const SizedBox.expand(),
+                child: LiveSessionShell(
+                  key: const ValueKey('liveSessionShell'),
+                  navigationShell: navigationShell,
+                  children: const [
+                    BroadcastTabWidget(),
+                    StubPage('Live Chat'),
+                    StubPage('Live Bible'),
+                    StubPage('Live Notes'),
+                  ],
+                ),
+              );
+            },
             routes: [
               GoRoute(
                 path: 'chat',
@@ -225,10 +212,7 @@ List<RouteBase> get _routes => [
               ),
             ],
           ),
-          GoRoute(
-            path: 'ended',
-            builder: (_, _) => const StubPage('Broadcast Ended'),
-          ),
+          GoRoute(path: 'ended', builder: (_, _) => const EndedBroadcastPage()),
         ],
       ),
     ],
@@ -237,63 +221,65 @@ List<RouteBase> get _routes => [
     path: MRoutes.webCreateBroadcast,
     builder: (_, _) => const StubPage('Create Broadcast (Web)'),
   ),
-  _rootShell,
+  StatefulShellRoute.indexedStack(
+    builder: (_, _, navigationShell) {
+      return RootShell(navigationShell: navigationShell);
+    },
+    branches: [
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.home,
+            builder: (_, _) => const StubPage('Home'),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.discover,
+            builder: (_, _) => const StubPage('Discover'),
+            routes: [
+              GoRoute(
+                path: 'all',
+                builder: (_, _) => const StubPage('All Broadcasts'),
+              ),
+              GoRoute(
+                path: 'now-live',
+                builder: (_, _) => const StubPage('Discover Now Live'),
+              ),
+              GoRoute(
+                path: 'recently-live',
+                builder: (_, _) => const StubPage('Discover Recently Live'),
+              ),
+              GoRoute(
+                path: 'accounts',
+                builder: (_, _) => const StubPage('Suggested Accounts'),
+              ),
+              GoRoute(
+                path: 'search',
+                builder: (_, _) => const StubPage('Discover Search'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.notes,
+            builder: (_, _) => const StubPage('Notes'),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.myProfile,
+            builder: (_, _) => const MyProfilePage(),
+          ),
+        ],
+      ),
+    ],
+  ),
 ];
-
-StatefulShellRoute get _rootShell => StatefulShellRoute.indexedStack(
-  builder: (_, _, navigationShell) =>
-      RootShell(navigationShell: navigationShell),
-  branches: [
-    StatefulShellBranch(
-      routes: [
-        GoRoute(path: MRoutes.home, builder: (_, _) => const StubPage('Home')),
-      ],
-    ),
-    StatefulShellBranch(
-      routes: [
-        GoRoute(
-          path: MRoutes.discover,
-          builder: (_, _) => const StubPage('Discover'),
-          routes: [
-            GoRoute(
-              path: 'all',
-              builder: (_, _) => const StubPage('All Broadcasts'),
-            ),
-            GoRoute(
-              path: 'now-live',
-              builder: (_, _) => const StubPage('Discover Now Live'),
-            ),
-            GoRoute(
-              path: 'recently-live',
-              builder: (_, _) => const StubPage('Discover Recently Live'),
-            ),
-            GoRoute(
-              path: 'accounts',
-              builder: (_, _) => const StubPage('Suggested Accounts'),
-            ),
-            GoRoute(
-              path: 'search',
-              builder: (_, _) => const StubPage('Discover Search'),
-            ),
-          ],
-        ),
-      ],
-    ),
-    StatefulShellBranch(
-      routes: [
-        GoRoute(
-          path: MRoutes.notes,
-          builder: (_, _) => const StubPage('Notes'),
-        ),
-      ],
-    ),
-    StatefulShellBranch(
-      routes: [
-        GoRoute(
-          path: MRoutes.myProfile,
-          builder: (_, _) => const MyProfilePage(),
-        ),
-      ],
-    ),
-  ],
-);
