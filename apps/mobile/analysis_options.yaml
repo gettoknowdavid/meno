@@ -76,6 +76,7 @@ linter:
 analyzer:
   errors:
     avoid_positional_boolean_parameters: ignore
+    use_setters_to_change_properties: ignore
   exclude:
     - lib/**/*.freezed.dart
     - lib/**/*.mocks.dart

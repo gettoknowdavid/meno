@@ -1,15 +1,19 @@
 /// The app's error taxonomy.
 ///
-/// Every failure the app surfaces is a [MenoException], or one of the transport
-/// failures in `exceptions.dart` that carry a message but no code. Each
-/// [MenoException] carries a stable code — the value the API documents as the
-/// one clients branch on — plus a human-readable message the server may reword
-/// at any time. Failures the app detects itself (no connectivity, a cancelled
-/// request, a failed write) use the client-side codes at the bottom of
-/// [MenoErrorCode], so one vocabulary covers the whole app.
+/// Every failure the app surfaces is a [MenoException]. Each one carries a
+/// stable code — the value the app branches on — plus a human-readable message
+/// the server may reword at any time. The failures the API answered carry the
+/// wire code it documents, along with the status line and request id it sent;
+/// the ones the app detects itself (no connectivity, a cancelled request, a
+/// failed write, a room that would not open) use the client-side codes at the
+/// bottom of [MenoErrorCode] and have no server-side counterpart to look up.
+/// One vocabulary covers the whole app.
+///
+/// The hierarchy is sealed, and that is what keeps the app honest about it: the
+/// error filter classifies a failure by switching over these types, so a
+/// failure added here will not compile until somebody has said where it is
+/// reported.
 library;
-
-import 'package:meno_mobile/_core/exceptions/exceptions.dart';
 
 /// Wire error codes, mirroring `ErrorCode` in `crates/core/src/error.rs`.
 ///
@@ -70,6 +74,13 @@ final class MenoErrorCode {
   static const String storage = 'STORAGE';
   static const String malformedResponse = 'MALFORMED_RESPONSE';
   static const String unknown = 'UNKNOWN';
+
+  // Client-side only, transport: raised when reaching the server failed rather
+  // than the server answering badly, so there is no wire code to mirror and
+  // [timeout], [network], [invalidToken] and [unknown] are reused wherever they
+  // already describe the failure honestly.
+  static const String liveKitConnectFailed = 'LIVEKIT_CONNECT_FAILED';
+  static const String liveKitMic = 'LIVEKIT_MIC';
 }
 
 /// A failure the app can act on.
@@ -78,6 +89,10 @@ final class MenoErrorCode {
 /// reworded at any time, so never match on it. [statusCode] and [requestId] are
 /// set when the API answered: the status line is authoritative, and the request
 /// id is what the server-side logs that produced the failure are tagged with.
+///
+/// The failures hang off two branches: the ones the API answered, each of which
+/// carries a status, and [TransportFailure], which the app raised while
+/// reaching the server and which therefore has none.
 sealed class MenoException implements Exception {
   /// Creates a failure with a wire [code] and a user-facing [message].
   const new({
@@ -162,7 +177,8 @@ sealed class MenoException implements Exception {
     };
   }
 
-  /// The stable wire code: the value to branch on.
+  /// The stable code to branch on: the wire code when the API answered, and one
+  /// of the client-side codes in [MenoErrorCode] when the app raised it.
   final String code;
 
   /// The message to show a person for this failure.
@@ -397,15 +413,97 @@ final class UnknownException extends MenoException {
   });
 }
 
+/// A failure raised while reaching the server rather than by what it answered.
+///
+/// These come from the app's own transport clients: a room that would not open,
+/// a microphone that would not switch, a socket write with nowhere to go, an
+/// acknowledgement that never arrived. There was no status line, no request id
+/// and nothing in the API's log to match one against, so [code] is one of the
+/// client-side codes and [statusCode] and [requestId] are left unset.
+///
+/// They are part of the taxonomy rather than a family of their own so that the
+/// error plumbing recognises them by type alone: the error filter routes the
+/// whole branch in one case, and a new failure of this kind cannot be added
+/// without deciding where it is reported.
+sealed class TransportFailure extends MenoException {
+  const new({required super.code, required super.message, super.cause});
+}
+
+/// A reason a room could not be entered, or a microphone could not be switched.
+sealed class LiveKitFailure extends TransportFailure {
+  const new({required super.code, required super.message, super.cause});
+}
+
+/// The token was rejected, so no retry can help.
+final class LiveKitInvalidToken extends LiveKitFailure {
+  const new([String message = 'Unable to connect: Invalid or expired token'])
+    : super(message: message, code: MenoErrorCode.invalidToken);
+}
+
+/// The room did not answer in time.
+final class LiveKitConnectionTimeout extends LiveKitFailure {
+  const new([
+    String message =
+        'Connection timeout: Please check your internet connection',
+  ]) : super(message: message, code: MenoErrorCode.timeout);
+}
+
+/// The room refused the connection for any other reason it reported.
+final class LiveKitConnectionFailed extends LiveKitFailure {
+  const new(String message)
+    : super(message: message, code: MenoErrorCode.liveKitConnectFailed);
+}
+
+/// The client is not in a room, so there is nothing to act on.
+final class LiveKitNotConnected extends LiveKitFailure {
+  const new([String message = 'Failed: Not connected to room'])
+    : super(message: message, code: MenoErrorCode.network);
+}
+
+/// The local microphone could not be switched.
+final class LiveKitMicError extends LiveKitFailure {
+  const new(String message)
+    : super(message: message, code: MenoErrorCode.liveKitMic);
+}
+
+/// A failure that is not one of the cases above.
+final class LiveKitUnexpectedError extends LiveKitFailure {
+  const new(String message)
+    : super(message: message, code: MenoErrorCode.unknown);
+}
+
+/// A write was attempted on a socket that is not connected.
+///
+/// Nothing is wrong with the request: it simply has nowhere to go yet, which is
+/// why it is a different failure from [SocketTimeoutException] — one is worth
+/// retrying once the socket is up, the other is about the server.
+final class SocketNotConnectedException extends TransportFailure {
+  const new(String message)
+    : super(message: message, code: MenoErrorCode.network);
+
+  @override
+  String toString() => 'SocketNotConnectedException: $message';
+}
+
+/// An acknowledgement did not arrive within its deadline.
+///
+/// The write did reach the server; what did not come back is the server's
+/// answer, so the request may or may not have been applied.
+final class SocketTimeoutException extends TransportFailure {
+  const new(String message)
+    : super(message: message, code: MenoErrorCode.timeout);
+
+  @override
+  String toString() => 'SocketTimeoutException: $message';
+}
+
 /// The message to show a person for [error].
 ///
-/// Failures the app recognises carry a message written for users: the
-/// [MenoException]s the API produced and the [InfrastructureFailure]s a
-/// transport client raised. Anything else is unclassified, and a raw
-/// `toString()` would leak internals into the UI — so the fallback is a generic
-/// sentence and the detail goes to the log.
+/// Every failure the app recognises carries a message written for users — the
+/// ones the API answered and the ones a transport client raised. Anything else
+/// is unclassified, and a raw `toString()` would leak internals into the UI —
+/// so the fallback is a generic sentence and the detail goes to the log.
 String errorMessage(Object? error) {
   if (error is MenoException) return error.message;
-  if (error is InfrastructureFailure) return error.message;
   return 'Something went wrong. Please try again.';
 }

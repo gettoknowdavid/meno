@@ -5,10 +5,10 @@ import 'package:meno_mobile/_core/_core.dart';
 /// The two decisions the error pipeline makes about a failure: what a person is
 /// told, and who gets to handle it.
 ///
-/// Both used to rest on the failure being a [MenoException]. The transport
-/// clients raise a second family that carries a message but no code, so these
-/// pin that the family is recognised rather than falling through to the generic
-/// sentence that is reserved for failures nobody has classified.
+/// Both rest on the failure being a [MenoException]. A transport failure has no
+/// wire code to read a status off, so these pin that it is recognised by the
+/// same plumbing as every other failure rather than falling through to the
+/// generic sentence that is reserved for failures nobody has classified.
 void main() {
   group('errorMessage', () {
     test('prefers the message a transport failure carries', () {

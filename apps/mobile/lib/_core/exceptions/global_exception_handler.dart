@@ -16,7 +16,9 @@ void configureGlobalExceptionHandler() {
 
     if (error is MenoException) {
       // The request id is the only handle on the server-side log lines for this
-      // failure, so it is worth a line of its own in the message.
+      // failure, so it is worth a line of its own in the message. A
+      // [TransportFailure] has none — the API never answered — and the reason
+      // it did happen, which is the only record of it, rides along on [error].
       final requestId = error.requestId;
       logger.e(
         'Unhandled ${error.runtimeType} (${error.code})'
@@ -28,12 +30,10 @@ void configureGlobalExceptionHandler() {
       return;
     }
 
-    // A transport failure says why it happened in its message, and that
-    // message is the only record of the reason: unlike the failures above,
-    // there is no code and no request id to search a server log by.
-    final reason = error is InfrastructureFailure ? ': ${error.message}' : '';
+    // Not one of the app's failures at all: a bug, or a failure mode nobody has
+    // classified yet, so only the type is known here.
     logger.e(
-      'Unhandled ${error.runtimeType}$reason',
+      'Unhandled ${error.runtimeType}',
       tag: MenoLogTag.debug.label,
       error: error,
       stackTrace: stackTrace,

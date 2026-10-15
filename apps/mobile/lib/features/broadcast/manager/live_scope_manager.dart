@@ -25,8 +25,10 @@ final class LiveSession {
 }
 
 /// Registers a live broadcast's own services in that broadcast's scope.
-typedef LiveScopeRegistrar =
-    FutureOr<void> Function(GetIt scope, LiveSession session);
+typedef LiveScopeRegistrar = FutureOr<void> Function(
+  GetIt scope,
+  LiveSession session,
+);
 
 /// The live tier: one get_it scope per broadcast session.
 ///
