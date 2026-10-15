@@ -3,6 +3,37 @@ import 'package:meno_mobile/_shared/model/_model.dart';
 
 part 'entities.freezed.dart';
 
+/// Sample public profiles for cards, lists, and placeholder states.
+final List<Profile> fakeProfileList = [
+  Profile(
+    id: 'b1b1b1b1-0001-4b1b-8b1b-1b1b1b1b1b1b',
+    fullName: 'Grace Okonkwo',
+    bio: 'Sharing moments of worship, prayer, and testimony.',
+    isFollowing: true,
+    stats: const ProfileStats(broadcasts: 5, followers: 120, following: 34),
+    createdAt: DateTime(2023, 9, 20),
+  ),
+  const Profile(
+    id: 'b1b1b1b1-0002-4b1b-8b1b-2b1b1b1b1b1b',
+    fullName: 'Daniel Cho',
+    bio: 'Teacher, speaker, and lifelong learner.',
+    stats: ProfileStats(broadcasts: 1, followers: 8, following: 2),
+  ),
+  Profile(
+    id: 'b1b1b1b1-0003-4b1b-8b1b-3b1b1b1b1b1b',
+    fullName: 'Sofia Bianchi',
+    stats: const ProfileStats(broadcasts: 10, followers: 90, following: 3),
+    createdAt: DateTime(2026, 1, 15),
+  ),
+  const Profile(
+    id: 'b1b1b1b1-0004-4b1b-8b1b-4b1b1b1b1b1b',
+    fullName: 'Aisha Rahman',
+    isFollowing: true,
+  ),
+];
+
+List<Profile> fakeProfiles = <Profile>[];
+
 /// Where an uploaded avatar now lives.
 ///
 /// `POST /users/me/avatar` answers with the two keys the account's row was
@@ -149,5 +180,3 @@ abstract class ProfileStats with _$ProfileStats {
   /// The counters of a profile nobody has counted yet.
   static const ProfileStats zero = ProfileStats();
 }
-
-List<Profile> fakeProfiles = <Profile>[];

@@ -101,7 +101,7 @@ class _BroadcastCardSkeleton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final broadcast = fakeBroadcasts[0];
+    final broadcast = fakeBroadcastList[0];
     return switch (type) {
       _SkeletonType.nLive => Skeletonizer(
         child: MCard.live(

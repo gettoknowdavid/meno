@@ -2,6 +2,128 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'entities.freezed.dart';
 
+/// Sample broadcasts in different states for cards, skeletons, and empty views.
+final List<Broadcast> fakeBroadcastList = [
+  Broadcast(
+    id: 'c1c1c1c1-0001-4c1c-8c1c-1c1c1c1c1c1c',
+    title: 'Sunday Worship Live',
+    description: 'A weekly time of worship, prayer, and the word.',
+    timeZone: 'America/New_York',
+    createdAt: DateTime(2024, 1, 10),
+    startTime: DateTime.now().add(const Duration(hours: 2)),
+    endTime: DateTime.now().add(const Duration(hours: 3)),
+    status: .active,
+    state: .scheduled,
+    recordingEnabled: true,
+    creator: const Participant(
+      id: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+      fullName: 'Elena Vasquez',
+    ),
+  ),
+  const Broadcast(
+    id: 'c1c1c1c1-0002-4c1c-8c1c-2c1c1c1c1c1c',
+    title: 'Prayer & Testimony Night',
+    description: 'Open mic for prayers and shared testimonies.',
+    timeZone: 'Europe/London',
+    imageId: 'img-123',
+    status: .active,
+    state: .live,
+    isJoined: true,
+    isBookmarked: true,
+    liveParticipantsCount: 18,
+    totalParticipants: 42,
+    recordingEnabled: true,
+    timeRemainingSeconds: 1480,
+    creator: Participant(
+      id: 'a1a1a1a1-0002-4a1a-8a1a-2a1a1a1a1a1a',
+      fullName: 'Marcus Reed',
+    ),
+    cohosts: [
+      Participant(
+        id: 'a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a',
+        fullName: 'Priya Nair',
+        bio: 'Hosting with Marcus tonight.',
+      ),
+    ],
+  ),
+  const Broadcast(
+    id: 'c1c1c1c1-0003-4c1c-8c1c-3c1c1c1c1c1c',
+    title: 'Morning Bible Study',
+    status: .ended,
+    state: .ended,
+    isBookmarked: true,
+    endReason: EndReason.normal,
+  ),
+  Broadcast(
+    id: 'c1c1c1c1-0004-4c1c-8c1c-4c1c1c1c1c1c',
+    title: 'Guest Speaker: Faith in Action',
+    description:
+        'A special session with a guest speaker on serving the community.',
+    timeZone: 'Asia/Tokyo',
+    status: .active,
+    state: .scheduled,
+    startTime: DateTime.now().add(const Duration(days: 3, hours: 1)),
+    endTime: DateTime.now().add(const Duration(days: 3, hours: 2)),
+    creator: const Participant(
+      id: 'a1a1a1a1-0004-4a1a-8a1a-4a1a1a1a1a1a',
+      fullName: 'Jordan Smith',
+    ),
+  ),
+  const Broadcast(
+    id: 'c1c1c1c1-0005-4c1c-8c1c-5c1c1c1c1c1c',
+    title: 'Youth Night',
+  ),
+];
+
+/// Sample favorites for the saved-broadcasts list and empty-state tests.
+final List<FavouriteBroadcast> fakeFavouriteBroadcastList = [
+  const FavouriteBroadcast(
+    broadcastId: 'c1c1c1c1-0002-4c1c-8c1c-2c1c1c1c1c1c',
+    ownerId: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+    title: 'Prayer & Testimony Night',
+    creatorName: 'Marcus Reed',
+  ),
+  FavouriteBroadcast(
+    broadcastId: 'c1c1c1c1-0001-4c1c-8c1c-1c1c1c1c1c1c',
+    ownerId: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+    title: 'Sunday Worship Live',
+    creatorName: 'Elena Vasquez',
+    savedAt: DateTime(2026, 4, 3),
+  ),
+  FavouriteBroadcast(
+    broadcastId: 'c1c1c1c1-0003-4c1c-8c1c-3c1c1c1c1c1c',
+    ownerId: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+    title: 'Morning Bible Study',
+    savedAt: DateTime(2026, 6, 20),
+  ),
+];
+
+/// Sample participants, including hosts, cohost, listeners, and empty-state cases.
+final List<Participant> fakeParticipantList = [
+  const Participant(
+    id: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+    fullName: 'Elena Vasquez',
+    role: ParticipantRole.host,
+  ),
+  const Participant(
+    id: 'a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a',
+    fullName: 'Priya Nair',
+    bio: 'Co-hosting tonight.',
+    avatarId: 'av-456',
+    role: ParticipantRole.cohost,
+  ),
+  const Participant(
+    id: 'a1a1a1a1-0005-4a1a-8a1a-5a1a1a1a1a1a',
+    fullName: 'Sam Carter',
+    role: ParticipantRole.listener,
+  ),
+  const Participant(
+    id: 'a1a1a1a1-0006-4a1a-8a1a-6a1a1a1a1a1a',
+    fullName: 'Taylor Kim',
+  ),
+  Participant.empty,
+];
+
 /// A broadcast as `GET /broadcasts/{id}` answers with.
 ///
 /// The shape is the API's `BroadcastResponse`. The viewer's own standing —
@@ -59,7 +181,7 @@ abstract class Broadcast with _$Broadcast {
   /// The host's name, for a card with no room for a full participant.
   String get hostName => creator?.fullName ?? '';
 
-  bool get isDraft => state == BroadcastState.draft;
+  bool get isDraft => state == .draft;
 
   bool get isEmpty => id.isEmpty;
 
@@ -68,7 +190,7 @@ abstract class Broadcast with _$Broadcast {
 
   bool get isNotEmpty => id.isNotEmpty;
 
-  bool get isScheduled => state == BroadcastState.scheduled;
+  bool get isScheduled => state == .scheduled;
 
   /// How much of a scheduled broadcast is left, when the API stated it.
   Duration? get timeRemaining => timeRemainingSeconds == null
@@ -167,7 +289,7 @@ enum BroadcastState {
     for (final state in BroadcastState.values) {
       if (state.wire == wire) return state;
     }
-    return BroadcastState.draft;
+    return .draft;
   }
 }
 
@@ -185,7 +307,7 @@ enum BroadcastStatus {
     for (final status in BroadcastStatus.values) {
       if (status.wire == wire) return status;
     }
-    return BroadcastStatus.inactive;
+    return .inactive;
   }
 }
 
@@ -225,7 +347,7 @@ abstract class BroadcastSummary with _$BroadcastSummary {
 
   bool get isLive => state.onAir;
 
-  bool get isScheduled => state == BroadcastState.scheduled;
+  bool get isScheduled => state == .scheduled;
 
   bool isHostedBy(String userId) => creatorId == userId;
 
@@ -283,8 +405,8 @@ abstract class EndedBroadcast with _$EndedBroadcast {
     imageUrl: imageUrl,
     endTime: endedAt,
     endReason: reason,
-    status: BroadcastStatus.ended,
-    state: BroadcastState.ended,
+    status: .ended,
+    state: .ended,
     durationSeconds: duration.inSeconds,
     totalParticipants: totalParticipants,
     recordingEnabled: recordingEnabled,
@@ -493,6 +615,3 @@ enum ParticipantRole {
     return ParticipantRole.unknown;
   }
 }
-
-final List<Broadcast> fakeBroadcasts = [];
-final List<Participant> fakeParticipants = [];

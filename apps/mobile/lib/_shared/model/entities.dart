@@ -2,6 +2,38 @@ import 'package:freezed_annotation/freezed_annotation.dart';
 
 part 'entities.freezed.dart';
 
+/// Sample accounts for skeletonizers, empty-state tests, and previews.
+final List<User> fakeUserList = [
+  const User(
+    id: 'a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a',
+    fullName: 'Elena Vasquez',
+    email: 'elena@example.com',
+    verified: true,
+    bio: 'Building things for the web and mobile.',
+    providers: [.password, .google],
+    role: .creator,
+  ),
+  const User(
+    id: 'a1a1a1a1-0002-4a1a-8a1a-2a1a1a1a1a1a',
+    fullName: 'Marcus Reed',
+    email: 'marcus@example.com',
+    verified: true,
+    providers: [.google],
+    role: .admin,
+  ),
+  const User(
+    id: 'a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a',
+    fullName: 'Priya Nair',
+    email: 'priya@example.com',
+    bio: 'Early adopter, always learning.',
+  ),
+  const User(
+    id: 'a1a1a1a1-0004-4a1a-8a1a-4a1a1a1a1a1a',
+    fullName: 'Jordan Smith',
+    email: 'jordan@example.com',
+  ),
+];
+
 /// How an account can sign in.
 ///
 /// Mirrors `AuthProvider` in `apps/api/src/middleware/auth.rs`. The enum is

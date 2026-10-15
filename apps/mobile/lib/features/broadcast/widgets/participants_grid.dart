@@ -1,7 +1,5 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:meno_mobile/features/broadcast/widgets/participant_info_modal.dart';
-import 'package:meno_mobile/features/broadcast/widgets/participant_item_widget.dart';
 import 'package:meno_mobile/features/features.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -28,7 +26,9 @@ class ParticipantsGrid extends WatchingWidget {
       (manager) => manager.currentUserId,
     );
 
-    final effectiveParticipants = isLoading ? fakeParticipants : participants;
+    final effectiveParticipants = isLoading
+        ? fakeParticipantList
+        : participants;
 
     return Skeletonizer(
       enabled: isLoading,
