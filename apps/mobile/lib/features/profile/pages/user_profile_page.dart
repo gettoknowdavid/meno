@@ -2,6 +2,9 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/profile/manager/_manager.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_mobile/features/profile/services/_services.dart';
@@ -44,6 +47,7 @@ class UserProfilePage extends WatchingWidget {
     );
 
     final manager = di<UserProfileManager>();
+
     // The proxy, not a value: watching it is what makes an optimistic follow
     // repaint this screen, and what keeps it in step with any card behind it
     // that already holds the same proxy.
@@ -71,7 +75,7 @@ class UserProfilePage extends WatchingWidget {
 }
 
 /// The profile itself: the collapsible header, then the tab bar.
-class _Content extends StatelessWidget {
+class _Content extends WatchingWidget {
   const new({required this.profile, required this.onRefresh});
 
   final UserProfileProxy profile;
@@ -80,6 +84,22 @@ class _Content extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
+
+    final recentBroadcastsFeed = createOnce(() {
+      return BroadcastFeedDataSource(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        query: BroadcastQuery.recentlyLive(creatorId: profile.id),
+      );
+    });
+
+    final allBroadcastsFeed = createOnce(() {
+      return BroadcastFeedDataSource(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        query: BroadcastQuery(creatorId: profile.id),
+      );
+    });
 
     return DefaultTabController(
       length: 2,
@@ -95,17 +115,32 @@ class _Content extends StatelessWidget {
                 innerBoxIsScrolled: innerBoxIsScrolled,
               ),
             ],
-            body: const TabBarView(
+            body: TabBarView(
               children: [
-                // Both tabs are broadcast feeds, which the broadcasts feature
-                // owns: the Meno mark stands in until it exists.
-                ProfileTabPlaceholder(),
-                ProfileTabPlaceholder(),
+                _RecentBroadcastsTab(feed: recentBroadcastsFeed),
+                _AllBroadcastsTab(feed: allBroadcastsFeed),
               ],
             ),
           ),
         ),
       ),
+    );
+  }
+}
+
+/// What a visitor sees when there is no profile to show.
+class _EmptyPage extends StatelessWidget {
+  const new();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: MAppBar.secondary(
+        title: 'No Profile',
+        centerTitle: true,
+        actions: const [Icon(MIcons.dots_horizontal), Spaces.horizontalLarge],
+      ),
+      body: const MEmptyState(),
     );
   }
 }
@@ -170,19 +205,48 @@ class _ProfileAppBar extends StatelessWidget {
   }
 }
 
-/// What a visitor sees when there is no profile to show.
-class _EmptyPage extends StatelessWidget {
-  const new();
+class _AllBroadcastsTab extends WatchingWidget {
+  const new({required this.feed});
+
+  final BroadcastFeedDataSource feed;
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: MAppBar.secondary(
-        title: 'No Profile',
-        centerTitle: true,
-        actions: const [Icon(MIcons.dots_horizontal), Spaces.horizontalLarge],
-      ),
-      body: const MEmptyState(),
+    return FeedWidget(
+      feedSource: feed,
+      padding: const .all(Insets.lg),
+      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
+      skeletonItemCount: 4,
+      itemBuilder: (context, broadcast) {
+        return BroadcastCard.rLiveTile(
+          broadcast,
+          key: ValueKey(broadcast.id),
+          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+        );
+      },
+    );
+  }
+}
+
+class _RecentBroadcastsTab extends WatchingWidget {
+  const new({required this.feed});
+
+  final BroadcastFeedDataSource feed;
+
+  @override
+  Widget build(BuildContext context) {
+    return FeedWidget(
+      feedSource: feed,
+      padding: const .all(Insets.lg),
+      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
+      skeletonItemCount: 4,
+      itemBuilder: (context, broadcast) {
+        return BroadcastCard.rLiveTile(
+          broadcast,
+          key: ValueKey(broadcast.id),
+          onTap: () => context.push(MRoutes.broadcastRoute(broadcast.id)),
+        );
+      },
     );
   }
 }
