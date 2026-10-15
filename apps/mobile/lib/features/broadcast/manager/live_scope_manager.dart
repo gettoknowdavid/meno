@@ -49,14 +49,25 @@ typedef LiveScopeRegistrar = FutureOr<void> Function(
 /// the API minted, and the room is closed by the client leaving it
 /// (`LiveSessionManager.endSession`) or by the broadcast ending under it, which
 /// the socket announces. Nothing else has to remember to push or pop a scope.
-///
-/// # Rooms that outlive the process
+////// # Rooms that outlive the process
 ///
 /// [init] puts the device back into a session that was still open when the app
 /// stopped, which [LiveSessionStore] has the record of. Transitions are
 /// serialised, and an
 /// [end] naming another broadcast is ignored — a late `endedBroadcast` for the
 /// previous session must not close the one that replaced it.
+///
+/// # Why this manager outlives the session
+  ///
+  /// This manager is registered in the account's scope and answers for the
+  /// account — *is a room open, and which one* — while the session's own
+  /// services answer only inside a room's scope. That split is what lets a
+  /// screen outside the room (the home page's banner, a card, the details
+  /// sheet) ask whether the account is on air without resolving anything that
+  /// does not exist yet: everything a widget needs to draw that answer is
+  /// registered for as long as the account is. Registering a session object in
+  /// the account's scope instead would put a room's identity where it can never
+  /// be disposed with the room.
 final class LiveScopeManager implements Disposable {
   new(
     this._userId, {
@@ -98,6 +109,15 @@ final class LiveScopeManager implements Disposable {
 
   /// Whether a session is open.
   ValueListenable<bool> get isLive => _broadcastId.select((id) => id != null);
+
+  /// Whether this device is in [broadcastId]'s room right now.
+  ///
+  /// The session's own registrations live in that room's scope, so they are
+  /// absent — not merely empty — until the room is entered: this is the
+  /// question to ask before resolving anything of the room's, which is why
+  /// there is no untyped `isRegistered` for callers to get wrong.
+  bool isInRoom(String broadcastId) =>
+      _broadcastId.value == broadcastId && di.isRegistered<LiveSession>();
 
   /// Restores the session this device was in, then follows the socket.
   ///

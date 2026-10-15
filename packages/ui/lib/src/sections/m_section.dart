@@ -30,6 +30,7 @@ class MSection extends StatelessWidget {
     required this.title,
     required this.builder,
     super.key,
+    this.titleIcon,
     this.onSeeAll,
     this.seeAllLabel = 'See all',
     this.maxContentHeight = _kDefaultMaxContentHeight,
@@ -38,6 +39,9 @@ class MSection extends StatelessWidget {
 
   /// The section title.
   final String title;
+
+  /// The icon to display next to the title.
+  final Widget? titleIcon;
 
   /// Builds the section content.
   final Widget Function(BuildContext context) builder;
@@ -59,7 +63,16 @@ class MSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: .start,
       children: [
-        MHeader(title: title, action: _seeAllAction(context), padding: padding),
+        MHeader(
+          title: Row(
+            children: [
+              MText(title),
+              if (titleIcon != null) ...[Spaces.horizontalSmall, titleIcon!],
+            ],
+          ),
+          action: _seeAllAction(context),
+          padding: padding,
+        ),
         const SizedBox(height: Insets.xl),
         LimitedBox(maxHeight: maxContentHeight, child: builder(context)),
       ],

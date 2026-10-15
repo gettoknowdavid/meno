@@ -4,6 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 
+/// How a feed reports a failure.
+///
+/// [menoExceptionFilter] sends an infrastructure failure — no connectivity, a
+/// timeout, a bad response — straight to the global toast, and a failure with
+/// only a global handler never reaches [Command.errors]. A feed is the one
+/// caller that does have somewhere to put such a failure: the error state its
+/// list draws, with a retry on it. So the feed asks for a local handler first
+/// and keeps the toast as the fallback, which is what happens when the feed is
+/// being read by code that is not drawing one.
+ErrorReaction _feedErrorFilter(Object error, StackTrace stackTrace) {
+  final reaction = menoExceptionFilter(error, stackTrace);
+  return reaction == .globalHandler ? .firstLocalThenGlobalHandler : reaction;
+}
+
 /// Base feed for finite data sets (non-paged)
 abstract class FeedDataSource<TItem> implements Disposable {
   new({List<TItem>? initialItems}) : items = initialItems ?? [] {
@@ -11,7 +25,7 @@ abstract class FeedDataSource<TItem> implements Disposable {
       await updateFeedData();
       updateWasCalled = true;
       refreshItemCount();
-    }, errorFilterFn: menoExceptionFilter);
+    }, errorFilterFn: _feedErrorFilter);
   }
 
   final List<TItem> items;
@@ -73,7 +87,7 @@ abstract class PagedFeedDataSource<TItem> extends FeedDataSource<TItem> {
     requestNextPageCommand = .createAsyncNoParamNoResult(() async {
       await requestNextPage();
       refreshItemCount();
-    }, errorFilterFn: menoExceptionFilter);
+    }, errorFilterFn: _feedErrorFilter);
 
     // Merge both commands' isRunning into a single isFetching notifier.
     updateDataCommand.isRunning.addListener(_syncFetching);

@@ -22,7 +22,7 @@ class MHeader extends StatelessWidget {
   });
 
   /// The title of the header.
-  final String title;
+  final Widget title;
 
   /// An optional widget to display on the right side of the header.
   final Widget? action;
@@ -55,10 +55,9 @@ class MHeader extends StatelessWidget {
             ),
             Spaces.horizontalMicro,
           ],
-          MText(
-            title,
-            style: textTheme.heading3Bold,
-            color: colors.onBackground,
+          DefaultTextStyle(
+            style: textTheme.heading3Bold.copyWith(color: colors.onBackground),
+            child: title,
           ),
           const Spacer(),
           if (action != null) ...[action!],

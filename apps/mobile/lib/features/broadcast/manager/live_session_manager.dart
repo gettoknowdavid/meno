@@ -8,6 +8,7 @@ import 'package:meno_mobile/features/broadcast/manager/broadcast_timer_manager.d
 import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
 
 /// The room one client is in, from the inside.
 ///
@@ -68,8 +69,8 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
             ? await _livekit.broadcast(token)
             : await _livekit.stream(token);
 
-        // A `Left` here is a connection that did not happen; raising it lets the
-        // error listener below decide between retrying and giving up.
+        // A `Left` here is a connection that did not happen; raising it lets
+        // the error listener below decide between retrying and giving up.
         outcome.match((failure) => throw failure, (_) {});
       },
       errorFilterFn: menoExceptionFilter,
@@ -184,6 +185,14 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   /// Whether this client may publish.
   late final isHost = ValueNotifier<bool>(
     _session.canPublish || _session.broadcast.isHostedBy(_session.userId),
+  );
+
+  late final hostProxy = UserProfileProxy(
+    Profile(
+      id: _session.broadcast.hostId,
+      fullName: _session.broadcast.hostName,
+      avatarUrl: _session.broadcast.hostImageUrl,
+    ),
   );
 
   /// What the room ended as, once the API has said.
@@ -410,6 +419,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     status.dispose();
     isMicrophoneEnabled.dispose();
     isHost.dispose();
+    hostProxy.dispose();
     endedBroadcast.dispose();
     _isLeaving.dispose();
 

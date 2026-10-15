@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_mobile/features/profile/widgets/profile_editor_modal.dart';
 import 'package:meno_ui/meno_ui.dart';
+import 'package:skeletonizer/skeletonizer.dart';
 
 /// Follows or unfollows the account whose profile is open.
 ///
@@ -17,10 +18,21 @@ import 'package:meno_ui/meno_ui.dart';
 /// that grew its own error surface would be a second voice for one failure.
 class SubscribeButton extends WatchingWidget {
   /// Creates the button for [profile].
-  const new({required this.profile, super.key});
+  const new({
+    required this.profile,
+    this.style,
+    this.showIcon = false,
+    super.key,
+  });
 
   /// The profile whose follow state this button moves.
   final UserProfileProxy profile;
+
+  /// The style to apply to the button.
+  final ButtonStyle? style;
+
+  /// Whether to show the icon on the button.
+  final bool showIcon;
 
   @override
   Widget build(BuildContext context) {
@@ -30,25 +42,40 @@ class SubscribeButton extends WatchingWidget {
     final isRunning = watch(profile.toggleFollow.isRunning).value;
     final isFollowing = profile.isFollowing;
 
-    if (isFollowing) {
-      return MSecondaryButton(
-        label: 'Subscribed',
+    final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
+
+    final defaultStyle = OutlinedButton.styleFrom(
+      textStyle: textTheme.microMedium,
+      fixedSize: const Size(double.infinity, 40),
+      side: BorderSide(color: colors.primary),
+      shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
+      backgroundColor: isFollowing ? colors.primary : Colors.transparent,
+      foregroundColor: isFollowing ? colors.onPrimary : colors.primary,
+    );
+
+    final label = isFollowing ? 'Unsubscribe' : 'Subscribe';
+
+    Widget child = MSecondaryButton(
+      label: label,
+      onPressed: profile.toggleFollow.run,
+      style: style ?? defaultStyle,
+    );
+
+    if (showIcon) {
+      child = MSecondaryButton.icon(
+        label: label,
+        loading: isRunning,
         onPressed: isRunning ? null : profile.toggleFollow.run,
-        style: OutlinedButton.styleFrom(
-          textStyle: MTextTheme.of(context).microMedium,
-          shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
+        style: style ?? defaultStyle,
+        icon: Icon(
+          isFollowing ? MIcons.user_minus_01 : MIcons.user_check,
+          color: isFollowing ? colors.onPrimary : colors.primary,
         ),
       );
     }
 
-    return MPrimaryButton(
-      label: 'Subscribe',
-      onPressed: isRunning ? null : profile.toggleFollow.run,
-      style: ElevatedButton.styleFrom(
-        textStyle: MTextTheme.of(context).microMedium,
-        shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
-      ),
-    );
+    return Skeleton.unite(child: child);
   }
 }
 

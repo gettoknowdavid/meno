@@ -119,50 +119,6 @@ enum BroadcastOrder {
   final String wire;
 }
 
-/// The filters one broadcast feed is built from.
-///
-/// Cursor-paginated, like every other list endpoint: the feed holds on to the
-/// cursor the previous page answered with and hands it back for the next one,
-/// rather than counting pages. Counted pages drift as broadcasts start and end,
-/// which is exactly the list this is.
-@freezed
-abstract class BroadcastQuery with _$BroadcastQuery {
-  const factory({
-    BroadcastsType? type,
-    String? creatorId,
-    BroadcastStatus? status,
-    BroadcastOrder? order,
-    String? cursor,
-    @Default(20) int limit,
-  }) = _BroadcastQuery;
-
-  const new _();
-
-  /// The query as request parameters, dropping what is not set.
-  Map<String, dynamic> toQueryParameters() => {
-    'creator_id': ?creatorId,
-    'status': ?status?.wire,
-    'order': ?order?.wire,
-    'cursor': ?cursor,
-    'limit': limit,
-  };
-
-  /// The same filters, asking for the page [cursor] names.
-  ///
-  /// A method rather than `copyWith` because freezed's `copyWith` ignores a
-  /// `null` argument, and "no cursor" is exactly what the first page means: a
-  /// feed that refreshed with `copyWith(cursor: null)` would silently ask for
-  /// the page it already has.
-  BroadcastQuery withCursor(String? cursor) => BroadcastQuery(
-    type: type,
-    creatorId: creatorId,
-    status: status,
-    order: order,
-    cursor: cursor,
-    limit: limit,
-  );
-}
-
 /// The session a client joins a live broadcast with.
 ///
 /// `POST /broadcasts/{id}/live` and `POST /broadcasts/{id}/join` answer with the
@@ -232,12 +188,6 @@ enum BroadcastStatus {
     return BroadcastStatus.inactive;
   }
 }
-
-/// The audience a broadcast list is built for.
-///
-/// Decides how a live socket event is applied to that list, which is why it
-/// travels with the query rather than being inferred from the response.
-enum BroadcastsType { forYou, nowLive, recentlyLive }
 
 /// A broadcast as a list answers with it.
 ///
@@ -543,3 +493,6 @@ enum ParticipantRole {
     return ParticipantRole.unknown;
   }
 }
+
+final List<Broadcast> fakeBroadcasts = [];
+final List<Participant> fakeParticipants = [];

@@ -9,9 +9,9 @@ import 'package:meno_mobile/features/broadcast/broadcast.dart';
 ///
 /// `/broadcasts` answers with an opaque cursor and says whether another page
 /// exists. The feed stores the last cursor it was given and hands it back, and
-/// overrides [hasNextPage] accordingly — the base class's page arithmetic is for
-/// endpoints that count, and this one deliberately does not: a page number in a
-/// list that reorders as broadcasts start and end skips and repeats rows.
+/// overrides [hasNextPage] accordingly — the base class's page arithmetic is
+/// for endpoints that count, and this one deliberately does not: a page number
+/// in a list that reorders as broadcasts start and end skips and repeats rows.
 ///
 /// # What the socket does to the list
 ///
@@ -28,13 +28,17 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
   new({
     required this._http,
     required this._query,
-    BroadcastSocketService? socket,
+    this.socket,
     super.fetchMoreEnabled = true,
   }) {
     _bindSocketService(socket);
   }
 
   final BroadcastHttpService _http;
+
+  /// The socket the feed listens on, kept so [updateQuery] can hand the new
+  /// filters to it.
+  final BroadcastSocketService? socket;
 
   BroadcastQuery _query;
 
@@ -64,7 +68,9 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
 
     items
       ..clear()
-      ..addAll(page.items.map((summary) => summary.toBroadcast()));
+      ..addAll(
+        page.items.map((summary) => summary.toBroadcast()).where(_belongsTo),
+      );
     _cursor = page.nextCursor;
 
     flushItemCount();
@@ -81,6 +87,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     // requests can appear in both pages, and the list is keyed by id.
     for (final summary in page.items) {
       final broadcast = summary.toBroadcast();
+      if (!_belongsTo(broadcast)) continue;
       if (items.any((existing) => itemsAreEqual(existing, broadcast))) continue;
       items.add(broadcast);
     }
@@ -90,11 +97,39 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
   }
 
   /// Replaces the filters and refreshes from the first page.
+  ///
+  /// The socket subscriptions are rebuilt with them, because which events
+  /// belong in a list is a property of its filters: a feed switched from "now
+  /// live" to "recently live" that kept its old subscriptions would file a
+  /// broadcast that just started into a list about ones that ended. The old
+  /// subscriptions are cancelled without being awaited — an event that slips
+  /// through in that moment lands in a list that [updateDataCommand] is about
+  /// to replace anyway.
   void updateQuery(BroadcastQuery newQuery) {
     _query = newQuery;
     _cursor = null;
+
+    unawaited(_unbindSocketService());
+    _bindSocketService(socket);
+
     updateDataCommand.run();
   }
+
+  /// Whether [broadcast] belongs in this list.
+  ///
+  /// `recentlyLive` is the one section the endpoint cannot express on its own.
+  /// Ending a broadcast sets `status = inactive` and `end_time`, and a draft or
+  /// a scheduled one is `inactive` too, so `status=inactive` is the closest the
+  /// wire gets to "has ended" — and it is closer than `status=ended`, a value
+  /// this API never writes. What it carries that does not belong here is
+  /// dropped once the page has arrived.
+  ///
+  /// Paging is unaffected: the cursor walks the endpoint's own order, so a page
+  /// that kept nothing still moves the list forward.
+  bool _belongsTo(Broadcast broadcast) => switch (_query.type) {
+    BroadcastsType.recentlyLive => broadcast.state.hasEnded,
+    _ => true,
+  };
 
   /// Subscribes to the events this feed's filters make relevant.
   void _bindSocketService(BroadcastSocketService? socket) {
@@ -103,6 +138,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
 
     switch (type) {
       case BroadcastsType.forYou:
+      case BroadcastsType.subscriptions:
       case BroadcastsType.nowLive:
         _newBroadcastSub = socket.onNewBroadcast.listen(_onNewBroadcast);
         _endedBroadcastSub = socket.onEndedBroadcast.listen(_onEndedBroadcast);
@@ -110,6 +146,14 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
       case BroadcastsType.recentlyLive:
         _endedBroadcastSub = socket.onEndedBroadcast.listen(_onRecentlyEnded);
     }
+  }
+
+  /// Stops listening to the socket without touching the items.
+  Future<void> _unbindSocketService() async {
+    await _newBroadcastSub?.cancel();
+    _newBroadcastSub = null;
+    await _endedBroadcastSub?.cancel();
+    _endedBroadcastSub = null;
   }
 
   void _onNewBroadcast(Broadcast broadcast) {
@@ -130,6 +174,12 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     addItemAtStart(broadcast);
   }
 
+  /// Convenience: update only the keyword filter and refresh.
+  void updateKeywords(String? keywords) {
+    if (keywords == null || keywords.trim().isEmpty) return;
+    return updateQuery(_query.updateKeywords(keywords.trim()));
+  }
+
   @override
   void reset() {
     _cursor = null;
@@ -138,10 +188,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
 
   @override
   FutureOr<dynamic> onDispose() async {
-    await _newBroadcastSub?.cancel();
-    _newBroadcastSub = null;
-    await _endedBroadcastSub?.cancel();
-    _endedBroadcastSub = null;
+    await _unbindSocketService();
 
     return await super.onDispose();
   }

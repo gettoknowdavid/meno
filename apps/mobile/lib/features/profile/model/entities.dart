@@ -149,3 +149,5 @@ abstract class ProfileStats with _$ProfileStats {
   /// The counters of a profile nobody has counted yet.
   static const ProfileStats zero = ProfileStats();
 }
+
+List<Profile> fakeProfiles = <Profile>[];
