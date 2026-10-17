@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -126,7 +127,9 @@ class SettingsPage extends WatchingWidget {
   }
 
   Future<void> _onLogout(BuildContext context, MyProfile profile) async {
-    final fullName = profile.isEmpty ? 'this account' : profile.fullName;
+    final fullName = profile.isEmpty
+        ? 'this account'
+        : profile.fullName.orEmpty;
     final confirmed = await MConfirmationDialog.show(
       context,
       title: 'Log out from account?',

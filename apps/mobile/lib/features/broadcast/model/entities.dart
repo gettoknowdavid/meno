@@ -20,7 +20,7 @@ final List<Broadcast> fakeBroadcastList = [
     recordingEnabled: true,
     creator: Participant(
       id: Id.fromString('a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a'),
-      fullName: FullName('Elena Vasquez'),
+      fullName: SingleLineString('Elena Vasquez'),
     ),
   ),
   Broadcast(
@@ -41,12 +41,12 @@ final List<Broadcast> fakeBroadcastList = [
     timeRemainingSeconds: 1480,
     creator: Participant(
       id: Id.fromString('a1a1a1a1-0002-4a1a-8a1a-2a1a1a1a1a1a'),
-      fullName: FullName('Marcus Reed'),
+      fullName: SingleLineString('Marcus Reed'),
     ),
     cohosts: [
       Participant(
         id: Id.fromString('a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a'),
-        fullName: FullName('Priya Nair'),
+        fullName: SingleLineString('Priya Nair'),
         bio: MultiLineString('Hosting with Marcus tonight.'),
       ),
     ],
@@ -72,7 +72,7 @@ final List<Broadcast> fakeBroadcastList = [
     endTime: DateTime.now().add(const Duration(days: 3, hours: 2)),
     creator: Participant(
       id: Id.fromString('a1a1a1a1-0004-4a1a-8a1a-4a1a1a1a1a1a'),
-      fullName: FullName('Jordan Smith'),
+      fullName: SingleLineString('Jordan Smith'),
     ),
   ),
   Broadcast(
@@ -87,13 +87,13 @@ final List<FavouriteBroadcast> fakeFavouriteBroadcastList = [
     broadcastId: Id.fromString('c1c1c1c1-0002-4c1c-8c1c-2c1c1c1c1c1c'),
     ownerId: Id.fromString('a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a'),
     title: SingleLineString('Prayer & Testimony Night'),
-    creatorName: FullName('Marcus Reed'),
+    creatorName: SingleLineString('Marcus Reed'),
   ),
   FavouriteBroadcast(
     broadcastId: Id.fromString('c1c1c1c1-0001-4c1c-8c1c-1c1c1c1c1c1c'),
     ownerId: Id.fromString('a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a'),
     title: SingleLineString('Sunday Worship Live'),
-    creatorName: FullName('Elena Vasquez'),
+    creatorName: SingleLineString('Elena Vasquez'),
     savedAt: DateTime(2026, 4, 3),
   ),
   FavouriteBroadcast(
@@ -109,24 +109,24 @@ final List<FavouriteBroadcast> fakeFavouriteBroadcastList = [
 final List<Participant> fakeParticipantList = [
   Participant(
     id: Id.fromString('a1a1a1a1-0001-4a1a-8a1a-1a1a1a1a1a1a'),
-    fullName: FullName('Elena Vasquez'),
+    fullName: SingleLineString('Elena Vasquez'),
     role: ParticipantRole.host,
   ),
   Participant(
     id: Id.fromString('a1a1a1a1-0003-4a1a-8a1a-3a1a1a1a1a1a'),
-    fullName: FullName('Priya Nair'),
+    fullName: SingleLineString('Priya Nair'),
     bio: MultiLineString('Co-hosting tonight.'),
     avatarId: 'av-456',
     role: ParticipantRole.cohost,
   ),
   Participant(
     id: Id.fromString('a1a1a1a1-0005-4a1a-8a1a-5a1a1a1a1a1a'),
-    fullName: FullName('Sam Carter'),
+    fullName: SingleLineString('Sam Carter'),
     role: ParticipantRole.listener,
   ),
   Participant(
     id: Id.fromString('a1a1a1a1-0006-4a1a-8a1a-6a1a1a1a1a1a'),
-    fullName: FullName('Taylor Kim'),
+    fullName: SingleLineString('Taylor Kim'),
   ),
   Participant.empty,
 ];
@@ -186,7 +186,7 @@ abstract class Broadcast with _$Broadcast {
   ImageInput? get hostImageUrl => creator?.avatar;
 
   /// The host's name, for a card with no room for a full participant.
-  FullName get hostName => creator?.fullName ?? .empty;
+  SingleLineString get hostName => creator?.fullName ?? .empty;
 
   bool get isDraft => state == .draft;
 
@@ -215,9 +215,9 @@ enum BroadcastCreationStep { none, created, started, saved }
 abstract class BroadcastDraft with _$BroadcastDraft {
   const factory({
     required Id id,
-    @Default('') Id ownerId,
-    @Default(SingleLineString.empty) SingleLineString title,
-    @Default(MultiLineString.empty) MultiLineString description,
+    @Default(Id.empty) Id ownerId,
+    @Default('') String title,
+    @Default('') String description,
     @Default(false) bool record,
     @Default(<Id>[]) List<Id> cohosts,
     ImageInput? imagePath,
@@ -236,8 +236,7 @@ abstract class BroadcastDraft with _$BroadcastDraft {
 
   /// Whether the draft has been written to at all.
   bool get isEmpty =>
-      title.getOrElse((e) => '').trim().isEmpty &&
-      description.getOrElse((e) => '').trim().isEmpty;
+      title.trim().isEmpty && description.trim().isEmpty;
 }
 
 /// Which way a broadcast list is ordered. Mirrors `meno_core::Order`.
@@ -340,15 +339,15 @@ abstract class BroadcastSummary with _$BroadcastSummary {
     DateTime? startTime,
     DateTime? endTime,
     @Default(0) int totalParticipants,
-    @Default('') Id creatorId,
-    @Default('') FullName creatorName,
+    @Default(Id.empty) Id creatorId,
+    @Default(SingleLineString.empty) SingleLineString creatorName,
     String? creatorAvatarId,
     ImageInput? creatorAvatar,
   }) = _BroadcastSummary;
 
   const new _();
 
-  static final BroadcastSummary empty = BroadcastSummary(
+  static const BroadcastSummary empty = BroadcastSummary(
     id: .empty,
     title: .empty,
   );
@@ -398,8 +397,8 @@ abstract class EndedBroadcast with _$EndedBroadcast {
   const factory({
     required Id broadcastId,
     required SingleLineString title,
-    @Default('') Id creatorId,
-    @Default('') FullName creatorName,
+    @Default(Id.empty) Id creatorId,
+    @Default(SingleLineString.empty) SingleLineString creatorName,
     DateTime? endedAt,
     ImageInput? image,
     @Default(EndReason.normal) EndReason reason,
@@ -467,7 +466,7 @@ abstract class FavouriteBroadcast with _$FavouriteBroadcast {
     required Id broadcastId,
     required Id ownerId,
     @Default(SingleLineString.empty) SingleLineString title,
-    @Default(FullName.empty) FullName creatorName,
+    @Default(SingleLineString.empty) SingleLineString creatorName,
     ImageInput? image,
     DateTime? savedAt,
   }) = _FavouriteBroadcast;
@@ -572,7 +571,7 @@ enum LiveStatus {
 abstract class Participant with _$Participant {
   const factory({
     required Id id,
-    required FullName fullName,
+    required SingleLineString fullName,
     String? avatarId,
     ImageInput? avatar,
     MultiLineString? bio,

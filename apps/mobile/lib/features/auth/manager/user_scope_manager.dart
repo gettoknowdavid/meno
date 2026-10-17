@@ -126,7 +126,7 @@ final class UserScopeManager implements Disposable {
       // thing left to put right is this manager's own idea of what is scoped.
       _scopedUserId = null;
       _logger.w(
-        'Could not scope the account $userId',
+        'Could not scope the account ${userId?.orEmpty}',
         tag: MenoLogTag.di.label,
         error: error,
         stackTrace: stackTrace,

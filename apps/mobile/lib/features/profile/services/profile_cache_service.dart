@@ -28,8 +28,8 @@ final class ProfileCacheService {
   final LocalStorage _storage;
 
   /// The cached profile of [userId], or null when nothing usable is stored.
-  MyProfile? myProfile(String userId) => _read(
-    StorageKeys.forUser(StorageKeys.profile, userId),
+  MyProfile? myProfile(Id userId) => _read(
+    StorageKeys.forUser(StorageKeys.profile, userId.getOrCrash),
     (json) => MeDto.fromJson(json).toDomain,
   );
 
@@ -40,8 +40,8 @@ final class ProfileCacheService {
   );
 
   /// The cached copy of [userId]'s profile, or null on a miss.
-  Profile? profile(String userId) => _read(
-    StorageKeys.forUser(StorageKeys.publicProfile, userId),
+  Profile? profile(Id userId) => _read(
+    StorageKeys.forUser(StorageKeys.publicProfile, userId.getOrCrash),
     (json) => ProfileDto.fromJson(json).toDomain,
   );
 

@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -58,13 +59,13 @@ class _LiveBroadcastTabState extends State<LiveBroadcastTab>
                 timeAgo: timeAgo,
               ),
               Spaces.verticalSmall,
-              BroadcastTitleWidget(title: broadcast.title.getOrElse((_) => '')),
+              BroadcastTitleWidget(title: broadcast.title.orEmpty),
               Spaces.verticalSmall,
               Row(
                 mainAxisAlignment: .center,
                 children: [
                   BroadcastCreatorWidget(
-                    name: broadcast.hostName.getOrElse((_) => ''),
+                    name: broadcast.hostName.orEmpty,
                   ),
                   Spaces.horizontalSmall,
                   const BroadcastStatusWidget(),

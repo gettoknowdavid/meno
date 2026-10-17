@@ -79,9 +79,9 @@ class LiveSessionInitPage extends WatchingWidget {
     // which broadcast that is; a page opened without one goes home rather than
     // guessing an id.
     final path = di.isRegistered<LiveSession>()
-        ? '${MRoutes.broadcasts}/${di<LiveSession>().broadcastId}/live'
+        ? MRoutes.liveBroadcastRoute(di<LiveSession>().broadcastId)
         : MRoutes.home;
-        
+
     callOnceAfterThisBuild((_) => context.replace(path));
 
     return const _LoadingView();

@@ -1,6 +1,7 @@
 import 'dart:io' show File;
 
 import 'package:dio/dio.dart' show FormData, MultipartFile;
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 
@@ -20,9 +21,9 @@ final class ProfileHttpService {
   Future<MyProfile> me() => _client.get('/users/me', fromJson: _me);
 
   /// `GET /users/{id}` — another account's public profile.
-  Future<Profile> profile(String userId) {
+  Future<Profile> profile(Id userId) {
     return _client.get(
-      '/users/$userId',
+      '/users/${userId.getOrCrash}',
       fromJson: (data) =>
           ProfileDto.fromJson(data as Map<String, dynamic>).toDomain,
     );
@@ -33,16 +34,16 @@ final class ProfileHttpService {
   /// Answers with no body: the row the API wrote is the whole result, and the
   /// client already knows what it asked for. A caller that wants the *new*
   /// follower count reads the profile again.
-  Future<void> follow(String userId) =>
-      _client.postUnit('/subscribers/$userId');
+  Future<void> follow(Id userId) =>
+      _client.postUnit('/subscribers/${userId.getOrCrash}');
 
   /// `DELETE /subscribers/{id}` — stops following [userId].
   ///
   /// Not following them is a success, so this is idempotent from a client's
   /// point of view; the undoable follow command decides from the *previous*
   /// state, not from a second read.
-  Future<void> unfollow(String userId) =>
-      _client.deleteUnit('/subscribers/$userId');
+  Future<void> unfollow(Id userId) =>
+      _client.deleteUnit('/subscribers/${userId.getOrCrash}');
 
   /// `PATCH /users/me` — a partial update, answering with the fresh record.
   ///

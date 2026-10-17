@@ -101,13 +101,17 @@ final class BroadcastSocketService implements Disposable {
   }
 
   /// Tells the server this client is watching [broadcastId].
-  void joinRoom(String broadcastId) {
-    _client.emit(SocketEvent.joinBroadcast, {'broadcastId': broadcastId});
+  void joinRoom(Id broadcastId) {
+    _client.emit(SocketEvent.joinBroadcast, {
+      'broadcastId': broadcastId.getOrCrash,
+    });
   }
 
   /// Tells the server this client stopped watching [broadcastId].
-  void leaveRoom(String broadcastId) {
-    _client.emit(SocketEvent.leaveBroadcast, {'broadcastId': broadcastId});
+  void leaveRoom(Id broadcastId) {
+    _client.emit(SocketEvent.leaveBroadcast, {
+      'broadcastId': broadcastId.getOrCrash,
+    });
   }
 
   @override
@@ -139,26 +143,28 @@ final class BroadcastSocketService implements Disposable {
   }
 
   BroadcastParticipantEvent? _participantEvent(dynamic data) {
-    final json = _asMap(data);
-    if (json == null) return null;
-    return BroadcastParticipantEvent(
-      broadcastId: json['broadcastId'] as String? ?? '',
-      count: (json['count'] as num?)?.toInt() ?? 0,
-      participant: json['participant'] == null
-          ? null
-          : ParticipantDto.fromJson(_asMap(json['participant'])!).toDomain,
-    );
+    return _decode(data, (json) {
+      final participant = json['participant'];
+      return BroadcastParticipantEvent(
+        broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
+        count: (json['count'] as num?)?.toInt() ?? 0,
+        participant: participant == null
+            ? null
+            : ParticipantDto.fromJson(_asMap(participant)!).toDomain,
+      );
+    });
   }
 
   HostConnectionEvent? _hostStateEvent(
     dynamic data, {
     required bool connected,
   }) {
-    final json = _asMap(data);
-    if (json == null) return null;
-    return HostConnectionEvent(
-      broadcastId: json['broadcastId'] as String? ?? '',
-      connected: connected,
+    return _decode(
+      data,
+      (json) => HostConnectionEvent(
+        broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
+        connected: connected,
+      ),
     );
   }
 
@@ -190,7 +196,7 @@ final class BroadcastSocketService implements Disposable {
 final class BroadcastParticipantEvent {
   const new({required this.broadcastId, required this.count, this.participant});
 
-  final String broadcastId;
+  final Id broadcastId;
 
   /// How many accounts are in the room after the change.
   final int count;
@@ -201,6 +207,6 @@ final class BroadcastParticipantEvent {
 final class HostConnectionEvent {
   const new({required this.broadcastId, required this.connected});
 
-  final String broadcastId;
+  final Id broadcastId;
   final bool connected;
 }

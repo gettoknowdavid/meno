@@ -112,7 +112,7 @@ class CohostListTile extends StatelessWidget {
                 mainAxisAlignment: .center,
                 children: [
                   MText(
-                    profile.fullName.getOrElse((_) => ''),
+                    profile.fullName.orEmpty,
                     style: textTheme.captionMedium,
                     overflow: .ellipsis,
                     maxLines: 1,

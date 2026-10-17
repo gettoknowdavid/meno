@@ -120,7 +120,7 @@ final class ProfileEditorManager implements Disposable {
       );
     }
 
-    final name = fullName.value.getOrCrash;
+    final name = fullName.value.orEmpty;
     // Only what moved travels: a field left alone is null, and an emptied bio
     // is the empty string the API reads as "remove it".
     final bioValue = bio.value?.getOrNull;
@@ -128,7 +128,7 @@ final class ProfileEditorManager implements Disposable {
         ? null
         : (bioValue ?? '');
 
-    if (name == _original.fullName.getOrCrash) {
+    if (name == _original.fullName.orEmpty) {
       if (bioField != null) profile = await _http.updateMe(bio: bioField);
     } else {
       profile = await _http.updateMe(fullName: name, bio: bioField);

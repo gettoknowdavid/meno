@@ -25,7 +25,7 @@ final class StreamManager implements Disposable {
   }) {
     fetchBroadcast = .createAsyncNoResult<Id>(
       (broadcastId) async {
-        broadcast.value = await _http.getBroadcast(broadcastId.getOrCrash);
+        broadcast.value = await _http.getBroadcast(broadcastId);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.fetchBroadcast',
@@ -35,12 +35,12 @@ final class StreamManager implements Disposable {
       (broadcastId) async {
         _isRunning.value = true;
         try {
-          final joined = (await _http.join(broadcastId.getOrCrash))
-              .toDomain(_userId.getOrCrash);
+          final joined = (await _http.join(broadcastId))
+              .toDomain(_userId);
           session.value = joined;
           broadcast.value = joined.broadcast;
           _logger.d(
-            'Joined broadcast $broadcastId as a listener',
+            'Joined broadcast ${broadcastId.orEmpty} as a listener',
             tag: MenoLogTag.network.label,
           );
           await _live.start(broadcastId, session: joined);

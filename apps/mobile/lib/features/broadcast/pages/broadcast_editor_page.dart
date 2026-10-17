@@ -49,7 +49,7 @@ class BroadcastEditorPage extends WatchingWidget {
         if (broadcastId == null || broadcastId.isEmpty) return;
 
         manager.resetForm.run();
-        context.go(MRoutes.liveBroadcastRoute(broadcastId.getOrCrash));
+        context.go(MRoutes.liveBroadcastRoute(broadcastId));
       },
     );
 
@@ -199,24 +199,18 @@ class _TitleField extends WatchingWidget {
   Widget build(BuildContext context) {
     final manager = di<BroadcastEditorManager>();
 
-    final controller = createOnce(() {
-      return TextEditingController(
-        text: manager.title.value.getOrElse((e) => ''),
-      );
-    });
+    final controller = createOnce(
+      () => TextEditingController(text: manager.title.value),
+    );
 
-    registerHandler<BroadcastEditorManager, SingleLineString>(
+    registerHandler<BroadcastEditorManager, String>(
       select: (manager) => manager.title,
       handler: (context, title, _) {
-        if (controller.text != title.getOrNull) {
-          controller.text = title.getOrElse((e) => '');
-        }
+        if (controller.text != title) controller.text = title;
       },
     );
 
-    final title = watchValue<BroadcastEditorManager, SingleLineString>(
-      (m) => m.title,
-    );
+    final title = watchValue<BroadcastEditorManager, String>((m) => m.title);
 
     final isLoading = watchValue<BroadcastEditorManager, bool>(
       (m) => m.isRunning,
@@ -230,8 +224,7 @@ class _TitleField extends WatchingWidget {
       onChanged: manager.onTitleChanged,
       textInputAction: TextInputAction.next,
       enabled: !isLoading,
-      validator: (_) =>
-          title.getOrElse((e) => '').isEmpty ? _emptyFieldMessage : null,
+      validator: (_) => title.trim().isEmpty ? _emptyFieldMessage : null,
     );
   }
 }
@@ -244,21 +237,17 @@ class _DescriptionField extends WatchingWidget {
     final manager = di<BroadcastEditorManager>();
 
     final controller = createOnce(
-      () => TextEditingController(
-        text: manager.description.value.getOrElse((e) => ''),
-      ),
+      () => TextEditingController(text: manager.description.value),
     );
 
-    registerHandler<BroadcastEditorManager, MultiLineString>(
+    registerHandler<BroadcastEditorManager, String>(
       select: (manager) => manager.description,
       handler: (context, description, _) {
-        if (controller.text != description.getOrNull) {
-          controller.text = description.getOrElse((e) => '');
-        }
+        if (controller.text != description) controller.text = description;
       },
     );
 
-    final description = watchValue<BroadcastEditorManager, MultiLineString>(
+    final description = watchValue<BroadcastEditorManager, String>(
       (m) => m.description,
     );
 
@@ -275,7 +264,8 @@ class _DescriptionField extends WatchingWidget {
       controller: controller,
       onChanged: manager.onDescriptionChanged,
       enabled: !isLoading,
-      validator: (_) => description.isEmpty ? _emptyFieldMessage : null,
+      validator: (_) =>
+          description.trim().isEmpty ? _emptyFieldMessage : null,
     );
   }
 }

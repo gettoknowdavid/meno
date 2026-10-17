@@ -14,7 +14,7 @@ final class FavouritesManager implements Disposable {
   new({required this._local, required this._userId, required this._logger}) {
     fetch = .createSyncNoParamNoResult(
       () {
-        final stored = _local.favourites(_userId.getOrCrash);
+        final stored = _local.favourites(_userId);
         favourites.startTransAction();
         favourites.clear();
         favourites.addAll(stored);
@@ -29,12 +29,11 @@ final class FavouritesManager implements Disposable {
     );
     remove = .createAsyncNoResult<Id>(
       (broadcastId) async {
-        final stored = _local
-            .favourites(_userId.getOrCrash)
+        final stored = _local.favourites(_userId)
             .firstWhere((favourite) => favourite.broadcastId == broadcastId);
         await _local.toggleIsFavourite(
           broadcast: Broadcast(id: stored.broadcastId, title: stored.title),
-          ownerId: _userId.getOrCrash,
+          ownerId: _userId,
         );
         fetch.run();
       },

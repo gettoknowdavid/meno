@@ -26,17 +26,18 @@ final class BroadcastHttpService {
       fromJson: (data) => CursorPage.fromJson(
         data,
         (item) => BroadcastListItemDto.fromJson(item).toDomain,
+        logger: _client.logger,
       ),
     );
   }
 
   /// `GET /broadcasts/{id}` — one broadcast, with the viewer's standing.
   Future<Broadcast> getBroadcast(
-    String broadcastId, {
+    Id broadcastId, {
     CancelToken? cancelToken,
   }) {
     return _client.get(
-      '/broadcasts/$broadcastId',
+      '/broadcasts/${broadcastId.getOrCrash}',
       cancelToken: cancelToken,
       fromJson: (data) => BroadcastDto.fromJson(_map(data)).toDomain,
     );
@@ -44,7 +45,7 @@ final class BroadcastHttpService {
 
   /// `GET /broadcasts/{id}/participants` — one page of the room's accounts.
   Future<CursorPage<Participant>> participants(
-    String broadcastId, {
+    Id broadcastId, {
     ParticipantRole? role,
     BroadcastOrder? order,
     String? cursor,
@@ -52,7 +53,7 @@ final class BroadcastHttpService {
     CancelToken? cancelToken,
   }) {
     return _client.get(
-      '/broadcasts/$broadcastId/participants',
+      '/broadcasts/${broadcastId.getOrCrash}/participants',
       queryParameters: {
         'role': ?role?.wire,
         'order': ?order?.wire,
@@ -63,6 +64,7 @@ final class BroadcastHttpService {
       fromJson: (data) => CursorPage.fromJson(
         data,
         (item) => ParticipantDto.fromJson(item).toDomain,
+        logger: _client.logger,
       ),
     );
   }
@@ -98,7 +100,7 @@ final class BroadcastHttpService {
 
   /// `PATCH /broadcasts/{id}` — a partial update, answering with the record.
   Future<Broadcast> update(
-    String broadcastId, {
+    Id broadcastId, {
     String? title,
     String? description,
     String? imageId,
@@ -110,7 +112,7 @@ final class BroadcastHttpService {
     CancelToken? cancelToken,
   }) {
     return _client.patch(
-      '/broadcasts/$broadcastId',
+      '/broadcasts/${broadcastId.getOrCrash}',
       data: {
         'title': ?title,
         'description': ?description,
@@ -127,29 +129,29 @@ final class BroadcastHttpService {
   }
 
   /// `DELETE /broadcasts/{id}`.
-  Future<void> remove(String broadcastId, {CancelToken? cancelToken}) {
+  Future<void> remove(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.deleteUnit(
-      '/broadcasts/$broadcastId',
+      '/broadcasts/${broadcastId.getOrCrash}',
       cancelToken: cancelToken,
     );
   }
 
   /// `POST /broadcasts/{id}/live` — goes on air, answering with the token.
   Future<BroadcastSessionDto> goLive(
-    String broadcastId, {
+    Id broadcastId, {
     CancelToken? cancelToken,
   }) {
     return _client.post(
-      '/broadcasts/$broadcastId/live',
+      '/broadcasts/${broadcastId.getOrCrash}/live',
       cancelToken: cancelToken,
       fromJson: (data) => BroadcastSessionDto.fromJson(_map(data)),
     );
   }
 
   /// `POST /broadcasts/{id}/end` — takes the broadcast off air.
-  Future<EndedBroadcast> end(String broadcastId, {CancelToken? cancelToken}) {
+  Future<EndedBroadcast> end(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.post(
-      '/broadcasts/$broadcastId/end',
+      '/broadcasts/${broadcastId.getOrCrash}/end',
       cancelToken: cancelToken,
       fromJson: (data) => EndBroadcastDto.fromJson(_map(data)).toDomain,
     );
@@ -157,11 +159,11 @@ final class BroadcastHttpService {
 
   /// `POST /broadcasts/{id}/join` — subscribes, answering with the token.
   Future<BroadcastSessionDto> join(
-    String broadcastId, {
+    Id broadcastId, {
     CancelToken? cancelToken,
   }) {
     return _client.post(
-      '/broadcasts/$broadcastId/join',
+      '/broadcasts/${broadcastId.getOrCrash}/join',
       cancelToken: cancelToken,
       fromJson: (data) => BroadcastSessionDto.fromJson(_map(data)),
     );
@@ -169,11 +171,11 @@ final class BroadcastHttpService {
 
   /// `POST /broadcasts/{id}/leave` — stops listening.
   Future<LeaveBroadcastDto> leave(
-    String broadcastId, {
+    Id broadcastId, {
     CancelToken? cancelToken,
   }) {
     return _client.post(
-      '/broadcasts/$broadcastId/leave',
+      '/broadcasts/${broadcastId.getOrCrash}/leave',
       cancelToken: cancelToken,
       fromJson: (data) => LeaveBroadcastDto.fromJson(_map(data)),
     );
@@ -181,13 +183,13 @@ final class BroadcastHttpService {
 
   /// `POST /broadcasts/{id}/cohosts` — invites [cohostId] to publish.
   Future<CohostDto> addCohost(
-    String broadcastId,
-    String cohostId, {
+    Id broadcastId,
+    Id cohostId, {
     CancelToken? cancelToken,
   }) {
     return _client.post(
-      '/broadcasts/$broadcastId/cohosts',
-      data: {'cohost': cohostId},
+      '/broadcasts/${broadcastId.getOrCrash}/cohosts',
+      data: {'cohost': cohostId.getOrCrash},
       cancelToken: cancelToken,
       fromJson: (data) => CohostDto.fromJson(_map(data)),
     );
@@ -198,13 +200,13 @@ final class BroadcastHttpService {
   /// [removeFromRoom] also drops them from the LiveKit room; without it they
   /// keep listening and only lose the ability to publish.
   Future<CohostDto> removeCohost(
-    String broadcastId,
-    String cohostId, {
+    Id broadcastId,
+    Id cohostId, {
     bool removeFromRoom = true,
     CancelToken? cancelToken,
   }) {
     return _client.delete(
-      '/broadcasts/$broadcastId/cohosts/$cohostId',
+      '/broadcasts/${broadcastId.getOrCrash}/cohosts/${cohostId.getOrCrash}',
       queryParameters: {'remove_from_room': removeFromRoom},
       cancelToken: cancelToken,
       fromJson: (data) => CohostDto.fromJson(_map(data)),

@@ -123,7 +123,7 @@ class BroadcastAboutTab extends WatchingWidget {
           ),
           const MSpacer.v(Insets.lg),
           MText(
-            broadcast.description?.getOrElse((_) => '') ?? '',
+            broadcast.description?.orEmpty ?? '',
             style: MTextTheme.of(context).captionRegular.copyWith(height: 1.4),
           ),
         ],

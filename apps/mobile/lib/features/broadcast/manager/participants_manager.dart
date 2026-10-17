@@ -38,7 +38,7 @@ final class ParticipantsManager implements Disposable {
     }, errorFilterFn: menoExceptionFilter)..pipeToCommand(_fetchParticipants);
 
     _fetchParticipants = Command.createAsyncNoParamNoResult(() async {
-      final page = await _http.participants(_broadcastId.getOrCrash);
+      final page = await _http.participants(_broadcastId);
       _handleInitialList(page.items);
     }, errorFilterFn: menoExceptionFilter);
 
@@ -179,7 +179,7 @@ final class ParticipantsManager implements Disposable {
                 : participants
                       .where(
                         (p) => p.fullName
-                            .getOrElse((_) => '')
+                            .orEmpty
                             .toLowerCase()
                             .contains(trimmed),
                       )

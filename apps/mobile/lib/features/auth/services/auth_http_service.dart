@@ -1,3 +1,4 @@
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
@@ -81,8 +82,8 @@ final class AuthHttpService {
   }
 
   /// `POST /auth/sessions/{id}` — ends one device's session.
-  Future<void> revokeSession(String sessionId) =>
-      _client.postUnit('/auth/sessions/$sessionId');
+  Future<void> revokeSession(Id sessionId) =>
+      _client.postUnit('/auth/sessions/${sessionId.getOrCrash}');
 
   /// `POST /auth/verify-email` — confirms the address with a code.
   Future<UserCredential> verifyEmail({

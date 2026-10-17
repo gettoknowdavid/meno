@@ -1,6 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_core/value_objects/text_value_objects.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
 
 part 'dtos.freezed.dart';
@@ -158,10 +157,13 @@ abstract class UserSummaryDto with _$UserSummaryDto {
   factory fromJson(Map<String, dynamic> json) => _$UserSummaryDtoFromJson(json);
 }
 
+/// An id the wire may leave out: the empty string is no id at all.
+Id _wireId(String raw) => raw.isEmpty ? Id.empty : Id.fromWire(raw);
+
 /// The domain view of a [BroadcastDto].
 extension BroadcastDtoX on BroadcastDto {
   Broadcast get toDomain => Broadcast(
-    id: Id.fromString(id),
+    id: Id.fromWire(id),
     title: SingleLineString(title),
     description: description == null ? null : MultiLineString(description!),
     timeZone: timeZone,
@@ -191,7 +193,7 @@ extension BroadcastDtoX on BroadcastDto {
 /// The domain view of a [BroadcastListItemDto].
 extension BroadcastListItemDtoX on BroadcastListItemDto {
   BroadcastSummary get toDomain => BroadcastSummary(
-    id: Id.fromString(id),
+    id: Id.fromWire(id),
     title: SingleLineString(title),
     description: description == null ? null : MultiLineString(description!),
     timeZone: timeZone,
@@ -203,8 +205,8 @@ extension BroadcastListItemDtoX on BroadcastListItemDto {
     startTime: startTime,
     endTime: endTime,
     totalParticipants: totalParticipants,
-    creatorId: Id.fromString(creatorId),
-    creatorName: FullName(creatorName),
+    creatorId: _wireId(creatorId),
+    creatorName: SingleLineString(creatorName),
     creatorAvatarId: creatorAvatarId,
     creatorAvatar: ImageInput.fromUrl(creatorAvatarUrl),
   );
@@ -213,13 +215,16 @@ extension BroadcastListItemDtoX on BroadcastListItemDto {
 /// The domain view of a [BroadcastSessionDto].
 extension BroadcastSessionDtoX on BroadcastSessionDto {
   /// This session as the app models it, under [userId].
-  BroadcastSession toDomain(String userId) => BroadcastSession(
-    userId: Id.fromString(userId),
-    broadcast: broadcast.toDomain,
-    token: token,
-    canPublish: broadcast.toDomain.canPublish,
-    timestamp: DateTime.now(),
-  );
+  BroadcastSession toDomain(Id userId) {
+    final domain = broadcast.toDomain;
+    return BroadcastSession(
+      userId: userId,
+      broadcast: domain,
+      token: token,
+      canPublish: domain.canPublish,
+      timestamp: DateTime.now(),
+    );
+  }
 }
 
 /// The wire view of a [Broadcast], for the cache.
@@ -262,10 +267,10 @@ extension CohostDtoX on CohostDto {
 /// The domain view of an [EndBroadcastDto].
 extension EndBroadcastDtoX on EndBroadcastDto {
   EndedBroadcast get toDomain => EndedBroadcast(
-    broadcastId: Id.fromString(broadcastId),
+    broadcastId: Id.fromWire(broadcastId),
     title: SingleLineString(broadcastTitle),
-    creatorId: Id.fromString(creatorId),
-    creatorName: FullName(creatorName),
+    creatorId: _wireId(creatorId),
+    creatorName: SingleLineString(creatorName),
     endedAt: endedAt,
     image: ImageInput.fromUrl(broadcastImageUrl),
     reason: EndReason.fromWire(endedReason),
@@ -278,8 +283,8 @@ extension EndBroadcastDtoX on EndBroadcastDto {
 /// The domain view of a [ParticipantDto].
 extension ParticipantDtoX on ParticipantDto {
   Participant get toDomain => Participant(
-    id: Id.fromString(id),
-    fullName: FullName(fullName),
+    id: Id.fromWire(id),
+    fullName: SingleLineString(fullName),
     avatarId: avatarId,
     avatar: ImageInput.fromUrl(avatarUrl),
     role: ParticipantRole.fromWire(role),
@@ -301,8 +306,8 @@ extension ParticipantX on Participant {
 /// The domain view of a [UserSummaryDto].
 extension UserSummaryDtoX on UserSummaryDto {
   Participant get toDomain => Participant(
-    id: Id.fromString(id),
-    fullName: FullName(fullName),
+    id: Id.fromWire(id),
+    fullName: SingleLineString(fullName),
     avatarId: avatarId,
     avatar: ImageInput.fromUrl(avatarUrl),
   );

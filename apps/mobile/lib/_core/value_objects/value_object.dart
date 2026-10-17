@@ -42,3 +42,7 @@ abstract class ValueObject<T> with Equatable implements IValueObject {
   @override
   bool? get stringify => true;
 }
+
+extension StringValueObjectX on ValueObject<String> {
+  String get orEmpty => getOrElse((_) => '');
+}

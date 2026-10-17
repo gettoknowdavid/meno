@@ -143,7 +143,7 @@ class EmailVerificationPage extends WatchingWidget {
                     text: 'Enter the 6-digit code we just sent to ',
                   ),
                   TextSpan(
-                    text: address.getOrElse((_) => ''),
+                    text: address.orEmpty,
                     style: textTheme.captionMedium,
                   ),
                   const TextSpan(text: ' to continue.'),

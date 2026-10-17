@@ -1,5 +1,6 @@
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/value_objects/id.dart';
 import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
@@ -119,6 +120,20 @@ List<RouteBase> get _publicRoutes => [
   ),
 ];
 
+/// What a path that names no real resource shows.
+const String _notFound = 'Not found';
+
+/// The id [state]'s parameter [name] carries, or null when it is not a UUID.
+///
+/// A path parameter is untrusted input: a hand-edited link can say anything.
+Id? _pathId(GoRouterState state, String name) {
+  final raw = state.pathParameters[name];
+  if (raw == null) return null;
+
+  final id = Id.fromString(raw);
+  return id.isValid ? id : null;
+}
+
 List<RouteBase> get _standaloneRoutes => [
   GoRoute(
     path: MRoutes.notifications,
@@ -137,15 +152,17 @@ List<RouteBase> get _standaloneRoutes => [
   GoRoute(
     path: MRoutes.userProfilePattern,
     builder: (_, state) {
-      final userId = state.pathParameters['userId'] ?? '';
-      return StubPage('User Profile $userId');
+      final userId = _pathId(state, 'userId');
+      if (userId == null) return const StubPage(_notFound);
+      return StubPage('User Profile ${userId.getOrCrash}');
     },
   ),
   GoRoute(
     path: MRoutes.switchAccountPattern,
     builder: (_, state) {
-      final userId = state.pathParameters['userId'] ?? '';
-      return StubPage('Switch Account $userId');
+      final userId = _pathId(state, 'userId');
+      if (userId == null) return const StubPage(_notFound);
+      return StubPage('Switch Account ${userId.getOrCrash}');
     },
   ),
   GoRoute(
@@ -163,7 +180,8 @@ List<RouteBase> get _broadcastFlow => [
       GoRoute(
         path: ':broadcastId',
         builder: (_, state) {
-          final broadcastId = state.pathParameters['broadcastId'] ?? '';
+          final broadcastId = _pathId(state, 'broadcastId');
+          if (broadcastId == null) return const StubPage(_notFound);
           return BroadcastDetailsPage(broadcastId: broadcastId);
         },
         routes: [
@@ -171,7 +189,10 @@ List<RouteBase> get _broadcastFlow => [
           GoRoute(
             path: 'pre-stream',
             pageBuilder: (_, state) {
-              final broadcastId = state.pathParameters['broadcastId'] ?? '';
+              final broadcastId = _pathId(state, 'broadcastId');
+              if (broadcastId == null) {
+                return const MaterialPage<void>(child: StubPage(_notFound));
+              }
               return ModalPage<dynamic>(child: PreStreamModal(id: broadcastId));
             },
           ),

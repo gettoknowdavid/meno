@@ -87,7 +87,7 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                   children: [
                     MText('Hello,', style: textTheme.captionRegular),
                     MText(
-                      user.fullName.getOrElse((_) => ''),
+                      user.fullName.orEmpty,
                       style: textTheme.subheadingMedium,
                     ),
                   ],
@@ -249,8 +249,7 @@ class _RecentlyLiveSection extends WatchingWidget {
             broadcast,
             key: ValueKey(broadcast.id),
             onTap: () async {
-              final id = broadcast.id.getOrCrash;
-              await context.push(MRoutes.broadcastRoute(id));
+              await context.push(MRoutes.broadcastRoute(broadcast.id));
             },
           );
         },

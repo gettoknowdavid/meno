@@ -110,7 +110,7 @@ final class AuthManager implements Disposable {
       debugName: 'auth.loadSessions',
     );
 
-    revokeSession = .createAsyncNoResult<String>(
+    revokeSession = .createAsyncNoResult<Id>(
       _http.revokeSession,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.revokeSession',
@@ -167,7 +167,7 @@ final class AuthManager implements Disposable {
   late final Command<void, List<SessionInfo>> loadSessions;
 
   /// Ends one device's session.
-  late final Command<String, void> revokeSession;
+  late final Command<Id, void> revokeSession;
 
   /// Every account on this device, keyed by user id.
   ///
@@ -329,8 +329,8 @@ final class AuthManager implements Disposable {
       // Nothing can bring this session back — there is no refresh token left —
       // so it is cleared now rather than left to fail on the first request.
       _logger.w(
-        'The stored session for ${credential.userId} expired and cannot be '
-        'renewed',
+        'The stored session for ${credential.userId.orEmpty} expired '
+        'and cannot be renewed',
         tag: MenoLogTag.lifecycle.label,
       );
       await _store.clearActive();

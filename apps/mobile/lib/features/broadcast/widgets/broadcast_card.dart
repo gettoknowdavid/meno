@@ -61,23 +61,23 @@ class BroadcastCard extends StatelessWidget {
     return switch (type) {
       _CardType.nLive => MCard.live(
         key: key,
-        title: title.getOrElse((_) => ''),
-        host: creator.getOrElse((_) => ''),
+        title: title.orEmpty,
+        host: creator.orEmpty,
         imageUrl: image?.getUrl,
         liveCount: liveCount,
         onTap: onTap,
       ),
       _CardType.rLive => MCard.recentlyLive(
         key: key,
-        title: title.getOrElse((_) => ''),
-        host: creator.getOrElse((_) => ''),
+        title: title.orEmpty,
+        host: creator.orEmpty,
         imageUrl: image?.getUrl,
         onTap: onTap,
       ),
       _CardType.rLiveTile => MRecentlyLiveListTile(
         key: key,
-        title: title.getOrElse((_) => ''),
-        creator: creator.getOrElse((_) => ''),
+        title: title.orEmpty,
+        creator: creator.orEmpty,
         imageUrl: image?.getUrl,
         endTime: endTime,
         onTap: onTap,
@@ -107,8 +107,8 @@ class _BroadcastCardSkeleton extends StatelessWidget {
       _SkeletonType.nLive => Skeletonizer(
         child: MCard.live(
           key: key,
-          title: broadcast.title.getOrElse((_) => ''),
-          host: broadcast.hostName.getOrElse((_) => ''),
+          title: broadcast.title.orEmpty,
+          host: broadcast.hostName.orEmpty,
           imageUrl: broadcast.image?.getUrl,
           liveCount: broadcast.liveParticipantsCount,
         ),
@@ -116,16 +116,16 @@ class _BroadcastCardSkeleton extends StatelessWidget {
       _SkeletonType.rLive => Skeletonizer(
         child: MCard.recentlyLive(
           key: key,
-          title: broadcast.title.getOrElse((_) => ''),
-          host: broadcast.hostName.getOrElse((_) => ''),
+          title: broadcast.title.orEmpty,
+          host: broadcast.hostName.orEmpty,
           imageUrl: broadcast.image?.getUrl,
         ),
       ),
       _SkeletonType.rLiveTile => Skeletonizer(
         child: MRecentlyLiveListTile(
           key: key,
-          title: broadcast.title.getOrElse((_) => ''),
-          creator: broadcast.hostName.getOrElse((_) => ''),
+          title: broadcast.title.orEmpty,
+          creator: broadcast.hostName.orEmpty,
           endTime: broadcast.endTime,
           imageUrl: broadcast.image?.getUrl,
         ),

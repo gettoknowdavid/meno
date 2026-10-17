@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart';
+import 'package:meno_mobile/_core/value_objects/id.dart';
 
 @immutable
 final class Config {
@@ -36,5 +37,6 @@ final class Scope {
   ///
   /// Named for the broadcast rather than a single `live` layer so a session
   /// that replaces another cannot inherit the first one's registrations.
-  static String liveFor(String broadcastId) => '$livePrefix:$broadcastId';
+  static String liveFor(Id broadcastId) =>
+      '$livePrefix:${broadcastId.getOrCrash}';
 }

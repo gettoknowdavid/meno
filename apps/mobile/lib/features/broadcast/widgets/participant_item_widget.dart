@@ -38,7 +38,7 @@ class ParticipantItemWidget extends StatelessWidget {
                 MText(
                   isEmpty
                       ? 'Add Co-host'
-                      : participant!.fullName.getOrElse((_) => ''),
+                      : participant!.fullName.orEmpty,
                   style: textTheme.microMedium.copyWith(height: 1),
                   maxLines: 1,
                   overflow: .ellipsis,

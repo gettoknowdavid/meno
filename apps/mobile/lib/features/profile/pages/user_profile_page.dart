@@ -1,5 +1,4 @@
 import 'package:flutter_it/flutter_it.dart';
-import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
@@ -20,11 +19,11 @@ const double _kTabBarHeight = 32;
 /// coming back reads the cache and refetches instead of showing whatever an
 /// earlier visit left behind.
 class UserProfilePage extends WatchingWidget {
-  /// Creates the page for [userIdStr].
-  const new({required this.userIdStr, super.key});
+  /// Creates the page for [userId].
+  const new({required this.userId, super.key});
 
   /// The account id from the route.
-  final String userIdStr;
+  final Id userId;
 
   @override
   Widget build(BuildContext context) {
@@ -32,7 +31,7 @@ class UserProfilePage extends WatchingWidget {
       init: (getIt) {
         getIt.registerSingleton<UserProfileManager>(
           UserProfileManager(
-            userId: userIdStr,
+            userId: userId,
             http: di<ProfileHttpService>(),
             cache: di<ProfileCacheService>(),
             profiles: di<UserProfileRepository>(),
@@ -166,7 +165,7 @@ class _ProfileAppBar extends StatelessWidget {
       forceElevated: innerBoxIsScrolled,
       elevation: innerBoxIsScrolled ? 1 : 0,
       shadowColor: colors.onBackground.withValues(alpha: 0.08),
-      title: MText(profile.fullName.getOrElse((_) => '')),
+      title: MText(profile.fullName.orEmpty),
       titleTextStyle: textTheme.bodyMedium,
       leading: MIconButton(
         icon: const Icon(MIcons.chevron_left),
@@ -222,8 +221,7 @@ class _AllBroadcastsTab extends WatchingWidget {
           broadcast,
           key: ValueKey(broadcast.id),
           onTap: () async {
-            final id = broadcast.id.getOrElse((_) => '');
-            await context.push(MRoutes.broadcastRoute(id));
+            await context.push(MRoutes.broadcastRoute(broadcast.id));
           },
         );
       },
@@ -248,8 +246,7 @@ class _RecentBroadcastsTab extends WatchingWidget {
           broadcast,
           key: ValueKey(broadcast.id),
           onTap: () async {
-            final id = broadcast.id.getOrElse((_) => '');
-            await context.push(MRoutes.broadcastRoute(id));
+            await context.push(MRoutes.broadcastRoute(broadcast.id));
           },
         );
       },

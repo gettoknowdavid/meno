@@ -32,7 +32,7 @@ final class SwitchAccountSheet {
     final accounts = auth.accounts.value.values.toList();
     final activeUserId = auth.activeCredential.value.userId;
 
-    final chosen = await showModalBottomSheet<Id?>(
+    final chosen = await showModalBottomSheet<Object>(
       context: context,
       showDragHandle: true,
       useSafeArea: true,
@@ -48,12 +48,12 @@ final class SwitchAccountSheet {
             for (final credential in accounts)
               ListTile(
                 title: MText(
-                  credential.user.fullName.getOrElse((_) => ''),
+                  credential.user.fullName.orEmpty,
                   maxLines: 1,
                   overflow: .ellipsis,
                 ),
                 subtitle: MText(
-                  credential.user.email.getOrElse((_) => ''),
+                  credential.user.email.orEmpty,
                   style: textTheme.captionMedium,
                   maxLines: 1,
                   overflow: .ellipsis,
@@ -78,6 +78,6 @@ final class SwitchAccountSheet {
       auth.addAccount.run();
       return;
     }
-    auth.switchAccount.run(chosen);
+    if (chosen is Id) auth.switchAccount.run(chosen);
   }
 }

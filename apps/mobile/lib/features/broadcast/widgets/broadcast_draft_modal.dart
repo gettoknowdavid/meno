@@ -221,7 +221,9 @@ class _DraftItem extends StatelessWidget {
                       children: [
                         Expanded(
                           child: MText(
-                            draft.title.getOrElse((_) => 'Untitled Broadcast'),
+                            draft.title.isEmpty
+                                ? 'Untitled Broadcast'
+                                : draft.title,
                             style: textTheme.captionMedium,
                             maxLines: 1,
                             overflow: .ellipsis,
@@ -235,7 +237,9 @@ class _DraftItem extends StatelessWidget {
                     ),
                     Spaces.verticalMicro,
                     MText(
-                      draft.description.getOrElse((_) => 'No description'),
+                      draft.description.isEmpty
+                          ? 'No description'
+                          : draft.description,
                       style: textTheme.captionRegular,
                       color: colors.onBackgroundVariant,
                       maxLines: 1,

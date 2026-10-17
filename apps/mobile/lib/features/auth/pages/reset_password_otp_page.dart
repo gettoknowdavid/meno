@@ -85,7 +85,7 @@ class ResetPasswordOtpPage extends WatchingWidget {
               disabled: !isValidAddress,
               onPressed: () => context.push(
                 MRoutes.createNewPasswordRoute(
-                  email: address.getOrElse((_) => ''),
+                  email: address.orEmpty,
                   code: codeController.text,
                 ),
               ),

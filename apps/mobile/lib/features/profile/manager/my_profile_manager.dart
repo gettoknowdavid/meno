@@ -157,6 +157,6 @@ final class MyProfileManager implements Disposable {
       _profile.value = .empty;
       return;
     }
-    _profile.value = _cache.myProfile(userId.getOrCrash) ?? .empty;
+    _profile.value = _cache.myProfile(userId) ?? .empty;
   }
 }

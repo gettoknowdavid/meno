@@ -14,8 +14,8 @@ import 'package:meno_mobile/features/broadcast/services/broadcast_local_service.
 final class BroadcastProxy extends ChangeNotifier {
   new(this._broadcast, this._ownerId) {
     _isFavourited = _storage.isFavourited(
-      broadcastId: _broadcast.id.getOrCrash,
-      ownerId: _ownerId.getOrCrash,
+      broadcastId: _broadcast.id,
+      ownerId: _ownerId,
     );
 
     toggleIsFavourite = .createUndoableNoParamNoResult<bool>(
@@ -25,7 +25,7 @@ final class BroadcastProxy extends ChangeNotifier {
         notifyListeners();
         await _storage.toggleIsFavourite(
           broadcast: _broadcast,
-          ownerId: _ownerId.getOrCrash,
+          ownerId: _ownerId,
         );
       },
       undo: (stack, _) {
@@ -55,11 +55,14 @@ final class BroadcastProxy extends ChangeNotifier {
 
   Id get ownerId => _ownerId;
 
+  /// The account that owns the broadcast, which is not the same as [id].
+  Id get hostId => _broadcast.hostId;
+
   SingleLineString get title => _broadcast.title;
 
   MultiLineString get description => _broadcast.description ?? .empty;
 
-  FullName get creatorName => _broadcast.hostName;
+  SingleLineString get creatorName => _broadcast.hostName;
 
   ImageInput? get image => _broadcast.image;
 

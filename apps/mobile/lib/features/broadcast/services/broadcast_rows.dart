@@ -1,4 +1,5 @@
 import 'package:meno_mobile/_core/_core.dart' as core;
+import 'package:meno_mobile/_core/logging/meno_logger.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:objectbox/objectbox.dart';
 
@@ -90,15 +91,13 @@ class FavouriteBroadcastRow {
 
 /// The domain view of a [BroadcastDraftRow].
 extension BroadcastDraftRowX on BroadcastDraftRow {
-  BroadcastDraft get toDomain => BroadcastDraft(
+  BroadcastDraft toDomain({MenoLogger? logger}) => BroadcastDraft(
     id: core.Id.fromString(draftId),
     ownerId: core.Id.fromString(ownerId),
-    title: core.SingleLineString(title),
-    description: core.MultiLineString(description),
+    title: title,
+    description: description,
     record: record,
-    cohosts: cohostIds.isEmpty
-        ? const []
-        : cohostIds.split(',').where((id) => id.isNotEmpty).toList(),
+    cohosts: _cohostIds(logger),
     imagePath: core.ImageInput.fromUrl(imagePath),
     imageId: imageId,
     createdBroadcastId: createdBroadcastId != null
@@ -107,6 +106,26 @@ extension BroadcastDraftRowX on BroadcastDraftRow {
     creationStep: _step(creationStepValue),
     lastModified: lastModified,
   );
+
+  List<core.Id> _cohostIds(MenoLogger? logger) {
+    final ids = <core.Id>[];
+    for (final raw in cohostIds.split(',')) {
+      if (raw.isEmpty) continue;
+
+      final id = core.Id.fromString(raw);
+      if (id.isValid) {
+        ids.add(id);
+        continue;
+      }
+
+      logger?.w(
+        'Dropped a stored cohost id that is not a UUID',
+        tag: MenoLogTag.di.label,
+        error: id.failureOrNull,
+      );
+    }
+    return ids;
+  }
 
   static BroadcastCreationStep _step(int value) {
     const steps = BroadcastCreationStep.values;
@@ -121,10 +140,10 @@ extension BroadcastDraftX on BroadcastDraft {
   BroadcastDraftRow get toRow => BroadcastDraftRow(
     draftId: id.getOrCrash,
     ownerId: ownerId.getOrCrash,
-    title: title.getOrCrash,
-    description: description.getOrElse((_) => ''),
+    title: title,
+    description: description,
     record: record,
-    cohostIds: cohosts.join(','),
+    cohostIds: [for (final id in cohosts) id.getOrCrash].join(','),
     imagePath: imagePath?.toUrlOrFilePathOrNull,
     imageId: imageId,
     createdBroadcastId: createdBroadcastId?.getOrNull,
@@ -139,7 +158,7 @@ extension FavouriteBroadcastRowX on FavouriteBroadcastRow {
     broadcastId: core.Id.fromString(broadcastId),
     ownerId: core.Id.fromString(ownerId),
     title: core.SingleLineString(title),
-    creatorName: core.FullName(creatorName),
+    creatorName: core.SingleLineString(creatorName),
     image: core.ImageInput.fromUrl(imageUrl),
     savedAt: savedAt,
   );
@@ -151,7 +170,7 @@ extension FavouriteBroadcastX on FavouriteBroadcast {
     broadcastId: broadcastId.getOrCrash,
     ownerId: ownerId.getOrCrash,
     title: title.getOrCrash,
-    creatorName: creatorName.getOrCrash,
+    creatorName: creatorName.orEmpty,
     imageUrl: image?.toUrlOrFilePathOrNull,
     savedAt: savedAt,
   );

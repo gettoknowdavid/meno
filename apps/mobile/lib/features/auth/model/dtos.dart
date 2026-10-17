@@ -60,7 +60,7 @@ extension UserCredentialDtoX on UserCredential {
 extension SessionInfoDtoX on SessionInfoDto {
   /// This row as the app models it.
   SessionInfo get toDomain => SessionInfo(
-    id: Id.fromString(id),
+    id: Id.fromWire(id),
     deviceLabel: deviceLabel,
     createdAt: createdAt,
     lastUsedAt: lastUsedAt,

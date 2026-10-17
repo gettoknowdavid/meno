@@ -17,9 +17,9 @@ final class SettingsLocalService {
   final LocalStorage _storage;
 
   /// The cached settings for [userId], or null when there are none.
-  UserSettings? getSettings(String userId) {
+  UserSettings? getSettings(Id userId) {
     final json = _storage.getString(
-      StorageKeys.forUser(StorageKeys.settings, userId),
+      StorageKeys.forUser(StorageKeys.settings, userId.getOrCrash),
     );
     if (json == null) return null;
     return SettingsDto.fromJson(
@@ -28,9 +28,9 @@ final class SettingsLocalService {
   }
 
   /// Stores [settings] for [userId].
-  Future<void> saveSettings(String userId, UserSettings settings) {
+  Future<void> saveSettings(Id userId, UserSettings settings) {
     return _storage.setString(
-      StorageKeys.forUser(StorageKeys.settings, userId),
+      StorageKeys.forUser(StorageKeys.settings, userId.getOrCrash),
       value: jsonEncode(settings.toDto.toJson()),
     );
   }

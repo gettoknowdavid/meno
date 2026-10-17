@@ -78,12 +78,12 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     )..pipeToCommand(_announcePresence);
     _announcePresence = .createAsyncNoParamNoResult(
       () async {
-        _socket.joinRoom(broadcast.value.id.getOrCrash);
+        _socket.joinRoom(broadcast.value.id);
 
         // The draft the host created this broadcast from has become a real
         // broadcast; keeping it would offer to resume a creation that is done.
         if (isHost.value) {
-          await _local.deleteDraft(broadcast.value.id.getOrCrash);
+          await _local.deleteDraft(broadcast.value.id);
         }
       },
       errorFilterFn: menoExceptionFilter,
@@ -118,14 +118,12 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
 
         try {
           if (isHost.value) {
-            endedBroadcast.value = await _http.end(
-              broadcast.value.id.getOrCrash,
-            );
+            endedBroadcast.value = await _http.end(broadcast.value.id);
           } else {
-            await _http.leave(broadcast.value.id.getOrCrash);
+            await _http.leave(broadcast.value.id);
           }
         } finally {
-          _socket.leaveRoom(broadcast.value.id.getOrCrash);
+          _socket.leaveRoom(broadcast.value.id);
           await _livekit.disconnect();
           state.value = const LiveSessionState.ended();
           status.value = LiveStatus.offAir;
@@ -156,7 +154,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       () async {
         if (!_livekit.connected) return;
         _logger.i('Re-announcing after a socket reconnect');
-        _socket.joinRoom(broadcast.value.id.getOrCrash);
+        _socket.joinRoom(broadcast.value.id);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.reconnect',
@@ -338,7 +336,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   }
 
   void _handleHostConnection(HostConnectionEvent event) {
-    if (event.broadcastId != broadcast.value.id.getOrCrash) return;
+    if (event.broadcastId != broadcast.value.id) return;
 
     if (event.connected) {
       // Only a listener notices: the host's own connection is its own.

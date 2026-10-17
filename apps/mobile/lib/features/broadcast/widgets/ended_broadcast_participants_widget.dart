@@ -41,7 +41,7 @@ class EndedBroadcastParticipantsWidget extends StatelessWidget {
           participants: recentParticipants
               .map(
                 (p) => ParticipantAvatar(
-                  id: p.id.getOrCrash,
+                  id: p.id.orEmpty,
                   avatarUrl: p.avatar?.getUrl,
                 ),
               )

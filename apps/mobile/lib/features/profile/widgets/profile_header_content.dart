@@ -194,7 +194,7 @@ class ProfileBio extends StatelessWidget {
       color: colors.onBackgroundVariant,
     );
     return ReadMoreText(
-      bio.getOrElse((_) => ''),
+      bio.orEmpty,
       style: textTheme.captionRegular,
       trimLines: 3,
       trimMode: TrimMode.Line,

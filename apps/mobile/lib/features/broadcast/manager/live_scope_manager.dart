@@ -163,7 +163,7 @@ final class LiveScopeManager implements Disposable {
 
     final broadcastId = _broadcastId.value;
     _broadcastId.value = null;
-    if (broadcastId != null) await _drop(Scope.liveFor(broadcastId.getOrCrash));
+    if (broadcastId != null) await _drop(Scope.liveFor(broadcastId));
     _broadcastId.dispose();
   }
 
@@ -184,9 +184,7 @@ final class LiveScopeManager implements Disposable {
     }
 
     try {
-      final broadcast = await _http.getBroadcast(
-        stored.broadcast.id.getOrCrash,
-      );
+      final broadcast = await _http.getBroadcast(stored.broadcast.id);
       // The account can be signed out while the API is answering, and a scope
       // must not be pushed on top of a stack that is being taken down.
       if (_disposed) return;
@@ -197,7 +195,9 @@ final class LiveScopeManager implements Disposable {
         return;
       }
 
-      _logger.i('Recovering the live session for ${stored.broadcast.id}');
+      _logger.i(
+        'Recovering the live session for ${stored.broadcast.id.orEmpty}',
+      );
       await start(stored.broadcast.id, session: stored);
     } on MenoException catch (error, stackTrace) {
       _logger.w(
@@ -279,7 +279,7 @@ final class LiveScopeManager implements Disposable {
 
     final live = LiveSession(broadcastId: broadcastId, userId: _userId);
     await di.pushNewScopeAsync(
-      scopeName: Scope.liveFor(broadcastId.getOrCrash),
+      scopeName: Scope.liveFor(broadcastId),
       init: (scope) async {
         scope.registerSingleton<LiveSession>(live);
         // Only when the room is being entered: a scope opened from a deep link
@@ -305,7 +305,7 @@ final class LiveScopeManager implements Disposable {
     if (live == null) return;
     if (broadcastId != null && broadcastId != live) return;
 
-    await _drop(Scope.liveFor(live.getOrCrash));
+    await _drop(Scope.liveFor(live));
     _broadcastId.value = null;
 
     // The session is over, so nothing is left to recover.

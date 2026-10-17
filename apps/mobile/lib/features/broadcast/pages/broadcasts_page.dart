@@ -67,7 +67,7 @@ class BroadcastsPage extends WatchingWidget {
         padding: const .all(16),
         itemBuilder: broadcastItemBuilder(
           feedSource: feedSource,
-          onTap: (b) => context.push(MRoutes.broadcastRoute(b.id.getOrCrash)),
+          onTap: (b) => context.push(MRoutes.broadcastRoute(b.id)),
         ),
       ),
     );

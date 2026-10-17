@@ -1,3 +1,5 @@
+import 'package:meno_mobile/_core/logging/meno_logger.dart';
+
 /// One page of a cursor-paginated endpoint.
 ///
 /// Every list endpoint answers with this shape — see `CursorPage` in
@@ -20,8 +22,9 @@ final class CursorPage<T> {
   /// Reads a page, decoding each entry of `data` with [itemFromJson].
   factory fromJson(
     dynamic json,
-    T Function(Map<String, dynamic> item) itemFromJson,
-  ) {
+    T Function(Map<String, dynamic> item) itemFromJson, {
+    MenoLogger? logger,
+  }) {
     if (json is! Map<String, dynamic>) {
       throw const FormatException(
         'Expected a cursor page but got a different value.',
@@ -34,8 +37,16 @@ final class CursorPage<T> {
 
     if (data is List) {
       for (final item in data) {
-        if (item is Map<String, dynamic>) {
+        if (item is! Map<String, dynamic>) continue;
+        try {
           items.add(itemFromJson(item));
+        } on Object catch (error, stackTrace) {
+          logger?.w(
+            'Skipped a page item that could not be read',
+            tag: MenoLogTag.network.label,
+            error: error,
+            stackTrace: stackTrace,
+          );
         }
       }
     }

@@ -8,7 +8,7 @@ part 'entities.freezed.dart';
 final List<Profile> fakeProfileList = [
   Profile(
     id: Id.fromString('b1b1b1b1-0001-4b1b-8b1b-1b1b1b1b1b1b'),
-    fullName: FullName('Grace Okonkwo'),
+    fullName: SingleLineString('Grace Okonkwo'),
     bio: MultiLineString('Sharing moments of worship, prayer, and testimony.'),
     isFollowing: true,
     stats: const ProfileStats(broadcasts: 5, followers: 120, following: 34),
@@ -16,19 +16,19 @@ final List<Profile> fakeProfileList = [
   ),
   Profile(
     id: Id.fromString('b1b1b1b1-0002-4b1b-8b1b-2b1b1b1b1b1b'),
-    fullName: FullName('Daniel Cho'),
+    fullName: SingleLineString('Daniel Cho'),
     bio: MultiLineString('Teacher, speaker, and lifelong learner.'),
     stats: const ProfileStats(broadcasts: 1, followers: 8, following: 2),
   ),
   Profile(
     id: Id.fromString('b1b1b1b1-0003-4b1b-8b1b-3b1b1b1b1b1b'),
-    fullName: FullName('Sofia Bianchi'),
+    fullName: SingleLineString('Sofia Bianchi'),
     stats: const ProfileStats(broadcasts: 10, followers: 90, following: 3),
     createdAt: DateTime(2026, 1, 15),
   ),
   Profile(
     id: Id.fromString('b1b1b1b1-0004-4b1b-8b1b-4b1b1b1b1b1b'),
-    fullName: FullName('Aisha Rahman'),
+    fullName: SingleLineString('Aisha Rahman'),
     isFollowing: true,
   ),
 ];
@@ -109,7 +109,7 @@ abstract class MyProfile with _$MyProfile {
   /// public profiles.
   Profile get asProfile => Profile(
     id: id,
-    fullName: fullName,
+    fullName: SingleLineString(fullName.orEmpty),
     bio: bio,
     avatarUrl: avatarUrl,
     stats: stats,
@@ -132,7 +132,7 @@ abstract class Profile with _$Profile {
     required Id id,
 
     /// The name shown next to the account.
-    required FullName fullName,
+    required SingleLineString fullName,
 
     /// The account's biography, when it has one.
     MultiLineString? bio,

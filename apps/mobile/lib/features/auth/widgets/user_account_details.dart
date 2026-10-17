@@ -36,7 +36,7 @@ class UserAccountDetails extends StatelessWidget {
             children: [
               MText('Welcome back,', style: textTheme.subheadingMedium),
               MText(
-                user.fullName.getOrElse((_) => ''),
+                user.fullName.orEmpty,
                 style: textTheme.heading2Medium,
               ),
             ],

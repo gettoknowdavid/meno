@@ -44,7 +44,7 @@ final class LiveSessionStore {
 
       return BroadcastSessionDto.fromJson(
         record['session'] as Map<String, dynamic>,
-      ).toDomain(_userId.getOrCrash).copyWith(timestamp: savedAt);
+      ).toDomain(_userId).copyWith(timestamp: savedAt);
     } on Object {
       return null;
     }

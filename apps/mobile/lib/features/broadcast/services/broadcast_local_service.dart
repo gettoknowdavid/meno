@@ -11,24 +11,25 @@ import 'package:meno_mobile/objectbox.g.dart';
 /// from its own cache, so a read is synchronous and a write is awaited only by
 /// the caller that has something to do after it.
 final class BroadcastLocalService {
-  const new(this._database);
+  const new(this._database, {required this._logger});
 
   final Database _database;
+  final core.MenoLogger _logger;
 
   /// Every draft [ownerId] has, newest edit first.
-  List<BroadcastDraft> drafts(String ownerId) {
+  List<BroadcastDraft> drafts(core.Id ownerId) {
     return _database.draftBox
-        .query(BroadcastDraftRow_.ownerId.equals(ownerId))
+        .query(BroadcastDraftRow_.ownerId.equals(ownerId.getOrCrash))
         .order(BroadcastDraftRow_.lastModified, flags: Order.descending)
         .build()
         .find()
-        .map((row) => row.toDomain)
+        .map((row) => row.toDomain(logger: _logger))
         .toList();
   }
 
   /// The draft with [draftId], or null.
-  BroadcastDraft? draft(String draftId) {
-    return _findDraft(draftId)?.toDomain;
+  BroadcastDraft? draft(core.Id draftId) {
+    return _findDraft(draftId.getOrCrash)?.toDomain(logger: _logger);
   }
 
   /// Stores [draft], replacing the stored copy of the same draft.
@@ -40,24 +41,24 @@ final class BroadcastLocalService {
   }
 
   /// Forgets the draft with [draftId].
-  Future<void> deleteDraft(String draftId) async {
-    final stored = _findDraft(draftId);
+  Future<void> deleteDraft(core.Id draftId) async {
+    final stored = _findDraft(draftId.getOrCrash);
     if (stored != null) await _database.draftBox.removeAsync(stored.id);
   }
 
   /// Whether [ownerId] keeps [broadcastId] for later.
-  bool isFavourited({required String broadcastId, required String ownerId}) {
+  bool isFavourited({required core.Id broadcastId, required core.Id ownerId}) {
     return _query(
-          broadcastId: broadcastId,
-          ownerId: ownerId,
+          broadcastId: broadcastId.getOrCrash,
+          ownerId: ownerId.getOrCrash,
         ).build().findFirst() !=
         null;
   }
 
   /// Every broadcast [ownerId] keeps, most recently saved first.
-  List<FavouriteBroadcast> favourites(String ownerId) {
+  List<FavouriteBroadcast> favourites(core.Id ownerId) {
     return _database.favouriteBroadcastBox
-        .query(FavouriteBroadcastRow_.ownerId.equals(ownerId))
+        .query(FavouriteBroadcastRow_.ownerId.equals(ownerId.getOrCrash))
         .order(FavouriteBroadcastRow_.savedAt, flags: Order.descending)
         .build()
         .find()
@@ -71,11 +72,11 @@ final class BroadcastLocalService {
   /// without asking again.
   Future<bool> toggleIsFavourite({
     required Broadcast broadcast,
-    required String ownerId,
+    required core.Id ownerId,
   }) async {
     final existing = _query(
       broadcastId: broadcast.id.getOrCrash,
-      ownerId: ownerId,
+      ownerId: ownerId.getOrCrash,
     ).build().findFirst();
 
     if (existing != null) {
@@ -86,7 +87,7 @@ final class BroadcastLocalService {
     await _database.favouriteBroadcastBox.putAsync(
       FavouriteBroadcast(
         broadcastId: broadcast.id,
-        ownerId: core.Id.fromString(ownerId),
+        ownerId: ownerId,
         title: broadcast.title,
         creatorName: broadcast.hostName,
         image: broadcast.image,

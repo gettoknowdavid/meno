@@ -188,7 +188,7 @@ class _ProfileTitle extends StatelessWidget {
             ),
             Spaces.horizontalMicro,
             MText(
-              title.getOrElse((_) => ''),
+              title.orEmpty,
               style: textTheme.heading3Bold,
               color: colors.onBackground,
             ),
@@ -239,8 +239,7 @@ class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
           broadcast,
           key: ValueKey(broadcast.id),
           onTap: () async {
-            final id = broadcast.id.getOrElse((_) => '');
-            await context.push(MRoutes.broadcastRoute(id));
+            await context.push(MRoutes.broadcastRoute(broadcast.id));
           },
         );
       },
@@ -289,8 +288,7 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
           broadcast,
           key: ValueKey(broadcast.id),
           onTap: () async {
-            final id = broadcast.id.getOrElse((_) => '');
-            await context.push(MRoutes.broadcastRoute(id));
+            await context.push(MRoutes.broadcastRoute(broadcast.id));
           },
         );
       },
@@ -336,12 +334,11 @@ class __FavouritesTabState extends State<_FavouritesTab>
             itemBuilder: (ctx, index) {
               final favourite = favourites[index];
               return MRecentlyLiveListTile(
-                title: favourite.title.getOrElse((_) => ''),
-                creator: favourite.creatorName.getOrElse((_) => ''),
+                title: favourite.title.orEmpty,
+                creator: favourite.creatorName.orEmpty,
                 imageUrl: favourite.image?.getUrl,
                 onTap: () async {
-                  final id = favourite.broadcastId.getOrElse((_) => '');
-                  await ctx.push(MRoutes.broadcastRoute(id));
+                  await ctx.push(MRoutes.broadcastRoute(favourite.broadcastId));
                 },
               );
             },

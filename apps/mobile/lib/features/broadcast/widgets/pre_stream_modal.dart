@@ -11,20 +11,19 @@ import 'package:skeletonizer/skeletonizer.dart';
 class PreStreamModal extends WatchingWidget {
   const new({required this.id, super.key});
 
-  final String id;
+  final Id id;
 
   static Future<void> show(BuildContext context, Id id) {
     final activeId = di<LiveScopeManager>().activeBroadcastId.value;
-    final broadcastId = id.getOrCrash;
     if (activeId == id) {
-      return context.push(MRoutes.liveBroadcastRoute(broadcastId));
+      return context.push(MRoutes.liveBroadcastRoute(id));
     }
-    return context.push(MRoutes.preStreamRoute(broadcastId));
+    return context.push(MRoutes.preStreamRoute(id));
   }
 
   @override
   Widget build(BuildContext context) {
-    callOnce((_) => di<StreamManager>().fetchBroadcast.run(Id.fromString(id)));
+    callOnce((_) => di<StreamManager>().fetchBroadcast.run(id));
 
     final isLoading = watchValue<StreamManager, bool>(
       (manager) => manager.fetchBroadcast.isRunning,
@@ -78,7 +77,7 @@ class _LoadedSheet extends WatchingWidget {
           const SliverToBoxAdapter(child: Spaces.verticalXLarge),
           SliverToBoxAdapter(
             child: PreStreamRecentBroadcastsSection(
-              creatorId: broadcast.hostId.getOrCrash,
+              creatorId: broadcast.hostId.getOrNull,
             ),
           ),
         ],
@@ -123,7 +122,7 @@ class _TopSection extends StatelessWidget {
                 mainAxisAlignment: .center,
                 children: [
                   MText(
-                    broadcast.title.getOrElse((_) => ''),
+                    broadcast.title.orEmpty,
                     style: textTheme.subheadingMedium,
                     maxLines: 2,
                     overflow: TextOverflow.ellipsis,
@@ -132,7 +131,7 @@ class _TopSection extends StatelessWidget {
                   const MBadge.live(),
                   const SizedBox(height: 6),
                   MText(
-                    broadcast.hostName.getOrElse((_) => ''),
+                    broadcast.hostName.orEmpty,
                     style: textTheme.captionRegular,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
@@ -254,7 +253,7 @@ class PreStreamDescriptionSection extends StatelessWidget {
 class PreStreamRecentBroadcastsSection extends WatchingWidget {
   const new({required this.creatorId, super.key});
 
-  final String creatorId;
+  final String? creatorId;
 
   @override
   Widget build(BuildContext context) {
@@ -290,8 +289,7 @@ class PreStreamRecentBroadcastsSection extends WatchingWidget {
             broadcast,
             key: ValueKey(broadcast.id),
             onTap: () async {
-              final id = broadcast.id.getOrCrash;
-              await context.push(MRoutes.broadcastRoute(id));
+              await context.push(MRoutes.broadcastRoute(broadcast.id));
             },
           );
         },

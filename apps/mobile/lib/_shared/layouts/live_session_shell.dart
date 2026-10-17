@@ -1,6 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -80,9 +81,7 @@ class LiveSessionShellState extends State<LiveSessionShell>
       select: (manager) => manager.state,
       handler: (context, state, _) {
         if (state is LiveSessionEnded) {
-          context.go(
-            '${MRoutes.broadcasts}/${manager.broadcast.value.id}/ended',
-          );
+          context.go(MRoutes.endedBroadcastRoute(manager.broadcast.value.id));
         }
       },
     );
@@ -94,7 +93,7 @@ class LiveSessionShellState extends State<LiveSessionShell>
         if (!didPop) context.go(MRoutes.home);
       },
       child: _LiveSessionScaffold(
-        title: broadcast.title.getOrElse((_) => ''),
+        title: broadcast.title.orEmpty,
         status: status,
         controller: controller,
         children: widget.children,

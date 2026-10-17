@@ -1,3 +1,5 @@
+import 'package:meno_mobile/_core/value_objects/id.dart';
+
 /// Centralised route registry for the Meno mobile app.
 ///
 /// Two kinds of constant are exposed for every route:
@@ -109,15 +111,15 @@ final class MRoutes {
 
   static const String userProfilePattern = '/users/:userId';
 
-  static String userProfileRoute(String userId, {String? tab}) {
-    return _withQuery('/users/${Uri.encodeComponent(userId)}', {'tab': tab});
+  static String userProfileRoute(Id userId, {String? tab}) {
+    return _withQuery('/users/${Uri.encodeComponent(userId.getOrCrash)}', {'tab': tab});
   }
 
   static const String switchAccountPrefix = '/switch-account';
   static const String switchAccountPattern = '$switchAccountPrefix/:userId';
 
-  static String switchAccountRoute(String userId) {
-    return '/switch-account/${Uri.encodeComponent(userId)}';
+  static String switchAccountRoute(Id userId) {
+    return '/switch-account/${Uri.encodeComponent(userId.getOrCrash)}';
   }
 
   /// Tab values accepted by [userProfileRoute]'s `tab` query parameter.
@@ -139,15 +141,16 @@ final class MRoutes {
   /// Edit an existing broadcast.
   static const String broadcastEditorPattern = '/broadcasts/:broadcastId/edit';
 
-  static String broadcastEditorRoute([String? broadcastId]) {
+  static String broadcastEditorRoute([Id? broadcastId]) {
     if (broadcastId == null || broadcastId.isEmpty) return broadcastEditor;
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/edit';
+
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/edit';
   }
 
   static const String broadcastPattern = '/broadcasts/:broadcastId';
 
-  static String broadcastRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}';
+  static String broadcastRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}';
   }
 
   /// Pre-stream lobby. Registered as a **modal** (`fullscreenDialog`, root
@@ -155,66 +158,66 @@ final class MRoutes {
   /// pushed over the broadcast card that opened it.
   static const String preStreamPattern = '/broadcasts/:broadcastId/pre-stream';
 
-  static String preStreamRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/pre-stream';
+  static String preStreamRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/pre-stream';
   }
 
   /// Live broadcast host/listener shell.
   static const String liveBroadcastPattern = '/broadcasts/:broadcastId/live';
 
-  static String liveBroadcastRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live';
+  static String liveBroadcastRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live';
   }
 
   static const String liveChatPattern = '/broadcasts/:broadcastId/live/chat';
 
-  static String liveChatRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/chat';
+  static String liveChatRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/chat';
   }
 
   static const String liveBiblePattern = '/broadcasts/:broadcastId/live/bible';
 
-  static String liveBibleRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/bible';
+  static String liveBibleRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/bible';
   }
 
   static const String liveNotesPattern = '/broadcasts/:broadcastId/live/notes';
 
-  static String liveNotesRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/notes';
+  static String liveNotesRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/notes';
   }
 
   static const String liveNoteEditorPattern =
       '/broadcasts/:broadcastId/live/notes/:noteId';
 
   static String liveNoteEditorRoute(
-    String broadcastId, [
+    Id broadcastId, [
     String noteId = 'new',
   ]) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/notes/'
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/notes/'
         '${Uri.encodeComponent(noteId)}';
   }
 
   static const String liveFoldersPattern =
       '/broadcasts/:broadcastId/live/folders';
 
-  static String liveFoldersRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/folders';
+  static String liveFoldersRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/folders';
   }
 
   static const String liveFolderPattern =
       '/broadcasts/:broadcastId/live/folders/:folderId';
 
-  static String liveFolderRoute(String broadcastId, String folderId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live/folders/'
+  static String liveFolderRoute(Id broadcastId, String folderId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/folders/'
         '${Uri.encodeComponent(folderId)}';
   }
 
   /// Post-broadcast summary screen.
   static const String endedBroadcastPattern = '/broadcasts/:broadcastId/ended';
 
-  static String endedBroadcastRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/ended';
+  static String endedBroadcastRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/ended';
   }
 
   /// The transition page that sits between the router and a live room.
@@ -225,8 +228,8 @@ final class MRoutes {
   /// here by address rather than by reconstructing the path.
   static const String liveSessionInit = '/broadcasts/:broadcastId/live-session-initialization';
 
-  static String liveSessionInitRoute(String broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId)}/live-session-initialization';
+  static String liveSessionInitRoute(Id broadcastId) {
+    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live-session-initialization';
   }
 
   static const String notes = '/notes';

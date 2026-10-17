@@ -193,7 +193,7 @@ Future<void> _registerAccountScope(
   );
 
   di.registerSingletonWithDependencies<BroadcastLocalService>(
-    () => BroadcastLocalService(di<Database>()),
+    () => BroadcastLocalService(di<Database>(), logger: di<MenoLogger>()),
     dependsOn: [Database],
   );
 

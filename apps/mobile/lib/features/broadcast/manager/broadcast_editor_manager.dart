@@ -39,10 +39,10 @@ final class BroadcastEditorManager implements Disposable {
         }
 
         final created = await _http.create(
-          title: draft.title.getOrCrash,
-          description: draft.description.getOrNull,
+          title: draft.title,
+          description: draft.description.isEmpty ? null : draft.description,
           imageId: draft.imageId,
-          cohosts: draft.cohosts.map((id) => id.getOrElse((_) => '')).toList(),
+          cohosts: [for (final id in draft.cohosts) id.getOrCrash],
           recordingEnabled: draft.record,
         );
         _createdBroadcastId = created.id;
@@ -62,8 +62,7 @@ final class BroadcastEditorManager implements Disposable {
         _isRunning.value = true;
         final BroadcastSession created;
         try {
-          created = (await _http.goLive(broadcastId.getOrCrash))
-              .toDomain(_userId.getOrCrash);
+          created = (await _http.goLive(broadcastId)).toDomain(_userId);
         } finally {
           _isRunning.value = false;
         }
@@ -77,8 +76,8 @@ final class BroadcastEditorManager implements Disposable {
     );
 
     resetForm = .createSyncNoParamNoResult(() {
-      title.value = SingleLineString.empty;
-      description.value = MultiLineString.empty;
+      title.value = '';
+      description.value = '';
       imagePath.value = null;
       cohosts.startTransAction();
       cohosts.clear();
@@ -106,7 +105,7 @@ final class BroadcastEditorManager implements Disposable {
 
     deleteDraft = .createAsyncNoResult<Id>(
       (draftId) async {
-        await _local.deleteDraft(draftId.getOrCrash);
+        await _local.deleteDraft(draftId);
         if (_draftId == draftId) resetForm.run();
         _loadDrafts();
       },
@@ -132,8 +131,11 @@ final class BroadcastEditorManager implements Disposable {
   /// How far the creation this draft describes has got.
   final ValueNotifier<BroadcastCreationStep> step = ValueNotifier(.none);
 
-  final ValueNotifier<SingleLineString> title = ValueNotifier(.empty);
-  final ValueNotifier<MultiLineString> description = ValueNotifier(.empty);
+  /// The title as typed, so half-typed or invalid text survives a save.
+  final ValueNotifier<String> title = ValueNotifier('');
+
+  /// The description as typed, for the same reason.
+  final ValueNotifier<String> description = ValueNotifier('');
 
   /// The locally picked image, until the API has one.
   final imagePath = ValueNotifier<ImageInput?>(null);
@@ -149,13 +151,12 @@ final class BroadcastEditorManager implements Disposable {
   /// A title and a description are what the API requires; the cohost limit is
   /// the editor's own rule and is enforced by [toggleCohost].
   late final ValueListenable<bool> canSubmit = title.map(
-    (value) => value.isValid,
+    (value) => SingleLineString(value).isValid,
   );
 
-  void onTitleChanged(String input) => title.value = SingleLineString(input);
+  void onTitleChanged(String input) => title.value = input;
 
-  void onDescriptionChanged(String input) =>
-      description.value = MultiLineString(input);
+  void onDescriptionChanged(String input) => description.value = input;
 
   void onToggleRecord(bool input) => record.value = input;
 
@@ -254,7 +255,7 @@ final class BroadcastEditorManager implements Disposable {
   static const int _maxCohosts = 2;
 
   void _loadDrafts() {
-    final stored = _local.drafts(_userId.getOrCrash);
+    final stored = _local.drafts(_userId);
     drafts.startTransAction();
     drafts.clear();
     drafts.addAll(stored);
@@ -280,7 +281,7 @@ final class BroadcastEditorManager implements Disposable {
     final draftId = _draftId;
     if (draftId == null) return;
 
-    final existing = _local.draft(draftId.getOrCrash);
+    final existing = _local.draft(draftId);
     if (existing == null) return;
 
     await _local.saveDraft(

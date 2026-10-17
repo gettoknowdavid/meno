@@ -20,7 +20,7 @@ final class BroadcastDetailsManager implements Disposable {
   }) {
     fetch = .createAsyncNoParamNoResult(
       () async {
-        final broadcast = await _http.getBroadcast(_broadcastId.getOrCrash);
+        final broadcast = await _http.getBroadcast(_broadcastId);
         final existing = _proxy.value;
         if (existing == null) {
           _proxy.value = BroadcastProxy(broadcast, _userId);
@@ -28,7 +28,7 @@ final class BroadcastDetailsManager implements Disposable {
           existing.broadcast = broadcast;
         }
         _logger.d(
-          'Loaded broadcast $_broadcastId (${broadcast.state.wire})',
+          'Loaded broadcast ${_broadcastId.orEmpty} (${broadcast.state.wire})',
           tag: MenoLogTag.lifecycle.label,
         );
       },

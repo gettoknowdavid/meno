@@ -136,7 +136,20 @@ final class HttpClient implements Disposable {
             message: 'Expected a list but got ${data.runtimeType}.',
           );
         }
-        return [for (final item in data) fromJson(item)];
+        final items = <T>[];
+        for (final item in data) {
+          try {
+            items.add(fromJson(item));
+          } on Object catch (error, stackTrace) {
+            logger.w(
+              'Skipped a $path item that could not be read',
+              tag: MenoLogTag.network.label,
+              error: error,
+              stackTrace: stackTrace,
+            );
+          }
+        }
+        return items;
       },
     );
   }

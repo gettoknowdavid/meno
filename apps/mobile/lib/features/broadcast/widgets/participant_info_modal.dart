@@ -52,7 +52,7 @@ class ParticipantInfoModal extends WatchingWidget {
               spacing: Insets.sm,
               children: [
                 MText(
-                  participant.fullName.getOrElse((_) => ''),
+                  participant.fullName.orEmpty,
                   style: textTheme.heading3Medium,
                   maxLines: 1,
                   overflow: .ellipsis,
@@ -82,8 +82,7 @@ class ParticipantInfoModal extends WatchingWidget {
           MTextButton(
             label: 'View account',
             onPressed: () async {
-              final id = participant.id.getOrElse((_) => '');
-              await ctx.push(MRoutes.userProfileRoute(id));
+              await ctx.push(MRoutes.userProfileRoute(participant.id));
             },
           ),
         ],

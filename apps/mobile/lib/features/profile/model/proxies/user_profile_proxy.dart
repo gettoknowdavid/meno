@@ -39,9 +39,9 @@ final class UserProfileProxy extends ChangeNotifier {
         _setFollowing(!isFollowing);
         final service = di<ProfileHttpService>();
         if (isFollowing) {
-          await service.follow(id.getOrCrash);
+          await service.follow(id);
         } else {
-          await service.unfollow(id.getOrCrash);
+          await service.unfollow(id);
         }
       },
       undo: (stack, _) => _setFollowing(stack.pop()),
@@ -76,7 +76,7 @@ final class UserProfileProxy extends ChangeNotifier {
   /// The account's id, or the empty string before anything is known.
   Id get id => _profile.id;
 
-  FullName get fullName => _profile.fullName;
+  SingleLineString get fullName => _profile.fullName;
 
   MultiLineString? get bio => _profile.bio;
 

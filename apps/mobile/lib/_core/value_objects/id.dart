@@ -1,4 +1,5 @@
 import 'package:fpdart/fpdart.dart';
+import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
 import 'package:meno_mobile/_core/value_objects/_value_objects.dart';
 import 'package:uuid/uuid.dart';
 
@@ -8,6 +9,20 @@ class Id extends ValueObject<String> {
 
   /// Validates a string input.
   factory fromString(String input) => Id._(_validate(input));
+
+  /// Converts a value the wire sent into an id, or fails the response.
+  ///
+  /// Used at the boundary — DTO mapping, router parameters — where an id that
+  /// is not a UUID means the server sent something the app cannot act on.
+  factory fromWire(String input) {
+    final id = Id.fromString(input);
+    if (id.isValid) return id;
+
+    throw MalformedResponseException(
+      cause: id.failureOrNull,
+      message: 'Expected a UUID but the wire said ${input.trim()}.',
+    );
+  }
 
   const new _(super.value);
 
@@ -32,5 +47,8 @@ class Id extends ValueObject<String> {
 }
 
 extension IdX on Id {
-  bool get isEmpty => this == Id.empty;
+  bool get isEmpty => value.fold(
+    (failure) => failure is RequiredValueException<String>,
+    (_) => false,
+  );
 }

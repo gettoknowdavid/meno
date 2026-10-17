@@ -14,7 +14,7 @@ import 'package:meno_ui/meno_ui.dart';
 class BroadcastDetailsPage extends WatchingWidget {
   const new({required this.broadcastId, super.key});
 
-  final String broadcastId;
+  final Id broadcastId;
 
   @override
   Widget build(BuildContext context) {
@@ -22,7 +22,7 @@ class BroadcastDetailsPage extends WatchingWidget {
       () => BroadcastDetailsManager(
         http: di<BroadcastHttpService>(),
         userId: di<UserManager>().currentUserId.value ?? .empty,
-        broadcastId: Id.fromString(broadcastId),
+        broadcastId: broadcastId,
         logger: di<MenoLogger>(),
       ),
     );
@@ -84,7 +84,7 @@ class BroadcastDetailsView extends WatchingWidget {
 
     return MScaffold(
       appBar: MAppBar.secondary(
-        title: proxy.title.getOrElse((e) => ''),
+        title: proxy.title.orEmpty,
         actions: [
           MIconButton(
             icon: proxy.isFavourited
@@ -106,12 +106,12 @@ class BroadcastDetailsView extends WatchingWidget {
             Spaces.verticalLarge,
             Align(child: _Artwork(imageUrl: proxy.image?.getUrl)),
             Spaces.verticalSmall,
-            _Title(title: proxy.title.getOrElse((e) => '')),
+            _Title(title: proxy.title.orEmpty),
             Spaces.verticalMicro,
             _Creator(
-              name: proxy.creatorName.getOrElse((e) => ''),
+              name: proxy.creatorName.orEmpty,
               onPressed: () =>
-                  context.push(MRoutes.userProfileRoute(proxy.id.getOrCrash)),
+                  context.push(MRoutes.userProfileRoute(proxy.hostId)),
             ),
             Spaces.verticalLarge,
             MPrimaryButton.icon(
@@ -122,7 +122,7 @@ class BroadcastDetailsView extends WatchingWidget {
             Spaces.verticalLarge,
             const MDivider(),
             Spaces.verticalXLarge,
-            _Description(description: proxy.description.getOrElse((e) => '')),
+            _Description(description: proxy.description.orEmpty),
           ],
         ),
       ),
@@ -215,9 +215,9 @@ class _OptionsModal extends StatelessWidget {
         children: [
           _Artwork(imageUrl: broadcast.image?.getUrl),
           Spaces.verticalSmall,
-          _Title(title: broadcast.title.getOrElse((e) => '')),
+          _Title(title: broadcast.title.orEmpty),
           Spaces.verticalMicro,
-          _Creator(name: broadcast.hostName.getOrElse((e) => '')),
+          _Creator(name: broadcast.hostName.orEmpty),
           Spaces.verticalXLarge,
           MModalListTile(
             leading: const Icon(MIcons.user),

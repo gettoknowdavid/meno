@@ -151,7 +151,8 @@ final class SessionInterceptor extends Interceptor {
     }
 
     _logger.d(
-      'Renewed the session for ${credential.userId}; replaying the request',
+      'Renewed the session for ${credential.userId.orEmpty}; '
+      'replaying the request',
       tag: MenoLogTag.network.label,
     );
 
@@ -210,7 +211,7 @@ final class SessionInterceptor extends Interceptor {
       final data = response.data;
       if (response.statusCode != 200 || data is! Map<String, dynamic>) {
         _logger.w(
-          'Session renewal for ${stale.userId} answered '
+          'Session renewal for ${stale.userId.orEmpty} answered '
           '${response.statusCode ?? 'no status'}',
           tag: MenoLogTag.network.label,
         );
@@ -224,7 +225,8 @@ final class SessionInterceptor extends Interceptor {
       final payload = envelope.data;
       if (!envelope.status || payload is! Map<String, dynamic>) {
         _logger.w(
-          'Session renewal for ${stale.userId} was refused: ${envelope.code}',
+          'Session renewal for ${stale.userId.orEmpty} was refused: '
+          '${envelope.code}',
           tag: MenoLogTag.network.label,
         );
         return null;
@@ -244,13 +246,14 @@ final class SessionInterceptor extends Interceptor {
       return renewed;
     } on DioException catch (error) {
       _logger.w(
-        'Session renewal for ${stale.userId} failed: ${error.type.name}',
+        'Session renewal for ${stale.userId.orEmpty} failed: '
+        '${error.type.name}',
         tag: MenoLogTag.network.label,
       );
       return null;
     } on Object catch (error, stackTrace) {
       _logger.e(
-        'Session renewal for ${stale.userId} could not be read',
+        'Session renewal for ${stale.userId.orEmpty} could not be read',
         tag: MenoLogTag.network.label,
         error: error,
         stackTrace: stackTrace,

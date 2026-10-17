@@ -111,8 +111,8 @@ abstract class User with _$User {
 
   /// The first name, for greetings.
   String get firstName {
-    final parts = fullName.getOrCrash.trim().split(RegExp(r'\s+'));
-    return parts.isEmpty ? fullName.getOrCrash : parts.first;
+    final name = fullName.orEmpty.trim();
+    return name.split(RegExp(r'\s+')).first;
   }
 
   /// Whether this is [empty] rather than a real account.

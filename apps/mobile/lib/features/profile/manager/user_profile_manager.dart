@@ -45,7 +45,7 @@ final class UserProfileManager implements Disposable {
   }
 
   /// The account whose profile this is.
-  final String userId;
+  final Id userId;
 
   final ProfileHttpService _http;
   final ProfileCacheService _cache;

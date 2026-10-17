@@ -51,15 +51,14 @@ class LiveSessionBanner extends WatchingWidget {
     if (status.isNotLive) return const SizedBox.shrink();
 
     return _Banner(
-      key: ValueKey('broadcastBanner-${broadcast.id}'),
+      key: ValueKey('broadcastBanner-${broadcast.id.orEmpty}'),
       badgeTitle: status.label,
-      broadcastTitle: broadcast.title.getOrElse((_) => ''),
-      broadcastCreatorName: broadcast.hostName.getOrElse((_) => ''),
+      broadcastTitle: broadcast.title.orEmpty,
+      broadcastCreatorName: broadcast.hostName.orEmpty,
       actionButtonLabel: isHost ? 'End' : 'Leave',
       action: () => _handleAction(context),
       onTap: () async {
-        final id = broadcast.id.getOrCrash;
-        await context.push<void>(MRoutes.liveBroadcastRoute(id));
+        await context.push<void>(MRoutes.liveBroadcastRoute(broadcast.id));
       },
     );
   }

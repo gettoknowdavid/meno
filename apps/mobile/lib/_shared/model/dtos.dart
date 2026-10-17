@@ -33,7 +33,7 @@ abstract class UserDto with _$UserDto {
 extension UserDtoX on UserDto {
   /// This user as the app models it.
   User get toDomain => User(
-    id: Id.fromString(id),
+    id: Id.fromWire(id),
     email: Email(email),
     fullName: FullName(fullName),
     bio: bio == null ? null : MultiLineString(bio!),

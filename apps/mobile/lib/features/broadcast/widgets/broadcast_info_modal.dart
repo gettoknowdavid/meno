@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_session_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
@@ -38,7 +39,7 @@ class BroadcastInfoModal extends WatchingWidget {
           BroadcastArtworkWidget(image: broadcast.image),
           Spaces.verticalSmall,
           BroadcastTitleWidget(
-            title: broadcast.title.getOrElse((_) => ''),
+            title: broadcast.title.orEmpty,
             maxLines: 1,
             padding: const .symmetric(horizontal: 40),
           ),
@@ -49,7 +50,7 @@ class BroadcastInfoModal extends WatchingWidget {
               mainAxisAlignment: .center,
               children: [
                 BroadcastCreatorWidget(
-                  name: broadcast.hostName.getOrElse((_) => ''),
+                  name: broadcast.hostName.orEmpty,
                 ),
                 Spaces.horizontalSmall,
                 const BroadcastStatusWidget(),

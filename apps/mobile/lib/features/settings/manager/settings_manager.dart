@@ -248,7 +248,7 @@ final class SettingsManager implements Disposable {
       final remote = await _http.getSettings();
       if (_user.currentUserId.value != userId) return;
       _settings.value = remote;
-      await _local.saveSettings(userId.getOrCrash, remote);
+      await _local.saveSettings(userId, remote);
     } on MenoException catch (error) {
       _logger.w(
         'Could not load settings (${error.code}); showing the cached copy',
@@ -319,7 +319,7 @@ final class SettingsManager implements Disposable {
   void _persistLocally() {
     final userId = _userId;
     if (userId == null || userId.isEmpty) return;
-    unawaited(_local.saveSettings(userId.getOrCrash, _settings.value));
+    unawaited(_local.saveSettings(userId, _settings.value));
   }
 
   /// Repaints the app in whatever theme the current account's settings ask for.
@@ -359,6 +359,6 @@ final class SettingsManager implements Disposable {
       return;
     }
     _settings.value =
-        _local.getSettings(userId.getOrCrash) ?? UserSettings.empty;
+        _local.getSettings(userId) ?? UserSettings.empty;
   }
 }

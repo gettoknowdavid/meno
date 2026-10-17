@@ -77,7 +77,7 @@ extension AvatarDtoX on AvatarDto {
 /// The domain view of a [MeDto].
 extension MeDtoX on MeDto {
   MyProfile get toDomain => MyProfile(
-    id: Id.fromString(id),
+    id: Id.fromWire(id),
     fullName: FullName(fullName),
     email: Email(email),
     emailVerified: emailVerified,
@@ -116,8 +116,8 @@ extension MyProfileDtoX on MyProfile {
 extension ProfileDtoX on ProfileDto {
   /// This profile as the app models another account.
   Profile get toDomain => Profile(
-    id: Id.fromString(id),
-    fullName: FullName(fullName),
+    id: Id.fromWire(id),
+    fullName: SingleLineString(fullName),
     bio: bio != null ? MultiLineString(bio!) : null,
     avatarUrl: ImageInput.fromUrl(avatarUrl),
     isFollowing: isFollowing,
@@ -135,7 +135,7 @@ extension ProfileEntityDtoX on Profile {
   /// This profile as the API writes it, for the cache.
   ProfileDto get toDto => ProfileDto(
     id: id.getOrCrash,
-    fullName: fullName.getOrCrash,
+    fullName: fullName.orEmpty,
     bio: bio?.getOrNull,
     avatarUrl: avatarUrl?.toUrlOrFilePathOrNull,
     isFollowing: isFollowing,
