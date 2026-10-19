@@ -46,7 +46,7 @@ final class BroadcastEditorManager implements Disposable {
           recordingEnabled: draft.record,
         );
         _createdBroadcastId = created.id;
-        step.value = BroadcastCreationStep.created;
+        step.value = .created;
         await _persistCreationState(created.id, step.value);
       },
       errorFilterFn: menoExceptionFilter,
@@ -67,7 +67,7 @@ final class BroadcastEditorManager implements Disposable {
           _isRunning.value = false;
         }
         session.value = created;
-        step.value = BroadcastCreationStep.started;
+        step.value = .started;
         await _persistCreationState(broadcastId, step.value);
         await _live.start(broadcastId, session: created);
       },
@@ -123,6 +123,8 @@ final class BroadcastEditorManager implements Disposable {
 
   /// The draft being edited, or null while the form is new.
   Id? _draftId;
+
+  /// The broadcast that was created by this draft, if any.
   Id? _createdBroadcastId;
 
   /// The account's drafts, newest edit first.

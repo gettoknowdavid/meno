@@ -6,24 +6,6 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
-/// The broadcast one live scope is open for.
-@immutable
-final class LiveSession {
-  const new({required this.broadcastId, required this.userId});
-
-  final Id broadcastId;
-  final Id userId;
-
-  @override
-  bool operator ==(Object other) =>
-      other is LiveSession &&
-      other.broadcastId == broadcastId &&
-      other.userId == userId;
-
-  @override
-  int get hashCode => Object.hash(broadcastId, userId);
-}
-
 /// Registers a live broadcast's own services in that broadcast's scope.
 typedef LiveScopeRegistrar = FutureOr<void> Function(
   GetIt scope,
@@ -88,9 +70,11 @@ final class LiveScopeManager implements Disposable {
   /// A stream rather than the socket service: this manager has nothing to say
   /// to a room, so it is given only what it listens to.
   final Stream<EndedBroadcast> _endedBroadcasts;
+
   final LiveScopeRegistrar? _register;
 
   StreamSubscription<EndedBroadcast>? _endedSubscription;
+
   bool _disposed = false;
 
   final ValueNotifier<Id?> _broadcastId = ValueNotifier(.empty);

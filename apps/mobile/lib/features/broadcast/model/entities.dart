@@ -235,8 +235,7 @@ abstract class BroadcastDraft with _$BroadcastDraft {
       (createdBroadcastId?.isValid ?? false);
 
   /// Whether the draft has been written to at all.
-  bool get isEmpty =>
-      title.trim().isEmpty && description.trim().isEmpty;
+  bool get isEmpty => title.trim().isEmpty && description.trim().isEmpty;
 }
 
 /// Which way a broadcast list is ordered. Mirrors `meno_core::Order`.
@@ -625,4 +624,10 @@ enum ParticipantRole {
     }
     return ParticipantRole.unknown;
   }
+}
+
+/// The broadcast one live scope is open for.
+@freezed
+abstract class LiveSession with _$LiveSession {
+  const factory({required Id broadcastId, required Id userId}) = _LiveSession;
 }
