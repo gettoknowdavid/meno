@@ -31,12 +31,14 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.avatarImageUrl,
     this.onAvatarTap,
     this.onNotificationBellTap,
+    this.titleTextStyle,
   }) : variant = .primary,
        child = _PrimaryAppBarImpl(
          title,
          backText: backText,
          onBackPressed: onBackPressed,
          implyLeading: implyLeading,
+         titleTextStyle: titleTextStyle,
        );
 
   /// Creates a secondary app bar with the given title.
@@ -64,6 +66,7 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.avatarImageUrl,
     this.onAvatarTap,
     this.onNotificationBellTap,
+    this.titleTextStyle,
   }) : variant = .secondary,
        child = _SecondaryAppBarImpl(
          title,
@@ -71,6 +74,8 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
          centerTitle: centerTitle,
          actions: actions,
          showBottomBorder: showBottomBorder,
+         implyLeading: implyLeading,
+         titleTextStyle: titleTextStyle,
        );
 
   /// Creates a home app bar with the given title.
@@ -97,6 +102,7 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.actions,
     this.showBottomBorder = false,
     this.onBackPressed,
+    this.titleTextStyle,
   }) : variant = .home,
        child = _HomeAppBarImpl(
          title,
@@ -105,6 +111,7 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
          avatarImageUrl: avatarImageUrl,
          onAvatarTap: onAvatarTap,
          onNotificationBellTap: onNotificationBellTap,
+         titleTextStyle: titleTextStyle,
        );
 
   /// The title of the app bar.
@@ -138,6 +145,9 @@ class MAppBar extends StatelessWidget implements PreferredSizeWidget {
   /// For primary app bar: The text for the back button. Defaults to 'Back'.
   final String backText;
 
+  /// TextStyle of the title
+  final TextStyle? titleTextStyle;
+
   /// The content of the app bar.
   final Widget child;
 
@@ -161,12 +171,14 @@ class _PrimaryAppBarImpl extends StatelessWidget {
     required this.backText,
     required this.implyLeading,
     this.onBackPressed,
+    this.titleTextStyle,
   });
 
   final String title;
   final String backText;
   final VoidCallback? onBackPressed;
   final bool implyLeading;
+  final TextStyle? titleTextStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -201,7 +213,7 @@ class _PrimaryAppBarImpl extends StatelessWidget {
                   ],
                   MText(
                     title,
-                    style: textTheme.heading2Bold,
+                    style: titleTextStyle ?? textTheme.heading2Bold,
                     color: colors.onPrimary,
                   ),
                 ],
@@ -229,6 +241,8 @@ class _SecondaryAppBarImpl extends StatelessWidget {
     this.centerTitle = false,
     this.actions,
     this.showBottomBorder = false,
+    this.implyLeading = true,
+    this.titleTextStyle,
   });
 
   final String title;
@@ -236,12 +250,15 @@ class _SecondaryAppBarImpl extends StatelessWidget {
   final bool centerTitle;
   final List<Widget>? actions;
   final bool showBottomBorder;
+  final bool implyLeading;
+  final TextStyle? titleTextStyle;
 
   @override
   Widget build(BuildContext context) {
     return AppBar(
-      leading: const MBackButton(),
+      leading: implyLeading ? const MBackButton() : null,
       centerTitle: centerTitle,
+      automaticallyImplyLeading: implyLeading,
       bottom: !showBottomBorder
           ? null
           : const PreferredSize(
@@ -256,6 +273,7 @@ class _SecondaryAppBarImpl extends StatelessWidget {
         overflow: .ellipsis,
         maxLines: 1,
         color: MColorScheme.of(context).onBackground,
+        style: titleTextStyle,
       ),
       actions: actions,
     );
@@ -270,6 +288,7 @@ class _HomeAppBarImpl extends StatelessWidget {
     this.avatarImageUrl,
     this.onAvatarTap,
     this.onNotificationBellTap,
+    this.titleTextStyle,
   });
 
   final String title;
@@ -278,6 +297,7 @@ class _HomeAppBarImpl extends StatelessWidget {
   final String? avatarImageUrl;
   final VoidCallback? onAvatarTap;
   final VoidCallback? onNotificationBellTap;
+  final TextStyle? titleTextStyle;
 
   @override
   Widget build(BuildContext context) {
@@ -297,7 +317,10 @@ class _HomeAppBarImpl extends StatelessWidget {
                   mainAxisSize: .min,
                   children: [
                     MText('Hello,', style: textTheme.captionRegular),
-                    MText(title, style: textTheme.subheadingMedium),
+                    MText(
+                      title,
+                      style: titleTextStyle ?? textTheme.subheadingMedium,
+                    ),
                   ],
                 ),
               ),

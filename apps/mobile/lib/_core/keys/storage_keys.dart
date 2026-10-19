@@ -51,4 +51,8 @@ final class StorageKeys {
   /// Device storage is shared by every account that signs in on it, so anything
   /// that belongs to a user has to be scoped to them.
   static String forUser(String key, String userId) => '${key}_$userId';
+
+  static String permissionPrimerDeclined(String typeName) {
+    return 'permission-primer-$typeName';
+  }
 }

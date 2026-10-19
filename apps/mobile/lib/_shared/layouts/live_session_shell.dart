@@ -87,8 +87,6 @@ class LiveSessionShellState extends State<LiveSessionShell>
     );
 
     return PopScope(
-      // Backing out of a live room leaves it rather than parking a dead session
-      // behind the home tab.
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) context.go(MRoutes.home);
       },

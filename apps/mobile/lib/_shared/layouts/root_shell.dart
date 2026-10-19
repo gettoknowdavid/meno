@@ -1,5 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/_shared/services/permission_prompts.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -70,7 +71,12 @@ class RootShell extends StatelessWidget {
         onTap: _onTabSelected,
         destinations: _tabs,
         centerItem: MMicrophone(
-          onTap: () => context.push(MRoutes.webCreateBroadcast),
+          onTap: () async {
+            final isMicPerm = await PermissionPrompts.broadcast(context);
+            if (isMicPerm && context.mounted) {
+              await context.push(MRoutes.broadcastEditor);
+            }
+          },
         ),
       );
     }

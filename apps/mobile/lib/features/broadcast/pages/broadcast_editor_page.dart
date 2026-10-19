@@ -54,31 +54,38 @@ class BroadcastEditorPage extends WatchingWidget {
     );
 
     final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
+
     return PopScope(
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) manager.resetForm.run();
       },
-      child: MScaffold(
-        appBar: AppBar(
-          leading: const SizedBox(),
-          leadingWidth: 0,
-          title: const MHeader(
-            title: MText.heading3('Go Live Now', weight: .bold),
-            padding: .zero,
+      child: Material(
+        child: MScaffold(
+          appBar: MAppBar.secondary(
+            title: 'Go Live Now',
+            implyLeading: false,
+            titleTextStyle: textTheme.heading3Bold,
+            // leading: const SizedBox(),
+            // leadingWidth: 0,
+            // title: const MHeader(
+            //   title: MText.heading3('Go Live Now', weight: .bold),
+            //   padding: .zero,
+            // ),
+            actions: [
+              InkWell(
+                onTap: () {
+                  manager.resetForm.run();
+                  context.pop();
+                },
+                child: MText('Cancel', color: colors.onBackgroundVariant),
+              ),
+              Spaces.horizontalLarge,
+            ],
           ),
-          actions: [
-            InkWell(
-              onTap: () {
-                manager.resetForm.run();
-                context.pop();
-              },
-              child: MText('Cancel', color: colors.onBackgroundVariant),
-            ),
-            Spaces.horizontalLarge,
-          ],
+          body: const SingleChildScrollView(child: _EditorFormWidget()),
+          persistentFooterButtons: const [StartBroadcastButton()],
         ),
-        body: const SingleChildScrollView(child: _EditorFormWidget()),
-        persistentFooterButtons: const [StartBroadcastButton()],
       ),
     );
   }
@@ -264,8 +271,7 @@ class _DescriptionField extends WatchingWidget {
       controller: controller,
       onChanged: manager.onDescriptionChanged,
       enabled: !isLoading,
-      validator: (_) =>
-          description.trim().isEmpty ? _emptyFieldMessage : null,
+      validator: (_) => description.trim().isEmpty ? _emptyFieldMessage : null,
     );
   }
 }

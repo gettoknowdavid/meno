@@ -1,211 +1,258 @@
+import 'dart:async';
 import 'dart:io';
 
-import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/services/local_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 
 /// Tracks and requests the app's runtime permissions.
 ///
-/// Each permission's state is published through a [ValueNotifier] and every
-/// request is a [Command], so a screen can watch a permission and drive it
-/// without owning any of the platform detail. Only the microphone matters until
-/// somebody broadcasts: permissions are asked for when a feature needs them,
-/// never at startup.
+/// A permission belongs to the device, not to an account, so this service lives
+/// in the root scope: switching accounts neither re-asks nor forgets. The
+/// platform is the source of truth, and the notifiers below are a cache of it
+/// that is refreshed whenever the app comes back to the foreground — which is
+/// also how a change made in Settings reaches the screens.
+///
+/// Permissions are asked for when a feature needs them, never at startup:
+///
+/// * the microphone, on the host's "Start Broadcast" and on unmuting;
+/// * notifications, on an explicit switch in settings, or after the user
+///   subscribes to somebody (their first reason to want one);
+/// * the camera and the photo library are *not* here. `image_picker` uses the
+///   system camera and the system photo picker, which need no permission, and
+///   `MediaService` reports the one case where the platform refuses.
+///
+/// How a request talks to the user is up to the screen: it hands in a
+/// [PermissionContext] and the service decides *when* each callback is needed.
 final class PermissionsService implements Disposable {
-  /// Creates a service over [_logger].
-  new(this._logger);
+  /// Creates a service over [_logger] and the device's [_storage].
+  new(this._storage, this._logger) {
+    _lifecycle = AppLifecycleListener(onResume: _onResume);
+    checkPermissions = .createAsyncNoParamNoResult(
+      _checkAllPermissions,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.check',
+    );
+    requestMicrophone = .createAsyncNoResult(
+      (context) => _request(_microphoneSpec, context),
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.microphone',
+    );
+    requestNotification = .createAsyncNoResult(
+      (context) => _request(_notificationSpec, context),
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.notifications',
+    );
+    requestBackground = .createAsyncNoParamNoResult(
+      _requestBackground,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.background',
+    );
+    requestBroadcast = .createAsyncNoResult(
+      _requestBroadcast,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.broadcast',
+    );
+    disableBackground = .createAsyncNoParam<bool>(
+      _disableBackground,
+      initialValue: false,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'permissions.disableBackground',
+    );
+  }
 
+  final LocalStorage _storage;
   final MenoLogger _logger;
+
+  late final AppLifecycleListener _lifecycle;
+
+  /// How long "not now" to an explanation is respected.
+  static const Duration _primerCooldown = Duration(days: 14);
+
+  /// Ask, explain and re-ask, send to Settings: the longest a request goes.
+  static const int _maxAttempts = 3;
 
   /// The microphone permission's last known state.
   final ValueNotifier<PermissionState> microphone = ValueNotifier(
-    const PermissionState.unknown(),
+    const .unknown(),
   );
 
   /// The notification permission's last known state.
   final ValueNotifier<PermissionState> notifications = ValueNotifier(
-    const PermissionState.unknown(),
+    const .unknown(),
   );
 
   /// The background-execution permission's last known state (Android only).
   final ValueNotifier<PermissionState> background = ValueNotifier(
-    const PermissionState.unknown(),
+    const .unknown(),
+  );
+
+  late final _Spec _microphoneSpec = _Spec(
+    PermissionType.microphone,
+    Permission.microphone,
+    microphone,
+    _microphoneCopy,
+  );
+
+  late final _Spec _notificationSpec = _Spec(
+    PermissionType.notification,
+    Permission.notification,
+    notifications,
+    _notificationCopy,
   );
 
   /// Refreshes every tracked permission.
-  late final Command<void, void> checkPermissions =
-      Command.createAsyncNoParamNoResult(
-        _checkAllPermissions,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.check',
-      );
+  late final Command<void, void> checkPermissions;
 
-  /// Requests the microphone, explaining a refusal when [PermissionContext]
-  /// supplies the copy.
-  late final Command<PermissionContext, void> requestMicrophone =
-      Command.createAsyncNoResult(
-        _requestMicrophone,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.microphone',
-      );
+  /// Requests the microphone.
+  late final Command<PermissionContext, void> requestMicrophone;
 
-  /// Requests notifications, explaining a refusal when one is supplied.
-  late final Command<PermissionContext, void> requestNotification =
-      Command.createAsyncNoResult(
-        _requestNotification,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.notifications',
-      );
+  /// Requests notifications.
+  late final Command<PermissionContext, void> requestNotification;
 
   /// Requests background execution (Android only).
-  late final Command<PermissionContext, void> requestBackground =
-      Command.createAsyncNoResult(
-        _requestBackground,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.background',
-      );
+  late final Command<void, void> requestBackground;
 
-  /// Requests everything a broadcast needs, in the order it needs it.
+  /// Requests what going on air needs.
   ///
-  /// The microphone is the gate: without it the rest is moot, so the flow stops
-  /// rather than piling up prompts the user cannot act on.
-  late final Command<PermissionContext, void> requestBroadcast =
-      Command.createAsyncNoResult(
-        _requestBroadcast,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.broadcast',
-      );
+  /// The microphone is the gate, and the only one: without it the broadcast
+  /// would be silent. Background execution (Android) is asked for after it so
+  /// the broadcast survives a locked screen, but refusing it does not stop the
+  /// broadcast. Notifications are not part of this: they are not needed to
+  /// broadcast, and a third system dialog in a row is how permissions get
+  /// denied.
+  late final Command<PermissionContext, void> requestBroadcast;
 
   /// Turns background execution off.
-  late final Command<void, bool> disableBackground =
-      Command.createAsyncNoParam<bool>(
-        _disableBackground,
-        initialValue: false,
-        errorFilterFn: menoExceptionFilter,
-        debugName: 'permissions.disableBackground',
-      );
+  late final Command<void, bool> disableBackground;
 
   /// Whether a broadcast could start right now.
   bool get canBroadcast =>
       microphone.value is PermissionGranted &&
       (!Platform.isAndroid || background.value is PermissionGranted);
 
-  /// Whether the platform wants an explanation before asking for [type] again.
-  Future<bool> shouldShowRationale(PermissionType type) => switch (type) {
-    .microphone => Permission.microphone.shouldShowRequestRationale,
-    .notification => Permission.notification.shouldShowRequestRationale,
-    .background => Future.value(false),
-  };
+  /// Whether the microphone is granted right now, read from the platform.
+  ///
+  /// For code that must not prompt — joining a room — and only needs to know
+  /// whether it may publish. A failed read answers false.
+  Future<bool> hasMicrophone() async {
+    try {
+      final status = await Permission.microphone.status;
+      _set(microphone, status);
+      return status.isGranted;
+    } on Exception catch (error) {
+      _logger.w(
+        'Could not read the microphone permission',
+        tag: MenoLogTag.permissions.label,
+        error: error,
+      );
+      return false;
+    }
+  }
+
+  /// Opens the app's page in the system settings.
+  Future<bool> openSettings() => openAppSettings();
 
   /// Refreshes every permission at once.
   Future<void> _checkAllPermissions() async {
     await Future.wait([
-      _checkMicrophone(),
-      _checkNotification(),
+      _check(_microphoneSpec),
+      _check(_notificationSpec),
       if (Platform.isAndroid) _checkBackground(),
     ]);
   }
 
-  Future<void> _checkMicrophone() async {
-    try {
-      _set(microphone, await Permission.microphone.status);
-    } on Exception catch (error) {
-      _fail(microphone, 'checking microphone permission', error);
-    }
+  /// Re-reads what Settings may have changed while the app was away.
+  void _onResume() {
+    if (!checkPermissions.isRunning.value) checkPermissions.run();
   }
 
-  Future<void> _checkNotification() async {
+  Future<void> _check(_Spec spec) async {
     try {
-      _set(notifications, await Permission.notification.status);
+      _set(spec.notifier, await spec.permission.status);
     } on Exception catch (error) {
-      _fail(notifications, 'checking notification permission', error);
+      _fail(spec.notifier, 'checking ${spec.type.displayName}', error);
     }
   }
 
   Future<void> _checkBackground() async {
     try {
       background.value = await FlutterBackground.hasPermissions
-          ? const PermissionState.granted()
-          : const PermissionState.denied();
+          ? const .granted()
+          : const .denied();
     } on Exception catch (error) {
       _fail(background, 'checking background permission', error);
     }
   }
 
-  Future<void> _requestMicrophone(PermissionContext context) async {
-    microphone.value = const PermissionState.requesting();
+  /// Gets [spec]'s permission granted, as far as the user allows.
+  ///
+  /// One state machine for every permission, driven by what the platform says
+  /// and by which callbacks [context] supplies:
+  ///
+  /// * granted — nothing to do, and nothing shown;
+  /// * never asked — the system prompt, preceded by [PermissionContext
+  ///   .showPrimer] when the screen wants to explain first (a "not now" there
+  ///   is remembered, and the question is not repeated for a while);
+  /// * refused once — [PermissionContext.showRationale] decides whether to ask
+  ///   again, which is only useful where the platform will show its prompt a
+  ///   second time (Android);
+  /// * refused for good — [PermissionContext.showSettingsPrompt] decides
+  ///   whether to send the user to Settings, the only place left to change it.
+  ///
+  /// A callback the screen did not supply is a step it did not want: no
+  /// primer means ask straight away, and no rationale or settings prompt means
+  /// give up quietly.
+  Future<void> _request(_Spec spec, PermissionContext context) async {
     try {
-      _set(microphone, await Permission.microphone.request());
-      switch (microphone.value) {
-        case PermissionDenied():
-          await context.showRationale?.call(
-            const PermissionRationale(
-              title: 'Microphone access required',
-              message:
-                  'Microphone access is essential for broadcasting your voice '
-                  'to listeners. Without it, you cannot start a broadcast.',
-              permission: PermissionType.microphone,
-            ),
-          );
-        case PermissionPermanentlyDenied():
-          final shouldOpen = await context.showSettingsPrompt?.call(
-            const PermissionRationale(
-              title: 'Microphone permission required',
-              message:
-                  'Microphone permission is permanently denied. Enable it in '
-                  'Settings to start broadcasting.',
-              permission: PermissionType.microphone,
-            ),
-          );
-          if (shouldOpen ?? false) {
-            await openAppSettings();
-            await _checkMicrophone();
+      for (var attempt = 0; attempt < _maxAttempts; attempt++) {
+        final status = await spec.permission.status;
+        _set(spec.notifier, status);
+
+        if (status.isGranted ||
+            status.isLimited ||
+            status.isProvisional ||
+            status.isRestricted) {
+          return;
+        }
+
+        if (status.isPermanentlyDenied) {
+          final open = await context.showSettingsPrompt?.call(spec.copy);
+          if (open ?? false) await openAppSettings();
+          return;
+        }
+
+        final isReAsk =
+            attempt > 0 || await spec.permission.shouldShowRequestRationale;
+        if (isReAsk) {
+          final retry = await context.showRationale?.call(spec.copy);
+          if (!(retry ?? false)) return;
+        } else if (context.showPrimer case final primer?) {
+          if (_primerSnoozed(spec.type)) return;
+          if (!await primer(spec.copy)) {
+            await _snoozePrimer(spec.type);
+            return;
           }
-        case PermissionGranted():
-        case PermissionRestricted():
-        case PermissionUnknown():
-        case PermissionRequesting():
-        case PermissionError():
-          break;
+        }
+
+        spec.notifier.value = const .requesting();
+        _set(spec.notifier, await spec.permission.request());
       }
     } on Exception catch (error) {
-      _fail(microphone, 'requesting microphone permission', error);
+      _fail(spec.notifier, 'requesting ${spec.type.displayName}', error);
     }
   }
 
-  Future<void> _requestNotification(PermissionContext context) async {
-    notifications.value = const PermissionState.requesting();
-    try {
-      _set(notifications, await Permission.notification.request());
-      if (notifications.value is! PermissionPermanentlyDenied) return;
-
-      final shouldOpen = await context.showSettingsPrompt?.call(
-        const PermissionRationale(
-          title: 'Notification permission',
-          message:
-              'Notifications keep you updated about your broadcasts and '
-              'interactions. Enable them in Settings.',
-          permission: PermissionType.notification,
-        ),
-      );
-      if (shouldOpen ?? false) {
-        await openAppSettings();
-        await _checkNotification();
-      }
-    } on Exception catch (error) {
-      _fail(notifications, 'requesting notification permission', error);
-    }
-  }
-
-  Future<void> _requestBackground(PermissionContext context) async {
+  Future<void> _requestBackground() async {
     if (!Platform.isAndroid) {
-      background.value = const PermissionState.granted();
+      background.value = const .granted();
       return;
     }
 
-    background.value = const PermissionState.requesting();
+    background.value = const .requesting();
     try {
       var granted = await FlutterBackground.hasPermissions;
       if (!granted) {
@@ -213,42 +260,23 @@ final class PermissionsService implements Disposable {
           androidConfig: const FlutterBackgroundAndroidConfig(
             notificationTitle: 'Menō Broadcasting',
             notificationText: 'Broadcast is running in background',
-            notificationImportance: AndroidNotificationImportance.high,
+            notificationImportance: .high,
             notificationIcon: AndroidResource(name: 'ic_stat_ic_notification'),
           ),
         );
       }
 
-      background.value = granted
-          ? const PermissionState.granted()
-          : const PermissionState.denied();
-
-      if (!granted) {
-        await context.showRationale?.call(
-          const PermissionRationale(
-            title: 'Background processing',
-            message:
-                'Background processing lets your broadcast continue while you '
-                'switch apps or lock your screen.',
-            permission: PermissionType.background,
-          ),
-        );
-      }
+      // Best effort: the system dialog was the explanation, and a broadcast
+      // that cannot outlive a locked screen is still a broadcast.
+      background.value = granted ? const .granted() : const .denied();
     } on Exception catch (error) {
       _fail(background, 'requesting background permission', error);
     }
   }
 
-  /// Requests the broadcast set in the order the platform expects.
-  ///
-  /// Each request publishes its own result, so there is no re-read at the end:
-  /// the notifiers already hold the answer.
   Future<void> _requestBroadcast(PermissionContext context) async {
-    await _checkAllPermissions();
+    await _request(_microphoneSpec, context);
 
-    if (microphone.value is! PermissionGranted) {
-      await _requestMicrophone(context);
-    }
     if (microphone.value is! PermissionGranted) {
       _logger.w(
         'Broadcast permissions abandoned: the microphone was not granted',
@@ -257,11 +285,8 @@ final class PermissionsService implements Disposable {
       return;
     }
 
-    if (notifications.value is! PermissionGranted) {
-      await _requestNotification(context);
-    }
     if (Platform.isAndroid && background.value is! PermissionGranted) {
-      await _requestBackground(context);
+      await _requestBackground();
     }
   }
 
@@ -279,11 +304,43 @@ final class PermissionsService implements Disposable {
     }
   }
 
+  /// Whether the user recently declined [type]'s explanation.
+  bool _primerSnoozed(PermissionType type) {
+    final declinedAt = _storage.getInt(
+      StorageKeys.permissionPrimerDeclined(type.name),
+    );
+    if (declinedAt == null) return false;
+
+    final since = DateTime.now().difference(
+      DateTime.fromMillisecondsSinceEpoch(declinedAt),
+    );
+    return since < _primerCooldown;
+  }
+
+  Future<void> _snoozePrimer(PermissionType type) async {
+    try {
+      await _storage.setInt(
+        StorageKeys.permissionPrimerDeclined(type.name),
+        value: DateTime.now().millisecondsSinceEpoch,
+      );
+    } on StorageException catch (error) {
+      // The worst case is being asked again sooner than intended.
+      _logger.w(
+        'Could not remember declining ${type.displayName}',
+        tag: MenoLogTag.permissions.label,
+        error: error,
+      );
+    }
+  }
+
   /// Publishes [status] as [notifier]'s new state.
   void _set(ValueNotifier<PermissionState> notifier, PermissionStatus status) {
-    notifier.value = PermissionState.fromStatus(status);
+    final next = PermissionState.fromStatus(status);
+    if (notifier.value.runtimeType == next.runtimeType) return;
+
+    notifier.value = next;
     _logger.d(
-      '${_name(notifier)} is now ${notifier.value.runtimeType}',
+      '${_name(notifier)} is now ${next.runtimeType}',
       tag: MenoLogTag.permissions.label,
     );
   }
@@ -294,12 +351,8 @@ final class PermissionsService implements Disposable {
     String action,
     Object error,
   ) {
-    _logger.e(
-      'Error $action',
-      tag: MenoLogTag.permissions.label,
-      error: error,
-    );
-    notifier.value = PermissionState.error(error.toString());
+    _logger.e('Error $action', tag: MenoLogTag.permissions.label, error: error);
+    notifier.value = .error(error.toString());
     throw UnknownException(cause: error);
   }
 
@@ -312,6 +365,8 @@ final class PermissionsService implements Disposable {
 
   @override
   Future<void> onDispose() async {
+    _lifecycle.dispose();
+
     microphone.dispose();
     notifications.dispose();
     background.dispose();
@@ -324,6 +379,37 @@ final class PermissionsService implements Disposable {
     disableBackground.dispose();
   }
 }
+
+/// One permission, with everything [PermissionsService._request] needs.
+final class _Spec {
+  const new(this.type, this.permission, this.notifier, this.copy);
+
+  final PermissionType type;
+  final Permission permission;
+  final ValueNotifier<PermissionState> notifier;
+  final PermissionRationale copy;
+}
+
+const PermissionRationale _microphoneCopy = PermissionRationale(
+  permission: PermissionType.microphone,
+  title: 'Microphone access needed',
+  message:
+      'Menō needs your microphone so listeners can hear you. You can mute '
+      'yourself at any time during a broadcast.',
+  settingsMessage:
+      'Microphone access is turned off for Menō. Turn it on in Settings to '
+      'go live.',
+);
+
+const PermissionRationale _notificationCopy = PermissionRationale(
+  permission: PermissionType.notification,
+  title: 'Know when they go live',
+  message:
+      'Turn on notifications to hear when the people you subscribe to go live.',
+  settingsMessage:
+      'Notifications are turned off for Menō. Turn them on in Settings to '
+      'hear when broadcasts go live.',
+);
 
 /// A permission's state, as far as the app knows it.
 sealed class PermissionState {
@@ -354,11 +440,10 @@ sealed class PermissionState {
   factory fromStatus(PermissionStatus status) => switch (status) {
     PermissionStatus.granted ||
     PermissionStatus.limited ||
-    PermissionStatus.provisional => const PermissionState.granted(),
-    PermissionStatus.denied => const PermissionState.denied(),
-    PermissionStatus.permanentlyDenied =>
-      const PermissionState.permanentlyDenied(),
-    PermissionStatus.restricted => const PermissionState.restricted(),
+    PermissionStatus.provisional => const .granted(),
+    PermissionStatus.denied => const .denied(),
+    PermissionStatus.permanentlyDenied => const .permanentlyDenied(),
+    PermissionStatus.restricted => const .restricted(),
   };
 }
 
@@ -421,36 +506,57 @@ extension PermissionTypeX on PermissionType {
   };
 }
 
-/// What a request should say when it needs to explain itself.
+/// Asks the user something about [PermissionRationale] and answers whether
+/// they said yes.
+typedef PermissionPrompt = Future<bool> Function(PermissionRationale copy);
+
+/// How a request may talk to the user.
 ///
-/// Keeps the copy with the screen that owns it: the service knows when to ask
-/// and the screen knows how to say it.
+/// Keeps the wording with the screen that owns it: the service knows when a
+/// step is needed and the screen knows how to say it. A step the screen leaves
+/// out is skipped, so [silent] asks the platform and never interrupts.
 @immutable
 final class PermissionContext {
-  const new({this.showRationale, this.showSettingsPrompt});
+  const new({this.showPrimer, this.showRationale, this.showSettingsPrompt});
 
-  /// Explains why the permission is wanted before the platform asks again.
-  final Future<void> Function(PermissionRationale)? showRationale;
+  /// Asks nothing of the user beyond the system's own prompt.
+  static const PermissionContext silent = PermissionContext();
 
-  /// Offers to open the app's settings. Answers whether the user accepted.
-  final Future<bool> Function(PermissionRationale)? showSettingsPrompt;
+  /// Explains the ask before the platform's prompt, the first time only.
+  ///
+  /// Answering no spends nothing — the platform's one-shot prompt stays unused
+  /// — and the question is not repeated for a while. Absent: ask straight away.
+  final PermissionPrompt? showPrimer;
+
+  /// Explains why, after a refusal, and answers whether to ask again.
+  ///
+  /// Absent: do not ask again.
+  final PermissionPrompt? showRationale;
+
+  /// Offers the app's settings, once only they can help, and answers whether
+  /// the user accepted. Absent: say nothing.
+  final PermissionPrompt? showSettingsPrompt;
 }
 
-/// The copy a rationale prompt shows.
+/// The copy a permission prompt shows.
 @immutable
 final class PermissionRationale {
   const new({
+    required this.permission,
     required this.title,
     required this.message,
-    required this.permission,
+    required this.settingsMessage,
   });
+
+  /// The permission being explained.
+  final PermissionType permission;
 
   /// The prompt's heading.
   final String title;
 
-  /// The prompt's body.
+  /// Why the permission is wanted.
   final String message;
 
-  /// The permission being explained.
-  final PermissionType permission;
+  /// What to say when only the system settings can grant it.
+  final String settingsMessage;
 }

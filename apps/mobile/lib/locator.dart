@@ -1,6 +1,5 @@
 import 'dart:async';
 
-import 'package:firebase_messaging/firebase_messaging.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -88,13 +87,12 @@ void _registerCore(Config config) {
 /// until a screen that needs them resolves one. That is what keeps a cold start
 /// free of prompts.
 void _registerPlatformServices() {
-  di.registerLazySingleton<PermissionsService>(
-    () => PermissionsService(di<MenoLogger>()),
-    dispose: (service) => service.onDispose(),
+  di.registerSingletonWithDependencies<PermissionsService>(
+    () => PermissionsService(di<LocalStorage>(), di<MenoLogger>()),
+    dependsOn: [LocalStorage],
   );
   di.registerLazySingleton<PushNotificationsService>(
-    () =>
-        PushNotificationsService(FirebaseMessaging.instance, di<MenoLogger>()),
+    () => PushNotificationsService(.instance, di<MenoLogger>()),
     dispose: (service) => service.onDispose(),
   );
   di.registerLazySingleton<LocalNotificationsService>(
