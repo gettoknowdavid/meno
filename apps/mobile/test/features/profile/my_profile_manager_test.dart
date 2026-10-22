@@ -98,7 +98,8 @@
 //     expect(api.requests, hasLength(1));
 //   });
 // 
-//   test('a read already in flight is not started again by the screen', () async {
+//   test('a read already in flight is not started again by the screen',
+//       () async {
 //     final answer = Completer<ResponseBody>();
 //     api.answers.add(() => answer.future);
 //     await signIn('1');
