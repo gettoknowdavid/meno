@@ -114,12 +114,7 @@ impl BroadcastService {
         request: CreateBroadcastRequest,
         creator: UserSummary,
     ) -> Result<BroadcastResponse, MenoError> {
-        if self
-            .repo
-            .find_live_by_creator(creator.id)
-            .await?
-            .is_some()
-        {
+        if self.repo.find_live_by_creator(creator.id).await?.is_some() {
             return Err(error::already_live_elsewhere());
         }
 
@@ -416,12 +411,7 @@ impl BroadcastService {
         // the creator's rows may be live. The unique index refuses the write anyway;
         // checking here is what makes the answer a named 409 instead of an unexplained
         // `already_live` from `mark_live`'s `None`.
-        if self
-            .repo
-            .find_live_by_creator(actor.id)
-            .await?
-            .is_some()
-        {
+        if self.repo.find_live_by_creator(actor.id).await?.is_some() {
             return Err(error::already_live_elsewhere());
         }
 

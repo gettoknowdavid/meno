@@ -191,11 +191,7 @@ mod tests {
     async fn a_silent_publisher_accepts_an_announcement_and_says_nothing() {
         // The deployment without realtime must not fail a sweep.
         SilentEvents
-            .ended(
-                Uuid::from_u128(1),
-                EndReason::Normal,
-                &[Uuid::from_u128(2)],
-            )
+            .ended(Uuid::from_u128(1), EndReason::Normal, &[Uuid::from_u128(2)])
             .await;
     }
 }
