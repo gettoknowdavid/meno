@@ -437,9 +437,11 @@ async fn the_keyset_page_is_newest_first_and_does_not_repeat_a_row(
         fixtures(&pool).await;
         let repo = PgChatRepo::new(pool.clone());
 
-        // Three messages an hour apart, plus the broadcast they are not part of.
+        // Three messages an hour apart, plus a room they are not part of. The second
+        // room belongs to Grace: one account has at most one broadcast on air, and the
+        // partial unique index from migration 0017 enforces it even for a fixture.
         let other = Uuid::from_u128(0x200);
-        broadcast(&pool, other, ada(), true).await;
+        broadcast(&pool, other, grace(), true).await;
         participant(&pool, other, ada(), true).await;
 
         for (content, seconds) in [

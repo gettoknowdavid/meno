@@ -211,6 +211,26 @@ pub async fn go_live(
     Ok(MenoResponse::created("Broadcast is live", session))
 }
 
+/// `POST /broadcasts/{id}/resume` — come back into a broadcast already on air.
+///
+/// Answers with a fresh session, because a media token outlives neither a crash nor a
+/// night's sleep. 200 rather than 201: nothing was created.
+///
+/// # Errors
+///
+/// 403 when the caller is not part of the broadcast, 409 when it is not live, 503 when
+/// the media server cannot mint a token.
+pub async fn resume(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Outcome<BroadcastSessionResponse> {
+    let actor = summary_of(&auth);
+
+    let session = handlers.service.resume(id, &actor).await?;
+    Ok(MenoResponse::ok("Broadcast resumed", session))
+}
+
 /// `POST /broadcasts/{id}/end` — end it.
 ///
 /// # Errors

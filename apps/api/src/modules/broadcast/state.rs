@@ -30,8 +30,10 @@ use std::sync::Arc;
 
 use crate::infrastructure::livekit::LivekitService;
 
+use super::events::{BroadcastEvents, SilentEvents};
 use super::handlers::Handlers;
 use super::media::{BroadcastMedia, DisabledMedia, LivekitMedia};
+use super::reaper::BroadcastReaper;
 use super::repository::{BroadcastRepo, PgBroadcastRepo, RepoDeps};
 use super::service::{BroadcastService, ServiceDeps};
 use super::storage::BroadcastStorage;
@@ -50,6 +52,13 @@ pub struct BroadcastState {
     /// service because a handler addresses an object by key; the *flow* that keeps the
     /// row in step lives in [`super::service::BroadcastService::set_image`].
     pub storage: BroadcastStorage,
+    /// The job that ends broadcasts nobody came back to.
+    ///
+    /// Held here rather than in a separate wiring layer because it needs exactly the
+    /// collaborators this state already built — the repository and the media adapter —
+    /// and the process that starts it is the one that owns the module. It is started by
+    /// `bootstrap::build_context`; nothing in the request path calls it.
+    pub reaper: BroadcastReaper,
 }
 
 impl std::fmt::Debug for BroadcastState {
@@ -58,6 +67,7 @@ impl std::fmt::Debug for BroadcastState {
         f.debug_struct("BroadcastState")
             .field("service", &self.service)
             .field("storage", &self.storage)
+            .field("reaper", &self.reaper)
             .finish_non_exhaustive()
     }
 }
@@ -77,6 +87,13 @@ pub struct Wiring {
     /// The same handle `profile` receives: cover images and avatars are the same kind of
     /// asset, and giving each module its own store would be two clients to configure.
     pub storage: Arc<dyn ObjectStore>,
+    /// Where "this broadcast ended" goes, for the reaper.
+    ///
+    /// [`super::events::PubSubEvents`] in production, so the frame reaches a participant
+    /// whose socket lives on another replica. A `Wiring` that has no realtime yet passes
+    /// [`SilentEvents`] and keeps working — a client that is not told still finds out on
+    /// its next read (§4.6).
+    pub events: Arc<dyn BroadcastEvents>,
 }
 
 impl BroadcastState {
@@ -98,7 +115,12 @@ impl BroadcastState {
             }
         };
 
-        Self::from_parts_with_storage(repo, media, BroadcastStorage::new(deps.storage))
+        Self::with_events(
+            repo,
+            media,
+            BroadcastStorage::new(deps.storage),
+            deps.events,
+        )
     }
 
     /// Wire the module from trait objects, with no infrastructure.
@@ -110,6 +132,19 @@ impl BroadcastState {
     #[must_use]
     pub fn from_parts(repo: Arc<dyn BroadcastRepo>, media: Arc<dyn BroadcastMedia>) -> Self {
         Self::from_parts_with_storage(repo, media, BroadcastStorage::disabled())
+    }
+
+    /// The same, with somewhere for the reaper's announcements to go.
+    ///
+    /// The shape a test uses to assert that an ended broadcast was *announced*, and the
+    /// one an in-process job runner wants when it has a real bridge but no object store.
+    #[must_use]
+    pub fn from_parts_with_events(
+        repo: Arc<dyn BroadcastRepo>,
+        media: Arc<dyn BroadcastMedia>,
+        events: Arc<dyn BroadcastEvents>,
+    ) -> Self {
+        Self::with_events(repo, media, BroadcastStorage::disabled(), events)
     }
 
     /// The same, with a store the caller chose.
@@ -124,12 +159,23 @@ impl BroadcastState {
         media: Arc<dyn BroadcastMedia>,
         storage: BroadcastStorage,
     ) -> Self {
+        Self::with_events(repo, media, storage, Arc::new(SilentEvents))
+    }
+
+    /// The one constructor: every other one is this with a default filled in.
+    fn with_events(
+        repo: Arc<dyn BroadcastRepo>,
+        media: Arc<dyn BroadcastMedia>,
+        storage: BroadcastStorage,
+        events: Arc<dyn BroadcastEvents>,
+    ) -> Self {
         Self {
             service: Arc::new(BroadcastService::new(ServiceDeps {
-                repo,
-                media,
+                repo: Arc::clone(&repo),
+                media: Arc::clone(&media),
                 storage: storage.clone(),
             })),
+            reaper: BroadcastReaper::new(repo, media, events),
             storage,
         }
     }

@@ -239,8 +239,8 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            43,
-            "fourteen auth endpoints, nine broadcast ones, one chat, six notes/folders, \
+            45,
+            "fourteen auth endpoints, eleven broadcast ones, one chat, six notes/folders, \
              five subscribers, four profile, two settings and two probes"
         );
     }

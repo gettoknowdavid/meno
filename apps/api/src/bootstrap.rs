@@ -29,6 +29,12 @@
 //! that the guard should make it impossible to re-enable by accident; the [`AppRole`]
 //! enum carries which binary is running so the job loop can be attached in exactly one
 //! place when `jobs/` lands.
+//!
+//! The one background task it does start is the broadcast abandonment sweep, and it is
+//! started deliberately rather than as a first job: an abandoned broadcast is a live
+//! room and a catalogue entry that persist until somebody ends it, and the process that
+//! owns the module is the only one that can. Its safety under two concurrent runners is
+//! the `mark_ended` guard — see `modules::broadcast::reaper`.
 
 use std::sync::Arc;
 
@@ -159,6 +165,29 @@ pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
     // and `role` is the only place that knows which binary is starting (§6).
     if role == AppRole::Web {
         state.ws_bridge.spawn_subscriber_loop();
+    }
+
+    // The abandonment sweep. Not a request path — a broadcast whose host vanished has
+    // nobody to make the request — so it runs as its own task and ends what a restart,
+    // a dead battery or a lost network left behind.
+    //
+    // Started under both roles, unlike the socket subscriber: the sweep is idempotent
+    // (`mark_ended` only matches a row that is still `active`, so two processes sweep
+    // the same broadcast and produce one ending and one announcement), and it must run
+    // wherever broadcasts do. Gated on LiveKit being configured, because a deployment
+    // without it cannot put a broadcast live in the first place, and every sweep would
+    // be a row of failed media calls.
+    if state.config.livekit.is_some() {
+        let reaper = state.broadcast.reaper.clone();
+        tokio::spawn(async move {
+            reaper
+                .run(crate::modules::broadcast::reaper::SWEEP_INTERVAL)
+                .await;
+        });
+        tracing::info!(
+            interval_secs = crate::modules::broadcast::reaper::SWEEP_INTERVAL.as_secs(),
+            "broadcast abandonment sweep started"
+        );
     }
 
     Ok(AppContext { config, state })

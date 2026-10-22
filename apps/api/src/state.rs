@@ -339,6 +339,10 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         detail: error.to_string(),
     })?;
 
+    // One `Arc` of the bridge, shared by chat and the broadcast module: a second
+    // subscriber connection per module would be a connection nobody needs.
+    let bridge = Arc::new(ws_bridge.clone());
+
     // Built before the struct literal, because the literal moves `parts.db` and
     // `parts.config` and this needs both. Cloning a pool and an `Arc` is free; a
     // borrow-after-move is not.
@@ -348,6 +352,11 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         // Cover images proxy through the object store (§3.3), exactly as avatars do
         // below — one handle, two modules.
         storage: Arc::clone(&parts.storage),
+        // How the reaper tells everybody in a broadcast that it ended: through the
+        // pub/sub bridge, because the host's socket may live on another replica.
+        events: Arc::new(crate::modules::broadcast::events::PubSubEvents::new(
+            Arc::clone(&bridge),
+        )),
     });
 
     // Profile and settings, for the same reason and in the same shape: `Wiring`
@@ -366,12 +375,10 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         redis: parts.redis.clone(),
     });
 
-    // Chat: one pool and the bridge. The bridge is passed as an `Arc` because chat is
-    // not its only user — the broadcast module publishes room events through it too —
-    // and a second subscriber connection per module would be a connection nobody needs.
+    // Chat: one pool and the bridge.
     let chat = ChatState::new(crate::modules::chat::state::Wiring {
         pool: parts.db.clone(),
-        bridge: Arc::new(ws_bridge.clone()),
+        bridge,
     });
 
     // Notes and folders (§2's tree): one pool, no external service.

@@ -104,12 +104,25 @@ impl BroadcastService {
     ///   even though `dto::validate` refused it, because a request validated at `t` and
     ///   handled at `t + 1s` has moved.
     /// - [`error::user_not_found`] when a cohost id has no live account.
+    /// - [`error::already_live_elsewhere`] when the creator already has a broadcast on
+    ///   air. Checked first, before anything is read or written: a client whose create
+    ///   succeeded but whose response was lost would otherwise retry into a second
+    ///   broadcast, which is exactly the shape of the bug that produced several of them.
     #[tracing::instrument(skip_all, fields(creator_id = %creator.id))]
     pub async fn create(
         &self,
         request: CreateBroadcastRequest,
         creator: UserSummary,
     ) -> Result<BroadcastResponse, MenoError> {
+        if self
+            .repo
+            .find_live_by_creator(creator.id)
+            .await?
+            .is_some()
+        {
+            return Err(error::already_live_elsewhere());
+        }
+
         if let Some(zone) = request.time_zone.as_deref() {
             check_time_zone(zone)?;
         }
@@ -383,8 +396,10 @@ impl BroadcastService {
     ///
     /// # Errors
     ///
-    /// [`error::not_creator`], [`error::already_live`], [`error::media_unavailable`]
-    /// when the room cannot be created, or [`error::internal`].
+    /// [`error::not_creator`], [`error::already_live`],
+    /// [`error::already_live_elsewhere`] when the creator has a *different* broadcast on
+    /// air, [`error::media_unavailable`] when the room cannot be created, or
+    /// [`error::internal`].
     #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
     pub async fn go_live(
         &self,
@@ -395,6 +410,19 @@ impl BroadcastService {
         require_creator(&existing, actor)?;
         if existing.is_live() {
             return Err(error::already_live());
+        }
+
+        // The other half of the one-on-air rule: this row is a draft, but another of
+        // the creator's rows may be live. The unique index refuses the write anyway;
+        // checking here is what makes the answer a named 409 instead of an unexplained
+        // `already_live` from `mark_live`'s `None`.
+        if self
+            .repo
+            .find_live_by_creator(actor.id)
+            .await?
+            .is_some()
+        {
+            return Err(error::already_live_elsewhere());
         }
 
         // Room first: a row marked live with no room behind it is a broadcast that
@@ -474,6 +502,72 @@ impl BroadcastService {
             duration_secs,
             total_participants: row.total_participants,
             recording_enabled: row.recording_enabled,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/resume` — re-enter a live broadcast this account is
+    /// already part of.
+    ///
+    /// A restart needs this and cannot use the other two: `go_live` refuses a broadcast
+    /// that is already on air, and `join` refuses the creator. Both refusals are right
+    /// on their own — neither is a "come back" — so coming back has its own flow.
+    ///
+    /// It exists because a media token lives for minutes, not hours: the token in a
+    /// session stored before the process died is expired by the time the app is back, so
+    /// re-entering means asking the API for a fresh one. Nothing about the broadcast
+    /// changes; this is the same host, the same room, and the same roster row re-opened.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_live`] when it is not on air, [`error::not_joined`] when the caller
+    /// is neither its host, one of its cohosts, nor on its roster,
+    /// [`error::media_unavailable`] when a fresh token cannot be minted.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn resume(
+        &self,
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let existing = self.require(id).await?;
+        if !existing.is_live() {
+            return Err(error::not_live());
+        }
+
+        let role = self.role_for(&existing, actor.id).await?;
+        if role == ParticipantRole::Participant
+            && self.repo.find_participant(id, actor.id).await?.is_none()
+        {
+            // Not on the roster and not invited: this is a join, and a join of a live
+            // broadcast is a deliberate act rather than something a launch does.
+            return Err(error::not_joined());
+        }
+
+        // The room may have been torn down while nobody was in it — a broadcast two
+        // minutes from being reaped is exactly the one a host comes back to — and
+        // creating it is idempotent.
+        if role == ParticipantRole::Host {
+            self.media.create_room(id).await?;
+        }
+
+        // Re-opening a closed roster row, or doing nothing when it is still open: both
+        // are what "this client is here" means, and the all-time counter moves for the
+        // first only.
+        self.repo
+            .join(JoinRequest {
+                broadcast_id: id,
+                participant_id: actor.id,
+                role,
+            })
+            .await?;
+
+        let token = self.media.mint_join_token(actor, id, role).await?;
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+
+        Ok(BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
         })
     }
 

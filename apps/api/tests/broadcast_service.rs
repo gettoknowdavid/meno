@@ -465,6 +465,194 @@ async fn going_live_twice_is_refused() {
 }
 
 #[tokio::test]
+async fn creating_while_another_broadcast_is_live_is_refused() {
+    // The bug this records: a client whose create succeeded but whose response was lost
+    // retried, and the account ended up with several broadcasts on air at once.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect_err("one account, one broadcast on air");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(repo.broadcast_count(), 1, "nothing was created");
+
+    // A second account is unaffected: the rule is one per creator, not one per server.
+    let other = svc
+        .create(second_request(), user(2, "Grace Hopper"))
+        .await
+        .expect("another account may create");
+    assert_eq!(other.creator.id, user(2, "Grace Hopper").id);
+}
+
+#[tokio::test]
+async fn creating_is_allowed_again_once_the_live_broadcast_has_ended() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.end(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    svc.create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("the refusal is about state, not about the account");
+}
+
+#[tokio::test]
+async fn going_live_while_another_broadcast_is_live_is_refused() {
+    // Two drafts are legal — a creator may write next week's show — but only one of them
+    // may be on air, and that is decided when the second one is started.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let first = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let second = svc
+        .create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("a second draft is fine");
+
+    svc.go_live(first.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("first goes live");
+
+    let error = svc
+        .go_live(second.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("second must be refused");
+    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+
+    let row = svc.get(second.id, None).await.expect("read");
+    assert_ne!(
+        row.state,
+        ModelBroadcastState::Live,
+        "a refused go-live must not leave a second broadcast on air"
+    );
+}
+
+#[tokio::test]
+async fn resuming_a_live_broadcast_mints_a_fresh_token_for_its_host() {
+    // What a restart needs: the token in the stored session expired with the process,
+    // and `go_live` deliberately refuses a broadcast that is already on air.
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let resumed = svc
+        .resume(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("resume");
+
+    assert!(!resumed.token.is_empty());
+    assert_eq!(resumed.broadcast.id, created.id);
+    assert_eq!(resumed.broadcast.state, ModelBroadcastState::Live);
+    assert_eq!(resumed.broadcast.participant_role, ParticipantRole::Host);
+
+    let mints = media
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("mint:"))
+        .count();
+    assert_eq!(mints, 2, "a second token was minted for the same room");
+}
+
+#[tokio::test]
+async fn resuming_reopens_a_listener_row_that_was_closed() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+    let before = repo.total_participants(created.id);
+
+    let resumed = svc
+        .resume(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("resume");
+
+    assert_eq!(
+        resumed.broadcast.participant_role,
+        ParticipantRole::Participant
+    );
+    assert!(resumed.broadcast.is_joined, "the row is open again");
+    assert_eq!(
+        repo.total_participants(created.id),
+        before + 1,
+        "a return visit is a join like any other"
+    );
+}
+
+#[tokio::test]
+async fn resuming_as_somebody_who_was_never_in_the_room_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .resume(created.id, &user(3, "Alan Turing"))
+        .await
+        .expect_err("a stranger has nothing to resume");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotParticipant);
+}
+
+#[tokio::test]
+async fn resuming_a_broadcast_that_is_not_live_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .resume(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("nothing to resume");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+}
+
+#[tokio::test]
 async fn ending_a_live_broadcast_returns_the_duration_and_participant_count() {
     let (svc, repo, media) = service();
     seed(&repo);

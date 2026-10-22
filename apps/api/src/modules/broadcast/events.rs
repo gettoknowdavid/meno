@@ -126,8 +126,11 @@ pub mod recording {
         }
 
         /// Every announcement, oldest first.
+        ///
+        /// Not named `ended`: that is the trait method that *makes* one, and a reader
+        /// who saw two of them would have to check which is which at every call site.
         #[must_use]
-        pub fn ended(&self) -> Vec<AnnouncedEnd> {
+        pub fn announced(&self) -> Vec<AnnouncedEnd> {
             self.lock().clone()
         }
 
@@ -174,7 +177,7 @@ mod tests {
             )
             .await;
 
-        let announced = events.ended();
+        let announced = events.announced();
         assert_eq!(announced.len(), 1);
         assert_eq!(announced[0].broadcast_id, broadcast);
         assert_eq!(announced[0].reason, EndReason::HostDisconnected);

@@ -108,6 +108,25 @@ impl LivekitMedia {
     }
 }
 
+/// Whether the media server said the room does not exist.
+///
+/// The SDK carries an HTTP/twirp code inside its error text rather than as a value this
+/// adapter can match on, so the check is on the spelling. It is deliberately narrow: a
+/// false negative only postpones an ending to the next sweep, while a false positive
+/// would end a broadcast whose room is very much alive, so the patterns name the code
+/// and the phrase rather than guessing from a 404 anywhere in the text.
+fn is_missing_room(error: &LivekitError) -> bool {
+    let LivekitError::Upstream(detail) = error else {
+        return false;
+    };
+    let detail = detail.to_ascii_lowercase();
+
+    detail.contains("not_found")
+        || detail.contains("not found")
+        || detail.contains("does not exist")
+        || detail.contains("room not found")
+}
+
 /// Every `LivekitError` becomes a 503 with the vendor's text in the log only.
 fn upstream(context: &'static str, error: LivekitError) -> MenoError {
     tracing::warn!(%error, context, "media server call failed");
@@ -155,11 +174,15 @@ impl BroadcastMedia for LivekitMedia {
     async fn room_participants(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
         match self.inner.list_participants(broadcast_id).await {
             Ok(participants) => Ok(participants.into_iter().map(|p| p.id).collect()),
-            // A room that has already been torn down has no participants. LiveKit
-            // answers that case with an error, and turning it into "nobody is here"
-            // would end a broadcast because its room was cleaned up a minute early —
-            // so it is reported like any other upstream failure and the sweep skips
-            // this broadcast until the next tick.
+            // A room that has already been torn down has nobody in it, which is the
+            // answer this method exists to give. This is not a nicety: LiveKit deletes
+            // a room five idle minutes after the last participant leaves, so the room
+            // of the crashed host the reaper is looking for is *gone* by the time the
+            // grace period is up. Reporting "not found" as an outage would leave every
+            // abandoned broadcast on air forever — the bug this whole module is for.
+            Err(failure) if is_missing_room(&failure) => Ok(Vec::new()),
+            // Anything else is an outage, and an outage is not an answer: a sweep must
+            // not end a broadcast because it could not ask about it.
             Err(failure) => Err(upstream("room_participants", failure)),
         }
     }
@@ -377,6 +400,20 @@ mod tests {
             503,
             "an unset LIVEKIT_URL is a 503, not a 400 and not a silent success"
         );
+    }
+
+    #[tokio::test]
+    async fn a_room_that_no_longer_exists_reports_nobody_rather_than_an_outage() {
+        // The whole reaping rule depends on this: LiveKit deletes an empty room after
+        // five minutes, so "the room is gone" is the normal state of the broadcast the
+        // reaper is about to end.
+        assert!(is_missing_room(&LivekitError::Upstream(
+            "twirp error: code = not_found: room not found".to_owned()
+        )));
+        assert!(!is_missing_room(&LivekitError::Upstream(
+            "connection refused".to_owned()
+        )));
+        assert!(!is_missing_room(&LivekitError::CircuitOpen));
     }
 
     #[tokio::test]

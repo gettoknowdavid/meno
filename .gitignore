@@ -5,6 +5,8 @@
 # Anchored to the repo root. Cargo builds every workspace member into ./target, so
 # an unanchored pattern would also hide a legitimately-tracked nested `target/`.
 /target/
+/target-tests/
+/apps/api/target-tests/
 **/*.rs.bk
 
 # Local cargo overrides — machine-specific (linker paths, registry mirrors).

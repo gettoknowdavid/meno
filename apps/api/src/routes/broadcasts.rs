@@ -52,6 +52,7 @@ pub const BROADCAST_PATHS: &[&str] = &[
     "/broadcasts/00000000-0000-0000-0000-000000000000/live",
     "/broadcasts/00000000-0000-0000-0000-000000000000/end",
     "/broadcasts/00000000-0000-0000-0000-000000000000/join",
+    "/broadcasts/00000000-0000-0000-0000-000000000000/resume",
     "/broadcasts/00000000-0000-0000-0000-000000000000/leave",
     "/broadcasts/00000000-0000-0000-0000-000000000000/cohosts",
     "/broadcasts/00000000-0000-0000-0000-000000000000/cohosts/00000000-0000-0000-0000-000000000000",
@@ -83,9 +84,11 @@ pub fn routes(
 
     // `join` sits apart from the other writes because it is the endpoint a room full
     // of reconnecting clients hits at once, and `LimitPolicy::broadcast_join` is the
-    // policy sized for that burst.
+    // policy sized for that burst. `resume` is the same burst — every client that
+    // comes back from a crash hits it on launch — so it shares the policy.
     let join = Router::new()
         .route("/broadcasts/{id}/join", post(handlers::join))
+        .route("/broadcasts/{id}/resume", post(handlers::resume))
         .layer(from_fn_with_state(
             RateLimitState::new(Redis::clone(&redis), LimitPolicy::broadcast_join()),
             rate_limit_middleware,

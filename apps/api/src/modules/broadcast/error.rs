@@ -91,6 +91,22 @@ pub fn already_live() -> MenoError {
     }
 }
 
+/// The caller already has a broadcast on air, so they may not create another or put a
+/// second one live.
+///
+/// A 409 rather than a 400 because the request is well-formed and the rule is about
+/// state: the same request succeeds the moment the broadcast on air is ended. One
+/// account owns one channel, which is what makes "which broadcast is this account in?"
+/// a question with one answer — the client's home screen and its reconnect-on-launch
+/// both depend on that.
+#[must_use]
+pub fn already_live_elsewhere() -> MenoError {
+    MenoError::Conflict {
+        code: ErrorCode::Conflict,
+        message: "You already have a broadcast on air. End it before starting another.".to_owned(),
+    }
+}
+
 /// The caller is already in the room.
 #[must_use]
 pub fn already_joined() -> MenoError {
@@ -282,6 +298,7 @@ mod tests {
             ErrorCode::InvalidTimeZone
         );
         assert_eq!(already_live().code(), ErrorCode::Conflict);
+        assert_eq!(already_live_elsewhere().code(), ErrorCode::Conflict);
         assert_eq!(media_unavailable().code(), ErrorCode::UpstreamUnavailable);
         assert_eq!(
             storage_unavailable("bucket refused").code(),
@@ -320,6 +337,7 @@ mod tests {
         // The distinction a client actually branches on: "try again later" versus
         // "you cannot".
         assert_eq!(to_body(&not_live()).http_status, 409);
+        assert_eq!(to_body(&already_live_elsewhere()).http_status, 409);
         assert_eq!(to_body(&already_joined()).http_status, 409);
         assert_eq!(to_body(&not_creator()).http_status, 403);
         assert_eq!(to_body(&creator_cannot_join()).http_status, 403);

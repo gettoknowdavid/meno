@@ -13,6 +13,8 @@
 //! | [`media`] | what does the media server allow? | the vendor does |
 //! | [`storage`] | what does the object store hold? | the bucket does |
 //! | [`service`] | in what order? | a *flow* changes |
+//! | [`reaper`] | when does an abandoned broadcast end? | the liveness rule does |
+//! | [`events`] | who is told that it ended? | the protocol does |
 //! | [`state`] | which adapter is real here? | wiring changes |
 //! | [`handlers`] | how does a request become a response? | the wire contract changes |
 //!
@@ -29,6 +31,13 @@
 //!   *and* the counter, in one statement; see [`repository::pg`].
 //! - **The creator cannot join, and a host cannot leave.** Joining would downgrade the
 //!   host grant; leaving would leave a live broadcast nobody can end.
+//! - **One account has at most one broadcast on air.** [`service`] refuses to create
+//!   another, refuses to put a second one live, and the partial unique index in
+//!   `0017_broadcast_liveness.sql` refuses it for every writer including a race
+//!   between two replicas.
+//! - **A broadcast nobody is running does not stay live.** [`reaper`] ends one whose
+//!   host and cohosts have all left the room, after ten minutes, and
+//!   [`events::BroadcastEvents`] tells the people who were in it.
 //! - **§4.5 — every date on the wire is RFC 3339.** Stated in [`dto`] and enforced for
 //!   this whole file by `apps/api/tests/wire_dates.rs`.
 //!
@@ -73,9 +82,11 @@
 
 pub mod dto;
 pub mod error;
+pub mod events;
 pub mod handlers;
 pub mod media;
 pub mod model;
+pub mod reaper;
 pub mod repository;
 pub mod service;
 pub mod state;
