@@ -89,6 +89,20 @@ pub trait TokenMinter {
     ) -> Result<String, LivekitError>;
 }
 
+/// Whether LiveKit's error says the room no longer exists.
+///
+/// The SDK carries the twirp code inside its error text rather than exposing it as a
+/// value, so this is the spelling check the room-admin methods need in order to treat
+/// "already gone" as an answer instead of an outage. Deliberately narrow: a miss only
+/// reports a stale room as an outage, while a false positive would hide a real one.
+fn says_room_is_gone(detail: &str) -> bool {
+    let detail = detail.to_ascii_lowercase();
+
+    detail.contains("not_found")
+        || detail.contains("not found")
+        || detail.contains("does not exist")
+}
+
 /// The LiveKit adapter.
 #[derive(Clone)]
 pub struct LivekitService {
@@ -278,6 +292,9 @@ impl LivekitService {
 
     /// Delete the room for a broadcast.
     ///
+    /// A room LiveKit has already deleted is success: the caller asked for it to be
+    /// gone, and it is.
+    ///
     /// # Errors
     ///
     /// [`LivekitError::CircuitOpen`] if the breaker is open; otherwise any upstream
@@ -285,8 +302,28 @@ impl LivekitService {
     pub async fn delete_room(&self, broadcast_id: Uuid) -> Result<(), LivekitError> {
         let room_name = broadcast_id.to_string();
         let room = Arc::clone(&self.room);
-        self.guarded(async move { room.delete_room(&room_name).await })
+
+        self.breaker
+            .check()
             .await
+            .map_err(|_| LivekitError::CircuitOpen)?;
+
+        match room.delete_room(&room_name).await {
+            Ok(()) => {
+                self.breaker.on_success().await;
+                Ok(())
+            }
+            // Already gone is the outcome the caller asked for: a broadcast that has
+            // outlived LiveKit's own empty-room timeout has nothing left to tear down.
+            Err(failure) if says_room_is_gone(&failure.to_string()) => {
+                self.breaker.on_success().await;
+                Ok(())
+            }
+            Err(failure) => {
+                self.breaker.on_failure().await;
+                Err(LivekitError::Upstream(failure.to_string()))
+            }
+        }
     }
 
     /// List the participants currently in a room.
@@ -294,6 +331,11 @@ impl LivekitService {
     /// A LiveKit identity that is not a UUID is skipped rather than failing the whole
     /// call: agents and egress joins use non-UUID identities, and one of those must
     /// not make the participant list unavailable.
+    ///
+    /// A room that no longer exists answers an empty list, not an error. LiveKit deletes
+    /// an empty room five minutes after its last participant leaves, so "gone" is the
+    /// normal state of a room nobody is in — and it is counted as a success, so the
+    /// abandonment sweep cannot trip the breaker with it.
     ///
     /// # Errors
     ///
@@ -306,9 +348,30 @@ impl LivekitService {
         let room_name = broadcast_id.to_string();
         let room = Arc::clone(&self.room);
 
-        let participants = self
-            .guarded(async move { room.list_participants(&room_name).await })
-            .await?;
+        self.breaker
+            .check()
+            .await
+            .map_err(|_| LivekitError::CircuitOpen)?;
+
+        let participants = match room.list_participants(&room_name).await {
+            Ok(participants) => {
+                self.breaker.on_success().await;
+                participants
+            }
+            // A room LiveKit has deleted has no participants, and that is a *successful*
+            // answer. It must not be counted as a failure: the abandonment sweep asks
+            // this once a minute for every live broadcast, and an abandoned broadcast's
+            // room is exactly the one LiveKit has already reaped — so counting it would
+            // trip the breaker and take token minting down for every other broadcast.
+            Err(failure) if says_room_is_gone(&failure.to_string()) => {
+                self.breaker.on_success().await;
+                return Ok(Vec::new());
+            }
+            Err(failure) => {
+                self.breaker.on_failure().await;
+                return Err(LivekitError::Upstream(failure.to_string()));
+            }
+        };
 
         Ok(participants
             .into_iter()
@@ -479,6 +542,19 @@ mod tests {
             }
         }
         out
+    }
+
+    #[test]
+    fn a_deleted_room_is_recognised_as_gone_rather_than_as_an_outage() {
+        // This decides whether an abandoned broadcast's missing room trips the
+        // breaker. If it stops matching, every abandoned broadcast opens the breaker
+        // once a minute and token minting dies for broadcasts that are genuinely live.
+        assert!(says_room_is_gone(
+            "twirp error: code = not_found: room not found"
+        ));
+        assert!(says_room_is_gone("404 NOT_FOUND"));
+        assert!(!says_room_is_gone("connection refused"));
+        assert!(!says_room_is_gone("deadline exceeded"));
     }
 
     #[test]
