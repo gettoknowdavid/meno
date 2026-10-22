@@ -58,7 +58,8 @@
 //     return di.reset();
 //   });
 // 
-//   test('joining a broadcast opens the room its session belongs to', () async {
+//   test('joining a broadcast opens the room its session belongs to',
+//       () async {
 //     api.answers.add(
 //       () async => envelope(
 //         data: {

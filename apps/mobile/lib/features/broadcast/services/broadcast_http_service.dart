@@ -163,6 +163,25 @@ final class BroadcastHttpService {
     );
   }
 
+  /// `POST /broadcasts/{id}/resume` — comes back into a broadcast on air.
+  ///
+  /// What a launch calls when the previous process died inside a room. Neither
+  /// of the other two works from there: [goLive] refuses a broadcast that is
+  /// already live, and [join] refuses the host. The token in the stored
+  /// session is no use either — the API signs one for minutes, so by the time
+  /// the app is back it has expired — which is why coming back asks for a new
+  /// one.
+  Future<BroadcastSessionDto> resume(
+    Id broadcastId, {
+    CancelToken? cancelToken,
+  }) {
+    return _client.post(
+      '/broadcasts/${broadcastId.getOrCrash}/resume',
+      cancelToken: cancelToken,
+      fromJson: (data) => BroadcastSessionDto.fromJson(_map(data)),
+    );
+  }
+
   /// `POST /broadcasts/{id}/leave` — stops listening.
   Future<LeaveBroadcastDto> leave(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.post(

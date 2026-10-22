@@ -28,12 +28,13 @@
 // );
 // 
 // /// The session joining or going live would have produced.
-// BroadcastSession _session({bool live = true, DateTime? at}) => BroadcastSession(
-//   userId: 'user-1',
-//   broadcast: _broadcast(live: live),
-//   token: 'room-token',
-//   timestamp: at,
-// );
+// BroadcastSession _session({bool live = true, DateTime? at}) =>
+//     BroadcastSession(
+//       userId: 'user-1',
+//       broadcast: _broadcast(live: live),
+//       token: 'room-token',
+//       timestamp: at,
+//     );
 // 
 // /// The stored record for [_session], as the app would have left it [ago] ago.
 // String _record({required Duration ago}) => jsonEncode({

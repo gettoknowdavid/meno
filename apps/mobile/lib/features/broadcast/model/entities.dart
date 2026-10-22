@@ -6,7 +6,9 @@ part 'entities.freezed.dart';
 // final fakeBroadcast = Broadcast(
 //   id: Id.fromString('2a84d446-555d-4c21-acd0-a13045f23e12'),
 //   title: SingleLineString('Prayer & Testimony Night'),
-//   description: MultiLineString('Open mic for prayers and shared testimonies.'),
+//   description: MultiLineString(
+//     'Open mic for prayers and shared testimonies.',
+//   ),
 //   timeZone: 'Europe/London',
 //   imageId: 'img-123',
 //   status: .active,
@@ -22,7 +24,8 @@ part 'entities.freezed.dart';
 //     fullName: SingleLineString('David Michael'),
 //     bio: MultiLineString(
 //       '''
-// Blessed of the Most High God, the possessor of heaven and earth! So am I and I give thanks! Bless of the Most High God, the possessor of heaven and earth! So am I and I give thanks!''',
+// Blessed of the Most High God, the possessor of heaven and earth! So am I
+// and I give thanks!''',
 //     ),
 //   ),
 //   // cohosts: [

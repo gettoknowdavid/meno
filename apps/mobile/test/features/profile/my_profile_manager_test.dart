@@ -105,10 +105,12 @@
 // 
 //     final profile = newManager();
 //     await profile.init();
-//     await pumpUntil(() => api.requests.length == 1 && profile.isLoading.value);
+//     await pumpUntil(
+//       () => api.requests.length == 1 && profile.isLoading.value,
+//     );
 // 
-//     // What the screen does when it opens while the background read is still on
-//     // its way: it must not double the request.
+//     // What the screen does when it opens while the background read is
+//     // still on its way: it must not double the request.
 //     await profile.fetch.runAsync();
 //     expect(api.requests, hasLength(1));
 // 
@@ -128,7 +130,9 @@
 // 
 //     final profile = newManager();
 //     await profile.init();
-//     await pumpUntil(() => api.requests.length == 1 && profile.isLoading.value);
+//     await pumpUntil(
+//       () => api.requests.length == 1 && profile.isLoading.value,
+//     );
 // 
 //     await signIn('2');
 //     await pumpUntil(() => profile.profile.value.id == '2');
@@ -147,7 +151,11 @@
 //     final logger = MockMenoLogger();
 // 
 //     await cache.saveMyProfile(
-//       const MyProfile(id: '1', fullName: 'Account 1', email: '1@example.com'),
+//       const MyProfile(
+//         id: '1',
+//         fullName: 'Account 1',
+//         email: '1@example.com',
+//       ),
 //     );
 //     await signIn('1');
 // 

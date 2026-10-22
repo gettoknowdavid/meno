@@ -162,8 +162,39 @@ final class BroadcastSocketService implements Disposable {
     return _decode(data, (json) => BroadcastDto.fromJson(json).toDomain);
   }
 
+  /// A broadcast ending.
+  ///
+  /// The socket's frame is the *ending*, not the whole summary: it carries
+  /// the id and the reason, which is all a client needs to stop drawing a room
+  /// and to ask the API what to show instead. It is decoded here rather than
+  /// through [EndBroadcastDto] so the two spellings the API has used for it —
+  /// the response's `broadcast_id` and the event's `broadcastId` — both land,
+  /// and a frame with no id is dropped rather than becoming an
+  /// `EndedBroadcast` that matches no room.
   EndedBroadcast? _endedBroadcast(dynamic data) {
-    return _decode(data, (json) => EndBroadcastDto.fromJson(json).toDomain);
+    return _decode<EndedBroadcast?>(data, (json) {
+      final rawId = json['broadcast_id'] ?? json['broadcastId'];
+      final broadcastId = Id.fromWire(rawId as String? ?? '');
+      if (!broadcastId.isValid) return null;
+
+      final rawTitle = json['broadcast_title'] ?? json['broadcastTitle'];
+
+      return EndedBroadcast(
+        broadcastId: broadcastId,
+        title: rawTitle is String && rawTitle.isNotEmpty
+            ? SingleLineString(rawTitle)
+            : SingleLineString.empty,
+        creatorId: Id.fromWire(
+          (json['creator_id'] ?? json['creatorId']) as String? ?? '',
+        ),
+        endedAt: DateTime.tryParse(
+          (json['ended_at'] ?? json['endedAt']) as String? ?? '',
+        ),
+        reason: EndReason.fromWire(
+          (json['ended_reason'] ?? json['reason']) as String?,
+        ),
+      );
+    });
   }
 
   BroadcastParticipantEvent? _participantEvent(dynamic data) {

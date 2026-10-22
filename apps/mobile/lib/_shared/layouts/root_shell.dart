@@ -1,6 +1,9 @@
+import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/services/permission_prompts.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -40,7 +43,7 @@ const List<MDestination> _tabs = [
 /// builder: (_, _, navigationShell) =>
 ///     RootShell(navigationShell: navigationShell),
 /// ```
-class RootShell extends StatelessWidget {
+class RootShell extends WatchingWidget {
   /// Creates the root shell for [navigationShell].
   const new({required this.navigationShell, super.key});
 
@@ -49,6 +52,8 @@ class RootShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    _enterRecoveredRoom(context);
+
     final index = navigationShell.currentIndex;
     final useSideNavRail = ResponsiveBreakpoints.of(context).largerThan(MOBILE);
 
@@ -86,6 +91,29 @@ class RootShell extends StatelessWidget {
       body: body,
       bottomNavigationBar: bottomNavigationBar,
     );
+  }
+
+  /// Walks into a room this launch recovered, once.
+  ///
+  /// A process that died inside a live broadcast comes back to it (§ the live
+  /// session store): the scope is open, the session was re-minted, and without
+  /// this the user would be looking at the home tab while their broadcast ran
+  /// without them. The request is consumed before the navigation, so a rebuild
+  /// of this shell does not drag them back into a room they have left.
+  void _enterRecoveredRoom(BuildContext context) {
+    final room = watchValue<LiveScopeManager, Id?>(
+      (manager) => manager.roomToEnter,
+    );
+    if (room == null || room.isEmpty) return;
+
+    callOnceAfterThisBuild((_) {
+      if (!context.mounted) return;
+      final live = di<LiveScopeManager>();
+      if (live.roomToEnter.value != room) return;
+
+      live.roomEntered();
+      context.go(MRoutes.liveSessionInit);
+    });
   }
 
   /// Switches to [index], resetting that branch when its tab is tapped again.

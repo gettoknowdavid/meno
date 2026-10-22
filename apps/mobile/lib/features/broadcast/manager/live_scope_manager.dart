@@ -79,6 +79,16 @@ final class LiveScopeManager implements Disposable {
 
   final ValueNotifier<Id?> _broadcastId = ValueNotifier(null);
 
+  /// A room the app should open by itself, because it just came back to one.
+  ///
+  /// Separate from [activeBroadcastId] on purpose. That one answers "which
+  /// room is open" for every screen that draws the answer — a banner, a card
+  /// — and a join or a go-live sets it while the screen that asked is already
+  /// navigating. This one is a *request to move*: it is set only by a launch
+  /// that recovered a session, and cleared by whoever acts on it, so a screen
+  /// cannot be dragged into a room twice.
+  final ValueNotifier<Id?> _roomToEnter = ValueNotifier(null);
+
   /// Whether the open scope was opened with the API's session for its room.
   ///
   /// A deep link opens a room before anything has been joined, and that room
@@ -90,6 +100,16 @@ final class LiveScopeManager implements Disposable {
 
   /// The broadcast on air, or null when there is none.
   ValueListenable<Id?> get activeBroadcastId => _broadcastId;
+
+  /// The room to open because this launch recovered it, or null.
+  ///
+  /// Read by the root shell, which navigates into the room. Consumed with
+  /// [roomEntered] the moment it does: leaving the value set would send the
+  /// user back into the room every time the shell rebuilt.
+  ValueListenable<Id?> get roomToEnter => _roomToEnter;
+
+  /// Tells this manager the recovered room has been shown.
+  void roomEntered() => _roomToEnter.value = null;
 
   /// Whether a session is open.
   ValueListenable<bool> get isLive => _broadcastId.select((id) => id != null);
@@ -147,28 +167,39 @@ final class LiveScopeManager implements Disposable {
 
     final broadcastId = _broadcastId.value;
     _broadcastId.value = null;
+    _roomToEnter.value = null;
     if (broadcastId != null) await _drop(Scope.liveFor(broadcastId));
     _broadcastId.dispose();
+    _roomToEnter.dispose();
   }
 
   /// Puts the device back into the session it was in when the app stopped.
   ///
   /// The record is trusted only as far as the API confirms it. A session that
-  /// has aged out, or that names a broadcast which is no longer on air, is
-  /// dropped — and so is one the API cannot answer for, because a room nobody
-  /// is in is worse than no room at all: it would be drawn as if it were one.
+  /// names a broadcast which is no longer on air is dropped, because a room
+  /// nobody is in is worse than no room at all: it would be drawn as if it were
+  /// one.
+  ///
+  /// # Why it asks for a new token instead of reusing the stored one
+  ///
+  /// The API signs media tokens for fifteen minutes, so the token in a record
+  /// written before the process died has expired by the time the process is
+  /// back — which is why reusing it failed to connect and why restarting never
+  /// put anybody back in a room. [`BroadcastHttpService.resume`] is the one
+  /// endpoint that answers "I am still the host (or a listener) of this room",
+  /// because going live refuses a broadcast that is already on air and joining
+  /// refuses the host.
+  ///
+  /// A recovery the *network* answered nothing about keeps its record, so the
+  /// next launch can try again; a refusal that says the room is over drops it.
   Future<void> _recover() async {
     final stored = _store.read();
     if (stored == null || stored.isEmpty) return;
 
-    if (stored.isExpired) {
-      _logger.i('Dropping a live session that had aged out');
-      await _forget();
-      return;
-    }
+    final broadcastId = stored.broadcast.id;
 
     try {
-      final broadcast = await _http.getBroadcast(stored.broadcast.id);
+      final broadcast = await _http.getBroadcast(broadcastId);
 
       // The account can be signed out while the API is answering, and a scope
       // must not be pushed on top of a stack that is being taken down.
@@ -180,13 +211,38 @@ final class LiveScopeManager implements Disposable {
         return;
       }
 
-      _logger.i(
-        'Recovering the live session for ${stored.broadcast.id.orEmpty}',
-      );
-      await start(stored.broadcast.id, session: stored);
-    } on MenoException catch (error, stackTrace) {
+      final resumed = (await _http.resume(broadcastId)).toDomain(_userId);
+      if (_disposed) return;
+
+      _logger.i('Recovering the live session for ${broadcastId.orEmpty}');
+      await start(broadcastId, session: resumed);
+
+      // And now the part that was missing: the room is open, and the app
+      // has to walk into it. The root shell navigates on this; the
+      // transition page starts the room's own chain.
+      _roomToEnter.value = broadcastId;
+    } on NetworkException catch (error, stackTrace) {
+      // Nothing was decided, so nothing is forgotten: a launch with no
+      // signal must not be the reason this device never comes back to its
+      // room.
       _logger.w(
-        'Could not check a live session to recover it (${error.code})',
+        'Could not reach the API to recover the live session',
+        tag: MenoLogTag.di.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } on RequestTimeoutException catch (error, stackTrace) {
+      _logger.w(
+        'The API timed out while recovering the live session',
+        tag: MenoLogTag.di.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } on MenoException catch (error, stackTrace) {
+      // The API answered, and the answer was that there is nothing to come back
+      // to: the broadcast ended, or this account is no longer part of it.
+      _logger.w(
+        'Could not recover the live session (${error.code})',
         tag: MenoLogTag.di.label,
         error: error,
         stackTrace: stackTrace,
@@ -292,6 +348,7 @@ final class LiveScopeManager implements Disposable {
 
     await _drop(Scope.liveFor(live));
     _broadcastId.value = null;
+    _roomToEnter.value = null;
 
     // The session is over, so nothing is left to recover.
     await _forget();

@@ -77,6 +77,18 @@ class LiveSessionShellState extends State<LiveSessionShell>
 
   @override
   Widget build(BuildContext context) {
+    // The room can be closed under this screen: the broadcast ended — the host
+    // ended it, or the server ended it because nobody came back to it — and the
+    // scope that owned the room's services was dropped with it. Asking the
+    // container for a manager it no longer has would throw inside `build`, so
+    // the screen steps out of the way instead.
+    if (!di.isRegistered<LiveSessionManager>()) {
+      callOnceAfterThisBuild((_) {
+        if (context.mounted) context.go(MRoutes.home);
+      });
+      return const SizedBox.shrink();
+    }
+
     final manager = di<LiveSessionManager>();
 
     registerHandler<LiveSessionManager, LiveSessionState>(
