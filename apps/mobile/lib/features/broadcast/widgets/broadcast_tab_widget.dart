@@ -42,16 +42,12 @@ class BroadcastTabWidget extends WatchingWidget {
                   timeAgo: timeAgo,
                 ),
                 Spaces.verticalSmall,
-                BroadcastTitleWidget(
-                  title: broadcast.title.orEmpty,
-                ),
+                BroadcastTitleWidget(title: broadcast.title.orEmpty),
                 Spaces.verticalSmall,
                 Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    BroadcastCreatorWidget(
-                      name: broadcast.hostName.orEmpty,
-                    ),
+                    BroadcastCreatorWidget(name: broadcast.hostName.orEmpty),
                     Spaces.horizontalSmall,
                     const BroadcastStatusWidget(),
                   ],

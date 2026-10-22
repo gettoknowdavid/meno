@@ -35,7 +35,7 @@ class BroadcastDraftRow {
 
   String title;
 
-  String description;
+  String? description;
 
   bool record;
 
@@ -98,7 +98,7 @@ extension BroadcastDraftRowX on BroadcastDraftRow {
     description: description,
     record: record,
     cohosts: _cohostIds(logger),
-    imagePath: core.ImageInput.fromUrl(imagePath),
+    imagePath: core.ImageInput.fromStored(imagePath),
     imageId: imageId,
     createdBroadcastId: createdBroadcastId != null
         ? core.Id.fromString(createdBroadcastId!)

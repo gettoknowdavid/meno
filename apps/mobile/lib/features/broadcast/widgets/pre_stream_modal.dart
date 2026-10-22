@@ -13,12 +13,10 @@ class PreStreamModal extends WatchingWidget {
 
   final Id id;
 
-  static Future<void> show(BuildContext context, Id id) {
+  static Future<void> show(BuildContext ctx, Id id) {
     final activeId = di<LiveScopeManager>().activeBroadcastId.value;
-    if (activeId == id) {
-      return context.push(MRoutes.liveBroadcastRoute(id));
-    }
-    return context.push(MRoutes.preStreamRoute(id));
+    if (activeId == id) return ctx.push(MRoutes.liveBroadcast);
+    return ctx.push(MRoutes.preStreamRoute(id));
   }
 
   @override
@@ -52,10 +50,15 @@ class _LoadedSheet extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    registerHandler<BroadcastEditorManager, void>(
-      handler: (context, result, cancel) async {
+    // The sheet closes and the transition page takes over as soon as the join
+    // has produced a session. The handler has to name the command it follows:
+    // a `select` is not optional, because a manager is not a `ValueListenable`
+    // and registering without one throws during build.
+    registerHandler<StreamManager, void>(
+      select: (manager) => manager.joinBroadcast,
+      handler: (context, _, _) async {
         context.pop();
-        await context.push('/live-session-initialization');
+        await context.push(MRoutes.liveSessionInit);
       },
     );
 

@@ -28,6 +28,8 @@ final class BroadcastSocketService implements Disposable {
 
   final List<SocketSubscription> _subscriptions = [];
 
+  bool _listening = false;
+
   /// A broadcast was created or went on air.
   Stream<Broadcast> get onNewBroadcast => _newBroadcast.stream;
 
@@ -54,7 +56,14 @@ final class BroadcastSocketService implements Disposable {
   Stream<void> get onReconnected => _client.onReconnected;
 
   /// Starts listening for the broadcast events.
+  ///
+  /// Called once when the account's scope is opened. A second call is a no-op:
+  /// every call appends handlers to the client, which keeps them for the life
+  /// of the account, so listening twice would deliver each event twice.
   void listen() {
+    if (_listening) return;
+    _listening = true;
+
     _subscriptions
       ..add(
         _client.on(
@@ -101,17 +110,31 @@ final class BroadcastSocketService implements Disposable {
   }
 
   /// Tells the server this client is watching [broadcastId].
-  void joinRoom(Id broadcastId) {
-    _client.emit(SocketEvent.joinBroadcast, {
-      'broadcastId': broadcastId.getOrCrash,
-    });
-  }
+  ///
+  /// Best effort. Room membership is a hint the server uses for presence, not
+  /// something audio depends on — a socket that is still connecting must not
+  /// stop a client from entering the room, and `LiveSessionManager` says it
+  /// again when the socket comes back.
+  void joinRoom(Id broadcastId) => _emitRoomEvent(
+    SocketEvent.joinBroadcast,
+    broadcastId,
+  );
 
   /// Tells the server this client stopped watching [broadcastId].
-  void leaveRoom(Id broadcastId) {
-    _client.emit(SocketEvent.leaveBroadcast, {
-      'broadcastId': broadcastId.getOrCrash,
-    });
+  void leaveRoom(Id broadcastId) => _emitRoomEvent(
+    SocketEvent.leaveBroadcast,
+    broadcastId,
+  );
+
+  void _emitRoomEvent(SocketEvent event, Id broadcastId) {
+    try {
+      _client.emit(event, {'broadcastId': broadcastId.getOrCrash});
+    } on SocketNotConnectedException catch (error) {
+      _logger.d(
+        'Could not send ${event.value}: ${error.message}',
+        tag: MenoLogTag.network.label,
+      );
+    }
   }
 
   @override
@@ -120,6 +143,7 @@ final class BroadcastSocketService implements Disposable {
       subscription.cancel();
     }
     _subscriptions.clear();
+    _listening = false;
     await Future.wait([
       _newBroadcast.close(),
       _started.close(),

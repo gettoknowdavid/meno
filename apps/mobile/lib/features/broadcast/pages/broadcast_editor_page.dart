@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/_shared/services/permission_prompts.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -49,7 +50,7 @@ class BroadcastEditorPage extends WatchingWidget {
         if (broadcastId == null || broadcastId.isEmpty) return;
 
         manager.resetForm.run();
-        context.go(MRoutes.liveBroadcastRoute(broadcastId));
+        context.replace(MRoutes.liveSessionInit);
       },
     );
 
@@ -247,14 +248,14 @@ class _DescriptionField extends WatchingWidget {
       () => TextEditingController(text: manager.description.value),
     );
 
-    registerHandler<BroadcastEditorManager, String>(
+    registerHandler<BroadcastEditorManager, String?>(
       select: (manager) => manager.description,
       handler: (context, description, _) {
-        if (controller.text != description) controller.text = description;
+        if (controller.text != description) controller.text = description ?? '';
       },
     );
 
-    final description = watchValue<BroadcastEditorManager, String>(
+    final description = watchValue<BroadcastEditorManager, String?>(
       (m) => m.description,
     );
 
@@ -271,7 +272,8 @@ class _DescriptionField extends WatchingWidget {
       controller: controller,
       onChanged: manager.onDescriptionChanged,
       enabled: !isLoading,
-      validator: (_) => description.trim().isEmpty ? _emptyFieldMessage : null,
+      validator: (_) =>
+          (description?.trim().isEmpty ?? true) ? _emptyFieldMessage : null,
     );
   }
 }
@@ -319,12 +321,15 @@ class StartBroadcastButton extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final manager = di<BroadcastEditorManager>();
+
     final canSubmit = watchValue<BroadcastEditorManager, bool>(
       (m) => m.canSubmit,
     );
+
     final isLoading = watchValue<BroadcastEditorManager, bool>(
       (m) => m.isRunning,
     );
+
     final step = watchValue<BroadcastEditorManager, BroadcastCreationStep>(
       (m) => m.step,
     );
@@ -350,6 +355,10 @@ class StartBroadcastButton extends WatchingWidget {
             // The draft is written before it is sent, so a creation the API
             // never answers is still on the device when the screen is reopened.
             onPressed: () async {
+              // The room is entered speaking: a host whose microphone was
+              // refused would go live silent, so it is asked for before the
+              // broadcast exists at all.
+              if (!await PermissionPrompts.broadcast(context)) return;
               final draft = await manager.saveDraft();
               manager.createBroadcast.run(draft);
             },

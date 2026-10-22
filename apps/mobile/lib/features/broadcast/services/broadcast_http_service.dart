@@ -32,10 +32,7 @@ final class BroadcastHttpService {
   }
 
   /// `GET /broadcasts/{id}` — one broadcast, with the viewer's standing.
-  Future<Broadcast> getBroadcast(
-    Id broadcastId, {
-    CancelToken? cancelToken,
-  }) {
+  Future<Broadcast> getBroadcast(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.get(
       '/broadcasts/${broadcastId.getOrCrash}',
       cancelToken: cancelToken,
@@ -158,10 +155,7 @@ final class BroadcastHttpService {
   }
 
   /// `POST /broadcasts/{id}/join` — subscribes, answering with the token.
-  Future<BroadcastSessionDto> join(
-    Id broadcastId, {
-    CancelToken? cancelToken,
-  }) {
+  Future<BroadcastSessionDto> join(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.post(
       '/broadcasts/${broadcastId.getOrCrash}/join',
       cancelToken: cancelToken,
@@ -170,10 +164,7 @@ final class BroadcastHttpService {
   }
 
   /// `POST /broadcasts/{id}/leave` — stops listening.
-  Future<LeaveBroadcastDto> leave(
-    Id broadcastId, {
-    CancelToken? cancelToken,
-  }) {
+  Future<LeaveBroadcastDto> leave(Id broadcastId, {CancelToken? cancelToken}) {
     return _client.post(
       '/broadcasts/${broadcastId.getOrCrash}/leave',
       cancelToken: cancelToken,

@@ -16,6 +16,30 @@ void main() {
       expect(config.webSocketUrl, 'wss://dev.socket');
       expect(config.menoLiveKitUrl, 'https://dev.livekit');
     });
+
+    test('a development build ignores the hosted room url', () {
+      const config = Config(
+        env: Environment.dev,
+        menoApiUrl: 'https://dev.api',
+        webSocketUrl: 'wss://dev.socket',
+        menoLiveKitUrl: 'wss://meno.livekit.cloud',
+      );
+
+      expect(config.liveKitUrl, Config.localLiveKitUrl);
+      expect(config.usesLocalRoomServer, isTrue);
+    });
+
+    test('a release build uses the room url it was given', () {
+      const config = Config(
+        env: Environment.prod,
+        menoApiUrl: 'https://api',
+        webSocketUrl: 'wss://socket',
+        menoLiveKitUrl: 'wss://meno.livekit.cloud',
+      );
+
+      expect(config.liveKitUrl, 'wss://meno.livekit.cloud');
+      expect(config.usesLocalRoomServer, isFalse);
+    });
   });
 
   group('Environment', () {

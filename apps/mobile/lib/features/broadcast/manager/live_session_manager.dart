@@ -3,7 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_shared/services/livekit_client.dart';
+import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/broadcast/manager/broadcast_timer_manager.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
@@ -33,7 +33,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     required this._http,
     required this._local,
     required this._socket,
-    required this._livekit,
+    required this._room,
     required this._live,
     required this._logger,
   }) {
@@ -52,7 +52,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.setup',
-    )..pipeToCommand(_connectToLiveKit);
+    );
 
     _connectToLiveKit = .createAsyncNoParamNoResult(
       () async {
@@ -65,17 +65,13 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
 
         status.value = LiveStatus.connecting;
 
-        final outcome = isHost.value
-            ? await _livekit.broadcast(token)
-            : await _livekit.stream(token);
-
-        // A `Left` here is a connection that did not happen; raising it lets
+        // A failure here is a connection that did not happen; raising it lets
         // the error listener below decide between retrying and giving up.
-        outcome.match((failure) => throw failure, (_) {});
+        await _room.connect(token, canPublish: isHost.value);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.connect',
-    )..pipeToCommand(_announcePresence);
+    );
     _announcePresence = .createAsyncNoParamNoResult(
       () async {
         _socket.joinRoom(broadcast.value.id);
@@ -88,11 +84,11 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.announce',
-    )..pipeToCommand(_settle);
+    );
     _settle = .createSyncNoParamNoResult(
       () {
         if (isHost.value) {
-          isMicrophoneEnabled.value = _livekit.isMicrophoneEnabled;
+          isMicrophoneEnabled.value = _room.isMicrophoneEnabled;
         }
         state.value = isHost.value
             ? const LiveSessionState.broadcasting()
@@ -123,8 +119,8 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
             await _http.leave(broadcast.value.id);
           }
         } finally {
+          await _room.disconnect();
           _socket.leaveRoom(broadcast.value.id);
-          await _livekit.disconnect();
           state.value = const LiveSessionState.ended();
           status.value = LiveStatus.offAir;
           _isLeaving.value = false;
@@ -144,7 +140,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       (value, stack) async {
         stack.push(isMicrophoneEnabled.value);
         isMicrophoneEnabled.value = value;
-        await _livekit.setMicrophoneEnabled(value);
+        await _room.setMicrophoneEnabled(value);
       },
       undo: (stack, _) => isMicrophoneEnabled.value = stack.pop(),
       errorFilterFn: menoExceptionFilter,
@@ -152,12 +148,31 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     );
     reconnectToSocket = .createAsyncNoParamNoResult(
       () async {
-        if (!_livekit.connected) return;
+        if (!_room.isConnected) return;
         _logger.i('Re-announcing after a socket reconnect');
         _socket.joinRoom(broadcast.value.id);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.reconnect',
+    );
+
+    // Chained here, after every command exists. A `..pipeToCommand(…)` written
+    // on the line that builds a command reads the field it points at, and a
+    // `late final` assigned two lines below has not been initialised yet — the
+    // constructor would throw before the first room could open. The closures
+    // above only reach for their neighbours when they *run*, so the order they
+    // are created in does not matter; the order they are read does.
+    setupConfigs.pipeToCommand(_connectToLiveKit);
+    _connectToLiveKit.pipeToCommand(_announcePresence);
+    _announcePresence.pipeToCommand(_settle);
+
+    // The room's own connection, for as long as the session lives. Exactly one
+    // listener, so there is exactly one to cancel; `_handleRoomState` ignores
+    // it until the chain above has settled.
+    _roomStateSubscription = _room.connectionState.listen(
+      _handleRoomState,
+      onError: (Object error) =>
+          _logger.e('Room state stream failed', error: error),
     );
   }
 
@@ -165,7 +180,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   final BroadcastHttpService _http;
   final BroadcastLocalService _local;
   final BroadcastSocketService _socket;
-  final LiveKitClient _livekit;
+  final RoomTransport _room;
   final LiveScopeManager _live;
   final MenoLogger _logger;
 
@@ -203,7 +218,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   /// The on-air clock, built by [setupConfigs].
   late final BroadcastTimerManager timer;
 
-  StreamSubscription<LiveKitState>? _liveKitStateSubscription;
+  StreamSubscription<RoomConnectionState>? _roomStateSubscription;
   StreamSubscription<HostConnectionEvent>? _hostConnectionSubscription;
   StreamSubscription<EndedBroadcast>? _endedBroadcastSubscription;
   StreamSubscription<void>? _socketReconnectionSubscription;
@@ -254,15 +269,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       _connectToLiveKit.errors;
 
   void _setupListeners() {
-    _liveKitStateSubscription = _livekit.connectionState.listen(
-      _handleLiveKitState,
-      onError: (Object error) {
-        _logger.e('LiveKit state stream failed', error: error);
-        state.value = LiveSessionState.error(errorMessage(error));
-        status.value = LiveStatus.offAir;
-      },
-    );
-
     _hostConnectionSubscription = _socket.onHostConnectionChanged.listen(
       _handleHostConnection,
       onError: (Object error) =>
@@ -308,22 +314,31 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     });
   }
 
-  void _handleLiveKitState(LiveKitState next) {
+  /// Follows the room once this client is on air.
+  ///
+  /// The chain owns the status until then: a room that reports `connected`
+  /// while the client is still announcing is not a reason to paint "live", so
+  /// everything is ignored while the state is still
+  /// [LiveSessionInitializing]. Afterwards the transport is the truth — a drop,
+  /// a reconnect and a return are its to report, and the clock follows.
+  void _handleRoomState(RoomConnectionState next) {
+    if (state.value is LiveSessionInitializing) return;
+
     switch (next) {
-      case LiveKitState.connected:
+      case RoomConnectionState.connected:
         status.value = LiveStatus.live;
         _reconnectionAttempts = 0;
         _reconnectionTimer?.cancel();
         if (!timer.isRunning.value) timer.resume.run();
 
-      case LiveKitState.connecting:
+      case RoomConnectionState.connecting:
         status.value = LiveStatus.connecting;
 
-      case LiveKitState.reconnecting:
+      case RoomConnectionState.reconnecting:
         status.value = LiveStatus.reconnecting;
         if (timer.isRunning.value) timer.pause.run();
 
-      case LiveKitState.disconnected:
+      case RoomConnectionState.disconnected:
         status.value = LiveStatus.disconnected;
         if (timer.isRunning.value) timer.pause.run();
 
@@ -364,7 +379,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     state.value = const LiveSessionState.ended();
     status.value = LiveStatus.offAir;
 
-    await _livekit.disconnect();
+    await _room.disconnect();
   }
 
   /// Says again which room this client is in, after the socket came back.
@@ -396,12 +411,12 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     _reconnectionTimer?.cancel();
     _reconnectionTimer = null;
 
-    await _liveKitStateSubscription?.cancel();
+    await _roomStateSubscription?.cancel();
     await _hostConnectionSubscription?.cancel();
     await _endedBroadcastSubscription?.cancel();
     await _socketReconnectionSubscription?.cancel();
 
-    _liveKitStateSubscription = null;
+    _roomStateSubscription = null;
     _hostConnectionSubscription = null;
     _endedBroadcastSubscription = null;
     _socketReconnectionSubscription = null;

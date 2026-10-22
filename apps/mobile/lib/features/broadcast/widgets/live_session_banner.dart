@@ -58,7 +58,7 @@ class LiveSessionBanner extends WatchingWidget {
       actionButtonLabel: isHost ? 'End' : 'Leave',
       action: () => _handleAction(context),
       onTap: () async {
-        await context.push<void>(MRoutes.liveBroadcastRoute(broadcast.id));
+        await context.push<void>(MRoutes.liveBroadcast);
       },
     );
   }

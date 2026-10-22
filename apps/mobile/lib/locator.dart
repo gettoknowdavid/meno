@@ -302,7 +302,8 @@ Future<void> _registerAccountScope(
 /// Registers one live session's services, in that session's own scope.
 ///
 /// Everything here is created when a room opens and disposed when it closes:
-/// the LiveKit client, the roster, and the manager that owns the room's state.
+/// the room's transport, the roster, and the manager that owns the room's
+/// state.
 /// The [LiveSession] the scope is opened for is registered by
 /// [LiveScopeManager] before this runs, which is why the registrations below
 /// can take it.
@@ -317,10 +318,6 @@ Future<void> _registerAccountScope(
 /// `di.isRegistered<LiveSessionManager>()` is the question a caller asks before
 /// entering.
 Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
-  scope.registerSingleton<LiveKitClient>(
-    LiveKitClient.initialize(di<Config>().menoLiveKitUrl, di<MenoLogger>()),
-    dispose: (client) => client.onDispose(),
-  );
   scope.registerSingleton<ParticipantsManager>(
     ParticipantsManager(
       http: di<BroadcastHttpService>(),
@@ -330,6 +327,47 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
     dispose: (manager) => manager.onDispose(),
   );
 
+  // The room itself. Which server it opens, and where its token comes from, is
+  // the one difference between a development build and a release one:
+  //
+  // * a release build joins [Config.menoLiveKitUrl] with the token the API
+  //   minted for the session;
+  // * a development build joins the LiveKit `ops/docker-compose.yml` starts,
+  //   over the loopback address `adb reverse` forwards, and signs its own
+  //   token with the development key pair that server runs with — so going
+  //   live on a device costs nothing and needs no internet.
+  //
+  // A room server that is not configured at all is walked on the silent
+  // transport: the flow still runs, and nothing is published.
+  final config = di<Config>();
+  final roomUrl = config.liveKitUrl;
+  if (roomUrl.isEmpty) {
+    di<MenoLogger>().w(
+      'No LiveKit URL is configured; the broadcast will run without a room',
+      tag: MenoLogTag.di.label,
+    );
+    scope.registerLazySingleton<RoomTransport>(
+      SilentRoomTransport.new,
+      dispose: (transport) => transport.onDispose(),
+    );
+  } else {
+    // Lazy: the SDK's room is built when a session enters the room, not when a
+    // scope is opened from a deep link that may never join one.
+    scope.registerLazySingleton<RoomTransport>(
+      () => LiveKitRoomTransport(
+        url: roomUrl,
+        logger: di<MenoLogger>(),
+        devToken: config.usesLocalRoomServer
+            ? DevRoomTokenSource(
+                room: session.broadcastId.getOrCrash,
+                identity: session.userId.getOrCrash,
+              )
+            : null,
+      ),
+      dispose: (transport) => transport.onDispose(),
+    );
+  }
+
   if (!scope.isRegistered<BroadcastSession>()) return;
 
   scope.registerSingleton<LiveSessionManager>(
@@ -338,11 +376,10 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
       http: di<BroadcastHttpService>(),
       local: di<BroadcastLocalService>(),
       socket: di<BroadcastSocketService>(),
-      livekit: di<LiveKitClient>(),
+      room: di<RoomTransport>(),
       live: di<LiveScopeManager>(),
       logger: di<MenoLogger>(),
     ),
-    dispose: (manager) => manager.onDispose(),
   );
 }
 

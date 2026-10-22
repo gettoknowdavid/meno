@@ -45,6 +45,7 @@ final class UserProfileProxy extends ChangeNotifier {
         }
       },
       undo: (stack, _) => _setFollowing(stack.pop()),
+      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'userProfile.toggleFollow',
     );

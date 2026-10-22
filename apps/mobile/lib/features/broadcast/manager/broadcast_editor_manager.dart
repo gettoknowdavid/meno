@@ -40,7 +40,9 @@ final class BroadcastEditorManager implements Disposable {
 
         final created = await _http.create(
           title: draft.title,
-          description: draft.description.isEmpty ? null : draft.description,
+          description: (draft.description?.isEmpty ?? false)
+              ? null
+              : draft.description,
           imageId: draft.imageId,
           cohosts: [for (final id in draft.cohosts) id.getOrCrash],
           recordingEnabled: draft.record,
@@ -60,7 +62,7 @@ final class BroadcastEditorManager implements Disposable {
         if (step.value.index >= BroadcastCreationStep.started.index) return;
 
         _isRunning.value = true;
-        final BroadcastSession created;
+        BroadcastSession created;
         try {
           created = (await _http.goLive(broadcastId)).toDomain(_userId);
         } finally {
@@ -137,7 +139,7 @@ final class BroadcastEditorManager implements Disposable {
   final ValueNotifier<String> title = ValueNotifier('');
 
   /// The description as typed, for the same reason.
-  final ValueNotifier<String> description = ValueNotifier('');
+  final ValueNotifier<String?> description = ValueNotifier('');
 
   /// The locally picked image, until the API has one.
   final imagePath = ValueNotifier<ImageInput?>(null);

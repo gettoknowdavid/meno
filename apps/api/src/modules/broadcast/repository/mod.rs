@@ -99,6 +99,30 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
     /// One page of broadcasts, newest first unless the filter says otherwise.
     async fn list(&self, filter: BroadcastFilter) -> Result<Vec<Broadcast>, MenoError>;
 
+    /// The broadcast `creator_id` currently has on air, or `None`.
+    ///
+    /// One account may have at most one live broadcast — `0017_broadcast_liveness.sql`
+    /// enforces it with a partial unique index — and this is the read that turns a
+    /// second attempt into a refusal before any media or row change happens.
+    async fn find_live_by_creator(&self, creator_id: Uuid) -> Result<Option<Broadcast>, MenoError>;
+
+    /// Every broadcast currently on air, reduced to what abandonment is decided from.
+    ///
+    /// The reaper asks this every tick. Deliberately not a page: a room left behind is
+    /// a room that holds a LiveKit slot until it is closed, so a live broadcast past the
+    /// first page still has to be found.
+    async fn list_live(&self) -> Result<Vec<LiveBroadcast>, MenoError>;
+
+    /// Record, or clear, the moment a live broadcast became abandonable.
+    ///
+    /// Only applies while the broadcast is still live, so a stale sweep cannot write a
+    /// clock onto a row somebody else has already ended.
+    async fn set_abandoned_since(
+        &self,
+        id: Uuid,
+        since: Option<OffsetDateTime>,
+    ) -> Result<(), MenoError>;
+
     /// How many people are in the room right now.
     async fn live_participant_count(&self, broadcast_id: Uuid) -> Result<i64, MenoError>;
 
@@ -159,6 +183,21 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
     /// rendering performance rule, and a detail response that joins one creator and
     /// three cohosts is four round trips unless it says so here.
     async fn find_users(&self, ids: &[Uuid]) -> Result<Vec<UserSummary>, MenoError>;
+}
+
+/// A live broadcast, as the abandonment reaper reads it.
+///
+/// Two columns and an id rather than a whole [`Broadcast`]: the reaper's rules are about
+/// presence and elapsed time, and a type that carried a title would invite a rule that
+/// reads one.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct LiveBroadcast {
+    /// Which broadcast.
+    pub id: Uuid,
+    /// Whose it is — the identity that has to be in the room for it to be healthy.
+    pub creator_id: Uuid,
+    /// When it first had nobody, or no host and no cohost; `None` while healthy.
+    pub abandoned_since: Option<OffsetDateTime>,
 }
 
 /// The filter a broadcast list is read with, already decoded.

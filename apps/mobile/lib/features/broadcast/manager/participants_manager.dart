@@ -35,12 +35,20 @@ final class ParticipantsManager implements Disposable {
           .listen(_handleSearchChange);
 
       _isInitialized = true;
-    }, errorFilterFn: menoExceptionFilter)..pipeToCommand(_fetchParticipants);
+    }, errorFilterFn: menoExceptionFilter);
 
     _fetchParticipants = Command.createAsyncNoParamNoResult(() async {
       final page = await _http.participants(_broadcastId);
       _handleInitialList(page.items);
     }, errorFilterFn: menoExceptionFilter);
+
+    // Chained here, after both commands exist. A `..pipeToCommand(…)` written
+    // on the line that builds `initialize` reads `_fetchParticipants`, and a
+    // `late final` assigned below it has not been initialised yet — the
+    // constructor would throw and the live scope would never register. The
+    // closures only reach for their neighbours when they *run*, so the order
+    // they are created in does not matter; the order they are read does.
+    initialize.pipeToCommand(_fetchParticipants);
 
     /// Shows [ _pageSize] more of the participants already loaded.
     loadMore = Command.createSyncNoParamNoResult(() {

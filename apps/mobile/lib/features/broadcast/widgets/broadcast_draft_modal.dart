@@ -144,7 +144,11 @@ class _DraftItem extends StatelessWidget {
     final textTheme = MTextTheme.of(context);
     final colors = MColorScheme.of(context);
 
-    final hasImage = draft.imagePath != null;
+    // A draft can hold a URL as well as a local file, and a stored path that
+    // no longer exists resolves to no file at all. The thumbnail needs the
+    // file itself, not merely an image input.
+    final imageFile = draft.imagePath?.getFile;
+    final hasImage = imageFile != null;
     final hasPartialCreation = draft.hasPartialCreation;
     final lastModified = draft.lastModified ?? DateTime.now();
 
@@ -194,12 +198,12 @@ class _DraftItem extends StatelessWidget {
                   shape: RoundedSuperellipseBorder(
                     borderRadius: .circular(Insets.md),
                   ),
-                  image: hasImage
-                      ? DecorationImage(
-                          image: FileImage(draft.imagePath!.getFile!),
+                  image: imageFile == null
+                      ? null
+                      : DecorationImage(
+                          image: FileImage(imageFile),
                           fit: .cover,
-                        )
-                      : null,
+                        ),
                 ),
                 child: hasImage
                     ? Icon(
@@ -237,9 +241,9 @@ class _DraftItem extends StatelessWidget {
                     ),
                     Spaces.verticalMicro,
                     MText(
-                      draft.description.isEmpty
+                      (draft.description?.isEmpty ?? true)
                           ? 'No description'
-                          : draft.description,
+                          : draft.description!,
                       style: textTheme.captionRegular,
                       color: colors.onBackgroundVariant,
                       maxLines: 1,

@@ -22,21 +22,21 @@ class ParticipantsModal extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final manager = di<ParticipantsManager>();
-    
+
     final list = watchValue<ParticipantsManager, List<Participant>>(
       (m) => m.displayedParticipants,
     );
-    
+
     final totalCount = watchValue<ParticipantsManager, int>(
       (m) => m.totalCount,
     );
-    
+
     final isSearching = watchValue<ParticipantsManager, bool>(
       (m) => m.isSearching,
     );
-    
+
     final isLoading = watchValue<ParticipantsManager, bool>((m) => m.isLoading);
-    
+
     final query = watchValue<ParticipantsManager, String?>(
       (m) => m.searchQuery,
     );

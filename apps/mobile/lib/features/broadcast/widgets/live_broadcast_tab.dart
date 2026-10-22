@@ -64,9 +64,7 @@ class _LiveBroadcastTabState extends State<LiveBroadcastTab>
               Row(
                 mainAxisAlignment: .center,
                 children: [
-                  BroadcastCreatorWidget(
-                    name: broadcast.hostName.orEmpty,
-                  ),
+                  BroadcastCreatorWidget(name: broadcast.hostName.orEmpty),
                   Spaces.horizontalSmall,
                   const BroadcastStatusWidget(),
                 ],

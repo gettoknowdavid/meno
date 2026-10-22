@@ -24,7 +24,7 @@ use std::sync::Mutex;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
+use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter};
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus, EndReason,
     JoinOutcome, JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, UserSummary, now,
@@ -48,6 +48,12 @@ struct State {
     participants: Vec<BroadcastParticipant>,
     cohosts: Vec<BroadcastCohost>,
     users: Vec<UserSummary>,
+    /// When each live broadcast first became abandonable, by id.
+    ///
+    /// A map rather than a field on [`Broadcast`] because the column is the reaper's
+    /// clock, not part of a broadcast's identity — Postgres keeps it separate for the
+    /// same reason, and the projection the API returns does not carry it.
+    abandoned: Vec<(Uuid, OffsetDateTime)>,
     clock: Option<OffsetDateTime>,
 }
 
@@ -252,18 +258,37 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
     ) -> Result<Option<Broadcast>, MenoError> {
         let mut state = self.lock();
         let now = Self::now(&state);
-        let Some(broadcast) = state
+
+        // Read first, then write: the guard needs the whole table, and an `iter_mut`
+        // held across another read of the same vector is a borrow the adapter's single
+        // statement does not have.
+        let Some(existing) = state
             .broadcasts
-            .iter_mut()
+            .iter()
             .find(|b| b.id == id && b.deleted_at.is_none())
         else {
             return Ok(None);
         };
 
-        if broadcast.status != BroadcastStatus::Inactive {
+        if existing.status != BroadcastStatus::Inactive {
             return Ok(None);
         }
 
+        // The partial unique index from migration 0017, mirrored: one account has at
+        // most one broadcast on air, so the second one is refused here exactly as
+        // Postgres refuses it.
+        let creator_id = existing.creator_id;
+        if state
+            .broadcasts
+            .iter()
+            .any(|b| b.id != id && b.creator_id == creator_id && b.is_live())
+        {
+            return Ok(None);
+        }
+
+        let Some(broadcast) = state.broadcasts.iter_mut().find(|b| b.id == id) else {
+            return Ok(None);
+        };
         broadcast.status = BroadcastStatus::Active;
         broadcast.published_at = Some(at);
         broadcast.updated_at = now;
@@ -278,23 +303,75 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
     ) -> Result<Option<Broadcast>, MenoError> {
         let mut state = self.lock();
         let now = Self::now(&state);
-        let Some(broadcast) = state
-            .broadcasts
-            .iter_mut()
-            .find(|b| b.id == id && b.deleted_at.is_none())
-        else {
-            return Ok(None);
+
+        let ended = {
+            let Some(broadcast) = state
+                .broadcasts
+                .iter_mut()
+                .find(|b| b.id == id && b.deleted_at.is_none())
+            else {
+                return Ok(None);
+            };
+
+            if broadcast.status != BroadcastStatus::Active {
+                return Ok(None);
+            }
+
+            broadcast.status = BroadcastStatus::Inactive;
+            broadcast.end_time = Some(at);
+            broadcast.end_reason = Some(reason);
+            broadcast.updated_at = now;
+            broadcast.clone()
         };
 
-        if broadcast.status != BroadcastStatus::Active {
-            return Ok(None);
+        // The clock is the reaper's, so ending clears it — a row that is no longer live
+        // cannot be waiting out a grace period.
+        state.abandoned.retain(|(live, _)| *live != id);
+        Ok(Some(ended))
+    }
+
+    async fn find_live_by_creator(&self, creator_id: Uuid) -> Result<Option<Broadcast>, MenoError> {
+        Ok(self
+            .lock()
+            .broadcasts
+            .iter()
+            .find(|b| b.creator_id == creator_id && b.is_live())
+            .cloned())
+    }
+
+    async fn list_live(&self) -> Result<Vec<LiveBroadcast>, MenoError> {
+        let state = self.lock();
+        Ok(state
+            .broadcasts
+            .iter()
+            .filter(|b| b.is_live())
+            .map(|b| LiveBroadcast {
+                id: b.id,
+                creator_id: b.creator_id,
+                abandoned_since: state
+                    .abandoned
+                    .iter()
+                    .find(|(id, _)| *id == b.id)
+                    .map(|(_, since)| *since),
+            })
+            .collect())
+    }
+
+    async fn set_abandoned_since(
+        &self,
+        id: Uuid,
+        since: Option<OffsetDateTime>,
+    ) -> Result<(), MenoError> {
+        let mut state = self.lock();
+        if !state.broadcasts.iter().any(|b| b.id == id && b.is_live()) {
+            return Ok(());
         }
 
-        broadcast.status = BroadcastStatus::Inactive;
-        broadcast.end_time = Some(at);
-        broadcast.end_reason = Some(reason);
-        broadcast.updated_at = now;
-        Ok(Some(broadcast.clone()))
+        state.abandoned.retain(|(live, _)| *live != id);
+        if let Some(since) = since {
+            state.abandoned.push((id, since));
+        }
+        Ok(())
     }
 
     async fn list(&self, filter: BroadcastFilter) -> Result<Vec<Broadcast>, MenoError> {

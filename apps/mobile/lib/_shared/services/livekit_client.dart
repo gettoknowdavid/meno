@@ -1,174 +1,239 @@
 import 'dart:async';
 
-import 'package:flutter_it/flutter_it.dart';
-import 'package:fpdart/fpdart.dart';
 import 'package:livekit_client/livekit_client.dart' as sdk;
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/services/dev_room_token.dart';
+import 'package:meno_mobile/_shared/services/room_transport.dart';
 
-/// Infrastructure layer - LiveKit Client
+/// The room, as the LiveKit SDK sees it.
 ///
-/// Manages LiveKit room connection and audio/video streaming.
-/// This is a low-level infrastructure component that should NOT be
-/// exposed to the application layer directly.
-class LiveKitClient implements Disposable {
-  new _(this._url, this._logger);
+/// [RoomTransport] is this app's vocabulary — join, hang up, microphone — and
+/// this is the one implementation that translates it into the SDK's. Everything
+/// vendor-specific about the room stays in this file: the session manager, the
+/// live shell and the transition page never learn that a `Room`, an `Engine` or
+/// a token grant exists.
+///
+/// # The token
+///
+/// [connect] is handed the token the API minted for the session and uses it as
+/// it stands. The single exception is [devToken]: a development build has no
+/// API-minted token (the broadcast flow around it is still fed from fixtures),
+/// so it signs one for the docker server instead — see [DevRoomTokenSource] and
+/// [Config.liveKitUrl]. A release build is never given one.
+///
+/// # Events are the truth
+///
+/// The connection is followed from the room's own events rather than inferred
+/// from the calls that succeeded: a drop, a reconnection and a return to the
+/// room all happen without anybody calling this class, and the session's status
+/// has to follow them. [RoomConnectionState.connecting]/[RoomConnectionState.connected]
+/// are emitted from the calls as well, so the state moves even on a platform
+/// whose events are late.
+final class LiveKitRoomTransport implements RoomTransport {
+  /// Opens the transport onto the room server at [url].
+  ///
+  /// The room is built here rather than at the first join: its listener has to
+  /// exist before [connect] runs, or the connection events that arrive while it
+  /// is still connecting are lost.
+  new({
+    required this.url,
+    required this._logger,
+    this.devToken,
+  })
+    : _room = sdk.Room(
+        roomOptions: const sdk.RoomOptions(
+          adaptiveStream: true,
+          dynacast: true,
+          defaultAudioPublishOptions: sdk.AudioPublishOptions(
+            name: sdk.AudioPublishOptions.defaultMicrophoneName,
+          ),
+        ),
+      ) {
+    // The listener has to exist before `connect`: the events that arrive while
+    // the room is still joining are what the session's status follows.
+    _listener = _room.createListener()..listen(_handleEvent);
+  }
 
-  final String _url;
+  /// The room server, as the SDK takes it (`ws://` or `wss://`).
+  final String url;
+
+  /// Signs a room token for the local development server, or null in any build
+  /// that gets its token from the API.
+  final DevRoomTokenSource? devToken;
+
   final MenoLogger _logger;
+  final sdk.Room _room;
 
-  sdk.Room? _room;
   sdk.EventsListener<sdk.RoomEvent>? _listener;
 
-  final _connectionStateCtr = StreamController<LiveKitState>.broadcast();
+  final _states = StreamController<RoomConnectionState>.broadcast();
 
-  Stream<LiveKitState> get connectionState => _connectionStateCtr.stream;
+  RoomConnectionState _state = RoomConnectionState.disconnected;
 
-  final _roomEventsCtr = StreamController<sdk.RoomEvent>.broadcast();
+  bool _disposed = false;
 
-  Stream<sdk.RoomEvent> get roomEvents => _roomEventsCtr.stream;
+  @override
+  Stream<RoomConnectionState> get connectionState => _states.stream;
 
-  /// Current connection state
-  LiveKitState _currentState = .disconnected;
+  @override
+  bool get isConnected => _state == RoomConnectionState.connected;
 
-  LiveKitState get currentState => _currentState;
-
-  /// Check if connected
-  bool get connected => _room?.connectionState == sdk.ConnectionState.connected;
-
-  /// Get the local participant
-  sdk.LocalParticipant? get localParticipant => _room?.localParticipant;
-
-  /// Get current microphone state
+  @override
   bool get isMicrophoneEnabled =>
-      localParticipant?.isMicrophoneEnabled() ?? false;
+      _room.localParticipant?.isMicrophoneEnabled() ?? false;
 
-  // ACTIONS
+  @override
+  Future<void> connect(String token, {required bool canPublish}) async {
+    if (_disposed) throw const LiveKitNotConnected();
 
-  static LiveKitClient initialize(String url, MenoLogger logger) {
-    final client = LiveKitClient._(url, logger);
-    client._logger.i('LiveKit: Initializing client');
-    client._room = sdk.Room(
-      roomOptions: const sdk.RoomOptions(
-        defaultAudioPublishOptions: sdk.AudioPublishOptions(
-          name: sdk.AudioPublishOptions.defaultMicrophoneName,
-        ),
-        adaptiveStream: true,
-        dynacast: true,
-      ),
+    // A room that is still up has to be taken down first: connecting it twice
+    // would leave the first engine behind. `disconnect` already waits for the
+    // engine, so there is nothing to sleep on here.
+    if (_room.connectionState != sdk.ConnectionState.disconnected) {
+      _logger.w('The room was still up; taking it down before joining again');
+      await disconnect();
+    }
+
+    final accessToken = _accessToken(token, canPublish: canPublish);
+
+    _emit(RoomConnectionState.connecting);
+    _logger.i(
+      'Joining ${devToken == null ? 'the room' : 'the local room'} at $url '
+      'as ${canPublish ? 'a publisher' : 'a listener'}',
     );
 
-    client._listener = client._room?.createListener();
-    client._setupRoomListeners();
-    client._logger.i('LiveKit: Client initialized successfully');
-    return client;
-  }
+    try {
+      // Warms DNS and TLS, and on LiveKit Cloud also pins the nearest region,
+      // so the connect below does not pay for either.
+      await _room.prepareConnection(url, accessToken);
 
-  /// Connect to LiveKit room as a broadcaster (host)
-  ///
-  /// This enables microphone by default and prepares for broadcasting
-  Future<Either<LiveKitFailure, Unit>> broadcast(String token) {
-    return _connect(token: token, enableMicrophone: true, isHost: true);
-  }
+      await _room.connect(url, accessToken);
 
-  /// Connect to LiveKit room as a listener (viewer)
-  ///
-  /// Microphone is disabled by default for listeners
-  Future<Either<LiveKitFailure, Unit>> stream(String token) {
-    return _connect(token: token, enableMicrophone: false, isHost: false);
-  }
+      // A host enters to speak: the microphone is published before the join is
+      // reported as done, so a screen that reads `isMicrophoneEnabled` the
+      // moment the session settles does not find it still false.
+      if (canPublish) await _enableMicrophoneAfterJoining();
 
-  /// Disconnects from the LiveKit room
-  ///
-  /// The wait matters: the room is only gone once this returns, so a connect
-  /// that follows it does not race the teardown of the one before.
-  Future<void> disconnect() async {
-    _logger.i('LiveKit: Disconnecting from room');
-    _updateConnectionState(.disconnected);
-
-    await _room?.disconnect();
-    _logger.i('LiveKit: Disconnected successfully');
-  }
-
-  /// Enable or disable local microphone
-  Future<Either<LiveKitFailure, bool>> setMicrophoneEnabled(
-    bool enabled,
-  ) async {
-    final participant = localParticipant;
-    if (participant == null) {
-      return const Left(LiveKitNotConnected());
+      _logger.i('Joined the room');
+      _emit(RoomConnectionState.connected);
+    } on sdk.ConnectException catch (error) {
+      _logger.e('The room refused the connection - ${error.message}');
+      await _disconnectQuietly();
+      throw _failureFrom(error);
+    } on sdk.TimeoutException catch (error) {
+      _logger.e('The room did not answer in time - ${error.message}');
+      await _disconnectQuietly();
+      throw const LiveKitConnectionTimeout();
+    } on sdk.LiveKitException catch (error) {
+      _logger.e('Could not join the room - ${error.message}');
+      await _disconnectQuietly();
+      throw LiveKitConnectionFailed(error.message);
+    } on Exception catch (error) {
+      _logger.e('Could not join the room', error: error);
+      await _disconnectQuietly();
+      throw LiveKitUnexpectedError(error.toString());
     }
+  }
+
+  @override
+  Future<void> disconnect() async {
+    if (_disposed) return;
+
+    if (_room.connectionState == sdk.ConnectionState.disconnected) {
+      _emit(RoomConnectionState.disconnected);
+      return;
+    }
+
+    _logger.i('Leaving the room');
+    try {
+      await _room.disconnect();
+    } on Object catch (error, stackTrace) {
+      // The room is gone as far as the session is concerned either way; what
+      // is left is an engine that did not acknowledge it, which the dispose
+      // below will finish.
+      _logger.w(
+        'Leaving the room did not complete cleanly',
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _emit(RoomConnectionState.disconnected);
+    }
+  }
+
+  @override
+  Future<void> setMicrophoneEnabled(bool enabled) async {
+    final participant = _room.localParticipant;
+    if (participant == null || !isConnected) throw const LiveKitNotConnected();
 
     try {
       await participant.setMicrophoneEnabled(enabled);
-      _logger.i('LiveKit: Microphone ${enabled ? 'enabled' : 'disabled'}');
-      return Right(enabled);
-    } on Exception catch (error) {
-      _logger.e('LiveKit: Failed to set microphone state', error: error);
-      return Left(LiveKitMicError(error.toString()));
+      _logger.i('Microphone ${enabled ? 'unmuted' : 'muted'}');
+    } on Object catch (error) {
+      _logger.e('Could not switch the microphone', error: error);
+      throw LiveKitMicError(error.toString());
     }
   }
 
-  // HELPER METHODS
+  @override
+  FutureOr<dynamic> onDispose() async {
+    if (_disposed) return;
+    _disposed = true;
 
-  Future<Either<LiveKitFailure, Unit>> _connect({
-    required String token,
-    required bool enableMicrophone,
-    required bool isHost,
-  }) async {
-    final room = _room;
-    if (room == null) return const Left(LiveKitNotConnected());
+    _logger.d('Closing the room');
+
+    // The listener is what keeps the room's events flowing into this transport,
+    // so it goes before the room does.
+    await _listener?.dispose();
+    _listener = null;
 
     try {
-      // A room that is still up has to be taken down first: connecting it
-      // twice would leave the first engine behind. `disconnect` already waits
-      // for the engine, so there is nothing to sleep on here.
-      if (room.connectionState == sdk.ConnectionState.connected) {
-        _logger.w('LiveKit: Already connected, disconnecting first');
-        await disconnect();
-      }
-
-      _updateConnectionState(.connecting);
-      _logger.i(
-        'LiveKit: Connecting as ${isHost ? 'broadcaster' : 'listener'} '
-        'to $_url',
+      await _room.disconnect();
+      await _room.dispose();
+    } on Object catch (error, stackTrace) {
+      // Teardown must not throw: the scope that owns this transport is being
+      // dropped either way, and a room left half-closed is worse than a log.
+      _logger.w(
+        'Could not close the room cleanly',
+        error: error,
+        stackTrace: stackTrace,
       );
-
-      // Warms DNS and TLS, and on LiveKit Cloud also pins the nearest region,
-      // so the connect below does not pay for either.
-      await room.prepareConnection(_url, token);
-
-      await room.connect(
-        _url,
-        token,
-        fastConnectOptions: isHost
-            ? sdk.FastConnectOptions(
-                microphone: sdk.TrackOption(enabled: enableMicrophone),
-              )
-            : null,
-      );
-
-      _logger.i('LiveKit: Connected successfully');
-      return const Right(unit);
-    } on sdk.ConnectException catch (error) {
-      _logger.e('LiveKit: Connection refused - ${error.message}');
-      await _disconnectQuietly();
-      return Left(_failureFrom(error));
-    } on sdk.TimeoutException catch (error) {
-      _logger.e('LiveKit: Connection timed out - ${error.message}');
-      await _disconnectQuietly();
-      return const Left(LiveKitConnectionTimeout());
-    } on sdk.LiveKitException catch (error) {
-      _logger.e('LiveKit: Connection failed - ${error.message}');
-      await _disconnectQuietly();
-      return Left(LiveKitConnectionFailed(error.message));
-    } on Exception catch (error) {
-      _logger.e('LiveKit: Unexpected connection error', error: error);
-      await _disconnectQuietly();
-      return Left(LiveKitUnexpectedError(error.toString()));
     }
+
+    await _states.close();
   }
 
-  /// What a refused connection means in this client's vocabulary.
+  /// The token [connect] actually joins with.
+  ///
+  /// The session's own token everywhere but a development build, where there is
+  /// no API-minted one to use and the local server only accepts what it can
+  /// verify.
+  String _accessToken(String token, {required bool canPublish}) {
+    final signer = devToken;
+    if (signer == null) return token;
+
+    _logger.d(
+      'Signing a development room token for ${signer.identity} '
+      'in ${signer.room}',
+    );
+    return signer.token(canPublish: canPublish);
+  }
+
+  /// Publishes the microphone once the join has gone through.
+  ///
+  /// A device that refuses the microphone fails the join rather than entering
+  /// the room silently: a host with no microphone is a broadcast nobody can
+  /// hear, and the screen that started it should say so.
+  Future<void> _enableMicrophoneAfterJoining() async {
+    final participant = _room.localParticipant;
+    if (participant == null) {
+      throw const LiveKitMicError('No local participant');
+    }
+
+    await participant.setMicrophoneEnabled(true);
+  }
+
+  /// What a refused connection means in this app's vocabulary.
   ///
   /// The SDK reports a rejected token as a [sdk.ConnectException] carrying the
   /// status the server answered with, which is what is matched on here rather
@@ -191,118 +256,44 @@ class LiveKitClient implements Disposable {
       await disconnect();
     } on Object catch (error, stackTrace) {
       _logger.w(
-        'LiveKit: Could not clean up after a failed connection',
+        'Could not clean up after a failed connection',
         error: error,
         stackTrace: stackTrace,
       );
     }
   }
 
-  /// Setup all room event listeners
-  void _setupRoomListeners() {
-    _logger.i('LiveKit: Setting up room listeners');
-
-    // Forward all events to the room events stream
-    _listener?.listen((event) {
-      _roomEventsCtr.add(event);
-      _handleRoomEvent(event);
-    });
-  }
-
-  void _updateConnectionState(LiveKitState state) {
-    if (_currentState != state) {
-      _currentState = state;
-      _connectionStateCtr.add(state);
-    }
-  }
-
-  /// Handle specific room events
-  void _handleRoomEvent(sdk.RoomEvent event) {
+  /// Follows the room's own events.
+  void _handleEvent(sdk.RoomEvent event) {
     switch (event) {
       case sdk.RoomConnectedEvent():
-        _updateConnectionState(.connected);
-        _logger.i('LiveKit: Room connected');
-
-      case sdk.RoomDisconnectedEvent(:final reason):
-        _updateConnectionState(.disconnected);
-        _logger.w('LiveKit: Room disconnected - $reason');
+      case sdk.RoomReconnectedEvent():
+        _emit(RoomConnectionState.connected);
 
       case sdk.RoomReconnectingEvent():
-        _updateConnectionState(.reconnecting);
-        _logger.v('LiveKit: Reconnecting...');
+        _emit(RoomConnectionState.reconnecting);
 
-      case sdk.RoomReconnectedEvent():
-        _updateConnectionState(.connected);
-        _logger.i('LiveKit: Reconnected successfully');
+      case sdk.RoomDisconnectedEvent(:final reason):
+        _logger.w('Left the room - $reason');
+        _emit(RoomConnectionState.disconnected);
 
       case sdk.ParticipantConnectedEvent(:final participant):
-        _logger.i('LiveKit: Participant connected - ${participant.identity}');
+        _logger.i('${participant.identity} joined the room');
 
       case sdk.ParticipantDisconnectedEvent(:final participant):
-        _logger.i(
-          'LiveKit: Participant disconnected - ${participant.identity}',
-        );
-
-      case sdk.TrackPublishedEvent(:final participant):
-        _logger.d('LiveKit: Track published by ${participant.identity}');
-
-      case sdk.TrackUnpublishedEvent(:final participant):
-        _logger.d('LiveKit: Track unpublished by ${participant.identity}');
-
-      case sdk.TrackSubscribedEvent(:final participant):
-        _logger.d('LiveKit: Track subscribed from ${participant.identity} ');
-
-      case sdk.TrackUnsubscribedEvent(:final participant):
-        _logger.d('LiveKit: Track unsubscribed from ${participant.identity} ');
+        _logger.i('${participant.identity} left the room');
 
       default:
         // Everything else is background detail at this layer; the SDK's own
         // log carries it.
-        _logger.v('LiveKit: Room event ${event.runtimeType}');
+        _logger.v('Room event ${event.runtimeType}');
     }
   }
 
-  @override
-  FutureOr<dynamic> onDispose() async {
-    _logger.d('LiveKit: Disposing client');
-
-    // The listener is what keeps the room's events flowing into this client,
-    // so it goes before the room does.
-    await _listener?.dispose();
-    _listener = null;
-
-    try {
-      await _room?.disconnect();
-      await _room?.dispose();
-    } on Object catch (error, stackTrace) {
-      // Teardown must not throw: the scope that owns this client is being
-      // dropped either way, and a room left half-closed is worse than a log.
-      _logger.w(
-        'LiveKit: Could not close the room cleanly',
-        error: error,
-        stackTrace: stackTrace,
-      );
-    } finally {
-      _room = null;
-    }
-
-    // Close streams
-    await _connectionStateCtr.close();
-    await _roomEventsCtr.close();
-
-    _logger.d('LiveKit: Client disposed successfully');
+  /// Publishes [next] unless it is where the room already is.
+  void _emit(RoomConnectionState next) {
+    if (_state == next) return;
+    _state = next;
+    if (!_states.isClosed) _states.add(next);
   }
-}
-
-// LIVEKIT CONNECTION STATE
-
-enum LiveKitState { disconnected, connecting, connected, reconnecting }
-
-extension LivekitConnectionStateX on sdk.ConnectionState {
-  LiveKitState get toLiveKitState => switch (this) {
-    .disconnected => LiveKitState.disconnected,
-    .connecting => LiveKitState.connecting,
-    .connected => LiveKitState.connected,
-    .reconnecting => LiveKitState.reconnecting,
-  };
 }

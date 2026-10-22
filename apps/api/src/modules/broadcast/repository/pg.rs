@@ -55,7 +55,7 @@ use sqlx::{AssertSqlSafe, Postgres, QueryBuilder};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{BroadcastFilter, BroadcastRepo, ParticipantFilter, RepoDeps};
+use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter, RepoDeps};
 use crate::infrastructure::query::{ColumnName, push_cursor_condition, push_order_and_limit};
 use crate::modules::broadcast::error;
 use crate::modules::broadcast::model::{
@@ -280,7 +280,7 @@ impl BroadcastRepo for PgBroadcastRepo {
         // The `status = 'inactive'` predicate is the guard: a second go-live matches no
         // row and comes back `None`, which the service reports as `already_live`
         // instead of overwriting the first `published_at`.
-        sqlx::query_as::<_, Broadcast>(statement(
+        let row = sqlx::query_as::<_, Broadcast>(statement(
             "UPDATE broadcasts SET status = 'active', published_at = $2, updated_at = now() \
              WHERE id = $1 AND status = 'inactive' AND deleted_at IS NULL \
              RETURNING {BROADCAST_COLUMNS}",
@@ -288,8 +288,56 @@ impl BroadcastRepo for PgBroadcastRepo {
         .bind(id)
         .bind(at)
         .fetch_optional(&self.pool)
+        .await;
+
+        match row {
+            Ok(row) => Ok(row),
+            // `23505` is the one-live-per-creator index from migration 0017: this
+            // creator already has another broadcast on air, and two replicas racing
+            // the same go-live is exactly the case the index exists for. It is the
+            // same refusal as a second go-live on this row, not a 500.
+            Err(sqlx::Error::Database(failure)) if failure.is_unique_violation() => Ok(None),
+            Err(error) => Err(database("mark_live", error)),
+        }
+    }
+
+    async fn find_live_by_creator(&self, creator_id: Uuid) -> Result<Option<Broadcast>, MenoError> {
+        sqlx::query_as::<_, Broadcast>(statement(
+            "SELECT {BROADCAST_COLUMNS} FROM broadcasts \
+             WHERE creator_id = $1 AND status = 'active' AND deleted_at IS NULL \
+             LIMIT 1",
+        ))
+        .bind(creator_id)
+        .fetch_optional(&self.pool)
         .await
-        .map_err(|e| database("mark_live", e))
+        .map_err(|e| database("find_live_by_creator", e))
+    }
+
+    async fn list_live(&self) -> Result<Vec<LiveBroadcast>, MenoError> {
+        sqlx::query_as::<_, LiveBroadcast>(
+            "SELECT id, creator_id, abandoned_since FROM broadcasts \
+             WHERE status = 'active' AND deleted_at IS NULL",
+        )
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| database("list_live", e))
+    }
+
+    async fn set_abandoned_since(
+        &self,
+        id: Uuid,
+        since: Option<OffsetDateTime>,
+    ) -> Result<(), MenoError> {
+        sqlx::query(
+            "UPDATE broadcasts SET abandoned_since = $2 \
+             WHERE id = $1 AND status = 'active' AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(since)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| database("set_abandoned_since", e))
     }
 
     async fn mark_ended(
@@ -300,7 +348,8 @@ impl BroadcastRepo for PgBroadcastRepo {
     ) -> Result<Option<Broadcast>, MenoError> {
         sqlx::query_as::<_, Broadcast>(statement(
             "UPDATE broadcasts \
-             SET status = 'inactive', end_time = $2, end_reason = $3, updated_at = now() \
+             SET status = 'inactive', end_time = $2, end_reason = $3, \
+                 abandoned_since = NULL, updated_at = now() \
              WHERE id = $1 AND status = 'active' AND deleted_at IS NULL \
              RETURNING {BROADCAST_COLUMNS}",
         ))

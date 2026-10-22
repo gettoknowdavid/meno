@@ -77,7 +77,7 @@ final class LiveScopeManager implements Disposable {
 
   bool _disposed = false;
 
-  final ValueNotifier<Id?> _broadcastId = ValueNotifier(.empty);
+  final ValueNotifier<Id?> _broadcastId = ValueNotifier(null);
 
   /// Whether the open scope was opened with the API's session for its room.
   ///
@@ -169,6 +169,7 @@ final class LiveScopeManager implements Disposable {
 
     try {
       final broadcast = await _http.getBroadcast(stored.broadcast.id);
+
       // The account can be signed out while the API is answering, and a scope
       // must not be pushed on top of a stack that is being taken down.
       if (_disposed) return;
@@ -286,7 +287,7 @@ final class LiveScopeManager implements Disposable {
   /// Pops the open session, unless [broadcastId] names a different one.
   Future<void> _close([Id? broadcastId]) async {
     final live = _broadcastId.value;
-    if (live == null) return;
+    if (live == null || live.isEmpty) return;
     if (broadcastId != null && broadcastId != live) return;
 
     await _drop(Scope.liveFor(live));

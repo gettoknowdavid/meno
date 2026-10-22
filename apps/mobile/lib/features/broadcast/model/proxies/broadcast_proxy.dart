@@ -32,6 +32,7 @@ final class BroadcastProxy extends ChangeNotifier {
         _isFavourited = stack.pop();
         notifyListeners();
       },
+      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.toggleIsFavourite',
     );

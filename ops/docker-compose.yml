@@ -63,6 +63,23 @@ services:
     networks: [meno]
     restart: unless-stopped
 
+  livekit:
+    image: livekit/livekit-server:latest
+    container_name: meno-livekit
+    # `--dev` runs the server with the development key pair
+    # (`devkey` / `secret`), in-memory routing and no TLS. `--node-ip` is the
+    # address clients are told to send media to: set LIVEKIT_NODE_IP to this
+    # machine's LAN address when testing from a phone, otherwise 127.0.0.1 is
+    # right for a desktop/emulator on the same machine.
+    command: >-
+      --dev --bind 0.0.0.0 --node-ip ${LIVEKIT_NODE_IP:-127.0.0.1}
+    ports:
+      - "7880:7880"
+      - "7881:7881"
+      - "7882:7882/udp"
+    networks: [meno]
+    restart: unless-stopped
+
   storage-init:
     image: amazon/aws-cli:latest
     container_name: meno-storage-init
@@ -81,10 +98,14 @@ services:
         set -e
         aws --endpoint-url http://storage:9000 s3api head-bucket --bucket meno-uploads \
           || aws --endpoint-url http://storage:9000 s3api create-bucket --bucket meno-uploads
-        aws --endpoint-url http://storage:9000 s3api put-public-access-block \
+        # Local image URLs are plain bucket URLs (STORAGE_PUBLIC_URL), so the
+        # development bucket has to be readable without credentials. This is a
+        # dev-only policy: production serves uploads through its CDN.
+        aws --endpoint-url http://storage:9000 s3api delete-public-access-block \
+          --bucket meno-uploads || true
+        aws --endpoint-url http://storage:9000 s3api put-bucket-policy \
           --bucket meno-uploads \
-          --public-access-block-configuration \
-            BlockPublicAcls=true,IgnorePublicAcls=true,BlockPublicPolicy=true,RestrictPublicBuckets=true
+          --policy '{"Version":"2012-10-17","Statement":[{"Sid":"PublicRead","Effect":"Allow","Principal":"*","Action":["s3:GetObject"],"Resource":["arn:aws:s3:::meno-uploads/*"]}]}'
         echo 'bucket meno-uploads ready'
     restart: "no"
 

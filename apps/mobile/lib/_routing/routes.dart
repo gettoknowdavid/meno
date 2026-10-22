@@ -36,7 +36,6 @@ final class MRoutes {
     resetPasswordOtp,
     createNewPassword,
     resetPasswordSuccess,
-    liveSessionInit,
   ];
 
   static bool isPublic(String location) => publicRoutes.contains(location);
@@ -162,55 +161,28 @@ final class MRoutes {
     return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/pre-stream';
   }
 
-  /// Live broadcast host/listener shell.
-  static const String liveBroadcastPattern = '/broadcasts/:broadcastId/live';
+  /// The live room's screens.
+  ///
+  /// They name no broadcast: the session this device is in *is* the room, and
+  /// the paths stay free of path parameters so the room's shell can hold them
+  /// as branches — go_router rejects a branch whose default location is
+  /// parameterized. Keeping the room at the top level also keeps the broadcast
+  /// list and details pages out of its URL, so opening a tab cannot build them
+  /// underneath it.
+  static const String liveBroadcast = '/live-broadcast';
+  static const String liveChat = '/live-chat';
+  static const String liveBible = '/live-bible';
+  static const String liveNotes = '/live-notes';
+  static const String liveFolders = '/live-folders';
 
-  static String liveBroadcastRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live';
+  /// A note opened over the live notes tab.
+  static String liveNoteEditor([String noteId = 'new']) {
+    return '$liveNotes/${Uri.encodeComponent(noteId)}';
   }
 
-  static const String liveChatPattern = '/broadcasts/:broadcastId/live/chat';
-
-  static String liveChatRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/chat';
-  }
-
-  static const String liveBiblePattern = '/broadcasts/:broadcastId/live/bible';
-
-  static String liveBibleRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/bible';
-  }
-
-  static const String liveNotesPattern = '/broadcasts/:broadcastId/live/notes';
-
-  static String liveNotesRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/notes';
-  }
-
-  static const String liveNoteEditorPattern =
-      '/broadcasts/:broadcastId/live/notes/:noteId';
-
-  static String liveNoteEditorRoute(
-    Id broadcastId, [
-    String noteId = 'new',
-  ]) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/notes/'
-        '${Uri.encodeComponent(noteId)}';
-  }
-
-  static const String liveFoldersPattern =
-      '/broadcasts/:broadcastId/live/folders';
-
-  static String liveFoldersRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/folders';
-  }
-
-  static const String liveFolderPattern =
-      '/broadcasts/:broadcastId/live/folders/:folderId';
-
-  static String liveFolderRoute(Id broadcastId, String folderId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live/folders/'
-        '${Uri.encodeComponent(folderId)}';
+  /// A folder opened over the live notes tab.
+  static String liveFolder(String folderId) {
+    return '$liveFolders/${Uri.encodeComponent(folderId)}';
   }
 
   /// Post-broadcast summary screen.
@@ -223,14 +195,12 @@ final class MRoutes {
   /// The transition page that sits between the router and a live room.
   ///
   /// A room is opened asynchronously — the scope exists before it is ready — so
-  /// the router shows this page in between and lets it wait on the scope. It is
-  /// a named route so the pre-stream modal and the live shell can hand a client
-  /// here by address rather than by reconstructing the path.
-  static const String liveSessionInit = '/broadcasts/:broadcastId/live-session-initialization';
-
-  static String liveSessionInitRoute(Id broadcastId) {
-    return '/broadcasts/${Uri.encodeComponent(broadcastId.getOrCrash)}/live-session-initialization';
-  }
+  /// the router shows this page in between and lets it wait on the scope. The
+  /// open session says which broadcast it is for, so the address carries no id.
+  ///
+  /// Not public: only a signed-in client that has just started or joined a
+  /// broadcast opens it, and the guard would otherwise send that client home.
+  static const String liveSessionInit = '/live-initialization';
 
   static const String notes = '/notes';
   static const String noteEditorPattern = '/notes/:noteId';

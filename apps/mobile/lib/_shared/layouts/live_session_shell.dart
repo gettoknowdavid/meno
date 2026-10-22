@@ -1,7 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -13,7 +12,7 @@ import 'package:meno_ui/meno_ui.dart';
 ///
 /// `go_router`'s `StatefulShellRoute` keeps one branch per tab, so a room's
 /// chat, bible and notes each hold their own state. The [TabController] here is
-/// only the *presentation* of that: it drives the chip bar and the swipeable
+/// only the *presentation* of that: it drives the tab bar and the swipeable
 /// page view, and a movement in either is mirrored into the other. Keeping them
 /// in step is this widget's whole job — a shell that let them drift would swipe
 /// to one screen and highlight another.
@@ -22,16 +21,22 @@ import 'package:meno_ui/meno_ui.dart';
 ///
 /// A session ends for two reasons: the host ended it, or the room did. Both
 /// arrive on the manager's `state`, and both leave the client on the page that
-/// says what happened, because the room it was in no longer exists.
+/// says what happened, because the room it was in no longer exists. Stepping
+/// out of the room is not this widget's business: the session lives in a scope,
+/// so changing the location only changes which screen is drawn.
 class LiveSessionShell extends WatchingStatefulWidget {
-  const new({required this.navigationShell, required this.children, super.key});
+  const new _({
+    required this.navigationShell,
+    required this.children,
+    super.key,
+  });
 
   /// The shell builder `go_router` calls with the branches it built.
   static Widget builder(
     BuildContext context,
     StatefulNavigationShell navigationShell,
     List<Widget> children,
-  ) => LiveSessionShell(
+  ) => LiveSessionShell._(
     key: const ValueKey<String>('LiveSessionShell'),
     navigationShell: navigationShell,
     children: children,
@@ -57,6 +62,10 @@ class LiveSessionShellState extends State<LiveSessionShell>
       initialIndex: widget.navigationShell.currentIndex,
     );
     controller.addListener(_handleTabChanged);
+
+    if (controller.index != widget.navigationShell.currentIndex) {
+      controller.index = widget.navigationShell.currentIndex;
+    }
   }
 
   @override
@@ -69,13 +78,6 @@ class LiveSessionShellState extends State<LiveSessionShell>
   @override
   Widget build(BuildContext context) {
     final manager = di<LiveSessionManager>();
-    final status = watchValue<LiveSessionManager, LiveStatus>(
-      (manager) => manager.status,
-    );
-
-    final broadcast = watchValue<LiveSessionManager, Broadcast>(
-      (manager) => manager.broadcast,
-    );
 
     registerHandler<LiveSessionManager, LiveSessionState>(
       select: (manager) => manager.state,
@@ -87,14 +89,18 @@ class LiveSessionShellState extends State<LiveSessionShell>
     );
 
     return PopScope(
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) context.go(MRoutes.home);
-      },
-      child: _LiveSessionScaffold(
-        title: broadcast.title.orEmpty,
-        status: status,
-        controller: controller,
-        children: widget.children,
+      onPopInvokedWithResult: (_, _) => context.go(MRoutes.home),
+      child: Scaffold(
+        appBar: _AppBar(
+          controller: controller,
+          showChatDot: false,
+          onTabChanged: onTabTap,
+        ),
+        body: MTabBarView(
+          controller: controller,
+          children: widget.children,
+          onPageChanged: (_) => FocusScope.of(context).unfocus(),
+        ),
       ),
     );
   }
@@ -103,77 +109,63 @@ class LiveSessionShellState extends State<LiveSessionShell>
     if (controller.index == widget.navigationShell.currentIndex) return;
     widget.navigationShell.goBranch(controller.index);
   }
+
+  void onTabTap(int tappedIndex) {
+    if (controller.index != tappedIndex) {
+      controller.animateTo(tappedIndex);
+    } else {
+      if (widget.navigationShell.currentIndex != tappedIndex) {
+        widget.navigationShell.goBranch(tappedIndex);
+      }
+    }
+  }
 }
 
-/// The room's header, its tabs, and the pages underneath.
-class _LiveSessionScaffold extends StatelessWidget {
+/// The room's tab bar, in the design system's normal (underline) style.
+///
+/// It is deliberately not the chip bar used elsewhere: the four room screens
+/// are a fixed, equal-width set, and the normal bar is the one the design
+/// draws for them.
+class _AppBar extends StatelessWidget implements PreferredSizeWidget {
   const new({
-    required this.title,
-    required this.status,
     required this.controller,
-    required this.children,
+    required this.showChatDot,
+    this.onTabChanged,
   });
 
-  final String title;
-  final LiveStatus status;
   final TabController controller;
-  final List<Widget> children;
+  final bool showChatDot;
+  final void Function(int)? onTabChanged;
 
-  /// The room's screens, in the order `routes.dart` mounts them.
-  static const List<String> _tabs = [
-    'Broadcast',
-    'Chat',
-    'Live Bible',
-    'Live Notes',
-  ];
+  @override
+  Size get preferredSize => const Size.fromHeight(kToolbarHeight);
 
   @override
   Widget build(BuildContext context) {
-    final textTheme = MTextTheme.of(context);
-
-    return Scaffold(
-      body: SafeArea(
-        child: Column(
-          children: [
-            Padding(
-              padding: const .symmetric(
-                horizontal: Insets.lg,
-                vertical: Insets.md,
-              ),
-              child: Row(
-                children: [
-                  Expanded(
-                    child: MText(
-                      title.isEmpty ? status.label : title,
-                      style: textTheme.bodyMedium,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  if (status.isInitializing || status.showReconnecting)
-                    const MLoadingIndicator.two(),
-                ],
-              ),
-            ),
-            MChipTabBar(
-              controller: controller,
-              tabs: [
-                for (var index = 0; index < _tabs.length; index++)
-                  MChipTab(
-                    label: _tabs[index],
-                    index: index,
-                    controller: controller,
-                  ),
-              ],
-            ),
-            Expanded(
-              child: MTabBarView(
-                controller: controller,
-                children: children,
-                onPageChanged: (_) => FocusScope.of(context).unfocus(),
-              ),
-            ),
+    Widget icon = const SizedBox.shrink();
+    if (showChatDot) {
+      icon = Center(
+        child: Container(
+          width: 8,
+          height: 8,
+          decoration: const BoxDecoration(color: Colors.red, shape: .circle),
+        ),
+      );
+    }
+    return SafeArea(
+      child: Padding(
+        padding: const .symmetric(horizontal: Insets.lg),
+        child: MTabBar.normal(
+          controller: controller,
+          tabs: [
+            const MenoTab(text: 'Broadcast'),
+            MenoTab(text: 'Chat', icon: icon),
+            const MenoTab(text: 'Live Bible'),
+            const MenoTab(text: 'Live Notes'),
           ],
+          padding: .zero,
+          isScrollable: false,
+          onTap: onTabChanged,
         ),
       ),
     );

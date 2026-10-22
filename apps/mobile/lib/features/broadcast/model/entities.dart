@@ -3,6 +3,37 @@ import 'package:meno_mobile/_core/_core.dart';
 
 part 'entities.freezed.dart';
 
+// final fakeBroadcast = Broadcast(
+//   id: Id.fromString('2a84d446-555d-4c21-acd0-a13045f23e12'),
+//   title: SingleLineString('Prayer & Testimony Night'),
+//   description: MultiLineString('Open mic for prayers and shared testimonies.'),
+//   timeZone: 'Europe/London',
+//   imageId: 'img-123',
+//   status: .active,
+//   state: .live,
+//   isJoined: true,
+//   isBookmarked: true,
+//   liveParticipantsCount: 18,
+//   totalParticipants: 42,
+//   recordingEnabled: true,
+//   timeRemainingSeconds: 1480,
+//   creator: Participant(
+//     id: Id.fromString('a2ac10be-46ab-48ff-bbed-21a4fc0b87c7'),
+//     fullName: SingleLineString('David Michael'),
+//     bio: MultiLineString(
+//       '''
+// Blessed of the Most High God, the possessor of heaven and earth! So am I and I give thanks! Bless of the Most High God, the possessor of heaven and earth! So am I and I give thanks!''',
+//     ),
+//   ),
+//   // cohosts: [
+//   //   Participant(
+//   //     id: Id.fromString('cec40b96-e28b-4fb2-af85-6329ee39474c'),
+//   //     fullName: SingleLineString('Priya Nair'),
+//   //     bio: MultiLineString('Hosting with Marcus tonight.'),
+//   //   ),
+//   // ],
+// );
+
 /// Sample broadcasts in different states for cards, skeletons, and empty views.
 final List<Broadcast> fakeBroadcastList = [
   Broadcast(
@@ -217,7 +248,7 @@ abstract class BroadcastDraft with _$BroadcastDraft {
     required Id id,
     @Default(Id.empty) Id ownerId,
     @Default('') String title,
-    @Default('') String description,
+    String? description,
     @Default(false) bool record,
     @Default(<Id>[]) List<Id> cohosts,
     ImageInput? imagePath,
@@ -235,7 +266,8 @@ abstract class BroadcastDraft with _$BroadcastDraft {
       (createdBroadcastId?.isValid ?? false);
 
   /// Whether the draft has been written to at all.
-  bool get isEmpty => title.trim().isEmpty && description.trim().isEmpty;
+  bool get isEmpty =>
+      title.trim().isEmpty && (description?.trim().isEmpty ?? true);
 }
 
 /// Which way a broadcast list is ordered. Mirrors `meno_core::Order`.

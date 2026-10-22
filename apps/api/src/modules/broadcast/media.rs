@@ -7,10 +7,17 @@
 //! make the media vendor part of the domain's vocabulary, and §10's service tests would
 //! need a LiveKit Cloud project to assert that a host gets a host token.
 //!
-//! The trait is deliberately four methods wide — mint, create room, evict, tear down —
-//! because those are the only four things a broadcast is allowed to ask a media server
-//! to do. Anything richer belongs behind the trait, where a test cannot accidentally
-//! depend on it.
+//! The trait is deliberately five methods wide — mint, create room, evict, tear down,
+//! and ask who is in the room — because those are the only five things a broadcast is
+//! allowed to ask a media server to do. Anything richer belongs behind the trait, where
+//! a test cannot accidentally depend on it.
+//!
+//! # Why presence comes from the media server
+//!
+//! `broadcast_participants.left_at` is written by a client that leaves politely, and a
+//! phone that crashed, lost its network or was killed never does. The room server, by
+//! contrast, drops a participant the moment its connection times out — so it, and not
+//! the roster table, is the only honest answer to *"is anybody in this broadcast?"*.
 //!
 //! # What a failure means
 //!
@@ -73,6 +80,18 @@ pub trait BroadcastMedia: Send + Sync + std::fmt::Debug {
     ///
     /// [`MenoError::Upstream`] when the media server refuses.
     async fn end_room(&self, broadcast_id: Uuid) -> Result<(), MenoError>;
+
+    /// The identities currently connected to `broadcast_id`'s room.
+    ///
+    /// An identity is the account's id, which is what a token is minted with. A room
+    /// that no longer exists is an empty room, not an error: nothing is in it, which is
+    /// exactly what the caller asked.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::Upstream`] when the media server is unreachable, so a sweep that
+    /// cannot see a room never mistakes "we could not ask" for "nobody is there".
+    async fn room_participants(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError>;
 }
 
 /// The real adapter: LiveKit, through the shared client and its circuit breaker.
@@ -132,6 +151,18 @@ impl BroadcastMedia for LivekitMedia {
             .await
             .map_err(|e| upstream("end_room", e))
     }
+
+    async fn room_participants(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        match self.inner.list_participants(broadcast_id).await {
+            Ok(participants) => Ok(participants.into_iter().map(|p| p.id).collect()),
+            // A room that has already been torn down has no participants. LiveKit
+            // answers that case with an error, and turning it into "nobody is here"
+            // would end a broadcast because its room was cleaned up a minute early —
+            // so it is reported like any other upstream failure and the sweep skips
+            // this broadcast until the next tick.
+            Err(failure) => Err(upstream("room_participants", failure)),
+        }
+    }
 }
 
 /// The adapter for a deployment with `LIVEKIT_ENABLED=false`.
@@ -168,6 +199,10 @@ impl BroadcastMedia for DisabledMedia {
     async fn end_room(&self, _broadcast_id: Uuid) -> Result<(), MenoError> {
         Err(error::media_unavailable())
     }
+
+    async fn room_participants(&self, _broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        Err(error::media_unavailable())
+    }
 }
 
 /// A media server that records what it was asked for and succeeds.
@@ -182,6 +217,8 @@ pub struct RecordingMedia {
     calls: std::sync::Arc<std::sync::Mutex<Vec<String>>>,
     /// Set to make the next call fail, for the §4.6 "disabled integration" path.
     fail_with: Option<String>,
+    /// Who is in each room, by broadcast id. Absent means an empty room.
+    presence: std::sync::Arc<std::sync::Mutex<std::collections::HashMap<Uuid, Vec<Uuid>>>>,
 }
 
 #[cfg(any(test, feature = "test-support"))]
@@ -198,7 +235,24 @@ impl RecordingMedia {
         Self {
             calls: std::sync::Arc::default(),
             fail_with: Some("media down".to_owned()),
+            presence: std::sync::Arc::default(),
         }
+    }
+
+    /// Put [who] in [broadcast_id]'s room, as the room server would report them.
+    pub fn set_room_participants(&self, broadcast_id: Uuid, who: &[Uuid]) {
+        self.presence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .insert(broadcast_id, who.to_vec());
+    }
+
+    /// Take everybody out of [broadcast_id]'s room.
+    pub fn clear_room(&self, broadcast_id: Uuid) {
+        self.presence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .remove(&broadcast_id);
     }
 
     /// What the media server was asked for, in order.
@@ -246,6 +300,22 @@ impl BroadcastMedia for RecordingMedia {
 
     async fn end_room(&self, broadcast_id: Uuid) -> Result<(), MenoError> {
         self.record(format!("end_room:{broadcast_id}"))
+    }
+
+    async fn room_participants(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        // A presence read is not a call the service tests are asserting; recording it
+        // would make `calls()` depend on how often the reaper ran.
+        if self.fail_with.is_some() {
+            return Err(error::media_unavailable());
+        }
+
+        Ok(self
+            .presence
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(&broadcast_id)
+            .cloned()
+            .unwrap_or_default())
     }
 }
 

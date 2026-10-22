@@ -14,44 +14,225 @@ import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 
+/// What a path that names no real resource shows.
+const String _notFound = 'Not found';
+
 /// The key of the router's root navigator.
 ///
 /// Public because the overlay it builds is the only one that always exists:
 /// anything outside the widget tree — the global failure reporter — reaches
 /// toasts through it rather than through a page's context.
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
+final liveBroadcastKey = GlobalKey<NavigatorState>(debugLabel: 'liveBroadcast');
+final liveChatKey = GlobalKey<NavigatorState>(debugLabel: 'liveChat');
+final liveBibleKey = GlobalKey<NavigatorState>(debugLabel: 'liveBible');
+final liveNotesKey = GlobalKey<NavigatorState>(debugLabel: 'liveNotes');
 
-/// Builds the application's [GoRouter].
-///
-/// The router is assembled in one place rather than across many small route
-/// files: at this size a single route table reads clearly and keeps the guard
-/// and shell logic next to the routes they cover.
-GoRouter createRouter({
-  required AuthManager auth,
-  required OnboardingManager onboarding,
-  bool debugLogDiagnostics = false,
-}) {
-  final guard = RouterGuard(auth: auth, onboarding: onboarding);
-
-  return GoRouter(
-    debugLogDiagnostics: debugLogDiagnostics,
-    navigatorKey: rootNavigatorKey,
-    initialLocation: MRoutes.home,
-    refreshListenable: Listenable.merge([
-      onboarding.isOnboarded,
-      auth.isAuthenticated,
-      auth.emailVerified,
-    ]),
-    redirect: guard.redirect,
-    routes: [
-      ..._publicRoutes,
-      ..._standaloneRoutes,
-      ..._broadcastFlow,
-      ..._settingsRoutes,
-      ..._bottomNavShell,
+List<RouteBase> get _bottomNavShell => [
+  StatefulShellRoute.indexedStack(
+    builder: (_, _, navigationShell) {
+      return RootShell(navigationShell: navigationShell);
+    },
+    branches: [
+      StatefulShellBranch(
+        routes: [
+          GoRoute(path: MRoutes.home, builder: (_, _) => const HomePage()),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.discover,
+            builder: (_, _) => const StubPage('Discover'),
+            routes: [
+              GoRoute(
+                path: 'all',
+                builder: (_, _) => const StubPage('All Broadcasts'),
+              ),
+              GoRoute(
+                path: 'now-live',
+                builder: (_, _) => const StubPage('Discover Now Live'),
+              ),
+              GoRoute(
+                path: 'recently-live',
+                builder: (_, _) => const StubPage('Discover Recently Live'),
+              ),
+              GoRoute(
+                path: 'accounts',
+                builder: (_, _) => const StubPage('Suggested Accounts'),
+              ),
+              GoRoute(
+                path: 'search',
+                builder: (_, _) => const StubPage('Discover Search'),
+              ),
+            ],
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.notes,
+            builder: (_, _) => const StubPage('Notes'),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        routes: [
+          GoRoute(
+            path: MRoutes.myProfile,
+            builder: (_, _) => const MyProfilePage(),
+          ),
+        ],
+      ),
     ],
-  );
-}
+  ),
+];
+
+List<RouteBase> get _broadcastRoutes => [
+  GoRoute(
+    path: MRoutes.broadcasts,
+    builder: (_, state) =>
+        BroadcastsPage(queryParameters: state.uri.queryParameters),
+    routes: [
+      GoRoute(
+        path: 'new',
+        pageBuilder: (_, state) => CustomTransitionPage<void>(
+          key: state.pageKey,
+          child: const BroadcastEditorPage(),
+          transitionDuration: const Duration(milliseconds: 450),
+          reverseTransitionDuration: const Duration(milliseconds: 400),
+          transitionsBuilder: (_, animation, __, child) {
+            final curved = CurvedAnimation(
+              parent: animation,
+              curve: Curves.easeOutCirc,
+              reverseCurve: Curves.easeInCubic,
+            );
+            return SlideTransition(
+              position: Tween<Offset>(
+                begin: const Offset(0, 1),
+                end: Offset.zero,
+              ).animate(curved),
+              child: FadeTransition(
+                opacity: Tween<double>(begin: 0, end: 1).animate(curved),
+                child: child,
+              ),
+            );
+          },
+        ),
+      ),
+      GoRoute(
+        path: ':broadcastId',
+        builder: (_, state) {
+          final broadcastId = _pathId(state, 'broadcastId');
+          if (broadcastId == null) return const StubPage(_notFound);
+          return BroadcastDetailsPage(broadcastId: broadcastId);
+        },
+        routes: [
+          GoRoute(
+            path: 'edit',
+            pageBuilder: (_, state) => CustomTransitionPage<void>(
+              key: state.pageKey,
+              child: const BroadcastEditorPage(),
+              transitionDuration: const Duration(milliseconds: 310),
+              reverseTransitionDuration: const Duration(milliseconds: 250),
+              transitionsBuilder: (_, animation, __, child) {
+                final curved = CurvedAnimation(
+                  parent: animation,
+                  curve: Curves.easeOutCirc,
+                  reverseCurve: Curves.easeInCubic,
+                );
+                return SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 1),
+                    end: Offset.zero,
+                  ).animate(curved),
+                  child: FadeTransition(
+                    opacity: Tween<double>(begin: 0, end: 1).animate(curved),
+                    child: child,
+                  ),
+                );
+              },
+            ),
+          ),
+          GoRoute(
+            path: 'pre-stream',
+            pageBuilder: (_, state) {
+              final broadcastId = _pathId(state, 'broadcastId');
+              if (broadcastId == null) {
+                return const MaterialPage<void>(child: StubPage(_notFound));
+              }
+              return ModalPage<dynamic>(child: PreStreamModal(id: broadcastId));
+            },
+          ),
+          GoRoute(path: 'ended', builder: (_, _) => const EndedBroadcastPage()),
+        ],
+      ),
+    ],
+  ),
+];
+
+List<RouteBase> get _liveSessionRoutes => [
+  StatefulShellRoute(
+    parentNavigatorKey: rootNavigatorKey,
+    builder: (_, _, navigationShell) => navigationShell,
+    navigatorContainerBuilder: LiveSessionShell.builder,
+    branches: [
+      StatefulShellBranch(
+        navigatorKey: liveBroadcastKey,
+        routes: [
+          GoRoute(
+            path: MRoutes.liveBroadcast,
+            builder: (_, _) => const BroadcastTabWidget(),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        navigatorKey: liveChatKey,
+        routes: [
+          GoRoute(
+            path: MRoutes.liveChat,
+            builder: (_, _) => const StubPage('Chats'),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        navigatorKey: liveBibleKey,
+        routes: [
+          GoRoute(
+            path: MRoutes.liveBible,
+            builder: (_, _) => const StubPage('Bible'),
+          ),
+        ],
+      ),
+      StatefulShellBranch(
+        navigatorKey: liveNotesKey,
+        routes: [
+          GoRoute(
+            path: MRoutes.liveNotes,
+            builder: (_, _) => const StubPage('Notes'),
+            routes: [
+              GoRoute(
+                path: ':noteId',
+                builder: (_, _) => const StubPage('Notes Details'),
+              ),
+            ],
+          ),
+          GoRoute(
+            path: MRoutes.liveFolders,
+            builder: (_, _) => const StubPage('Folders'),
+            routes: [
+              GoRoute(
+                path: ':folderId',
+                builder: (_, _) => const StubPage('Folder Details'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    ],
+  ),
+];
 
 List<RouteBase> get _publicRoutes => [
   GoRoute(path: MRoutes.loading, builder: (_, _) => const StubPage('Loading')),
@@ -114,25 +295,25 @@ List<RouteBase> get _publicRoutes => [
     path: MRoutes.authGoogle,
     builder: (_, _) => const StubPage('Google Sign-in'),
   ),
-  GoRoute(
-    path: MRoutes.liveSessionInit,
-    builder: (_, _) => const LiveSessionInitPage(),
-  ),
 ];
 
-/// What a path that names no real resource shows.
-const String _notFound = 'Not found';
-
-/// The id [state]'s parameter [name] carries, or null when it is not a UUID.
-///
-/// A path parameter is untrusted input: a hand-edited link can say anything.
-Id? _pathId(GoRouterState state, String name) {
-  final raw = state.pathParameters[name];
-  if (raw == null) return null;
-
-  final id = Id.fromString(raw);
-  return id.isValid ? id : null;
-}
+List<RouteBase> get _settingsRoutes => [
+  GoRoute(
+    path: MRoutes.settings,
+    builder: (_, _) => const SettingsPage(),
+    routes: [
+      GoRoute(
+        path: 'notifications',
+        builder: (_, _) => const NotificationsSettingsPage(),
+      ),
+      GoRoute(
+        path: 'security',
+        builder: (_, _) => const SecuritySettingsPage(),
+      ),
+      GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
+    ],
+  ),
+];
 
 List<RouteBase> get _standaloneRoutes => [
   GoRoute(
@@ -169,169 +350,52 @@ List<RouteBase> get _standaloneRoutes => [
     path: MRoutes.webCreateBroadcast,
     builder: (_, _) => const StubPage('Create Broadcast (Web)'),
   ),
-];
-
-List<RouteBase> get _broadcastFlow => [
   GoRoute(
-    path: MRoutes.broadcasts,
-    builder: (_, _) => const BroadcastsPage(queryParameters: {}),
-    routes: [
-      GoRoute(path: 'new', builder: (_, _) => const BroadcastEditorPage()),
-      GoRoute(
-        path: ':broadcastId',
-        builder: (_, state) {
-          final broadcastId = _pathId(state, 'broadcastId');
-          if (broadcastId == null) return const StubPage(_notFound);
-          return BroadcastDetailsPage(broadcastId: broadcastId);
-        },
-        routes: [
-          GoRoute(path: 'edit', builder: (_, _) => const BroadcastEditorPage()),
-          GoRoute(
-            path: 'pre-stream',
-            pageBuilder: (_, state) {
-              final broadcastId = _pathId(state, 'broadcastId');
-              if (broadcastId == null) {
-                return const MaterialPage<void>(child: StubPage(_notFound));
-              }
-              return ModalPage<dynamic>(child: PreStreamModal(id: broadcastId));
-            },
-          ),
-          GoRoute(
-            path: 'live',
-            pageBuilder: (context, state) {
-              final navigationShell = state as StatefulNavigationShell;
-              return CustomTransitionPage<void>(
-                key: const ValueKey('liveSessionShell'),
-                transitionsBuilder: (_, _, _, _) => const SizedBox.expand(),
-                child: LiveSessionShell(
-                  key: const ValueKey('liveSessionShell'),
-                  navigationShell: navigationShell,
-                  children: const [
-                    BroadcastTabWidget(),
-                    StubPage('Live Chat'),
-                    StubPage('Live Bible'),
-                    StubPage('Live Notes'),
-                  ],
-                ),
-              );
-            },
-            routes: [
-              GoRoute(
-                path: 'chat',
-                builder: (_, _) => const StubPage('Live Chat'),
-              ),
-              GoRoute(
-                path: 'bible',
-                builder: (_, _) => const StubPage('Live Bible'),
-              ),
-              GoRoute(
-                path: 'notes',
-                builder: (_, _) => const StubPage('Live Notes'),
-                routes: [
-                  GoRoute(
-                    path: ':noteId',
-                    builder: (_, state) => StubPage(
-                      'Live Note ${state.pathParameters['noteId'] ?? ''}',
-                    ),
-                  ),
-                ],
-              ),
-              GoRoute(
-                path: 'folders',
-                builder: (_, _) => const StubPage('Live Folders'),
-                routes: [
-                  GoRoute(
-                    path: ':folderId',
-                    builder: (_, state) => StubPage(
-                      'Live Folder ${state.pathParameters['folderId'] ?? ''}',
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-          GoRoute(path: 'ended', builder: (_, _) => const EndedBroadcastPage()),
-        ],
-      ),
-    ],
+    path: MRoutes.liveSessionInit,
+    builder: (_, _) => const LiveSessionInitPage(),
   ),
 ];
 
-List<RouteBase> get _settingsRoutes => [
-  GoRoute(
-    path: MRoutes.settings,
-    builder: (_, _) => const SettingsPage(),
-    routes: [
-      GoRoute(
-        path: 'notifications',
-        builder: (_, _) => const NotificationsSettingsPage(),
-      ),
-      GoRoute(
-        path: 'security',
-        builder: (_, _) => const SecuritySettingsPage(),
-      ),
-      GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
-    ],
-  ),
-];
+/// Builds the application's [GoRouter].
+///
+/// The router is assembled in one place rather than across many small route
+/// files: at this size a single route table reads clearly and keeps the guard
+/// and shell logic next to the routes they cover.
+GoRouter createRouter({
+  required AuthManager auth,
+  required OnboardingManager onboarding,
+  bool debugLogDiagnostics = false,
+}) {
+  final guard = RouterGuard(auth: auth, onboarding: onboarding);
 
-List<RouteBase> get _bottomNavShell => [
-  StatefulShellRoute.indexedStack(
-    builder: (_, _, navigationShell) {
-      return RootShell(navigationShell: navigationShell);
-    },
-    branches: [
-      StatefulShellBranch(
-        routes: [
-          GoRoute(path: MRoutes.home, builder: (_, _) => const HomePage()),
-        ],
-      ),
-      StatefulShellBranch(
-        routes: [
-          GoRoute(
-            path: MRoutes.discover,
-            builder: (_, _) => const StubPage('Discover'),
-            routes: [
-              GoRoute(
-                path: 'all',
-                builder: (_, _) => const StubPage('All Broadcasts'),
-              ),
-              GoRoute(
-                path: 'now-live',
-                builder: (_, _) => const StubPage('Discover Now Live'),
-              ),
-              GoRoute(
-                path: 'recently-live',
-                builder: (_, _) => const StubPage('Discover Recently Live'),
-              ),
-              GoRoute(
-                path: 'accounts',
-                builder: (_, _) => const StubPage('Suggested Accounts'),
-              ),
-              GoRoute(
-                path: 'search',
-                builder: (_, _) => const StubPage('Discover Search'),
-              ),
-            ],
-          ),
-        ],
-      ),
-      StatefulShellBranch(
-        routes: [
-          GoRoute(
-            path: MRoutes.notes,
-            builder: (_, _) => const StubPage('Notes'),
-          ),
-        ],
-      ),
-      StatefulShellBranch(
-        routes: [
-          GoRoute(
-            path: MRoutes.myProfile,
-            builder: (_, _) => const MyProfilePage(),
-          ),
-        ],
-      ),
+  return GoRouter(
+    debugLogDiagnostics: debugLogDiagnostics,
+    navigatorKey: rootNavigatorKey,
+    initialLocation: MRoutes.home,
+    refreshListenable: Listenable.merge([
+      onboarding.isOnboarded,
+      auth.isAuthenticated,
+      auth.emailVerified,
+    ]),
+    redirect: guard.redirect,
+    routes: [
+      ..._publicRoutes,
+      ..._standaloneRoutes,
+      ..._broadcastRoutes,
+      ..._liveSessionRoutes,
+      ..._settingsRoutes,
+      ..._bottomNavShell,
     ],
-  ),
-];
+  );
+}
+
+/// The id [state]'s parameter [name] carries, or null when it is not a UUID.
+///
+/// A path parameter is untrusted input: a hand-edited link can say anything.
+Id? _pathId(GoRouterState state, String name) {
+  final raw = state.pathParameters[name];
+  if (raw == null) return null;
+
+  final id = Id.fromString(raw);
+  return id.isValid ? id : null;
+}
