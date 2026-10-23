@@ -346,12 +346,17 @@ pub struct BroadcastResponse {
     pub recording_enabled: bool,
     /// Resolved recording URL, once one exists.
     pub recording_url: Option<String>,
-    /// Why it ended. `none` while it has not.
-    pub end_reason: EndReason,
+    /// Why it ended, or `null` while it has not.
+    ///
+    /// `null` rather than a `none` variant: a variant is a value a client can render, and
+    /// a live broadcast rendering "why it ended" is the reason the variant was removed.
+    pub end_reason: Option<EndReason>,
 
     /// Where the caller left off, for "continue listening".
     pub time_remaining_seconds: Option<i64>,
 
+    /// Who owns it, so a list and a detail agree on the id as well as the object.
+    pub creator_id: Uuid,
     /// Who owns it.
     pub creator: UserSummary,
     /// The current cohosts.
@@ -403,8 +408,9 @@ impl BroadcastResponse {
             total_participants,
             recording_enabled: broadcast.recording_enabled,
             recording_url: broadcast.recording_url.clone(),
-            end_reason: broadcast.end_reason.unwrap_or_default(),
+            end_reason: broadcast.end_reason,
             time_remaining_seconds: viewer.and_then(|v| v.time_remaining_seconds),
+            creator_id: broadcast.creator_id,
             creator,
             cohosts,
         })
@@ -674,6 +680,7 @@ mod tests {
             recording_key: None,
             recording_url: None,
             published_at: None,
+            abandoned_since: None,
             end_reason: None,
             created_at: now(),
             updated_at: now(),
@@ -916,6 +923,108 @@ mod tests {
         // API accepts — and it must still be clamped to the ceiling like every other list.
         let absurd: BroadcastQuery = serde_json::from_str(r#"{"limit":"10000"}"#).expect("decodes");
         assert_eq!(absurd.limit(), 100, "clamped like every other list");
+    }
+
+    fn summarised() -> UserSummary {
+        UserSummary {
+            id: Uuid::from_u128(2),
+            full_name: "Ada".to_owned(),
+            avatar_id: None,
+            avatar_url: None,
+        }
+    }
+
+    #[test]
+    fn a_response_is_camel_case_with_one_name_per_field() {
+        // The contract test for §6.2's casing: every multi-word field appears under the
+        // camelCase spelling the mobile model now reads, and not under the snake_case one.
+        let mut row = row();
+        row.status = BroadcastStatus::Active;
+        row.published_at = Some(now());
+        row.time_zone = Some("Africa/Lagos".to_owned());
+        row.image_url = Some("https://cdn.test/cover.jpg".to_owned());
+
+        let json = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+
+        for snake in [
+            "time_zone",
+            "image_url",
+            "image_id",
+            "created_at",
+            "start_time",
+            "end_time",
+            "published_at",
+            "duration_seconds",
+            "participant_role",
+            "is_joined",
+            "is_bookmarked",
+            "live_participants_count",
+            "total_participants",
+            "recording_enabled",
+            "recording_url",
+            "end_reason",
+            "time_remaining_seconds",
+            "creator_id",
+        ] {
+            assert!(json.get(snake).is_none(), "{snake} is still snake_case");
+        }
+
+        for camel in [
+            "timeZone",
+            "imageUrl",
+            "imageId",
+            "createdAt",
+            "startTime",
+            "endTime",
+            "publishedAt",
+            "durationSeconds",
+            "participantRole",
+            "isJoined",
+            "isBookmarked",
+            "liveParticipantsCount",
+            "totalParticipants",
+            "recordingEnabled",
+            "recordingUrl",
+            "endReason",
+            "timeRemainingSeconds",
+            "creatorId",
+        ] {
+            assert!(json.get(camel).is_some(), "{camel} is missing");
+        }
+
+        assert_eq!(json["creatorId"], "00000000-0000-0000-0000-000000000002");
+        assert_eq!(json["creator"]["fullName"], "Ada");
+        assert_eq!(json["status"], "active");
+        assert_eq!(json["state"], "live");
+        assert_eq!(json["participantRole"], "none");
+    }
+
+    #[test]
+    fn a_live_broadcast_has_no_end_reason_and_an_ended_one_has_its_reason() {
+        // `null`, not a `none` variant: a live broadcast that carries a reason is a
+        // client rendering "why this ended" over a room that is still running.
+        let mut row = row();
+        row.status = BroadcastStatus::Active;
+
+        let live = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+        assert_eq!(live["endReason"], serde_json::Value::Null);
+
+        row.status = BroadcastStatus::Inactive;
+        row.end_time = Some(now());
+        row.end_reason = Some(EndReason::HostDisconnected);
+
+        let ended = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+        assert_eq!(ended["endReason"], "host_disconnected");
+        assert_eq!(ended["state"], "ended");
     }
 
     #[test]

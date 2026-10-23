@@ -67,8 +67,8 @@ use meno_core::Error as MenoError;
 /// Columns selected wherever a `Broadcast` is read.
 const BROADCAST_COLUMNS: &str = "id, title, description, status, creator_id, time_zone, \
      image_url, image_id, broadcast_token, total_participants, start_time, end_time, \
-     recording_enabled, recording_key, recording_url, published_at, end_reason, \
-     created_at, updated_at, deleted_at";
+     recording_enabled, recording_key, recording_url, published_at, abandoned_since, \
+     end_reason, created_at, updated_at, deleted_at";
 
 /// Columns selected wherever a `BroadcastParticipant` is read.
 const PARTICIPANT_COLUMNS: &str = "broadcast_id, participant_id, role, joined_at, left_at, \
@@ -511,6 +511,24 @@ impl BroadcastRepo for PgBroadcastRepo {
         Ok(LeaveOutcome::Left)
     }
 
+    async fn close_participants(
+        &self,
+        broadcast_id: Uuid,
+        at: OffsetDateTime,
+    ) -> Result<u64, MenoError> {
+        let closed = sqlx::query(
+            "UPDATE broadcast_participants SET left_at = $2 \
+             WHERE broadcast_id = $1 AND left_at IS NULL",
+        )
+        .bind(broadcast_id)
+        .bind(at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| database("close_participants", e))?;
+
+        Ok(closed.rows_affected())
+    }
+
     async fn find_participant(
         &self,
         broadcast_id: Uuid,
@@ -691,11 +709,12 @@ mod tests {
                 "normal" | "host_disconnected" | "admin_forced" | "quota_exceeded"
             ));
         }
-        assert_eq!(
-            EndReason::None.as_str(),
-            "none",
-            "None is not written: a broadcast that has not ended stores NULL"
-        );
+        // `none` is not a value the column allows, and there is no variant for it any
+        // more: a broadcast that has not ended stores NULL.
+        assert!(!matches!(
+            EndReason::from_wire("none"),
+            Some(_)
+        ));
     }
 
     /// Every placeholder in every template is one of the four `const`s.

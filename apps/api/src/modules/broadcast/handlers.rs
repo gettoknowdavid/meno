@@ -247,6 +247,23 @@ pub async fn end(
     Ok(MenoResponse::ok("Broadcast ended", ended))
 }
 
+/// `POST /broadcasts/{id}/token` — refresh the media token for a live session.
+///
+/// # Errors
+///
+/// 409 when it is not live, 403 when the caller is not in the broadcast, 503 when the
+/// media server cannot mint a token.
+pub async fn token(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Outcome<BroadcastSessionResponse> {
+    let actor = summary_of(&auth);
+
+    let session = handlers.service.token(id, &actor).await?;
+    Ok(MenoResponse::ok("Broadcast token refreshed", session))
+}
+
 /// `POST /broadcasts/{id}/join` — join a live broadcast.
 ///
 /// # Errors

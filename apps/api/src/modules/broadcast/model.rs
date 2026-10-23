@@ -65,6 +65,12 @@ pub struct Broadcast {
     pub recording_url: Option<String>,
     /// When it went live.
     pub published_at: Option<OffsetDateTime>,
+    /// When nobody who can run it was left in the room, or `None` while healthy.
+    ///
+    /// Written by the reaper, never by a request. A live row with this set is inside its
+    /// grace window, which is why [`Self::state`] can answer `reconnecting` from the row
+    /// alone on every read.
+    pub abandoned_since: Option<OffsetDateTime>,
     /// Why it ended. Null while it never has.
     pub end_reason: Option<EndReason>,
     /// Row creation time.
@@ -84,13 +90,18 @@ impl Broadcast {
 
     /// What a client renders, derived from the row alone.
     ///
-    /// `Reconnecting` is *not* derived here: it needs a fact from Redis (whether the
-    /// host's grace key exists), so it belongs to the service, which is the only layer
-    /// that can ask. Everything else is a pure function of this row.
+    /// `Reconnecting` is a property of the row, not of a process: the reaper writes
+    /// `abandoned_since` the first time it finds the room unhealthy and clears it when it
+    /// is healthy again, so every read — detail, list, session — answers from the same
+    /// fact and a restart mid-grace cannot lose the window.
     #[must_use]
     pub fn state(&self) -> BroadcastState {
         if self.is_live() {
-            return BroadcastState::Live;
+            return if self.abandoned_since.is_some() {
+                BroadcastState::Reconnecting
+            } else {
+                BroadcastState::Live
+            };
         }
         if self.end_time.is_some() || self.status == BroadcastStatus::Ended {
             return BroadcastState::Ended;
@@ -264,8 +275,6 @@ pub enum EndReason {
     AdminForced,
     /// The recording or participant quota was reached.
     QuotaExceeded,
-    /// Still live, or the row predates the column being populated.
-    None,
 }
 
 impl EndReason {
@@ -277,7 +286,6 @@ impl EndReason {
             Self::HostDisconnected => "host_disconnected",
             Self::AdminForced => "admin_forced",
             Self::QuotaExceeded => "quota_exceeded",
-            Self::None => "none",
         }
     }
 
@@ -547,6 +555,7 @@ mod tests {
             recording_key: None,
             recording_url: None,
             published_at: None,
+            abandoned_since: None,
             end_reason: None,
             created_at: now(),
             updated_at: now(),
@@ -585,6 +594,21 @@ mod tests {
             BroadcastState::Ended,
             "status alone must not keep a finished broadcast looking live"
         );
+    }
+
+    #[test]
+    fn a_live_row_whose_clock_is_running_reads_as_reconnecting() {
+        // The state that used to be defined and never produced: a live row with nobody
+        // running the room must say so on every read, not only on the socket.
+        let mut row = broadcast();
+        row.status = BroadcastStatus::Active;
+        row.abandoned_since = Some(now());
+
+        assert_eq!(row.state(), BroadcastState::Reconnecting);
+
+        // The host came back: the reaper cleared the clock, and the next read is live.
+        row.abandoned_since = None;
+        assert_eq!(row.state(), BroadcastState::Live);
     }
 
     #[test]

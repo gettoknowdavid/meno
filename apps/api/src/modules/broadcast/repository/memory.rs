@@ -150,6 +150,7 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             recording_key: None,
             recording_url: None,
             published_at: None,
+            abandoned_since: None,
             end_reason: None,
             created_at: now,
             updated_at: now,
@@ -320,6 +321,7 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             broadcast.status = BroadcastStatus::Inactive;
             broadcast.end_time = Some(at);
             broadcast.end_reason = Some(reason);
+            broadcast.abandoned_since = None;
             broadcast.updated_at = now;
             broadcast.clone()
         };
@@ -371,6 +373,13 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
         if let Some(since) = since {
             state.abandoned.push((id, since));
         }
+
+        // The row carries the same fact, so `state()` answers `reconnecting` here exactly
+        // as it does against Postgres.
+        if let Some(broadcast) = state.broadcasts.iter_mut().find(|b| b.id == id) {
+            broadcast.abandoned_since = since;
+        }
+
         Ok(())
     }
 
@@ -479,6 +488,26 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
         // migration 0006's trigger only decrements on DELETE.
         existing.left_at = Some(now);
         Ok(LeaveOutcome::Left)
+    }
+
+    async fn close_participants(
+        &self,
+        broadcast_id: Uuid,
+        at: OffsetDateTime,
+    ) -> Result<u64, MenoError> {
+        let mut state = self.lock();
+        let mut closed = 0;
+
+        for participant in state
+            .participants
+            .iter_mut()
+            .filter(|p| p.broadcast_id == broadcast_id && p.is_present())
+        {
+            participant.left_at = Some(at);
+            closed += 1;
+        }
+
+        Ok(closed)
     }
 
     async fn find_participant(

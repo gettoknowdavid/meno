@@ -278,6 +278,12 @@ impl BroadcastReaper {
             tracing::warn!(%error, broadcast_id = %broadcast.id, "could not tear down the room");
         }
 
+        // The same ending the explicit path writes: a roster left open makes the next
+        // live count wrong on a broadcast nobody can be in any more.
+        if let Err(error) = self.repo.close_participants(broadcast.id, ended_at).await {
+            tracing::error!(%error, broadcast_id = %broadcast.id, "could not close participant rows");
+        }
+
         let recipients = recipients_of(broadcast.creator_id, cohosts, present);
         tracing::info!(
             broadcast_id = %broadcast.id,

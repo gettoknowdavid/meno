@@ -77,7 +77,7 @@ pub fn not_creator() -> MenoError {
 #[must_use]
 pub fn not_live() -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::NotLive,
         message: "This broadcast is not live".to_owned(),
     }
 }
@@ -86,7 +86,7 @@ pub fn not_live() -> MenoError {
 #[must_use]
 pub fn already_live() -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::AlreadyLive,
         message: "This broadcast is already live".to_owned(),
     }
 }
@@ -102,7 +102,7 @@ pub fn already_live() -> MenoError {
 #[must_use]
 pub fn already_live_elsewhere() -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::AlreadyLiveElsewhere,
         message: "You already have a broadcast on air. End it before starting another.".to_owned(),
     }
 }
@@ -111,7 +111,7 @@ pub fn already_live_elsewhere() -> MenoError {
 #[must_use]
 pub fn already_joined() -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::AlreadyJoined,
         message: "You are already in this broadcast".to_owned(),
     }
 }
@@ -132,7 +132,7 @@ pub fn not_joined() -> MenoError {
 #[must_use]
 pub fn creator_cannot_join() -> MenoError {
     MenoError::Forbidden {
-        code: ErrorCode::Forbidden,
+        code: ErrorCode::CreatorCannotJoin,
         message: "You created this broadcast, so you are already its host".to_owned(),
     }
 }
@@ -144,7 +144,7 @@ pub fn creator_cannot_join() -> MenoError {
 #[must_use]
 pub fn host_cannot_leave() -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::HostCannotLeave,
         message: "End the broadcast instead of leaving it".to_owned(),
     }
 }
@@ -177,7 +177,7 @@ pub fn invalid_time_zone(zone: &str) -> MenoError {
 #[must_use]
 pub fn cohost_limit_reached(limit: usize) -> MenoError {
     MenoError::Conflict {
-        code: ErrorCode::Conflict,
+        code: ErrorCode::CohostLimitReached,
         message: format!("A broadcast can have at most {limit} cohosts"),
     }
 }
@@ -195,7 +195,7 @@ pub fn already_cohost() -> MenoError {
 #[must_use]
 pub fn cannot_add_self_as_cohost() -> MenoError {
     MenoError::Forbidden {
-        code: ErrorCode::Forbidden,
+        code: ErrorCode::CannotAddSelfAsCohost,
         message: "You cannot add yourself as a cohost".to_owned(),
     }
 }
@@ -297,8 +297,17 @@ mod tests {
             invalid_time_zone("Mars/Olympus").code(),
             ErrorCode::InvalidTimeZone
         );
-        assert_eq!(already_live().code(), ErrorCode::Conflict);
-        assert_eq!(already_live_elsewhere().code(), ErrorCode::Conflict);
+        assert_eq!(already_live().code(), ErrorCode::AlreadyLive);
+        assert_eq!(already_live_elsewhere().code(), ErrorCode::AlreadyLiveElsewhere);
+        assert_eq!(not_live().code(), ErrorCode::NotLive);
+        assert_eq!(already_joined().code(), ErrorCode::AlreadyJoined);
+        assert_eq!(host_cannot_leave().code(), ErrorCode::HostCannotLeave);
+        assert_eq!(cohost_limit_reached(3).code(), ErrorCode::CohostLimitReached);
+        assert_eq!(creator_cannot_join().code(), ErrorCode::CreatorCannotJoin);
+        assert_eq!(
+            cannot_add_self_as_cohost().code(),
+            ErrorCode::CannotAddSelfAsCohost
+        );
         assert_eq!(media_unavailable().code(), ErrorCode::UpstreamUnavailable);
         assert_eq!(
             storage_unavailable("bucket refused").code(),

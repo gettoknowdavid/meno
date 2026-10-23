@@ -478,6 +478,17 @@ impl BroadcastService {
             tracing::warn!(%failure, broadcast_id = %id, "room teardown failed after end");
         }
 
+        // Every open row is closed with the broadcast. Best effort: the row is already
+        // ended, and failing the response would tell the client the opposite of what
+        // happened — but a stale roster is a live count that never falls and a next
+        // broadcast whose all-time counter starts from a room that never emptied.
+        match self.repo.close_participants(id, ended_at).await {
+            Ok(closed) => tracing::info!(broadcast_id = %id, closed, "closed participant rows"),
+            Err(failure) => {
+                tracing::error!(%failure, broadcast_id = %id, "could not close participant rows");
+            }
+        }
+
         let duration_secs = row.published_at.map_or(0, |started| {
             ended_at.unix_timestamp() - started.unix_timestamp()
         });
@@ -549,6 +560,53 @@ impl BroadcastService {
                 role,
             })
             .await?;
+
+        let token = self.media.mint_join_token(actor, id, role).await?;
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+
+        Ok(BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/token` — a fresh media token for a session already in a
+    /// live broadcast.
+    ///
+    /// The role is read from the broadcast, never from the request: a cohost demoted
+    /// since they joined gets a participant token, and somebody removed from the roster
+    /// is refused. Nothing here re-joins them or changes the roster — a refresh is not a
+    /// re-entry, and announcing one again would duplicate the room's presence event.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_live`] when it is not on air, [`error::not_joined`] when the caller is
+    /// neither its host, a current cohost, nor on its open roster,
+    /// [`error::media_unavailable`] when a token cannot be minted.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn token(
+        &self,
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let existing = self.require(id).await?;
+        if !existing.is_live() {
+            return Err(error::not_live());
+        }
+
+        let role = self.role_for(&existing, actor.id).await?;
+        if role == ParticipantRole::Participant {
+            let present = self
+                .repo
+                .find_participant(id, actor.id)
+                .await?
+                .is_some_and(|participant| participant.is_present());
+            if !present {
+                return Err(error::not_joined());
+            }
+        }
 
         let token = self.media.mint_join_token(actor, id, role).await?;
         let row = self.require(id).await?;

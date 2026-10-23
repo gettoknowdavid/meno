@@ -98,6 +98,16 @@ pub fn routes(
             idempotency_middleware,
         ));
 
+    // Token refresh is apart from the other writes for one reason: its response is a
+    // fresh credential. An idempotency layer that replayed a stored body would hand back
+    // a token that had already expired, so it gets the join burst limiter and no cache.
+    let tokens = Router::new()
+        .route("/broadcasts/{id}/token", post(handlers::token))
+        .layer(from_fn_with_state(
+            RateLimitState::new(Redis::clone(&redis), LimitPolicy::broadcast_join()),
+            rate_limit_middleware,
+        ));
+
     // The rest of the writes: idempotency innermost, so a retried request is answered
     // from the stored response rather than re-entering the service.
     let writes = Router::new()
@@ -142,6 +152,7 @@ pub fn routes(
 
     reads
         .merge(join)
+        .merge(tokens)
         .merge(writes)
         .merge(uploads)
         .layer(from_fn_with_state(guard, auth_middleware))

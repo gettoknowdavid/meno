@@ -142,6 +142,17 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
         participant_id: Uuid,
     ) -> Result<LeaveOutcome, MenoError>;
 
+    /// Close every open row on a broadcast, returning how many were closed.
+    ///
+    /// Called on every end path. Without it the live count keeps counting people who
+    /// left when the room ended, and the next broadcast's all-time counter starts from a
+    /// roster that never emptied.
+    async fn close_participants(
+        &self,
+        broadcast_id: Uuid,
+        at: OffsetDateTime,
+    ) -> Result<u64, MenoError>;
+
     /// A participant's row, live or not.
     async fn find_participant(
         &self,
