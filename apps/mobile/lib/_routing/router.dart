@@ -102,7 +102,7 @@ List<RouteBase> get _broadcastRoutes => [
           child: const BroadcastEditorPage(),
           transitionDuration: const Duration(milliseconds: 450),
           reverseTransitionDuration: const Duration(milliseconds: 400),
-          transitionsBuilder: (_, animation, __, child) {
+          transitionsBuilder: (_, animation, _, child) {
             final curved = CurvedAnimation(
               parent: animation,
               curve: Curves.easeOutCirc,
@@ -136,7 +136,7 @@ List<RouteBase> get _broadcastRoutes => [
               child: const BroadcastEditorPage(),
               transitionDuration: const Duration(milliseconds: 310),
               reverseTransitionDuration: const Duration(milliseconds: 250),
-              transitionsBuilder: (_, animation, __, child) {
+              transitionsBuilder: (_, animation, _, child) {
                 final curved = CurvedAnimation(
                   parent: animation,
                   curve: Curves.easeOutCirc,

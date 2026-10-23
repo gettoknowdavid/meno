@@ -1,7 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/_shared/services/permissions_service.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Where every permission dialog is worded and wired.
