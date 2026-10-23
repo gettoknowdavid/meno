@@ -43,6 +43,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use meno_api::modules::broadcast::dto::{self, CreateBroadcastRequest, UpdateBroadcastRequest};
+use meno_api::modules::broadcast::events::{BroadcastEvents, recording::RecordingEvents};
 use meno_api::modules::broadcast::media::RecordingMedia;
 use meno_api::modules::broadcast::model::BroadcastState as ModelBroadcastState;
 use meno_api::modules::broadcast::model::{EndReason, ParticipantRole, UserSummary};
@@ -95,16 +96,32 @@ fn service() -> (
     Arc<InMemoryBroadcastRepo>,
     Arc<RecordingMedia>,
 ) {
+    let (svc, repo, media, _) = service_with_events();
+    (svc, repo, media)
+}
+
+/// The same, with somewhere for the lifecycle announcements to go.
+///
+/// The silence of [`service`] is the default for tests about what a flow *returns*; this
+/// is for the ones about who it *told*, which is half of what these flows are for.
+fn service_with_events() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingMedia>,
+    Arc<RecordingEvents>,
+) {
     let repo = Arc::new(InMemoryBroadcastRepo::new());
     let media = Arc::new(RecordingMedia::new());
+    let events = Arc::new(RecordingEvents::new());
     let svc = BroadcastService::new(service::ServiceDeps {
         repo: Arc::clone(&repo) as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
         media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
         // No bucket: the cover-upload flow is asserted in `broadcast_router`, which wires
         // the in-memory store so it can read back what was written.
         storage: BroadcastStorage::disabled(),
+        events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
     });
-    (svc, repo, media)
+    (svc, repo, media, events)
 }
 
 /// Seed the three fixture users so the service can resolve them.
@@ -1102,4 +1119,198 @@ async fn every_date_on_a_broadcast_response_is_an_rfc3339_string() {
     let parsed = time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
         .expect("{text} must be RFC 3339");
     assert!(parsed > time::OffsetDateTime::UNIX_EPOCH);
+}
+
+// ── lifecycle announcements (§10.3) ───────────────────────────────────────
+//
+// Every flow below has two halves: what it returns, and who it tells. The first is
+// asserted throughout this file; these assert the second, because a room page that is
+// never told a broadcast ended is a client that only finds out on its next refresh.
+
+#[tokio::test]
+async fn going_live_announces_the_broadcast_as_the_response_shape() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let announced = events.created_events();
+    assert_eq!(announced.len(), 1);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id],
+        "the creator's own devices; this module has no follow graph to fan out over"
+    );
+
+    // The frame is the endpoint's own response type, so the keys are the camelCase the
+    // client already parses for `GET /broadcasts/{id}` — not a second spelling.
+    let frame = &announced[0].broadcast;
+    assert_eq!(frame["id"], created.id.to_string());
+    assert_eq!(frame["title"], "Ada's show");
+    assert!(frame["creator"]["fullName"].is_string(), "{frame}");
+    assert!(frame.get("creator_id").is_none(), "{frame}");
+    assert_eq!(frame["state"], "live");
+}
+
+#[tokio::test]
+async fn going_live_invalidates_every_home_screen() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    assert_eq!(
+        events.home_invalidations(),
+        0,
+        "a draft is on nobody's home screen"
+    );
+
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    assert_eq!(events.home_invalidations(), 1);
+}
+
+#[tokio::test]
+async fn a_join_announces_the_participant_to_the_host_and_cohosts_only() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(
+            CreateBroadcastRequest {
+                cohosts: Some(vec![user(3, "Alan Turing").id]),
+                ..create_request()
+            },
+            user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    let announced = events.participant_events();
+    assert_eq!(announced.len(), 1);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id, user(3, "Alan Turing").id],
+        "§10.3: the host and the current cohosts, and not the joiner"
+    );
+
+    let change = &announced[0].change;
+    assert_eq!(change.broadcast_id, created.id);
+    assert_eq!(change.participant.id, user(2, "Grace Hopper").id);
+    assert_eq!(change.participant.full_name, "Grace Hopper");
+    assert_eq!(change.participant.role, ParticipantRole::Participant);
+    assert!(change.participant.is_joined);
+    assert_eq!(change.count, 1, "the room after the join");
+}
+
+#[tokio::test]
+async fn a_leave_announces_the_participant_as_gone() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+
+    let announced = events.participant_events();
+    assert_eq!(announced.len(), 2, "one join, one leave");
+    let leave = &announced[1].change;
+    assert_eq!(leave.participant.id, user(2, "Grace Hopper").id);
+    assert!(!leave.participant.is_joined);
+    assert_eq!(leave.count, 0, "the room after the leave");
+    assert_eq!(
+        announced[1].recipients,
+        [user(1, "Ada Lovelace").id],
+        "the host, not the account that left"
+    );
+}
+
+#[tokio::test]
+async fn ending_announces_the_ending_and_the_home_change() {
+    let (svc, repo, media, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+    // The listener is still in the room as far as the media server knows.
+    media.set_room_participants(created.id, &[user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id]);
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let announced = events.ended_events();
+    assert_eq!(
+        announced.len(),
+        1,
+        "the host's own End has to reach the room; the reaper's is the other path"
+    );
+    assert_eq!(announced[0].broadcast_id, created.id);
+    assert_eq!(announced[0].reason, EndReason::Normal);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id]
+    );
+
+    assert_eq!(events.home_invalidations(), 2, "one for go live, one for the end");
+}
+
+#[tokio::test]
+async fn deleting_and_editing_a_broadcast_invalidate_the_home_screens() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    svc.update(
+        created.id,
+        UpdateBroadcastRequest {
+            title: Some("Ada's show, renamed".to_owned()),
+            ..Default::default()
+        },
+        &user(1, "Ada Lovelace"),
+    )
+    .await
+    .expect("update");
+    assert_eq!(events.home_invalidations(), 1);
+
+    svc.delete(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("delete");
+    assert_eq!(events.home_invalidations(), 2);
 }

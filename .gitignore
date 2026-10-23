@@ -14,6 +14,7 @@
 # if yours contains absolute paths.
 /.cargo/config.toml
 /.cargo/config
+/.cargo-test-target
 
 # Rust analyzer / rust-analyzer scratch
 /rust-analyzer/

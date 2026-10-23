@@ -174,6 +174,7 @@ impl BroadcastState {
                 repo: Arc::clone(&repo),
                 media: Arc::clone(&media),
                 storage: storage.clone(),
+                events: Arc::clone(&events),
             })),
             reaper: BroadcastReaper::new(repo, media, events),
             storage,

@@ -31,6 +31,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::error;
+use super::events::{BroadcastEvents, ParticipantChange, ParticipantFrame};
 use super::media::BroadcastMedia;
 use super::model::{
     Broadcast, BroadcastPatch, EndReason, JoinOutcome, JoinRequest, LeaveOutcome, NewBroadcast,
@@ -55,13 +56,26 @@ pub struct ServiceDeps {
     pub media: Arc<dyn BroadcastMedia>,
     /// The object store seam (§5.5), for cover images.
     pub storage: BroadcastStorage,
+    /// Where lifecycle events go.
+    ///
+    /// Required, and defaulted to [`super::events::SilentEvents`] by every constructor
+    /// that has no bridge: a service with "no events" *is* a service that announces
+    /// nothing, so the null case is an implementation rather than an `Option` every call
+    /// site has to unwrap. A client that is not told a broadcast ended still finds out on
+    /// its next read (§4.6).
+    pub events: Arc<dyn BroadcastEvents>,
 }
 
 impl std::fmt::Debug for ServiceDeps {
     /// Both fields are trait objects whose `Debug` would name an adapter with a
     /// credential in it, and a `{:?}` in a log line is not worth that.
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ServiceDeps").finish_non_exhaustive()
+        f.debug_struct("ServiceDeps")
+            .field("repo", &self.repo)
+            .field("media", &self.media)
+            .field("storage", &self.storage)
+            .field("events", &"<dyn BroadcastEvents>")
+            .finish_non_exhaustive()
     }
 }
 
@@ -71,6 +85,7 @@ pub struct BroadcastService {
     repo: Arc<dyn BroadcastRepo>,
     media: Arc<dyn BroadcastMedia>,
     storage: BroadcastStorage,
+    events: Arc<dyn BroadcastEvents>,
 }
 
 impl std::fmt::Debug for BroadcastService {
@@ -79,7 +94,8 @@ impl std::fmt::Debug for BroadcastService {
             .field("repo", &self.repo)
             .field("media", &self.media)
             .field("storage", &self.storage)
-            .finish()
+            .field("events", &"<dyn BroadcastEvents>")
+            .finish_non_exhaustive()
     }
 }
 
@@ -91,6 +107,7 @@ impl BroadcastService {
             repo: deps.repo,
             media: deps.media,
             storage: deps.storage,
+            events: deps.events,
         }
     }
 
@@ -142,6 +159,9 @@ impl BroadcastService {
             })
             .await?;
 
+        // A new draft does not move the home sections; only a broadcast that went
+        // live, changed, was deleted or ended does. `go_live` is where the home gets
+        // nudged for a newly live broadcast.
         self.render(row, Some(creator), None).await
     }
 
@@ -283,7 +303,14 @@ impl BroadcastService {
 
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
-        self.render(row, Some(creator), Some(viewer)).await
+        let response = self.render(row, Some(creator), Some(viewer)).await?;
+
+        // A title, a cover or a schedule time is drawn on a home card, so an edit
+        // that landed invalidates it. Announced after the write: a client that
+        // refetches on the frame must find the new values.
+        self.notify_home().await;
+
+        Ok(response)
     }
 
     /// `POST /broadcasts/{id}/image` — replace the cover, as the creator (§3.3).
@@ -366,7 +393,12 @@ impl BroadcastService {
 
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
-        self.render(row, Some(creator), Some(viewer)).await
+        let response = self.render(row, Some(creator), Some(viewer)).await?;
+
+        // The new cover is what a home card draws.
+        self.notify_home().await;
+
+        Ok(response)
     }
 
     /// `DELETE /broadcasts/{id}` — soft-delete, as the creator.
@@ -384,6 +416,10 @@ impl BroadcastService {
         }
 
         self.repo.soft_delete(id).await?;
+
+        // The deleted broadcast disappears from every home section it was in.
+        self.notify_home().await;
+
         Ok(())
     }
 
@@ -442,10 +478,23 @@ impl BroadcastService {
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
 
-        Ok(BroadcastSessionResponse {
+        let response = BroadcastSessionResponse {
             broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
             token,
-        })
+        };
+
+        // Announced from the response the creator is about to receive, so the frame a
+        // subscriber gets is byte-for-byte the shape `GET /broadcasts/{id}` answers
+        // with — one type, one spelling, no second read to build it.
+        self.events
+            .broadcast_created(&response.broadcast, &[actor.id])
+            .await;
+        // Everybody else's "now live" section changed, and only this global nudge can
+        // tell them: the follow graph this module would fan a `newBroadcast` out over
+        // does not exist here.
+        self.notify_home().await;
+
+        Ok(response)
     }
 
     /// `POST /broadcasts/{id}/end` — end it, as the creator.
@@ -468,6 +517,27 @@ impl BroadcastService {
         }
 
         let ended_at = now();
+
+        // Who has to hear it, computed *before* the room is torn down and the roster
+        // closed: both of those erase the answer. Presence comes from the media server
+        // for the same reason the reaper reads it there — `left_at` is written by a
+        // client that leaves politely, and the one this list matters for never does.
+        // A media outage is not a reason to refuse the host's End, so it degrades to
+        // "the people we know about".
+        let cohosts = self.repo.list_cohosts(id).await.unwrap_or_default();
+        let present = self.media.room_participants(id).await.unwrap_or_default();
+        let mut recipients = vec![existing.creator_id];
+        for id in cohosts
+            .iter()
+            .filter(|cohost| cohost.is_current())
+            .map(|cohost| cohost.cohost_id)
+            .chain(present)
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
         let row = self
             .repo
             .mark_ended(id, EndReason::Normal, ended_at)
@@ -488,6 +558,17 @@ impl BroadcastService {
                 tracing::error!(%failure, broadcast_id = %id, "could not close participant rows");
             }
         }
+
+        // The same announcement the reaper makes for an abandoned broadcast. Without it
+        // a participant on the room page is only told what happened by the host's own
+        // client, and a host whose device died mid-request would leave them in a room
+        // that no longer exists.
+        self.events
+            .ended(row.id, EndReason::Normal, &recipients)
+            .await;
+
+        // And the ended broadcast leaves the home sections it was drawn in.
+        self.notify_home().await;
 
         let duration_secs = row.published_at.map_or(0, |started| {
             ended_at.unix_timestamp() - started.unix_timestamp()
@@ -639,7 +720,10 @@ impl BroadcastService {
             return Err(error::creator_cannot_join());
         }
 
-        let role = self.role_for(&row, user.id).await?;
+        // One read answers both questions this flow asks: what the account may do, and
+        // who has to hear that they arrived.
+        let cohosts = self.repo.list_cohosts(id).await?;
+        let role = role_in(&row, &cohosts, user.id);
 
         match self
             .repo
@@ -659,10 +743,25 @@ impl BroadcastService {
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, user).await?;
 
-        Ok(BroadcastSessionResponse {
+        let response = BroadcastSessionResponse {
             broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
             token,
-        })
+        };
+
+        // Announced once the token exists: a frame about a participant who was never
+        // given a room to enter would be an announcement about nobody. The count comes
+        // from the response the joiner receives, so the number a host applies is the
+        // number the joiner was shown.
+        self.announce_roster_change(
+            &row,
+            &cohosts,
+            participant_frame(user, role, true),
+            response.broadcast.live_participants_count,
+            user.id,
+        )
+        .await;
+
+        Ok(response)
     }
 
     /// `POST /broadcasts/{id}/leave`.
@@ -676,7 +775,9 @@ impl BroadcastService {
         id: Uuid,
         user: &UserSummary,
     ) -> Result<LeaveBroadcastResponse, MenoError> {
-        self.require(id).await?;
+        let row = self.require(id).await?;
+        let cohosts = self.repo.list_cohosts(id).await?;
+        let role = role_in(&row, &cohosts, user.id);
 
         match self.repo.leave(id, user.id).await? {
             LeaveOutcome::IsHost => return Err(error::host_cannot_leave()),
@@ -690,6 +791,21 @@ impl BroadcastService {
             tracing::warn!(%failure, broadcast_id = %id, "evicting a departed participant failed");
         }
 
+        // The count after the leave, because that is what the room header draws next.
+        // A read that fails must not fail the leave: the row is already closed, and the
+        // client that cares will refetch.
+        let count = self.repo.live_participant_count(id).await.unwrap_or(0);
+        self.announce_roster_change(
+            &row,
+            &cohosts,
+            participant_frame(user, role, false),
+            count,
+            user.id,
+        )
+        .await;
+
+        // A participant leaving does not change what any home section draws, so no
+        // home nudge here.
         Ok(LeaveBroadcastResponse {
             success: true,
             broadcast_id: id,
@@ -884,13 +1000,7 @@ impl BroadcastService {
         if row.creator_id == user_id {
             return Ok(ParticipantRole::Host);
         }
-        Ok(self
-            .repo
-            .list_cohosts(row.id)
-            .await?
-            .iter()
-            .find(|cohost| cohost.cohost_id == user_id)
-            .map_or(ParticipantRole::Participant, |_| ParticipantRole::Cohost))
+        Ok(role_in(row, &self.repo.list_cohosts(row.id).await?, user_id))
     }
 
     /// The caller's view of a broadcast, or `None` when they are not a live account.
@@ -960,6 +1070,55 @@ impl BroadcastService {
         )
     }
 
+    /// Tell the creator and the current cohosts that a roster row changed.
+    ///
+    /// The audience is §10.3's for both directions of this event — host and cohosts —
+    /// minus the account the frame is about, which is the one client that already knows.
+    /// The cohost list is passed in rather than re-read: every caller has just read it to
+    /// work out the role, and a second read is a query that can disagree with the first.
+    async fn announce_roster_change(
+        &self,
+        row: &Broadcast,
+        cohosts: &[BroadcastCohost],
+        participant: ParticipantFrame,
+        count: i64,
+        actor: Uuid,
+    ) {
+        let mut recipients = Vec::with_capacity(1 + cohosts.len());
+        for id in std::iter::once(row.creator_id)
+            .chain(cohosts.iter().filter(|c| c.is_current()).map(|c| c.cohost_id))
+        {
+            if id != actor && !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.events
+            .participant_changed(
+                &ParticipantChange {
+                    broadcast_id: row.id,
+                    participant,
+                    count,
+                },
+                &recipients,
+            )
+            .await;
+    }
+
+    /// Nudge every connected client that its home screen is stale.
+    ///
+    /// Fired after any mutation that changes what the home sections draw, so a client
+    /// does not have to poll to notice a broadcast went live, changed, ended or was
+    /// deleted. The frame carries only a timestamp; the client refetches the sections it
+    /// already has.
+    async fn notify_home(&self) {
+        self.events.home_invalidated().await;
+    }
+
     /// Resolve a cohost list, refusing a duplicate and an unknown account.
     async fn resolve_cohosts(
         &self,
@@ -994,6 +1153,45 @@ fn require_creator(broadcast: &Broadcast, actor: &UserSummary) -> Result<(), Men
         Ok(())
     } else {
         Err(error::not_creator())
+    }
+}
+
+/// What `user_id` may do in `broadcast`, given its current cohosts.
+///
+/// Split out from [`BroadcastService::role_for`] so the flows that need the cohost list
+/// for a second reason — join and leave, which also address the roster announcement —
+/// compute the role from the list they already have instead of reading it twice.
+fn role_in(
+    broadcast: &Broadcast,
+    cohosts: &[BroadcastCohost],
+    user_id: Uuid,
+) -> ParticipantRole {
+    if broadcast.creator_id == user_id {
+        return ParticipantRole::Host;
+    }
+    if cohosts
+        .iter()
+        .any(|cohost| cohost.is_current() && cohost.cohost_id == user_id)
+    {
+        ParticipantRole::Cohost
+    } else {
+        ParticipantRole::Participant
+    }
+}
+
+/// One account's row in a roster announcement.
+fn participant_frame(
+    user: &UserSummary,
+    role: ParticipantRole,
+    is_joined: bool,
+) -> ParticipantFrame {
+    ParticipantFrame {
+        id: user.id,
+        full_name: user.full_name.clone(),
+        avatar_id: user.avatar_id.clone(),
+        avatar_url: user.avatar_url.clone(),
+        role,
+        is_joined,
     }
 }
 

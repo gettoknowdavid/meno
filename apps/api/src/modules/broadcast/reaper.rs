@@ -294,6 +294,11 @@ impl BroadcastReaper {
             .ended(row.id, EndReason::HostDisconnected, &recipients)
             .await;
 
+        // And it leaves the home sections it was drawn in. The ended frame reaches the
+        // people who were in the room; this nudge reaches everybody whose home screen
+        // still shows a broadcast that is over.
+        self.events.home_invalidated().await;
+
         Ok(Outcome::Ended)
     }
 }
@@ -344,6 +349,7 @@ fn recipients_of(
 mod tests {
     use super::*;
     use crate::modules::broadcast::dto::CreateBroadcastRequest;
+    use crate::modules::broadcast::events::SilentEvents;
     use crate::modules::broadcast::events::recording::RecordingEvents;
     use crate::modules::broadcast::media::RecordingMedia;
     use crate::modules::broadcast::model::{BroadcastCohost, UserSummary};
@@ -390,6 +396,7 @@ mod tests {
             repo: repo.clone(),
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
+            events: Arc::new(SilentEvents),
         });
 
         repo.insert_user(user(1));
@@ -450,6 +457,7 @@ mod tests {
             repo: repo.clone(),
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
+            events: Arc::new(SilentEvents),
         });
 
         repo.insert_user(user(1));
@@ -541,6 +549,7 @@ mod tests {
             repo: repo.clone(),
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
+            events: Arc::new(SilentEvents),
         });
 
         repo.insert_user(user(1));
@@ -576,7 +585,7 @@ mod tests {
         reaper(&fixture).sweep().await.expect("sweeping");
         reaper(&fixture).sweep().await.expect("sweeping");
 
-        let announced = events.announced();
+        let announced = events.ended_events();
         assert_eq!(announced.len(), 1);
         assert_eq!(announced[0].broadcast_id, created.id);
         assert_eq!(announced[0].reason, EndReason::HostDisconnected);
@@ -584,6 +593,14 @@ mod tests {
             announced[0].recipients,
             [user(1).id, user(2).id, user(3).id],
             "the creator, the cohost, and the listener still connected"
+        );
+
+        // A broadcast that ended also leaves every home section it was drawn in, so a
+        // client on the home screen is nudged instead of polling for it.
+        assert_eq!(
+            events.home_invalidations(),
+            1,
+            "one nudge per ending, not one per recipient"
         );
     }
 
@@ -637,6 +654,7 @@ mod tests {
             repo: repo.clone(),
             media: Arc::new(RecordingMedia::new()),
             storage: BroadcastStorage::disabled(),
+            events: Arc::new(SilentEvents),
         });
 
         repo.insert_user(user(1));
