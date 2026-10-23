@@ -1216,7 +1216,10 @@ async fn a_join_announces_the_participant_to_the_host_and_cohosts_only() {
     assert_eq!(change.participant.full_name, "Grace Hopper");
     assert_eq!(change.participant.role, ParticipantRole::Participant);
     assert!(change.participant.is_joined);
-    assert_eq!(change.count, 1, "the room after the join");
+    assert_eq!(
+        change.count, 2,
+        "the room after the join: the host and the listener"
+    );
 }
 
 #[tokio::test]
@@ -1243,7 +1246,7 @@ async fn a_leave_announces_the_participant_as_gone() {
     let leave = &announced[1].change;
     assert_eq!(leave.participant.id, user(2, "Grace Hopper").id);
     assert!(!leave.participant.is_joined);
-    assert_eq!(leave.count, 0, "the room after the leave");
+    assert_eq!(leave.count, 1, "the room after the leave: the host alone");
     assert_eq!(
         announced[1].recipients,
         [user(1, "Ada Lovelace").id],

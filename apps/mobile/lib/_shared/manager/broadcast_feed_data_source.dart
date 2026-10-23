@@ -24,6 +24,16 @@ import 'package:meno_mobile/features/broadcast/broadcast.dart';
 ///
 /// A socket is optional: a feed built without one is purely HTTP-backed, which
 /// is what a profile's or a search result's list is.
+///
+/// # What `homeInvalidated` does to it
+///
+/// Prepend and remove cover the broadcasts this client was told about by id.
+/// `homeInvalidated` is the other half: a mutation this client was not told
+/// about — a broadcast somebody else took live, an edit, a soft delete —
+/// leaves the list quietly stale. Every feed refetches its first page on that
+/// frame, so a section is never more than one event behind. The `isRunning`
+/// guard collapses a burst into the refresh already in flight rather than
+/// queueing one per frame.
 class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
   new({
     required this._http,
@@ -50,6 +60,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
 
   StreamSubscription<Broadcast>? _newBroadcastSub;
   StreamSubscription<EndedBroadcast>? _endedBroadcastSub;
+  StreamSubscription<HomeInvalidatedDto>? _homeInvalidatedSub;
 
   /// The filters the feed is currently built from.
   BroadcastQuery get query => _query;
@@ -133,8 +144,17 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
 
   /// Subscribes to the events this feed's filters make relevant.
   void _bindSocketService(BroadcastSocketService? socket) {
+    if (socket == null) return;
+
+    // Every list is affected by a mutation it was not told about, whatever its
+    // filters — including the unfiltered one, which is why this is bound above
+    // the type switch rather than inside it.
+    _homeInvalidatedSub = socket.onHomeInvalidated.listen(
+      _onHomeInvalidated,
+    );
+
     final type = _query.type;
-    if (socket == null || type == null) return;
+    if (type == null) return;
 
     switch (type) {
       case BroadcastsType.forYou:
@@ -154,6 +174,17 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     _newBroadcastSub = null;
     await _endedBroadcastSub?.cancel();
     _endedBroadcastSub = null;
+    await _homeInvalidatedSub?.cancel();
+    _homeInvalidatedSub = null;
+  }
+
+  /// Refetch from the first page, because something changed that this client
+  /// was not told about by id.
+  void _onHomeInvalidated(HomeInvalidatedDto _) {
+    // A refresh in flight will read the same state; queueing another would be
+    // one request per event in a burst of them.
+    if (updateDataCommand.isRunning.value) return;
+    updateDataCommand.run();
   }
 
   void _onNewBroadcast(Broadcast broadcast) {

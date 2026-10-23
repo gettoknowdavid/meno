@@ -5,7 +5,6 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/socket.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
-import 'package:meno_mobile/features/broadcast/model/dtos.dart';
 
 /// The broadcast events the socket carries.
 ///

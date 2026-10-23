@@ -7,7 +7,6 @@ import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/broadcast/manager/broadcast_timer_manager.dart';
 import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
-import 'package:meno_mobile/features/broadcast/model/dtos.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 
@@ -209,9 +208,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   StreamSubscription<RoomConnectionState>? _roomStateSubscription;
   StreamSubscription<HostConnectionEvent>? _hostConnectionSubscription;
   StreamSubscription<EndedBroadcast>? _endedBroadcastSubscription;
-  StreamSubscription<HomeInvalidatedDto>? _homeInvalidatedSubscription;
-
-  HomeInvalidatedDto? _lastHomeInvalidated;
 
   Timer? _reconnectionTimer;
   int _reconnectionAttempts = 0;
@@ -262,12 +258,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       _handleEndedBroadcast,
       onError: (Object error) =>
           _logger.e('Ended broadcast stream failed', error: error),
-    );
-
-    _homeInvalidatedSubscription = _socket.onHomeInvalidated.listen(
-      _handleHomeInvalidated,
-      onError: (Object error) =>
-          _logger.e('Home invalidated stream failed', error: error),
     );
 
     _connectToLiveKit.errors.listen((commandError, _) {
@@ -362,27 +352,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     await _room.disconnect();
   }
 
-  void _handleHomeInvalidated(HomeInvalidatedDto frame) {
-    if (broadcast.value.hasEnded) return;
-
-    if (_lastHomeInvalidated?.timestamp == frame.timestamp) return;
-    _lastHomeInvalidated = frame;
-
-    _logger.i('The home sections were invalidated; refreshing the session');
-    _refreshSessionBroadcast();
-  }
-
-  Future<void> _refreshSessionBroadcast() async {
-    try {
-      final refreshed = await _http.getBroadcast(broadcast.value.id);
-      broadcast.value = refreshed;
-    } catch (_) {
-      // Best effort: the session already has a valid broadcast; a refresh that
-      // fails leaves the one the client joined rather than surfacing an error
-      // over a room the client is still in.
-    }
-  }
-
   /// Retries the connection with a growing delay, up to a ceiling.
   void _scheduleReconnection() {
     if (_reconnectionAttempts >= _maxReconnectionAttempts) {
@@ -412,12 +381,10 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     await _roomStateSubscription?.cancel();
     await _hostConnectionSubscription?.cancel();
     await _endedBroadcastSubscription?.cancel();
-    await _homeInvalidatedSubscription?.cancel();
 
     _roomStateSubscription = null;
     _hostConnectionSubscription = null;
     _endedBroadcastSubscription = null;
-    _homeInvalidatedSubscription = null;
 
     // Leaving is part of tearing down: a scope that is popped without it leaves
     // the socket subscribed to a room nobody is in. A session that already
