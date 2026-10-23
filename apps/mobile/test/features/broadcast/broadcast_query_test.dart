@@ -18,12 +18,17 @@ Future<ResponseBody> Function() _emptyPage({String? nextCursor}) =>
     );
 
 /// A broadcast as `GET /broadcasts` would list it.
+///
+/// camelCase keys, matching what `BroadcastResponse` puts on the wire.
 Map<String, dynamic> _item(String id, {required String state}) => {
   'id': id,
   'title': id,
   'state': state,
   'status': state == 'live' ? 'active' : 'inactive',
-  'created_at': '2026-01-01T00:00:00Z',
+  'createdAt': '2026-01-01T00:00:00Z',
+  'totalParticipants': 0,
+  'creatorId': 'creator-1',
+  'creatorName': 'Ada',
 };
 
 /// One page carrying [items].
