@@ -1,6 +1,13 @@
 import 'package:flutter_test/flutter_test.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/model/dtos.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
+
+// Valid UUIDs: `toDomain` runs every id through `Id.fromWire`, which refuses a
+// value that is not a UUID, so the fixture has to look like a real response.
+const _broadcastId = '71ac3124-ffc1-4306-9126-0adf318ce838';
+const _creatorId = 'a4401eef-ad59-4dde-88ef-3a5d92a3a64e';
+const _cohostId = '1ff79a48-d726-4470-a418-db2b9ea34eb5';
 
 /// A `GET /broadcasts/{id}` response, exactly as
 /// `apps/api/src/modules/broadcast/dto.rs` serialises one: every key camelCase
@@ -9,7 +16,7 @@ import 'package:meno_mobile/features/broadcast/model/entities.dart';
 /// This is the Tier 1.1 gate — the client must parse the field names the
 /// backend actually sends, not the snake_case ones it used to send.
 Map<String, dynamic> _liveFixture() => {
-  'id': 'b-1',
+  'id': _broadcastId,
   'title': 'Ada\u2019s show',
   'description': 'Every Thursday',
   'timeZone': 'Africa/Lagos',
@@ -31,10 +38,10 @@ Map<String, dynamic> _liveFixture() => {
   'recordingUrl': null,
   'endReason': null,
   'timeRemainingSeconds': 1480,
-  'creatorId': 'u-9',
-  'creator': {'id': 'u-9', 'fullName': 'Ada Lovelace', 'avatarId': 'a-1'},
+  'creatorId': _creatorId,
+  'creator': {'id': _creatorId, 'fullName': 'Ada Lovelace', 'avatarId': 'a-1'},
   'cohosts': [
-    {'id': 'u-2', 'fullName': 'Grace Hopper'},
+    {'id': _cohostId, 'fullName': 'Grace Hopper'},
   ],
 };
 
@@ -47,7 +54,10 @@ void main() {
       // of a camelCase field silently yields the default, which is exactly the
       // defect this test exists to catch.
       expect(broadcast.timeZone, 'Africa/Lagos');
-      expect(broadcast.image?.toUrlOrFilePathOrNull, 'https://cdn.test/cover.jpg');
+      expect(
+        broadcast.image?.toUrlOrFilePathOrNull,
+        'https://cdn.test/cover.jpg',
+      );
       expect(broadcast.imageId, 'img-123');
       expect(broadcast.publishedAt, isNotNull);
       expect(broadcast.participantRole, ParticipantRole.cohost);
@@ -58,15 +68,15 @@ void main() {
       expect(broadcast.recordingEnabled, isTrue);
       expect(broadcast.timeRemainingSeconds, 1480);
       expect(broadcast.creator?.fullName.getOrCrash, 'Ada Lovelace');
-      expect(broadcast.creator?.id.getOrCrash, 'u-9');
+      expect(broadcast.creator?.id.getOrCrash, _creatorId);
       expect(broadcast.cohosts.single.fullName.getOrCrash, 'Grace Hopper');
     });
 
     test('a live broadcast has no end reason, and null reads as none', () {
       final broadcast = BroadcastDto.fromJson(_liveFixture()).toDomain;
 
-      // The wire carries `endReason: null` for a live broadcast; the domain maps
-      // that to `EndReason.none` rather than inventing a reason.
+      // The wire carries `endReason: null` for a live broadcast; the domain
+      // maps that to `EndReason.none` rather than inventing a reason.
       expect(broadcast.endReason, EndReason.none);
       expect(broadcast.state, BroadcastState.live);
       expect(broadcast.isLive, isTrue);
@@ -96,15 +106,15 @@ void main() {
       });
 
       expect(session.token, 'room-token');
-      expect(session.broadcast.id, 'b-1');
-      expect(session.toDomain('u-9').token, 'room-token');
+      expect(session.broadcast.id, _broadcastId);
+      expect(session.toDomain(Id.fromWire(_creatorId)).token, 'room-token');
     });
   });
 
   group('UserSummaryDto', () {
     test('parses camelCase names', () {
       final user = UserSummaryDto.fromJson({
-        'id': 'u-1',
+        'id': _creatorId,
         'fullName': 'Ada Lovelace',
         'avatarId': null,
         'avatarUrl': 'https://cdn.test/ada.jpg',
@@ -118,10 +128,10 @@ void main() {
   group('EndBroadcastDto', () {
     test('parses the endedBroadcast camelCase payload', () {
       final ended = EndBroadcastDto.fromJson({
-        'broadcastId': 'b-1',
+        'broadcastId': _broadcastId,
         'broadcastTitle': 'Ada\u2019s show',
         'broadcastImageUrl': null,
-        'creatorId': 'u-9',
+        'creatorId': _creatorId,
         'creatorName': 'Ada Lovelace',
         'endedReason': 'normal',
         'endedAt': '2026-10-01T10:30:00Z',
@@ -130,7 +140,7 @@ void main() {
         'recordingEnabled': true,
       }).toDomain;
 
-      expect(ended.broadcastId.getOrCrash, 'b-1');
+      expect(ended.broadcastId.getOrCrash, _broadcastId);
       expect(ended.creatorName.getOrCrash, 'Ada Lovelace');
       expect(ended.reason, EndReason.normal);
       expect(ended.duration, const Duration(seconds: 1500));
