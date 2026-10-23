@@ -56,6 +56,8 @@ pub enum ErrorCode {
     NotOwner,
     /// Caller has not joined the room.
     NotParticipant,
+    /// The creator tried to join their own broadcast.
+    CreatorCannotJoin,
     /// The OAuth provider has not verified ownership of the email address.
     EmailNotVerified,
     /// The OAuth provider is switched off for this deployment.
@@ -72,6 +74,20 @@ pub enum ErrorCode {
     AlreadyExists,
     /// Optimistic-concurrency check failed — the client's `version` is stale.
     VersionConflict,
+    /// The broadcast is not on air.
+    NotLive,
+    /// The broadcast is already on air.
+    AlreadyLive,
+    /// The creator already has a different broadcast on air.
+    AlreadyLiveElsewhere,
+    /// The caller is already in the room.
+    AlreadyJoined,
+    /// The host tried to leave their own broadcast.
+    HostCannotLeave,
+    /// The broadcast already has the maximum number of cohosts.
+    CohostLimitReached,
+    /// The creator tried to add themselves as a cohost.
+    CannotAddSelfAsCohost,
     // 422
     /// One or more fields failed validation; see `ErrorBody::data`.
     ValidationFailed,
@@ -106,11 +122,19 @@ impl ErrorCode {
             Self::NotCreator => "NOT_CREATOR",
             Self::NotOwner => "NOT_OWNER",
             Self::NotParticipant => "NOT_PARTICIPANT",
+            Self::CreatorCannotJoin => "CREATOR_CANNOT_JOIN",
             Self::NotFound => "NOT_FOUND",
             Self::Conflict => "CONFLICT",
             Self::EmailTaken => "EMAIL_TAKEN",
             Self::AlreadyExists => "ALREADY_EXISTS",
             Self::VersionConflict => "VERSION_CONFLICT",
+            Self::NotLive => "NOT_LIVE",
+            Self::AlreadyLive => "ALREADY_LIVE",
+            Self::AlreadyLiveElsewhere => "ALREADY_LIVE_ELSEWHERE",
+            Self::AlreadyJoined => "ALREADY_JOINED",
+            Self::HostCannotLeave => "HOST_CANNOT_LEAVE",
+            Self::CohostLimitReached => "COHOST_LIMIT_REACHED",
+            Self::CannotAddSelfAsCohost => "CANNOT_ADD_SELF_AS_COHOST",
             Self::ValidationFailed => "VALIDATION_FAILED",
             Self::RateLimited => "RATE_LIMITED",
             Self::UpstreamUnavailable => "UPSTREAM_UNAVAILABLE",
@@ -576,11 +600,19 @@ mod tests {
             ErrorCode::NotCreator,
             ErrorCode::NotOwner,
             ErrorCode::NotParticipant,
+            ErrorCode::CreatorCannotJoin,
             ErrorCode::NotFound,
             ErrorCode::Conflict,
             ErrorCode::EmailTaken,
             ErrorCode::AlreadyExists,
             ErrorCode::VersionConflict,
+            ErrorCode::NotLive,
+            ErrorCode::AlreadyLive,
+            ErrorCode::AlreadyLiveElsewhere,
+            ErrorCode::AlreadyJoined,
+            ErrorCode::HostCannotLeave,
+            ErrorCode::CohostLimitReached,
+            ErrorCode::CannotAddSelfAsCohost,
             ErrorCode::ValidationFailed,
             ErrorCode::RateLimited,
             ErrorCode::UpstreamUnavailable,
