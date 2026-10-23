@@ -103,6 +103,22 @@ abstract class CohostDto with _$CohostDto {
   factory fromJson(Map<String, dynamic> json) => _$CohostDtoFromJson(json);
 }
 
+/// The socket's `homeInvalidated` frame.
+///
+/// The API's `EndBroadcastResponse` is the richer type: it carries the ending
+/// summary. The socket's `homeInvalidated` is a bare timestamp the client uses
+/// as a nudge, and the client decodes it through a DTO of its own so the parse
+/// path is explicit rather than conditional.
+@freezed
+abstract class HomeInvalidatedDto with _$HomeInvalidatedDto {
+  const factory({
+    required DateTime timestamp,
+  }) = _HomeInvalidatedDto;
+
+  factory fromJson(Map<String, dynamic> json) =>
+      _$HomeInvalidatedDtoFromJson(json);
+}
+
 /// `EndBroadcastResponse` in `apps/api/src/modules/broadcast/dto.rs`.
 @freezed
 abstract class EndBroadcastDto with _$EndBroadcastDto {

@@ -147,4 +147,13 @@ void main() {
       expect(ended.totalParticipants, 42);
     });
   });
+
+  group('HomeInvalidatedDto', () {
+    test('parses the homeInvalidated frame', () {
+      final homeInvalidated = HomeInvalidatedDto.fromJson({
+        'timestamp': '2026-10-01T10:30:00Z',
+      });
+      expect(homeInvalidated.timestamp, isNotNull);
+    });
+  });
 }

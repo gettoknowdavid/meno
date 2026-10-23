@@ -24,6 +24,7 @@ enum SocketEvent {
   // Server → client: broadcast lifecycle.
   newBroadcast('newBroadcast'),
   endedBroadcast('endedBroadcast'),
+  homeInvalidated('homeInvalidated'),
   broadcastError('broadcastError'),
   // Server → client: host presence.
   hostDisconnected('hostDisconnected'),

@@ -5,6 +5,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/socket.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
+import 'package:meno_mobile/features/broadcast/model/dtos.dart';
 
 /// The broadcast events the socket carries.
 ///
@@ -21,6 +22,7 @@ final class BroadcastSocketService implements Disposable {
 
   final _newBroadcast = StreamController<Broadcast>.broadcast();
   final _ended = StreamController<EndedBroadcast>.broadcast();
+  final _homeInvalidated = StreamController<HomeInvalidatedDto>.broadcast();
   final _joined = StreamController<BroadcastParticipantEvent>.broadcast();
   final _left = StreamController<BroadcastParticipantEvent>.broadcast();
   final _hostState = StreamController<HostConnectionEvent>.broadcast();
@@ -35,6 +37,9 @@ final class BroadcastSocketService implements Disposable {
 
   /// A broadcast ended, in any of the ways it can.
   Stream<EndedBroadcast> get onEndedBroadcast => _ended.stream;
+
+  /// The home sections the socket told this client to refetch.
+  Stream<HomeInvalidatedDto> get onHomeInvalidated => _homeInvalidated.stream;
 
   /// Somebody joined a room.
   Stream<BroadcastParticipantEvent> get onParticipantJoined => _joined.stream;
@@ -111,6 +116,17 @@ final class BroadcastSocketService implements Disposable {
           SocketEvent.broadcastError,
           (data) => _emit(_error, _broadcastError(data)),
         ),
+      )
+      ..add(
+        _client.on(
+          SocketEvent.homeInvalidated,
+          (data) {
+            final frame = HomeInvalidatedDto.fromJson(
+              _asMap(data) ?? <String, dynamic>{},
+            );
+            _emit(_homeInvalidated, frame);
+          },
+        ),
       );
   }
 
@@ -124,6 +140,7 @@ final class BroadcastSocketService implements Disposable {
     await Future.wait([
       _newBroadcast.close(),
       _ended.close(),
+      _homeInvalidated.close(),
       _joined.close(),
       _left.close(),
       _hostState.close(),
