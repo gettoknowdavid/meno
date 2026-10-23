@@ -74,8 +74,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     );
     _announcePresence = .createAsyncNoParamNoResult(
       () async {
-        _socket.joinRoom(broadcast.value.id);
-
         // The draft the host created this broadcast from has become a real
         // broadcast; keeping it would offer to resume a creation that is done.
         if (isHost.value) {
@@ -120,7 +118,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
           }
         } finally {
           await _room.disconnect();
-          _socket.leaveRoom(broadcast.value.id);
           state.value = const LiveSessionState.ended();
           status.value = LiveStatus.offAir;
           _isLeaving.value = false;
@@ -146,16 +143,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.session.toggleMicrophone',
     );
-    reconnectToSocket = .createAsyncNoParamNoResult(
-      () async {
-        if (!_room.isConnected) return;
-        _logger.i('Re-announcing after a socket reconnect');
-        _socket.joinRoom(broadcast.value.id);
-      },
-      errorFilterFn: menoExceptionFilter,
-      debugName: 'broadcast.session.reconnect',
-    );
-
     // Chained here, after every command exists. A `..pipeToCommand(…)` written
     // on the line that builds a command reads the field it points at, and a
     // `late final` assigned two lines below has not been initialised yet — the
@@ -221,7 +208,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   StreamSubscription<RoomConnectionState>? _roomStateSubscription;
   StreamSubscription<HostConnectionEvent>? _hostConnectionSubscription;
   StreamSubscription<EndedBroadcast>? _endedBroadcastSubscription;
-  StreamSubscription<void>? _socketReconnectionSubscription;
 
   Timer? _reconnectionTimer;
   int _reconnectionAttempts = 0;
@@ -257,13 +243,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   /// when the room refuses.
   late final Command<bool, void> toggleMicrophone;
 
-  /// Re-announces this client after the socket comes back.
-  ///
-  /// A reconnect gives a fresh socket with no room membership, so the server
-  /// has to be told again or the participant count drifts down for a client
-  /// that is still watching.
-  late final Command<void, void> reconnectToSocket;
-
   /// The last failure that stopped a step, for a room that never settled.
   late final ValueListenable<CommandError<void>?> errors =
       _connectToLiveKit.errors;
@@ -279,15 +258,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       _handleEndedBroadcast,
       onError: (Object error) =>
           _logger.e('Ended broadcast stream failed', error: error),
-    );
-
-    // A reconnect hands this client a socket the server has no room for, so the
-    // server is told again — otherwise the roster counts down for a client that
-    // is still watching, and the host's own room would not know they are back.
-    _socketReconnectionSubscription = _socket.onReconnected.listen(
-      _handleSocketReconnected,
-      onError: (Object error) =>
-          _logger.e('Socket reconnection stream failed', error: error),
     );
 
     _connectToLiveKit.errors.listen((commandError, _) {
@@ -382,9 +352,6 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     await _room.disconnect();
   }
 
-  /// Says again which room this client is in, after the socket came back.
-  Future<void> _handleSocketReconnected(void _) => reconnectToSocket.runAsync();
-
   /// Retries the connection with a growing delay, up to a ceiling.
   void _scheduleReconnection() {
     if (_reconnectionAttempts >= _maxReconnectionAttempts) {
@@ -414,12 +381,10 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     await _roomStateSubscription?.cancel();
     await _hostConnectionSubscription?.cancel();
     await _endedBroadcastSubscription?.cancel();
-    await _socketReconnectionSubscription?.cancel();
 
     _roomStateSubscription = null;
     _hostConnectionSubscription = null;
     _endedBroadcastSubscription = null;
-    _socketReconnectionSubscription = null;
 
     // Leaving is part of tearing down: a scope that is popped without it leaves
     // the socket subscribed to a room nobody is in. A session that already
@@ -446,6 +411,5 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     _settle.dispose();
     endSession.dispose();
     toggleMicrophone.dispose();
-    reconnectToSocket.dispose();
   }
 }

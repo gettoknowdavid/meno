@@ -20,11 +20,11 @@ final class BroadcastSocketService implements Disposable {
   final MenoLogger _logger;
 
   final _newBroadcast = StreamController<Broadcast>.broadcast();
-  final _started = StreamController<Broadcast>.broadcast();
   final _ended = StreamController<EndedBroadcast>.broadcast();
   final _joined = StreamController<BroadcastParticipantEvent>.broadcast();
   final _left = StreamController<BroadcastParticipantEvent>.broadcast();
   final _hostState = StreamController<HostConnectionEvent>.broadcast();
+  final _error = StreamController<BroadcastErrorEvent>.broadcast();
 
   final List<SocketSubscription> _subscriptions = [];
 
@@ -32,9 +32,6 @@ final class BroadcastSocketService implements Disposable {
 
   /// A broadcast was created or went on air.
   Stream<Broadcast> get onNewBroadcast => _newBroadcast.stream;
-
-  /// A broadcast went live.
-  Stream<Broadcast> get onStartedBroadcast => _started.stream;
 
   /// A broadcast ended, in any of the ways it can.
   Stream<EndedBroadcast> get onEndedBroadcast => _ended.stream;
@@ -47,6 +44,14 @@ final class BroadcastSocketService implements Disposable {
 
   /// The host of a room you are in dropped or came back.
   Stream<HostConnectionEvent> get onHostConnectionChanged => _hostState.stream;
+
+  /// Something went wrong; the server is telling this client directly.
+  ///
+  /// `broadcastError` is the only frame that carries a decision the client has
+  /// to make — [BroadcastErrorEvent.recoverable] separates "retry" from
+  /// "navigate away", and `BroadcastErrorCode.tokenExpired` is the one that
+  /// leads to a token refresh rather than a re-join.
+  Stream<BroadcastErrorEvent> get onBroadcastError => _error.stream;
 
   /// The underlying socket dropped and came back.
   ///
@@ -73,25 +78,19 @@ final class BroadcastSocketService implements Disposable {
       )
       ..add(
         _client.on(
-          SocketEvent.startedBroadcast,
-          (data) => _emit(_started, _broadcast(data)),
-        ),
-      )
-      ..add(
-        _client.on(
           SocketEvent.endedBroadcast,
           (data) => _emit(_ended, _endedBroadcast(data)),
         ),
       )
       ..add(
         _client.on(
-          SocketEvent.newBroadcastListener,
+          SocketEvent.participantJoined,
           (data) => _emit(_joined, _participantEvent(data)),
         ),
       )
       ..add(
         _client.on(
-          SocketEvent.broadcastListenerLeft,
+          SocketEvent.participantLeft,
           (data) => _emit(_left, _participantEvent(data)),
         ),
       )
@@ -106,35 +105,13 @@ final class BroadcastSocketService implements Disposable {
           SocketEvent.hostReconnected,
           (data) => _emit(_hostState, _hostStateEvent(data, connected: true)),
         ),
+      )
+      ..add(
+        _client.on(
+          SocketEvent.broadcastError,
+          (data) => _emit(_error, _broadcastError(data)),
+        ),
       );
-  }
-
-  /// Tells the server this client is watching [broadcastId].
-  ///
-  /// Best effort. Room membership is a hint the server uses for presence, not
-  /// something audio depends on — a socket that is still connecting must not
-  /// stop a client from entering the room, and `LiveSessionManager` says it
-  /// again when the socket comes back.
-  void joinRoom(Id broadcastId) => _emitRoomEvent(
-    SocketEvent.joinBroadcast,
-    broadcastId,
-  );
-
-  /// Tells the server this client stopped watching [broadcastId].
-  void leaveRoom(Id broadcastId) => _emitRoomEvent(
-    SocketEvent.leaveBroadcast,
-    broadcastId,
-  );
-
-  void _emitRoomEvent(SocketEvent event, Id broadcastId) {
-    try {
-      _client.emit(event, {'broadcastId': broadcastId.getOrCrash});
-    } on SocketNotConnectedException catch (error) {
-      _logger.d(
-        'Could not send ${event.value}: ${error.message}',
-        tag: MenoLogTag.network.label,
-      );
-    }
   }
 
   @override
@@ -146,11 +123,11 @@ final class BroadcastSocketService implements Disposable {
     _listening = false;
     await Future.wait([
       _newBroadcast.close(),
-      _started.close(),
       _ended.close(),
       _joined.close(),
       _left.close(),
       _hostState.close(),
+      _error.close(),
     ]);
   }
 
@@ -223,6 +200,30 @@ final class BroadcastSocketService implements Disposable {
     );
   }
 
+  /// Decodes a [`broadcastError`] frame.
+  ///
+  /// The payload is `WsError` from `apps/api/src/infrastructure/ws/errors.rs`: a
+  /// stable code, a human-readable message, and `recoverable`, which is derived
+  /// from the code server-side so it can never contradict it. A frame with no
+  /// recognisable code is dropped rather than treated as fatal — an unknown
+  /// error is not a reason to tear down a working room.
+  BroadcastErrorEvent? _broadcastError(dynamic data) {
+    return _decode<BroadcastErrorEvent?>(data, (json) {
+      final rawCode = json['code'] as String?;
+      final code = BroadcastErrorCode.fromWire(rawCode);
+      if (code == null) return null;
+
+      return BroadcastErrorEvent(
+        broadcastId: json['broadcastId'] == null
+            ? null
+            : Id.fromWire(json['broadcastId'] as String),
+        code: code,
+        message: (json['message'] as String? ?? '').trim(),
+        recoverable: json['recoverable'] as bool? ?? code.isRecoverable,
+      );
+    });
+  }
+
   T? _decode<T>(dynamic data, T Function(Map<String, dynamic>) decode) {
     final json = _asMap(data);
     if (json == null) return null;
@@ -264,4 +265,70 @@ final class HostConnectionEvent {
 
   final Id broadcastId;
   final bool connected;
+}
+
+/// Why the server sent a `broadcastError`, mirroring `WsErrorCode` in
+/// `apps/api/src/infrastructure/ws/errors.rs`.
+///
+/// The wire value is SCREAMING_SNAKE_CASE and is a stability contract: the API
+/// may add a code but never rename one, so matching on it is safe.
+enum BroadcastErrorCode {
+  tokenExpired('TOKEN_EXPIRED'),
+  broadcastForciblyEnded('BROADCAST_FORCIBLY_ENDED'),
+  kickedFromRoom('KICKED_FROM_ROOM'),
+  roomNotFound('ROOM_NOT_FOUND'),
+  mediaServerError('MEDIA_SERVER_ERROR'),
+  unsupported('UNSUPPORTED');
+
+  new(this.wire);
+
+  /// The exact string the API sends.
+  final String wire;
+
+  /// Whether retrying the same action can succeed.
+  ///
+  /// Mirrors `WsErrorCode::is_recoverable`: the socket flag is derived from
+  /// this server-side, so this default only applies when the frame omits it.
+  bool get isRecoverable =>
+      this == tokenExpired || this == mediaServerError;
+
+  /// Whether this error means the room is gone and the client should leave it.
+  ///
+  /// Mirrors `WsErrorCode::is_fatal`: an `unsupported` frame is not recoverable
+  /// by retrying, but it is also not a reason to drop a working connection.
+  bool get isFatal =>
+      this == broadcastForciblyEnded ||
+      this == kickedFromRoom ||
+      this == roomNotFound;
+
+  static BroadcastErrorCode? fromWire(String? wire) {
+    for (final code in BroadcastErrorCode.values) {
+      if (code.wire == wire) return code;
+    }
+    return null;
+  }
+}
+
+/// A `broadcastError` frame, decoded once here.
+final class BroadcastErrorEvent {
+  const new({
+    required this.code,
+    required this.message,
+    required this.recoverable,
+    this.broadcastId,
+  });
+
+  /// The room this concerns, when it concerns one. Connection-scoped errors
+  /// (a malformed heartbeat, an unsupported frame, a server shutdown) carry
+  /// no id.
+  final Id? broadcastId;
+
+  /// The stable code to branch on; never match on [message].
+  final BroadcastErrorCode code;
+
+  /// Human-readable detail. Safe to show, never used for control flow.
+  final String message;
+
+  /// Whether retrying can succeed — the server derives this from [code].
+  final bool recoverable;
 }

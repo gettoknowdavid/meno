@@ -8,28 +8,39 @@ library;
 
 /// Every event this app sends or listens for over the socket.
 ///
-/// The value is the wire name — the API's own spelling. It is carried
-/// separately from the member name so an event can be renamed on the wire
-/// without renaming Dart, and so no call site has to build a string.
+/// The value is the wire name — the API's own spelling, from `WsEvent` in
+/// `apps/api/src/infrastructure/ws/model.rs`. It is carried separately from the
+/// member name so an event can be renamed on the wire without renaming Dart,
+/// and so no call site has to build a string.
+///
+/// Only events the server actually emits or accepts belong here. The pre-v2
+/// `startedBroadcast`, `joinBroadcast`, `leaveBroadcast` and `endBroadcast`
+/// names are gone: the server's `WsEvent` has no such variants, so it refuses
+/// every frame that carries one (§10.2's client→server set is `heartbeat` plus
+/// chat, and entering or leaving a room is an HTTP call, not a socket frame).
+/// The participant events are the server's `participantJoined`/`participantLeft`,
+/// not the old `newBroadcastListener`/`broadcastListenerLeft` spellings.
 enum SocketEvent {
+  // Server → client: broadcast lifecycle.
   newBroadcast('newBroadcast'),
   endedBroadcast('endedBroadcast'),
-  leaveBroadcast('leaveBroadcast'),
-  startedBroadcast('startedBroadcast'),
-  joinBroadcast('joinBroadcast'),
-  endBroadcast('endBroadcast'),
-  newBroadcastListener('newBroadcastListener'),
-  broadcastListenerLeft('broadcastListenerLeft'),
+  broadcastError('broadcastError'),
+  // Server → client: host presence.
+  hostDisconnected('hostDisconnected'),
+  hostReconnected('hostReconnected'),
+  // Server → client: participants.
+  participantJoined('participantJoined'),
+  participantLeft('participantLeft'),
+  // Server → client: chat and notifications.
   newMessage('newMessage'),
   editedMessage('editedMessage'),
   deletedMessage('deletedMessage'),
-  sendChatMessage('sendChatMessage'),
-  editChatMessage('editChatMessage'),
-  deleteChatMessage('deleteChatMessage'),
-  getChatMessages('getChatMessages'),
-  hostDisconnected('hostDisconnected'),
-  hostReconnected('hostReconnected'),
-  notification('notification');
+  notification('notification'),
+  // Client → server: chat (the only frames the server accepts besides
+  // heartbeat).
+  sendChatMessage('sendMessage'),
+  editChatMessage('editMessage'),
+  deleteChatMessage('deleteMessage');
 
   new(this.value);
 
