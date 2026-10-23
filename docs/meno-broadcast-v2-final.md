@@ -14,7 +14,7 @@ LiveKit · WebSocket · Nigeria Resilience · Full Figma Coverage
 | Background app BE support                      | Documented — ping tolerance, participant persistence, keepalive  |
 | Full broadcast search API                      | Complete — all filters, sort, pagination, convenience endpoints  |
 | FE state signals                               | BroadcastDto v2 — viewer_role, broadcast_state, connection_state |
-| Live listener count strategy                   | Hybrid: DB total + Redis live counter + WS delta in room         |
+| Live participant count strategy                | Hybrid: DB total + Redis live counter + WS delta in room         |
 | Figma features: daily quota                    | Full implementation — Redis quota, mid-broadcast watcher         |
 | Figma features: recording & publish            | LiveKit Egress + S3 + presigned URLs + webhook                   |
 | Figma features: cohost accept flow             | Two-step invite → accept/decline                                 |
@@ -78,7 +78,7 @@ Nigeria's mobile network reality: frequent 2G/3G fallbacks in dense urban areas,
 | **Failure**                             | **Cause**                                      | **Detection**                    | **Recovery**                                         |
 | --------------------------------------- | ---------------------------------------------- | -------------------------------- | ---------------------------------------------------- |
 | Host WS drops mid-broadcast             | Network switch, phone screen off, backgrounded | Missed heartbeat pings           | 90s grace period → reconnect → hostReconnected event |
-| Listener WS drops                       | Network loss, app close                        | Connection close / missed pings  | Auto-remove from room, update count                  |
+| Participant WS drops                    | Network loss, app close                        | Connection close / missed pings  | Auto-remove from room, update count                  |
 | Flutter app crashes (force kill)        | OOM, OS kill, crash                            | WS TCP close without Close frame | Same as WS drop — cleanup on disconnect              |
 | Rapid reconnect loops                   | Unstable network                               | Redis reconnect counter          | Exponential backoff enforced server-side             |
 | LiveKit token expires in-session        | Broadcast > 6 hours                            | Token TTL check on join          | FE polls expiry, calls refresh endpoint              |
@@ -95,13 +95,13 @@ Nigeria's mobile network reality: frequent 2G/3G fallbacks in dense urban areas,
 | ---------------------------------------------------------------------------------------------- |
 | // - Nigerian mobile NATs drop idle TCP after ~30s → ping every 25s                            |
 | // - iOS background budget: up to 30s before processing is frozen → 60s pong timeout for hosts |
-| // - Listeners get 20s timeout (more aggressive, less critical)                                |
+| // - Participants get 20s timeout (more aggressive, less critical)                              |
 | // - 2 missed pongs before declaring dead (handles one brief packet loss event)                |
 |                                                                                                |
 | pub struct HeartbeatConfig {                                                                   |
 | pub ping_interval_secs: u64, // 25                                                             |
 | pub host_pong_timeout: u64, // 60 — hosts get extended window (backgrounded app)               |
-| pub listener_pong_timeout: u64, // 20                                                          |
+| pub participant_pong_timeout: u64, // 20                                                        |
 | pub max_missed_pings: u32, // 2                                                                |
 | }                                                                                              |
 |                                                                                                |
@@ -478,62 +478,62 @@ Some errors can only be communicated after the HTTP response has been sent — e
 
 The FE foreground service keeps audio alive. The BE's job is to not kill the session while the app is in the background.
 
-| **FE Responsibility**                           | **BE Responsibility**                                             |
-| ----------------------------------------------- | ----------------------------------------------------------------- |
-| Flutter foreground service (audio continues)    | Extended pong timeout for active hosts (60s vs 20s for listeners) |
-| WS reconnection with exponential backoff        | Message buffer replays missed events on reconnect (5-min window)  |
-| LiveKit SDK media reconnection                  | Tiered grace period: 120s first disconnect → 30s fourth+          |
-| Show persistent notification while broadcasting | Participant state in DB — re-join after crash returns same role   |
-| Re-acquire microphone on foreground             | Keepalive heartbeat endpoint for non-WS health check              |
-| Re-authenticate WS after cold app restart       | Token refresh endpoint with role inference from DB                |
+| **FE Responsibility**                           | **BE Responsibility**                                                |
+| ----------------------------------------------- | -------------------------------------------------------------------- |
+| Flutter foreground service (audio continues)    | Extended pong timeout for active hosts (60s vs 20s for participants) |
+| WS reconnection with exponential backoff        | Message buffer replays missed events on reconnect (5-min window)     |
+| LiveKit SDK media reconnection                  | Tiered grace period: 120s first disconnect → 30s fourth+             |
+| Show persistent notification while broadcasting | Participant state in DB — re-join after crash returns same role      |
+| Re-acquire microphone on foreground             | Keepalive heartbeat endpoint for non-WS health check                 |
+| Re-authenticate WS after cold app restart       | Token refresh endpoint with role inference from DB                   |
 
 ## **4.1 Non-WS Keepalive Endpoint**
 
 Some network environments kill WebSockets but allow HTTP. Adding a simple HTTP keepalive lets the FE background service verify the session is alive without needing the WS connection.
 
-| // POST /broadcasts/:id/keepalive                                                      |
-| -------------------------------------------------------------------------------------- |
-| // Called by the FE background service every 30 seconds when WS is not reachable.      |
-| // This tells the server 'I am still in this broadcast'.                               |
-|                                                                                        |
-| HANDLER broadcast_keepalive(Path(id), AuthUser(user)) -> Json<KeepaliveResponse>       |
-|                                                                                        |
-| broadcast = broadcast_repo.find_by_id(id).await?.ok_or(NotFound)?                      |
-| if broadcast.status != Active { return Err(NotLive) }                                  |
-|                                                                                        |
-| listener = broadcast_repo.find_listener(id, user.id).await?                            |
-| if listener.is_none() { return Err(NotParticipant) }                                   |
-|                                                                                        |
-| // Update Redis last-seen timestamp                                                    |
-| state.redis.set_ex(                                                                    |
-| &format!('participant_last_seen:{}:{}', id, user.id),                                  |
-| Utc::now().timestamp().to_string(),                                                    |
-| 300, // 5-min TTL                                                                      |
-| ).await?                                                                               |
-|                                                                                        |
-| // If host: also refresh the grace period if they're in one                            |
-| if broadcast.creator_id == user.id {                                                   |
-| // Calling keepalive during grace period = host is alive, extend grace                 |
-| grace_key = format!('host_grace:{}', id)                                               |
-| if state.redis.exists(&grace_key).await? {                                             |
-| on_host_reconnected(user.id, state).await?                                             |
-| }                                                                                      |
-| }                                                                                      |
-|                                                                                        |
-| Ok(Json(KeepaliveResponse {                                                            |
-| broadcast_id: id,                                                                      |
-| connection_state: BroadcastConnectionState::Live,                                      |
-| live_listener_count: state.redis.get(format!('live_count:{}', id)).await.unwrap_or(0), |
-| token_expires_at: /* decoded from current token */,                                    |
-| }))                                                                                    |
-|                                                                                        |
-| #[derive(Serialize)]                                                                   |
-| pub struct KeepaliveResponse {                                                         |
-| pub broadcast_id: Uuid,                                                                |
-| pub connection_state: BroadcastConnectionState,                                        |
-| pub live_listener_count: i64,                                                          |
-| pub token_expires_at: DateTime<Utc>, // FE checks if token refresh needed              |
-| }                                                                                      |
+| // POST /broadcasts/:id/keepalive                                                          |
+| ------------------------------------------------------------------------------------------  |
+| // Called by the FE background service every 30 seconds when WS is not reachable.          |
+| // This tells the server 'I am still in this broadcast'.                                   |
+|                                                                                            |
+| HANDLER broadcast_keepalive(Path(id), AuthUser(user)) -> Json<KeepaliveResponse>           |
+|                                                                                            |
+| broadcast = broadcast_repo.find_by_id(id).await?.ok_or(NotFound)?                          |
+| if broadcast.status != Active { return Err(NotLive) }                                      |
+|                                                                                            |
+| participant = broadcast_repo.find_participant(id, user.id).await?                           |
+| if participant.is_none() { return Err(NotParticipant) }                                     |
+|                                                                                            |
+| // Update Redis last-seen timestamp                                                        |
+| state.redis.set_ex(                                                                        |
+| &format!('participant_last_seen:{}:{}', id, user.id),                                      |
+| Utc::now().timestamp().to_string(),                                                        |
+| 300, // 5-min TTL                                                                          |
+| ).await?                                                                                   |
+|                                                                                            |
+| // If host: also refresh the grace period if they're in one                                |
+| if broadcast.creator_id == user.id {                                                       |
+| // Calling keepalive during grace period = host is alive, extend grace                     |
+| grace_key = format!('host_grace:{}', id)                                                   |
+| if state.redis.exists(&grace_key).await? {                                                 |
+| on_host_reconnected(user.id, state).await?                                                 |
+| }                                                                                          |
+| }                                                                                          |
+|                                                                                            |
+| Ok(Json(KeepaliveResponse {                                                                |
+| broadcast_id: id,                                                                          |
+| connection_state: BroadcastConnectionState::Live,                                          |
+| live_participants_count: state.redis.get(format!('live_count:{}', id)).await.unwrap_or(0),  |
+| token_expires_at: /* decoded from current token */,                                        |
+| }))                                                                                        |
+|                                                                                            |
+| #[derive(Serialize)]                                                                       |
+| pub struct KeepaliveResponse {                                                             |
+| pub broadcast_id: Uuid,                                                                    |
+| pub connection_state: BroadcastConnectionState,                                            |
+| pub live_participants_count: i64,                                                           |
+| pub token_expires_at: DateTime<Utc>, // FE checks if token refresh needed                  |
+| }                                                                                          |
 
 # **5. Broadcast Search ****&**** Query API**
 
@@ -541,42 +541,42 @@ All the query parameters from the NestJS implementation, plus additions from the
 
 ## **5.1 Full Request DTO**
 
-| #[derive(Debug, Deserialize, Default)]                                            |
-| --------------------------------------------------------------------------------- |
-| #[serde(rename_all = "camelCase")]                                                |
-| pub struct BroadcastQuery {                                                       |
-| // ── Filtering ────────────────────────────────────────────────                  |
-| pub id: Option<Uuid>, // fetch single by ID in list context                       |
-| pub status: Option<BroadcastStatus>, // active │ inactive                         |
-| pub creator_id: Option<Uuid>,                                                     |
-| pub only_subscriptions: Option<bool>, // 'Live for you'                           |
-| pub keywords: Option<String>, // full-text on title + description                 |
-| pub recently_ended: Option<bool>, // ended < 24h ago ('Recently live')            |
-| pub has_recording: Option<bool>, // has published recording                       |
-| pub exclude_creator_id: Option<Uuid>, // exclude a specific creator               |
-|                                                                                   |
-| // ── Sorting ─────────────────────────────────────────────────                   |
-| pub sort_by: Option<BroadcastSortField>, // default: created_at                   |
-| pub order: Option<SortOrder>, // default: desc                                    |
-|                                                                                   |
-| // ── Pagination ──────────────────────────────────────────────                   |
-| pub page: Option<i64>, // 1-indexed, default 1                                    |
-| pub limit: Option<i64>, // default 20, max 100                                    |
-| }                                                                                 |
-|                                                                                   |
-| #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq)]                    |
-| #[serde(rename_all = "snake_case")]                                               |
-| pub enum BroadcastSortField {                                                     |
-| #[default] CreatedAt,                                                             |
-| Title, // alphabetical sort                                                       |
-| StartTime, // when scheduled                                                      |
-| EndTime, // recently-ended sort                                                   |
-| TotalListeners, // most popular (uses Redis counter for live, DB count for ended) |
-| }                                                                                 |
-|                                                                                   |
-| #[derive(Debug, Deserialize, Default, Clone, Copy)]                               |
-| #[serde(rename_all = "snake_case")]                                               |
-| pub enum SortOrder { #[default] Desc, Asc }                                       |
+| #[derive(Debug, Deserialize, Default)]                                               |
+| ------------------------------------------------------------------------------------  |
+| #[serde(rename_all = "camelCase")]                                                   |
+| pub struct BroadcastQuery {                                                          |
+| // ── Filtering ────────────────────────────────────────────────                     |
+| pub id: Option<Uuid>, // fetch single by ID in list context                          |
+| pub status: Option<BroadcastStatus>, // active │ inactive                            |
+| pub creator_id: Option<Uuid>,                                                        |
+| pub only_subscriptions: Option<bool>, // 'Live for you'                              |
+| pub keywords: Option<String>, // full-text on title + description                    |
+| pub recently_ended: Option<bool>, // ended < 24h ago ('Recently live')               |
+| pub has_recording: Option<bool>, // has published recording                          |
+| pub exclude_creator_id: Option<Uuid>, // exclude a specific creator                  |
+|                                                                                      |
+| // ── Sorting ─────────────────────────────────────────────────                      |
+| pub sort_by: Option<BroadcastSortField>, // default: created_at                      |
+| pub order: Option<SortOrder>, // default: desc                                       |
+|                                                                                      |
+| // ── Pagination ──────────────────────────────────────────────                      |
+| pub page: Option<i64>, // 1-indexed, default 1                                       |
+| pub limit: Option<i64>, // default 20, max 100                                       |
+| }                                                                                    |
+|                                                                                      |
+| #[derive(Debug, Deserialize, Default, Clone, Copy, PartialEq)]                       |
+| #[serde(rename_all = "snake_case")]                                                  |
+| pub enum BroadcastSortField {                                                        |
+| #[default] CreatedAt,                                                                |
+| Title, // alphabetical sort                                                          |
+| StartTime, // when scheduled                                                         |
+| EndTime, // recently-ended sort                                                      |
+| TotalParticipants, // most popular (uses Redis counter for live, DB count for ended)  |
+| }                                                                                    |
+|                                                                                      |
+| #[derive(Debug, Deserialize, Default, Clone, Copy)]                                  |
+| #[serde(rename_all = "snake_case")]                                                  |
+| pub enum SortOrder { #[default] Desc, Asc }                                          |
 
 ## **5.2 Home Section Convenience Endpoints**
 
@@ -585,9 +585,9 @@ These map directly to the Figma sections. Each is a thin wrapper around the same
 | **Endpoint**                       | **Auth** | **Figma Section**        | **Query Preset**                                             |
 | ---------------------------------- | -------- | ------------------------ | ------------------------------------------------------------ |
 | GET /broadcasts                    | —        | Search / Discover        | All params available                                         |
-| GET /broadcasts/live-for-you       | ✓        | Live for you ✨          | status=active, only_subscriptions=true, sort=created_at desc |
-| GET /broadcasts/now-live           | —        | Now live 🔥              | status=active, sort=total_listeners desc                     |
-| GET /broadcasts/recently-live      | —        | Recently live ⚡         | recently_ended=true, sort=end_time desc                      |
+| GET /broadcasts/live-for-you       | ✓        | Live for you ✨           | status=active, only_subscriptions=true, sort=created_at desc |
+| GET /broadcasts/now-live           | —        | Now live 🔥               | status=active, sort=total_participants desc                  |
+| GET /broadcasts/recently-live      | —        | Recently live ⚡          | recently_ended=true, sort=end_time desc                      |
 | GET /broadcasts/continue-listening | ✓        | Continue listening       | Viewer's past joins, has_recording=true or recently ended    |
 | GET /broadcasts/listen-later       | ✓        | Listen Later (bookmarks) | User's saved broadcasts                                      |
 
@@ -597,11 +597,11 @@ These map directly to the Figma sections. Each is a thin wrapper around the same
 | ----------------------------------------------------------------------------- |
 |                                                                               |
 | // Base query: always filter deleted_at IS NULL                               |
-| // COUNT(*) total_listeners via subquery to avoid JOIN inflation              |
+| // COUNT(*) total_participants via subquery to avoid JOIN inflation            |
 | let mut qb = QueryBuilder::new(                                               |
 | 'SELECT b.*,                                                                  |
-| (SELECT COUNT(*) FROM broadcast_listeners bl WHERE bl.broadcast_id = b.id)    |
-| AS total_listeners                                                            |
+| (SELECT COUNT(*) FROM broadcast_participants bp WHERE bp.broadcast_id = b.id)  |
+| AS total_participants                                                          |
 | FROM broadcasts b                                                             |
 | WHERE b.deleted_at IS NULL'                                                   |
 | )                                                                             |
@@ -656,7 +656,7 @@ These map directly to the Figma sections. Each is a thin wrapper around the same
 | BroadcastSortField::Title => 'b.title',                                       |
 | BroadcastSortField::StartTime => 'b.start_time',                              |
 | BroadcastSortField::EndTime => 'COALESCE(b.end_time, b.created_at)',          |
-| BroadcastSortField::TotalListeners => 'total_listeners',                      |
+| BroadcastSortField::TotalParticipants => 'total_participants',                 |
 | BroadcastSortField::CreatedAt => 'b.created_at',                              |
 | }                                                                             |
 | let order = match query.order.unwrap_or_default() {                           |
@@ -689,8 +689,8 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 | Am I currently in the room?                     | viewer_is_in_room == true                       |
 | Have I subscribed to this creator?              | is_subscribed_to_creator == true                |
 | How long was this broadcast?                    | duration_seconds                                |
-| How many people are live right now?             | live_listener_count (from Redis)                |
-| How many total have ever listened?              | total_listeners (from DB)                       |
+| How many people are live right now?             | live_participants_count (from Redis)            |
+| How many total have ever listened?              | total_participants (from DB)                    |
 | Was this recorded and published?                | published_at != null && recording_url != null   |
 | How much time is left if I joined halfway?      | time_remaining_seconds (continue listening)     |
 | How much broadcast quota does the creator have? | creator_quota (in host-specific responses only) |
@@ -727,15 +727,15 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 |                                                                             |
 | // ── Viewer-specific signals ──────────────────────────────────            |
 | pub viewer_role: ViewerRole,                                                |
-| // HOST, COHOST, LISTENER, NONE                                             |
+| // HOST, COHOST, PARTICIPANT, NONE                                           |
 | // Always present (NONE for unauthenticated viewers)                        |
 |                                                                             |
 | pub viewer_is_in_room: bool, // currently joined as participant             |
 | pub is_subscribed_to_creator: bool, // viewer follows creator               |
 |                                                                             |
 | // ── Counts ──────────────────────────────────────────────────             |
-| pub live_listener_count: i64, // from Redis (0 when not live)               |
-| pub total_listeners: i64, // from DB (all-time joins)                       |
+| pub live_participants_count: i64, // from Redis (0 when not live)            |
+| pub total_participants: i64, // from DB (all-time joins)                     |
 |                                                                             |
 | // ── Recording ───────────────────────────────────────────────             |
 | pub recording_enabled: bool,                                                |
@@ -766,7 +766,7 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 |                                                                             |
 | #[derive(Serialize, Clone, PartialEq)]                                      |
 | #[serde(rename_all = "SCREAMING_SNAKE_CASE")]                               |
-| pub enum ViewerRole { Host, Cohost, Listener, None }                        |
+| pub enum ViewerRole { Host, Cohost, Participant, None }                      |
 |                                                                             |
 | #[derive(Serialize, Clone)]                                                 |
 | #[serde(rename_all = "SCREAMING_SNAKE_CASE")]                               |
@@ -811,9 +811,9 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 | viewer_role = match viewer_id {                                                           |
 | Some(vid) if vid == broadcast.creator_id => ViewerRole::Host,                             |
 | Some(vid) => {                                                                            |
-| match broadcast_repo.find_listener(broadcast.id, vid).await? {                            |
+| match broadcast_repo.find_participant(broadcast.id, vid).await? {                          |
 | Some(l) if l.role == BroadcastRole::Cohost => ViewerRole::Cohost,                         |
-| Some(_) => ViewerRole::Listener,                                                          |
+| Some(_) => ViewerRole::Participant,                                                        |
 | None => ViewerRole::None,                                                                 |
 | }                                                                                         |
 | }                                                                                         |
@@ -830,7 +830,7 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 | None => false,                                                                            |
 | }                                                                                         |
 |                                                                                           |
-| // ── live_listener_count ──────────────────────────────────────────                      |
+| // ── live_participants_count ──────────────────────────────────────────                   |
 | live_count = state.redis                                                                  |
 | .get::<i64>(format!('live_count:{}', broadcast.id)).await                                 |
 | .unwrap_or(0)                                                                             |
@@ -854,20 +854,20 @@ The root cause of the 'am I the host?' confusion in NestJS was missing explicit 
 |                                                                                           |
 | BroadcastDto {                                                                            |
 | broadcast_state, viewer_role, viewer_is_in_room, is_subscribed_to_creator: is_subscribed, |
-| live_listener_count: live_count, duration_seconds: duration_secs,                         |
+| live_participants_count: live_count, duration_seconds: duration_secs,                      |
 | time_remaining_seconds: time_remaining,                                                   |
 | // ... all other fields mapped 1:1                                                        |
 | }                                                                                         |
 
-# **7. Live Listener Counts — Three-Tier Hybrid**
+# **7. Live Participant Counts — Three-Tier Hybrid**
 
 Home page shows 'LIVE 60K', 'LIVE 2.5K' on broadcast cards. Inside a room the count updates in real-time. Here is exactly how to implement both efficiently.
 
-| **Tier**                 | **Storage**        | **When Used**                                | **Accuracy**                   |
-| ------------------------ | ------------------ | -------------------------------------------- | ------------------------------ |
-| DB total_listeners       | Postgres COUNT(*)  | All list responses (cards, search, discover) | Exact — all-time joins         |
-| Redis live_count         | Atomic INCR/DECR   | List responses for active broadcasts         | Near-exact — may lag 1 event   |
-| WS numberOfLiveListeners | Computed in memory | Inside an active broadcast room only         | Exact — pushed on every change |
+| **Tier**                    | **Storage**        | **When Used**                                | **Accuracy**                   |
+| --------------------------- | ------------------ | -------------------------------------------- | ------------------------------ |
+| DB total_participants       | Postgres COUNT(*)  | All list responses (cards, search, discover) | Exact — all-time joins         |
+| Redis live_count            | Atomic INCR/DECR   | List responses for active broadcasts         | Near-exact — may lag 1 event   |
+| WS numberOfLiveParticipants | Computed in memory | Inside an active broadcast room only         | Exact — pushed on every change |
 
 ## **7.1 Redis Counter Lifecycle**
 
@@ -880,7 +880,7 @@ Home page shows 'LIVE 60K', 'LIVE 2.5K' on broadcast cards. Inside a room the co
 | // ── On join() ───────────────────────────────────────────────────                       |
 | let new_count = state.redis.incr(&format!('live_count:{}', broadcast_id)).await?          |
 | // Emit to room participants (inside-room update only)                                    |
-| emit_listener_count_update(broadcast_id, new_count, state).await                          |
+| emit_participant_count_update(broadcast_id, new_count, state).await                        |
 |                                                                                           |
 | // ── On leave() / disconnect ─────────────────────────────────────                       |
 | let new_count = state.redis.decr(&format!('live_count:{}', broadcast_id)).await?          |
@@ -888,7 +888,7 @@ Home page shows 'LIVE 60K', 'LIVE 2.5K' on broadcast cards. Inside a room the co
 | if new_count < 0 {                                                                        |
 | state.redis.set(&format!('live_count:{}', broadcast_id), '0').await?                      |
 | }                                                                                         |
-| emit_listener_count_update(broadcast_id, new_count.max(0), state).await                   |
+| emit_participant_count_update(broadcast_id, new_count.max(0), state).await                 |
 |                                                                                           |
 | // ── On end_broadcast() ──────────────────────────────────────────                       |
 | state.redis.del(&format!('live_count:{}', broadcast_id)).await.ok()                       |
@@ -902,13 +902,13 @@ Home page shows 'LIVE 60K', 'LIVE 2.5K' on broadcast cards. Inside a room the co
 | .filter_map(│(id, v)│ v.and_then(│s│ s.parse().ok()).map(│n│ (*id, n)))                   |
 | .collect()                                                                                |
 |                                                                                           |
-| // ── ASYNC FUNCTION emit_listener_count_update ─────────────────                         |
-| ASYNC FUNCTION emit_listener_count_update(broadcast_id, count, state)                     |
+| // ── ASYNC FUNCTION emit_participant_count_update ─────────────────                       |
+| ASYNC FUNCTION emit_participant_count_update(broadcast_id, count, state)                   |
 | // Only sends to CURRENT ROOM PARTICIPANTS, not the home page.                            |
 | // Home page gets the count from the list endpoint's Redis batch fetch.                   |
 | let participant_ids = broadcast_repo.get_all_participant_ids(broadcast_id).await?         |
 | state.ws_hub.send_to_users(&participant_ids, WsPayload {                                  |
-| event: 'numberOfLiveListeners'.into(),                                                    |
+| event: 'numberOfLiveParticipants'.into(),                                                  |
 | data: json!({ 'broadcastId': broadcast_id, 'count': count }),                             |
 | }).await                                                                                  |
 
@@ -1101,13 +1101,13 @@ Figma: '45mins left', '5mins left', '10mins left' on Continue listening cards. N
 
 | // DB column addition:                                                                                |
 | ----------------------------------------------------------------------------------------------------- |
-| ALTER TABLE broadcast_listeners                                                                       |
+| ALTER TABLE broadcast_participants                                                                     |
 | ADD COLUMN IF NOT EXISTS last_listen_position_seconds INT NOT NULL DEFAULT 0,                         |
 | ADD COLUMN IF NOT EXISTS last_listened_at TIMESTAMPTZ                                                 |
 |                                                                                                       |
 | // Update listen position — called on leaveBroadcast WS event:                                        |
 | ASYNC FUNCTION update_listen_position(broadcast_id, user_id, position_secs, state)                    |
-| broadcast_repo.update_listener_position(                                                              |
+| broadcast_repo.update_participant_position(                                                            |
 | broadcast_id, user_id, position_secs                                                                  |
 | ).await?                                                                                              |
 |                                                                                                       |
@@ -1116,11 +1116,11 @@ Figma: '45mins left', '5mins left', '10mins left' on Continue listening cards. N
 | // BE handles_client_message() → extracts positionSeconds → updates DB                                |
 |                                                                                                       |
 | // time_remaining_seconds in BroadcastDto (continue-listening context):                               |
-| // = broadcast.duration_seconds - listener.last_listen_position_seconds                               |
+| // = broadcast.duration_seconds - participant.last_listen_position_seconds                             |
 |                                                                                                       |
 | // GET /broadcasts/continue-listening response:                                                       |
 | // Returns broadcasts where:                                                                          |
-| // - viewer has a broadcast_listeners row (joined before), AND                                        |
+| // - viewer has a broadcast_participants row (joined before), AND                                      |
 | // - broadcast ended < 7 days ago OR has a recording                                                  |
 | // Sorted by last_listened_at DESC                                                                    |
 
@@ -1135,7 +1135,7 @@ Figma: home screen shows 'Now streaming' banner at the top ('Rabbit: the need fo
 | // Used by the home screen to show the mini-player 'Now streaming' bar        |
 |                                                                               |
 | ASYNC FUNCTION get_active_session(user_id, state) -> Option<ActiveSessionDto> |
-| // Find any active broadcast_listeners row for this user                      |
+| // Find any active broadcast_participants row for this user                    |
 | let session = broadcast_repo                                                  |
 | .find_active_session_for_user(user_id).await?                                 |
 |                                                                               |
@@ -1144,8 +1144,8 @@ Figma: home screen shows 'Now streaming' banner at the top ('Rabbit: the need fo
 | broadcast_title: s.title,                                                     |
 | creator_name: s.creator_name,                                                 |
 | image_url: s.image_url,                                                       |
-| role: s.role, // HOST │ COHOST │ LISTENER                                     |
-| live_listener_count: redis_get_count(s.broadcast_id).await?,                  |
+| role: s.role, // HOST │ COHOST │ PARTICIPANT                                   |
+| live_participants_count: redis_get_count(s.broadcast_id).await?,               |
 | joined_at: s.joined_at,                                                       |
 | })                                                                            |
 |                                                                               |
@@ -1157,7 +1157,7 @@ Figma: home screen shows 'Now streaming' banner at the top ('Rabbit: the need fo
 | pub creator_name: String,                                                     |
 | pub image_url: Option<String>,                                                |
 | pub role: BroadcastRole,                                                      |
-| pub live_listener_count: i64,                                                 |
+| pub live_participants_count: i64,                                              |
 | pub joined_at: DateTime<Utc>,                                                 |
 | }                                                                             |
 |                                                                               |
@@ -1191,7 +1191,7 @@ Figma: '[Creator] wants to add you as a co-host. Accept request / Decline'. The 
 | // AUTH = invitee only                                                      |
 | // → updates invitation status = 'accepted'                                 |
 | // → inserts into broadcast_cohosts                                         |
-| // → if broadcast is live: mint COHOST token, upsert broadcast_listeners    |
+| // → if broadcast is live: mint COHOST token, upsert broadcast_participants  |
 | // → emits WS 'newCohost' to invitee with { broadcastId, livekitToken }     |
 | // → emits WS 'cohostAccepted' to creator with { broadcastId, userId }      |
 | // Returns: CohostSessionDto { user, livekitToken? }                        |
@@ -1240,7 +1240,7 @@ Figma shows a '...' menu on broadcast cards and inside broadcasts: Go to profile
 | ADD COLUMN IF NOT EXISTS end_reason TEXT;                                     |
 |                                                                               |
 | -- Listen position tracking (for 'X mins left')                               |
-| ALTER TABLE broadcast_listeners                                               |
+| ALTER TABLE broadcast_participants                                             |
 | ADD COLUMN IF NOT EXISTS last_listen_position_seconds INT NOT NULL DEFAULT 0, |
 | ADD COLUMN IF NOT EXISTS last_listened_at TIMESTAMPTZ;                        |
 |                                                                               |
@@ -1276,8 +1276,8 @@ Figma shows a '...' menu on broadcast cards and inside broadcasts: Go to profile
 | ON broadcasts (end_time DESC NULLS LAST)                                      |
 | WHERE status = 'inactive' AND deleted_at IS NULL;                             |
 |                                                                               |
-| CREATE INDEX IF NOT EXISTS idx_broadcast_listeners_user                       |
-| ON broadcast_listeners (listener_id);                                         |
+| CREATE INDEX IF NOT EXISTS idx_broadcast_participants_user                     |
+| ON broadcast_participants (participant_id);                                    |
 |                                                                               |
 | CREATE INDEX IF NOT EXISTS idx_bookmarks_user                                 |
 | ON broadcast_bookmarks (user_id, saved_at DESC);                              |
@@ -1296,7 +1296,7 @@ Figma shows a '...' menu on broadcast cards and inside broadcasts: Go to profile
 | ---------- | --------------------------------------- | -------- | --------------------------------------------------------------------------- |
 | GET        | /broadcasts                             | —        | Full search (id, status, keywords, creator_id, sort_by, order, page, limit) |
 | GET        | /broadcasts/live-for-you                | ✓        | Active broadcasts from subscriptions                                        |
-| GET        | /broadcasts/now-live                    | —        | All active broadcasts, sorted by listeners                                  |
+| GET        | /broadcasts/now-live                    | —        | All active broadcasts, sorted by participants                               |
 | GET        | /broadcasts/recently-live               | —        | Ended <24h, sorted by end_time                                              |
 | GET        | /broadcasts/continue-listening          | ✓        | Viewer's past joins with time_remaining_seconds                             |
 | GET        | /broadcasts/listen-later                | ✓        | Viewer's bookmarked broadcasts                                              |
@@ -1312,8 +1312,8 @@ Figma shows a '...' menu on broadcast cards and inside broadcasts: Go to profile
 | POST       | /broadcasts/:id/keepalive               | ✓        | HTTP keepalive for background apps                                          |
 | POST       | /broadcasts/:id/publish                 | ✓        | Publish recording after end                                                 |
 | GET        | /broadcasts/:id/recording-url           | ✓        | Presigned S3 URL (24h)                                                      |
-| GET        | /broadcasts/:id/listeners               | —        | All-time listeners (paginated)                                              |
-| GET        | /broadcasts/:id/live-listeners          | —        | Current LiveKit participants                                                |
+| GET        | /broadcasts/:id/participants            | —        | All-time participants (paginated)                                           |
+| GET        | /broadcasts/:id/live-participants       | —        | Current LiveKit participants                                                |
 | POST       | /broadcasts/:id/bookmark                | ✓        | Save to Listen Later                                                        |
 | DELETE     | /broadcasts/:id/bookmark                | ✓        | Remove bookmark                                                             |
 | POST       | /broadcasts/:id/co-hosts                | ✓        | Invite a co-host (creates invitation)                                       |
@@ -1324,31 +1324,31 @@ Figma shows a '...' menu on broadcast cards and inside broadcasts: Go to profile
 
 ## **10.2 WebSocket Events — Client → Server**
 
-| **Event**      | **Payload**                      | **Description**                                          |
-| -------------- | -------------------------------- | -------------------------------------------------------- |
-| endBroadcast   | { broadcastId }                  | Host ends the broadcast                                  |
-| leaveBroadcast | { broadcastId, positionSeconds } | Listener leaves (positionSeconds for continue-listening) |
-| heartbeat      | { broadcastId }                  | Participant keepalive every 60s                          |
+| **Event**      | **Payload**                      | **Description**                                             |
+| -------------- | -------------------------------- | ----------------------------------------------------------- |
+| endBroadcast   | { broadcastId }                  | Host ends the broadcast                                     |
+| leaveBroadcast | { broadcastId, positionSeconds } | Participant leaves (positionSeconds for continue-listening) |
+| heartbeat      | { broadcastId }                  | Participant keepalive every 60s                             |
 
 ## **10.3 WebSocket Events — Server → Client**
 
-| **Event**              | **Sent To**            | **Payload**                                                        |
-| ---------------------- | ---------------------- | ------------------------------------------------------------------ |
-| newBroadcast           | Subscribers of creator | BroadcastDto                                                       |
-| endedBroadcast         | Room participants      | { broadcastId, reason: EndReason }                                 |
-| hostDisconnected       | Room participants      | { broadcastId, gracePeriodSecs, disconnectCount }                  |
-| hostReconnected        | Room participants      | { broadcastId }                                                    |
-| newBroadcastListener   | Host + cohosts         | UserSummaryDto + broadcastId                                       |
-| broadcastListenerLeft  | Host + cohosts         | { userId, broadcastId }                                            |
-| numberOfLiveListeners  | Room participants      | { broadcastId, count }                                             |
-| numberOfLiveBroadcasts | All connected clients  | { count }                                                          |
-| cohostInvitation       | Invitee                | { broadcastId, invitationId, inviterName, broadcastTitle }         |
-| cohostAccepted         | Creator                | { broadcastId, userId, userName }                                  |
-| cohostDeclined         | Creator                | { broadcastId, userId }                                            |
-| newCohost              | Accepted invitee       | { broadcastId, livekitToken }                                      |
-| removedCohost          | Removed cohost         | { broadcastId }                                                    |
-| recordingReady         | Creator                | { broadcastId }                                                    |
-| broadcastError         | Targeted user          | BroadcastWsError { broadcastId, code, message, recoverable, data } |
-| notification           | Targeted user          | NotificationDto                                                    |
+| **Event**                | **Sent To**            | **Payload**                                                        |
+| ------------------------ | ---------------------- | ------------------------------------------------------------------ |
+| newBroadcast             | Subscribers of creator | BroadcastDto                                                       |
+| endedBroadcast           | Room participants      | { broadcastId, reason: EndReason }                                 |
+| hostDisconnected         | Room participants      | { broadcastId, gracePeriodSecs, disconnectCount }                  |
+| hostReconnected          | Room participants      | { broadcastId }                                                    |
+| participantJoined        | Host + cohosts         | UserSummaryDto + broadcastId                                       |
+| participantLeft          | Host + cohosts         | { userId, broadcastId }                                            |
+| numberOfLiveParticipants | Room participants      | { broadcastId, count }                                             |
+| numberOfLiveBroadcasts   | All connected clients  | { count }                                                          |
+| cohostInvitation         | Invitee                | { broadcastId, invitationId, inviterName, broadcastTitle }         |
+| cohostAccepted           | Creator                | { broadcastId, userId, userName }                                  |
+| cohostDeclined           | Creator                | { broadcastId, userId }                                            |
+| newCohost                | Accepted invitee       | { broadcastId, livekitToken }                                      |
+| removedCohost            | Removed cohost         | { broadcastId }                                                    |
+| recordingReady           | Creator                | { broadcastId }                                                    |
+| broadcastError           | Targeted user          | BroadcastWsError { broadcastId, code, message, recoverable, data } |
+| notification             | Targeted user          | NotificationDto                                                    |
 
 Page · Meno Engineering — Confidential
