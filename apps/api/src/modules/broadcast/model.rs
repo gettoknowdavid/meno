@@ -413,6 +413,7 @@ impl BroadcastCohost {
 /// repository rather than from the auth module, which is also why a broadcast response
 /// cannot start leaking an auth-only field.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
 pub struct UserSummary {
     /// Account id.
     pub id: Uuid,
