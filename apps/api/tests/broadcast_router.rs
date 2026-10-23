@@ -280,7 +280,7 @@ async fn creating_a_broadcast_returns_201_and_the_success_envelope() {
     assert_eq!(response["status"], true);
     assert!(response["data"]["id"].is_string(), "{response}");
     assert_eq!(response["data"]["title"], "Ada's show");
-    assert_eq!(response["data"]["creator"]["full_name"], "Ada Lovelace");
+    assert_eq!(response["data"]["creator"]["fullName"], "Ada Lovelace");
     assert_eq!(response["data"]["creator"]["id"], caller.id.to_string());
     assert!(
         response["data"]["cohosts"]

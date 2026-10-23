@@ -461,7 +461,7 @@ async fn going_live_twice_is_refused() {
         .await
         .expect_err("second");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLive);
 }
 
 #[tokio::test]
@@ -483,7 +483,7 @@ async fn creating_while_another_broadcast_is_live_is_refused() {
         .await
         .expect_err("one account, one broadcast on air");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLiveElsewhere);
     assert_eq!(repo.broadcast_count(), 1, "nothing was created");
 
     // A second account is unaffected: the rule is one per creator, not one per server.
@@ -537,7 +537,7 @@ async fn going_live_while_another_broadcast_is_live_is_refused() {
         .go_live(second.id, &user(1, "Ada Lovelace"))
         .await
         .expect_err("second must be refused");
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLiveElsewhere);
 
     let row = svc.get(second.id, None).await.expect("read");
     assert_ne!(
@@ -649,7 +649,7 @@ async fn resuming_a_broadcast_that_is_not_live_is_refused() {
         .await
         .expect_err("nothing to resume");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
 }
 
 #[tokio::test]
@@ -700,7 +700,7 @@ async fn ending_a_broadcast_that_is_not_live_is_refused() {
         .await
         .expect_err("not live");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
 }
 
 #[tokio::test]
@@ -757,7 +757,7 @@ async fn the_creator_cannot_join_their_own_broadcast() {
         .await
         .expect_err("refused");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Forbidden);
+    assert_eq!(error.code(), meno_core::ErrorCode::CreatorCannotJoin);
 }
 
 #[tokio::test]
@@ -779,7 +779,7 @@ async fn a_host_cannot_leave_their_own_broadcast() {
 
     // A conflict, not a permission failure: the caller may well leave broadcasts, just
     // not this one — they end it instead.
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::HostCannotLeave);
     assert_eq!(to_body(&error).http_status, 409);
 }
 
@@ -870,7 +870,7 @@ async fn a_duplicate_join_is_refused_and_does_not_inflate_the_counter() {
         .await
         .expect_err("already in");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyJoined);
     assert_eq!(
         svc.get(created.id, None)
             .await
@@ -895,7 +895,7 @@ async fn a_listener_cannot_join_a_broadcast_that_is_not_live() {
         .await
         .expect_err("not live");
 
-    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
 }
 
 // ── cohost add / remove ──────────────────────────────────────────────────
