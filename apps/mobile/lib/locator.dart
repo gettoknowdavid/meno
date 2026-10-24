@@ -324,7 +324,6 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
       socket: di<BroadcastSocketService>(),
       broadcastId: session.broadcastId,
     ),
-    dispose: (manager) => manager.onDispose(),
   );
 
   // The room itself. Which server it opens, and where its token comes from, is
