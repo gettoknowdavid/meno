@@ -1,4 +1,6 @@
-import 'package:dio/dio.dart' show CancelToken;
+import 'dart:io' show File;
+
+import 'package:dio/dio.dart' show CancelToken, FormData, MultipartFile;
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
@@ -6,9 +8,10 @@ import 'package:meno_mobile/features/broadcast/model/_model.dart';
 /// The broadcast endpoints, one method each.
 ///
 /// Paths and payloads are the ones the API serves — see
-/// `apps/api/src/routes/broadcasts.rs`. Every write is a JSON body: the API
-/// takes `image_id`/`image_url` rather than a multipart file, so an image is
-/// either already stored or not sent at all.
+/// `apps/api/src/routes/broadcasts.rs`. Every write is a JSON body except the
+/// cover, which is a multipart upload: an image is stored through
+/// [uploadImage], and a caller that already has its key sends it as
+/// `image_id`/`image_url` instead.
 final class BroadcastHttpService {
   const new(this._client);
 
@@ -90,6 +93,35 @@ final class BroadcastHttpService {
         'recording_enabled': ?recordingEnabled,
         if (cohosts != null && cohosts.isNotEmpty) 'cohosts': cohosts,
       },
+      cancelToken: cancelToken,
+      fromJson: (data) => BroadcastDto.fromJson(_map(data)).toDomain,
+    );
+  }
+
+  /// `POST /broadcasts/{id}/image` — stores [file] as the broadcast's cover.
+  ///
+  /// The only way a cover gets a URL: the bytes pass through the API, which
+  /// sniffs them, writes the object and answers with the record carrying the
+  /// new `imageUrl`. It has to happen while the row is still a draft — the API
+  /// refuses a cover change on a broadcast that is on air — so the editor calls
+  /// it between creating the row and going live.
+  Future<Broadcast> uploadImage(
+    Id broadcastId,
+    File file, {
+    CancelToken? cancelToken,
+  }) {
+    return _client.upload(
+      '/broadcasts/${broadcastId.getOrCrash}/image',
+      formData: FormData()
+        ..files.add(
+          MapEntry(
+            'file',
+            MultipartFile.fromFileSync(
+              file.path,
+              filename: file.uri.pathSegments.last,
+            ),
+          ),
+        ),
       cancelToken: cancelToken,
       fromJson: (data) => BroadcastDto.fromJson(_map(data)).toDomain,
     );

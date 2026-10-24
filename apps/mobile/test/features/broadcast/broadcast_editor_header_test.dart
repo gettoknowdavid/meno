@@ -16,8 +16,12 @@ void main() {
   // face is loaded so the measurement means something.
   setUpAll(() async {
     final loader = FontLoader('SFProDisplay')
-      ..addFont(rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Medium.ttf'))
-      ..addFont(rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Bold.ttf'));
+      ..addFont(
+        rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Medium.ttf'),
+      )
+      ..addFont(
+        rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Bold.ttf'),
+      );
     await loader.load();
   });
 
@@ -50,7 +54,10 @@ void main() {
                       horizontal: Insets.sm,
                       vertical: Insets.md,
                     ),
-                    child: MText('Drafts (3)', color: colors.onBackgroundVariant),
+                    child: MText(
+                      'Drafts (3)',
+                      color: colors.onBackgroundVariant,
+                    ),
                   ),
                   Spaces.horizontalSmall,
                   const SizedBox(width: Insets.xxxl, height: Insets.xxxl),
@@ -83,12 +90,6 @@ void main() {
       textDirection: TextDirection.ltr,
       textScaler: TextScaler.noScaling,
     )..layout();
-
-    // ignore: avoid_print
-    print(
-      'natural=${natural.width} laidOut=${paragraph.size.width} '
-      'exceeded=${paragraph.didExceedMaxLines}',
-    );
 
     expect(
       paragraph.didExceedMaxLines,

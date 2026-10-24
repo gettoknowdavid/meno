@@ -10,10 +10,11 @@ import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
 ///
-/// Creating a broadcast is three steps the API has no single call for — create
-/// the row, go live for a token, hand the session to the room — and the draft
-/// records how far it got, so a creation interrupted between two of them is
-/// resumed rather than started again. A draft is written on every edit for the
+/// Creating a broadcast is four steps the API has no single call for — create
+/// the row, store its cover, go live for a token, hand the session to the room
+/// — and the draft records how far it got, so a creation interrupted between
+/// two of them is resumed rather than started again. A draft is written on
+/// every edit for the
 /// same reason: the form is the only place the user's work lives until the API
 /// has it.
 final class BroadcastEditorManager implements Disposable {
@@ -35,6 +36,10 @@ final class BroadcastEditorManager implements Disposable {
       (draft) async {
         if (_createdBroadcastId != null &&
             step.value.index >= BroadcastCreationStep.created.index) {
+          // The row exists but its cover may not: an earlier press can have
+          // stopped between the two, and going live now would leave the picture
+          // the user picked on this device alone.
+          await _uploadArtwork();
           return;
         }
 
@@ -50,6 +55,11 @@ final class BroadcastEditorManager implements Disposable {
         _createdBroadcastId = created.id;
         step.value = .created;
         await _persistCreationState(created.id, step.value);
+
+        // Before the chain goes on to `startBroadcast`: the cover is stored
+        // under the broadcast's id, and the API refuses to change the cover of
+        // a row that is already on air.
+        await _uploadArtwork();
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.create',
@@ -107,6 +117,13 @@ final class BroadcastEditorManager implements Disposable {
 
       _createdBroadcastId = draft.createdBroadcastId;
       step.value = draft.creationStep;
+
+      // What of this picture the API already has, if any: resuming a creation
+      // must not upload it a second time, but a new pick still must.
+      _uploadedImageId = draft.imageId;
+      _uploadedImagePath = draft.imageId == null
+          ? null
+          : draft.imagePath?.getFile?.path;
     });
 
     deleteDraft = .createAsyncNoResult<Id>(
@@ -137,6 +154,15 @@ final class BroadcastEditorManager implements Disposable {
 
   /// The broadcast that was created by this draft, if any.
   Id? _createdBroadcastId;
+
+  /// The key the API stored the chosen cover under, as the draft last knew it.
+  String? _uploadedImageId;
+
+  /// The local path whose bytes that key holds.
+  ///
+  /// Kept beside [imagePath] so a second press of Start does not send the same
+  /// picture again, and so a *different* picture picked afterwards still does.
+  String? _uploadedImagePath;
 
   /// The account's drafts, newest edit first.
   final drafts = ListNotifier<BroadcastDraft>(data: []);
@@ -243,6 +269,7 @@ final class BroadcastEditorManager implements Disposable {
       record: record.value,
       cohosts: cohosts.toList(),
       imagePath: imagePath.value,
+      imageId: _uploadedImageId,
       createdBroadcastId: _createdBroadcastId,
       creationStep: step.value,
       lastModified: DateTime.now(),
@@ -317,16 +344,44 @@ final class BroadcastEditorManager implements Disposable {
   }
 
   void _resetCreationState() {
+    _uploadedImageId = null;
+    _uploadedImagePath = null;
+
     if (step.value.index >= BroadcastCreationStep.created.index) {
       _createdBroadcastId = null;
       step.value = BroadcastCreationStep.none;
     }
   }
 
+  /// Sends the picked picture to the API, once.
+  ///
+  /// The editor keeps artwork on the device; this is what turns it into the
+  /// `imageUrl` every card and the room's own header read. It happens between
+  /// creating the row and going live, because `POST /broadcasts/{id}/image`
+  /// needs the row to exist and refuses one that is already on air — and a
+  /// failure here stops the chain before the broadcast is on air, so pressing
+  /// Start again retries it rather than going on air without a cover.
+  Future<void> _uploadArtwork() async {
+    final broadcastId = _createdBroadcastId;
+    final file = imagePath.value?.getFile;
+    if (broadcastId == null || file == null) return;
+    if (_uploadedImagePath == file.path) return;
+
+    final uploaded = await _http.uploadImage(broadcastId, file);
+    _uploadedImageId = uploaded.imageId;
+    _uploadedImagePath = file.path;
+    await _persistCreationState(
+      broadcastId,
+      step.value,
+      imageId: uploaded.imageId,
+    );
+  }
+
   Future<void> _persistCreationState(
     Id broadcastId,
-    BroadcastCreationStep currentStep,
-  ) async {
+    BroadcastCreationStep currentStep, {
+    String? imageId,
+  }) async {
     final draftId = _draftId;
     if (draftId == null) return;
 
@@ -338,7 +393,7 @@ final class BroadcastEditorManager implements Disposable {
         createdBroadcastId: broadcastId,
         creationStep: currentStep,
         imagePath: imagePath.value,
-        imageId: existing.imageId,
+        imageId: imageId ?? existing.imageId,
       ),
     );
     _loadDrafts();

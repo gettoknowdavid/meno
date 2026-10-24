@@ -318,13 +318,20 @@ Future<void> _registerAccountScope(
 /// `di.isRegistered<LiveSessionManager>()` is the question a caller asks before
 /// entering.
 Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
-  scope.registerSingleton<ParticipantsManager>(
-    ParticipantsManager(
-      http: di<BroadcastHttpService>(),
-      socket: di<BroadcastSocketService>(),
-      broadcastId: session.broadcastId,
-    ),
+  final participants = ParticipantsManager(
+    http: di<BroadcastHttpService>(),
+    socket: di<BroadcastSocketService>(),
+    broadcastId: session.broadcastId,
   );
+  scope.registerSingleton<ParticipantsManager>(participants);
+
+  // The roster fills itself — it subscribes to the room's join/leave frames
+  // and then reads the API's page once — and nothing else starts it. A screen
+  // that only ever *reads* this manager draws an empty room whatever the API
+  // answered, which is what the host's own tile did. Started here rather than
+  // when the tab first builds, so a join in between is not missed, and not
+  // awaited, so opening a room never waits on a page of participants.
+  participants.initialize.run();
 
   // The room itself. Which server it opens, and where its token comes from, is
   // the one difference between a development build and a release one:
