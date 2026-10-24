@@ -28,6 +28,12 @@ class BroadcastEditorPage extends WatchingWidget {
       (manager) => manager.hasUnsavedChanges,
     );
 
+    // Watched here rather than inside the button, because an empty list must
+    // leave no gap in the header: the action is absent, not invisible.
+    final drafts = watchValue<BroadcastEditorManager, List<BroadcastDraft>>(
+      (manager) => manager.drafts,
+    );
+
     // Creation is two API calls with a room in between, so the page chains
     // them: the button creates (or resumes) the row, and going live is what
     // produces the session the room is entered with. Each step reports its own
@@ -50,7 +56,6 @@ class BroadcastEditorPage extends WatchingWidget {
       },
     );
 
-    final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
 
     return PopScope(
@@ -71,16 +76,20 @@ class BroadcastEditorPage extends WatchingWidget {
             title: 'Go Live Now',
             implyLeading: false,
             titleTextStyle: textTheme.heading3Bold,
-            // The drafts used to arrive as a modal on every open, which is a
-            // list nobody asked to see at the moment they asked to go live.
-            // They are one explicit tap away instead: leading of Cancel, the
-            // slot the eye reaches when it is looking for "the other thing I
-            // can do here".
+            // Drafts sit left of the close: the same "what else can this
+            // screen do" cluster, ordered from the reversible action to the one
+            // that leaves. The drafts action is a word, not a glyph — a folded
+            // page is not a universally understood "saved broadcasts", and a
+            // label costs a few dp that the title still has room for. It is
+            // absent at zero rather than empty, so the header carries no
+            // permanently blank slot.
             actions: [
-              const _DraftsAction(),
-              InkWell(
-                onTap: () => unawaited(_confirmAndLeave(context, manager)),
-                child: MText('Cancel', color: colors.onBackgroundVariant),
+              if (drafts.isNotEmpty) ...[
+                _DraftsAction(count: drafts.length),
+                Spaces.horizontalSmall,
+              ],
+              _CloseAction(
+                onPressed: () => unawaited(_confirmAndLeave(context, manager)),
               ),
               Spaces.horizontalLarge,
             ],
@@ -132,17 +141,21 @@ class BroadcastEditorPage extends WatchingWidget {
           style: textTheme.bodyRegular,
         ),
         actions: [
-          TextButton(
+          MTextButton(
             onPressed: () => Navigator.pop(context),
-            child: MText('Keep editing', color: colors.onBackgroundVariant),
+            label: 'Keep editing',
+            style: TextButton.styleFrom(
+              foregroundColor: colors.onBackgroundVariant,
+            ),
           ),
-          TextButton(
+          MTextButton(
             onPressed: () => Navigator.pop(context, _LeaveChoice.discard),
-            child: MText('Discard', color: colors.error),
+            label: 'Discard',
+            style: TextButton.styleFrom(foregroundColor: colors.error),
           ),
-          TextButton(
+          MTextButton(
             onPressed: () => Navigator.pop(context, _LeaveChoice.save),
-            child: const MText('Save draft'),
+            label: 'Save draft',
           ),
         ],
       ),
@@ -153,42 +166,71 @@ class BroadcastEditorPage extends WatchingWidget {
 /// What the user chose to do with an unfinished form.
 enum _LeaveChoice { save, discard }
 
+/// Closes the editor, through the same guard Cancel used to have.
+///
+/// An icon rather than the word "Cancel": the header has two actions now, and
+/// a glyph pair reads as a toolbar instead of as two sentences.
+class _CloseAction extends StatelessWidget {
+  const new({required this.onPressed});
+
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = MColorScheme.of(context);
+
+    return Tooltip(
+      message: 'Close',
+      child: MIconButton(
+        icon: const Icon(MIcons.x_close),
+        // 48 across for the tap target, 16 for the glyph: the icon is a close
+        // affordance, not a headline, so it is drawn small inside the size the
+        // finger needs.
+        iconSize: Insets.xl,
+        color: colors.onBackgroundVariant,
+        onPressed: onPressed,
+      ),
+    );
+  }
+}
+
 /// The way into the saved drafts, from the editor.
 ///
-/// It sits beside Cancel rather than inside the form because a draft is about
-/// the *page*, not about the broadcast: it is the other thing that can happen
-/// to what is on it. The count is shown only when there is one, so the app bar
-/// is not permanently carrying a zero.
-class _DraftsAction extends WatchingWidget {
-  const new();
+/// A text action rather than an icon: "Drafts" says what the tap does without
+/// being learned, and a screen reader reads it as a word rather than as an
+/// unknown glyph. The count is part of the label for the same reason —
+/// "Drafts (3)" is one announcement, where a bare badge beside an icon is a
+/// number with no noun attached to it.
+class _DraftsAction extends StatelessWidget {
+  const new({required this.count});
+
+  /// How many drafts are on the device.
+  final int count;
 
   @override
   Widget build(BuildContext context) {
     final manager = di<BroadcastEditorManager>();
-    final colors = MColorScheme.of(context);
 
-    final drafts = watchValue<BroadcastEditorManager, List<BroadcastDraft>>(
-      (manager) => manager.drafts,
-    );
+    // Past nine the exact number stops being useful and starts widening the
+    // header; the list itself is one tap away.
+    final badge = count > 9 ? '9+' : '$count';
 
-    return Row(
-      mainAxisSize: .min,
-      children: [
-        InkWell(
-          onTap: () => unawaited(
+    return Tooltip(
+      message: 'Open drafts, $count saved',
+      child: Semantics(
+        button: true,
+        label: 'Drafts, $count saved',
+        child: MTextButton(
+          onPressed: () => unawaited(
             BroadcastDraftModal.show(
               context,
               onDraftSelected: manager.selectDraft.run,
               onCreateNew: manager.resetForm.run,
             ),
           ),
-          child: MText(
-            drafts.isEmpty ? 'Drafts' : 'Drafts (${drafts.length})',
-            color: colors.onBackgroundVariant,
-          ),
+          label: 'Drafts ($badge)',
         ),
-        Spaces.horizontalLarge,
-      ],
+      ),
     );
   }
 }
