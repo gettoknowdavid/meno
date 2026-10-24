@@ -39,14 +39,27 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   }) {
     setupConfigs = .createSyncNoParamNoResult(
       () {
-        final startTime = broadcast.value.startTime;
+        // Where the clock counts from: when the API says this broadcast went
+        // on air. `startTime` is the *scheduled* time and exists only for a
+        // scheduled broadcast; `publishedAt` is written by go-live and is what
+        // every unscheduled broadcast has — including one a restarted process
+        // just came back to. The session's own timestamp is stamped on the way
+        // in, so falling back to it would count from the moment this process
+        // returned (or joined) rather than from when the broadcast started,
+        // which is what reset the timer to zero after a recovery and left a
+        // late listener at zero too.
+        final startedAt =
+            broadcast.value.startTime ?? broadcast.value.publishedAt;
         timer = BroadcastTimerManager(
-          broadcastStartTime: startTime ?? _session.timestamp ?? DateTime.now(),
-          initialElapsed: startTime == null
+          broadcastStartTime: startedAt ?? _session.timestamp ?? DateTime.now(),
+          initialElapsed: startedAt == null
               ? null
-              : DateTime.now().difference(startTime),
+              : DateTime.now().difference(startedAt),
           logger: _logger,
         );
+        // Sets `elapsed` now rather than on the first tick a second later, so
+        // the frame that opens on this room already shows the right time.
+        timer.initialize.run();
 
         _setupListeners();
       },
