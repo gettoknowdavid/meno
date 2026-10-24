@@ -78,6 +78,7 @@ final class BroadcastEditorManager implements Disposable {
     );
 
     resetForm = .createSyncNoParamNoResult(() {
+      hasUnsavedChanges.value = false;
       title.value = '';
       description.value = '';
       imagePath.value = null;
@@ -91,6 +92,9 @@ final class BroadcastEditorManager implements Disposable {
     });
 
     selectDraft = .createSyncNoResult<BroadcastDraft>((draft) {
+      // Opening a draft is not an edit: leaving an untouched one must not ask
+      // whether to save it again.
+      hasUnsavedChanges.value = false;
       _draftId = draft.id;
       title.value = draft.title;
       description.value = draft.description;
@@ -114,6 +118,11 @@ final class BroadcastEditorManager implements Disposable {
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.deleteDraft',
     );
+
+    // Read once at construction: the drafts are already on the device, and a
+    // list that is only populated after the first save is a "Drafts" button
+    // that shows nothing the first time it is pressed.
+    _loadDrafts();
   }
 
   final BroadcastHttpService _http;
@@ -158,11 +167,20 @@ final class BroadcastEditorManager implements Disposable {
     (value) => SingleLineString(value).isValid,
   );
 
-  void onTitleChanged(String input) => title.value = input;
+  void onTitleChanged(String input) {
+    hasUnsavedChanges.value = true;
+    title.value = input;
+  }
 
-  void onDescriptionChanged(String input) => description.value = input;
+  void onDescriptionChanged(String input) {
+    hasUnsavedChanges.value = true;
+    description.value = input;
+  }
 
-  void onToggleRecord(bool input) => record.value = input;
+  void onToggleRecord(bool input) {
+    hasUnsavedChanges.value = true;
+    record.value = input;
+  }
 
   /// Adds [cohostId] to the form, or removes it.
   ///
@@ -170,6 +188,7 @@ final class BroadcastEditorManager implements Disposable {
   /// broadcast card both draw slots for two, so the form stops at what can be
   /// seen.
   void toggleCohost(Id cohostId) {
+    hasUnsavedChanges.value = true;
     if (cohosts.contains(cohostId)) {
       cohosts.remove(cohostId);
       return;
@@ -182,10 +201,14 @@ final class BroadcastEditorManager implements Disposable {
   Future<void> pickImage({bool fromGallery = true}) async {
     final file = await _media.getImage(fromGallery: fromGallery);
     if (file == null) return;
+    hasUnsavedChanges.value = true;
     imagePath.value = ImageInput.fromFile(file);
   }
 
-  void removeImage() => imagePath.value = null;
+  void removeImage() {
+    hasUnsavedChanges.value = true;
+    imagePath.value = null;
+  }
 
   /// Loads the account's drafts.
   late final Command<void, void> loadDrafts;
@@ -228,8 +251,29 @@ final class BroadcastEditorManager implements Disposable {
     if (draft.isEmpty) return draft;
 
     await _local.saveDraft(draft);
+    hasUnsavedChanges.value = false;
     _loadDrafts();
     return draft;
+  }
+
+  /// Whether the form holds something the device has not been given.
+  ///
+  /// Set by every field that changes, cleared by saving and by opening a saved
+  /// draft. The editor reads it to decide whether leaving is worth a question:
+  /// asking "save or discard?" over an untouched form is a dialog about
+  /// nothing.
+  final ValueNotifier<bool> hasUnsavedChanges = ValueNotifier(false);
+
+  /// Throws the form away, deleting its device copy when there is one.
+  ///
+  /// "Discard" in the exit prompt means the user does not want what they typed.
+  /// A form opened from a saved draft still has that row, so keeping it would
+  /// offer them the work they just threw away the next time they open the
+  /// editor.
+  Future<void> discardDraft() async {
+    final draftId = _draftId;
+    resetForm.run();
+    if (draftId != null) await deleteDraft.runAsync(draftId);
   }
 
   /// Whether a step of the creation is in flight.
@@ -246,6 +290,7 @@ final class BroadcastEditorManager implements Disposable {
     loadDrafts.dispose();
 
     step.dispose();
+    hasUnsavedChanges.dispose();
     drafts.dispose();
     title.dispose();
     description.dispose();
