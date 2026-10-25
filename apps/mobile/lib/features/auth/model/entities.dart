@@ -38,11 +38,14 @@ abstract class SessionInfo with _$SessionInfo {
 /// Represents a user credential, including the user and their session.
 ///
 /// This is the main entity for the authentication flow.
+@Deprecated('Use [CredentialRecord] instead.')
 @freezed
 abstract class UserCredential with _$UserCredential {
+  @Deprecated('Use [CredentialRecord] instead.')
   const factory({required Session session, required User user}) =
       _UserCredential;
 
+  @Deprecated('Use [CredentialRecord] instead.')
   const new _();
 
   /// A credential with no account behind it.
