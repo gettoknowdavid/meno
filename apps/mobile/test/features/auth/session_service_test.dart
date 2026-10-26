@@ -36,7 +36,7 @@ CredentialRecord _record({
   );
 }
 
-class _MockPlatform extends Mock implements FlutterSecureStorage {}
+class _MockPlatform extends Mock implements FlutterSecureStorage;
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -46,20 +46,22 @@ void main() {
   late SessionService service;
 
   void stubReads() {
-    when(() => platform.read(key: any(named: 'key'))).thenAnswer((
-      invocation,
-    ) async {
-      return disk[invocation.namedArguments[#key]! as String];
-    });
+    when(() => platform.read(key: any(named: 'key')))
+        .thenAnswer((invocation) async {
+          return disk[invocation.namedArguments[#key]! as String];
+        });
   }
 
   void stubWrites() {
-    when(() =>
-            platform.write(key: any(named: 'key'), value: any(named: 'value')))
-        .thenAnswer((invocation) async {
-          disk[invocation.namedArguments[#key]! as String] =
-              invocation.namedArguments[#value]! as String;
-        });
+    when(
+      () => platform.write(
+        key: any(named: 'key'),
+        value: any(named: 'value'),
+      ),
+    ).thenAnswer((invocation) async {
+      disk[invocation.namedArguments[#key]! as String] =
+          invocation.namedArguments[#value]! as String;
+    });
   }
 
   setUp(() {
@@ -100,7 +102,10 @@ void main() {
       await reloaded.initialize();
 
       expect(reloaded.usableCredential(_idA), isNotNull);
-      expect(reloaded.readSnapshot().credentials[_idA]!.accessToken, 'access-1');
+      expect(
+        reloaded.readSnapshot().credentials[_idA]!.accessToken,
+        'access-1',
+      );
     });
   });
 
@@ -109,32 +114,35 @@ void main() {
       await service.initialize();
     });
 
-    test('commits only one of two concurrent conditional replacements', () async {
-      await service.adoptCandidate(_record());
+    test(
+      'commits only one of two concurrent conditional replacements',
+      () async {
+        await service.adoptCandidate(_record());
 
-      final first = service.conditionalReplace(
-        _idA,
-        epoch: 'epoch-a',
-        fromRevision: 1,
-        accessToken: 'access-2',
-        accessExpiresAt: DateTime.utc(2031),
-      );
-      final second = service.conditionalReplace(
-        _idA,
-        epoch: 'epoch-a',
-        fromRevision: 1,
-        accessToken: 'access-3',
-        accessExpiresAt: DateTime.utc(2031),
-      );
+        final first = service.conditionalReplace(
+          _idA,
+          epoch: 'epoch-a',
+          fromRevision: 1,
+          accessToken: 'access-2',
+          accessExpiresAt: DateTime.utc(2031),
+        );
+        final second = service.conditionalReplace(
+          _idA,
+          epoch: 'epoch-a',
+          fromRevision: 1,
+          accessToken: 'access-3',
+          accessExpiresAt: DateTime.utc(2031),
+        );
 
-      final results = await Future.wait([first, second]);
-      expect(results[0], isA<MutationCommitted>());
-      expect(results[1], isA<MutationStale>());
+        final results = await Future.wait([first, second]);
+        expect(results[0], isA<MutationCommitted>());
+        expect(results[1], isA<MutationStale>());
 
-      final record = service.readSnapshot().credentials[_idA]!;
-      expect(record.accessToken, 'access-2');
-      expect(record.revision, 2);
-    });
+        final record = service.readSnapshot().credentials[_idA]!;
+        expect(record.accessToken, 'access-2');
+        expect(record.revision, 2);
+      },
+    );
 
     test('remove queued behind a replacement leaves no record', () async {
       await service.adoptCandidate(_record());
@@ -156,37 +164,46 @@ void main() {
       expect(snapshot.activeAccountId, isNull);
     });
 
-    test('a failed write leaves memory untouched and the queue usable', () async {
-      await service.adoptCandidate(_record());
-      final before = service.readSnapshot();
+    test(
+      'a failed write leaves memory untouched and the queue usable',
+      () async {
+        await service.adoptCandidate(_record());
+        final before = service.readSnapshot();
 
-      when(() =>
-              platform.write(key: any(named: 'key'), value: any(named: 'value')))
-          .thenThrow(PlatformException(code: 'unavailable'));
+        when(
+          () => platform.write(
+            key: any(named: 'key'),
+            value: any(named: 'value'),
+          ),
+        ).thenThrow(PlatformException(code: 'unavailable'));
 
-      expect(await service.activate(_idA), isA<MutationStorageFailed>());
-      expect(service.readSnapshot(), equals(before));
+        expect(await service.activate(_idA), isA<MutationStorageFailed>());
+        expect(service.readSnapshot(), equals(before));
 
-      stubWrites();
-      expect(await service.activate(_idA), isA<MutationCommitted>());
-      expect(service.readSnapshot().activeAccountId, _idA);
-    });
+        stubWrites();
+        expect(await service.activate(_idA), isA<MutationCommitted>());
+        expect(service.readSnapshot().activeAccountId, _idA);
+      },
+    );
 
-    test('expired credentials are offered only while a renewal is possible', () async {
-      await service.adoptCandidate(
-        _record(accessExpiresAt: DateTime.utc(2020)),
-      );
-      await service.adoptCandidate(
-        _record(
-          accountId: _idB,
-          accessExpiresAt: DateTime.utc(2020),
-          refreshToken: null,
-        ),
-      );
+    test(
+      'expired credentials are offered only while a renewal is possible',
+      () async {
+        await service.adoptCandidate(
+          _record(accessExpiresAt: DateTime.utc(2020)),
+        );
+        await service.adoptCandidate(
+          _record(
+            accountId: _idB,
+            accessExpiresAt: DateTime.utc(2020),
+            refreshToken: null,
+          ),
+        );
 
-      expect(service.usableCredential(_idA), isNotNull);
-      expect(service.usableCredential(_idB), isNull);
-    });
+        expect(service.usableCredential(_idA), isNotNull);
+        expect(service.usableCredential(_idB), isNull);
+      },
+    );
 
     test('publishes one projection per committed mutation', () async {
       var emissions = 0;
@@ -200,39 +217,45 @@ void main() {
       expect(service.changes.value!.revision, 2);
     });
 
-    test('deactivate keeps credentials but clears the active account', () async {
-      await service.adoptCandidate(_record());
-      await service.activate(_idA);
+    test(
+      'deactivate keeps credentials but clears the active account',
+      () async {
+        await service.adoptCandidate(_record());
+        await service.activate(_idA);
 
-      expect(await service.deactivate(), isA<MutationCommitted>());
+        expect(await service.deactivate(), isA<MutationCommitted>());
 
-      final snapshot = service.readSnapshot();
-      expect(snapshot.activeAccountId, isNull);
-      expect(snapshot.credentials[_idA], isNotNull);
-    });
+        final snapshot = service.readSnapshot();
+        expect(snapshot.activeAccountId, isNull);
+        expect(snapshot.credentials[_idA], isNotNull);
+      },
+    );
 
-    test('logout keeps the greeting identity and requires authentication', () async {
-      await service.adoptCandidate(_record());
-      await service.activate(_idA);
-      await service.updateRememberedIdentity(
-        RememberedIdentity(
-          accountId: _idA,
-          displayName: 'Alice',
-          lastUsedAt: DateTime.utc(2025),
-          requiresAuthentication: false,
-        ),
-      );
+    test(
+      'logout keeps the greeting identity and requires authentication',
+      () async {
+        await service.adoptCandidate(_record());
+        await service.activate(_idA);
+        await service.updateRememberedIdentity(
+          RememberedIdentity(
+            accountId: _idA,
+            displayName: 'Alice',
+            lastUsedAt: DateTime.utc(2025),
+            requiresAuthentication: false,
+          ),
+        );
 
-      expect(
-        await service.removeCredentials(_idA, epoch: 'epoch-a'),
-        isA<MutationCommitted>(),
-      );
+        expect(
+          await service.removeCredentials(_idA, epoch: 'epoch-a'),
+          isA<MutationCommitted>(),
+        );
 
-      final snapshot = service.readSnapshot();
-      expect(snapshot.credentials, isEmpty);
-      expect(snapshot.activeAccountId, isNull);
-      expect(snapshot.remembered[_idA]!.requiresAuthentication, isTrue);
-    });
+        final snapshot = service.readSnapshot();
+        expect(snapshot.credentials, isEmpty);
+        expect(snapshot.activeAccountId, isNull);
+        expect(snapshot.remembered[_idA]!.requiresAuthentication, isTrue);
+      },
+    );
 
     test('a logout for a replaced epoch writes nothing', () async {
       await service.adoptCandidate(_record(epoch: 'epoch-new'));
@@ -253,11 +276,7 @@ void main() {
 
     test('uncertain blocks the credential until reauthentication', () async {
       expect(
-        await service.markRenewalInFlight(
-          _idA,
-          epoch: 'epoch-a',
-          revision: 1,
-        ),
+        await service.markRenewalInFlight(_idA, epoch: 'epoch-a', revision: 1),
         isA<MutationCommitted>(),
       );
       // The access token is still valid; the renewal itself is single-flight.
@@ -280,30 +299,25 @@ void main() {
       expect(service.usableCredential(_idA), isNull);
     });
 
-    test('an in-flight renewal from a killed process becomes uncertain', () async {
-      await service.markRenewalInFlight(
-        _idA,
-        epoch: 'epoch-a',
-        revision: 1,
-      );
+    test(
+      'an in-flight renewal from a killed process becomes uncertain',
+      () async {
+        await service.markRenewalInFlight(_idA, epoch: 'epoch-a', revision: 1);
 
-      final restarted = SessionService(SecureStorage(platform));
-      addTearDown(restarted.close);
-      await restarted.initialize();
+        final restarted = SessionService(SecureStorage(platform));
+        addTearDown(restarted.close);
+        await restarted.initialize();
 
-      expect(
-        restarted.readSnapshot().credentials[_idA]!.renewalState,
-        RenewalState.uncertain,
-      );
-      expect(restarted.usableCredential(_idA), isNull);
-    });
+        expect(
+          restarted.readSnapshot().credentials[_idA]!.renewalState,
+          RenewalState.uncertain,
+        );
+        expect(restarted.usableCredential(_idA), isNull);
+      },
+    );
 
     test('unavailable keeps the pair usable', () async {
-      await service.markRenewalInFlight(
-        _idA,
-        epoch: 'epoch-a',
-        revision: 1,
-      );
+      await service.markRenewalInFlight(_idA, epoch: 'epoch-a', revision: 1);
 
       expect(
         await service.settleRenewal(
@@ -322,41 +336,36 @@ void main() {
       );
     });
 
-    test('success installs the new pair and bumps the record revision', () async {
-      await service.markRenewalInFlight(
-        _idA,
-        epoch: 'epoch-a',
-        revision: 1,
-      );
+    test(
+      'success installs the new pair and bumps the record revision',
+      () async {
+        await service.markRenewalInFlight(_idA, epoch: 'epoch-a', revision: 1);
 
-      expect(
-        await service.settleRenewal(
-          _idA,
-          epoch: 'epoch-a',
-          revision: 1,
-          outcome: RefreshSucceeded(
-            _record(
-              accessToken: 'access-2',
-              refreshToken: 'refresh-2',
-              accessExpiresAt: DateTime.utc(2031),
+        expect(
+          await service.settleRenewal(
+            _idA,
+            epoch: 'epoch-a',
+            revision: 1,
+            outcome: RefreshSucceeded(
+              _record(
+                accessToken: 'access-2',
+                refreshToken: 'refresh-2',
+                accessExpiresAt: DateTime.utc(2031),
+              ),
             ),
           ),
-        ),
-        isA<MutationCommitted>(),
-      );
+          isA<MutationCommitted>(),
+        );
 
-      final record = service.readSnapshot().credentials[_idA]!;
-      expect(record.accessToken, 'access-2');
-      expect(record.refreshToken, 'refresh-2');
-      expect(record.revision, 2);
-    });
+        final record = service.readSnapshot().credentials[_idA]!;
+        expect(record.accessToken, 'access-2');
+        expect(record.refreshToken, 'refresh-2');
+        expect(record.revision, 2);
+      },
+    );
 
     test('a late outcome for an older revision is stale', () async {
-      await service.markRenewalInFlight(
-        _idA,
-        epoch: 'epoch-a',
-        revision: 1,
-      );
+      await service.markRenewalInFlight(_idA, epoch: 'epoch-a', revision: 1);
       await service.settleRenewal(
         _idA,
         epoch: 'epoch-a',
@@ -388,18 +397,12 @@ void main() {
 
     final result = await service.activate(_idA);
     expect(result, isA<MutationRejected>());
-    expect(
-      (result as MutationRejected).reason,
-      MutationRejection.closing,
-    );
+    expect((result as MutationRejected).reason, MutationRejection.closing);
   });
 
   test('unknown accounts are rejected rather than invented', () async {
     await service.initialize();
 
-    expect(
-      await service.activate(_idB),
-      isA<MutationRejected>(),
-    );
+    expect(await service.activate(_idB), isA<MutationRejected>());
   });
 }

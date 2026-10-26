@@ -1,4 +1,5 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/time/clock.dart';
 import 'package:meno_mobile/_core/value_objects/id.dart';
 
 part 'credential_record.freezed.dart';
@@ -91,6 +92,15 @@ abstract class CredentialRecord with _$CredentialRecord {
     'isVerified': isVerified,
     'renewalState': renewalState.name,
   };
+
+  /// Whether the access token is inside the renewal window.
+  ///
+  /// Compares the stored absolute instant with the clock; no duration is added
+  /// to "now", so the answer does not drift with how often this is asked.
+  bool needsRefresh(
+    Clock clock, {
+    Duration skewMargin = const Duration(minutes: 1),
+  }) => !accessExpiresAt.isAfter(clock.nowUtc().add(skewMargin));
 
   @override
   String toString() =>
@@ -230,16 +240,12 @@ abstract class VaultEnvelope with _$VaultEnvelope {
   Map<String, Object?> toJson() => {
     'revision': revision,
     'schemaVersion': schemaVersionNumber,
-    'orderedAccountIds': [
-      for (final id in orderedAccountIds) id.getOrCrash,
-    ],
+    'orderedAccountIds': [for (final id in orderedAccountIds) id.getOrCrash],
     'credentials': {
-      for (final e in credentials.entries)
-        e.key.getOrCrash: e.value.toJson(),
+      for (final e in credentials.entries) e.key.getOrCrash: e.value.toJson(),
     },
     'remembered': {
-      for (final e in remembered.entries)
-        e.key.getOrCrash: e.value.toJson(),
+      for (final e in remembered.entries) e.key.getOrCrash: e.value.toJson(),
     },
     'activeAccountId': activeAccountId?.getOrCrash,
   };

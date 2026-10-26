@@ -315,9 +315,7 @@ final class SessionService implements Disposable {
   }
 
   /// Updates greeting metadata. Never accepts or writes a token.
-  Future<MutationResult> updateRememberedIdentity(
-    RememberedIdentity identity,
-  ) {
+  Future<MutationResult> updateRememberedIdentity(RememberedIdentity identity) {
     return _enqueue(() {
       final guard = _guard();
       if (guard != null) return guard;

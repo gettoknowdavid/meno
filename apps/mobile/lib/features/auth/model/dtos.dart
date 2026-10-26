@@ -1,7 +1,11 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
+import 'package:meno_mobile/_core/exceptions/meno_exception.dart';
+import 'package:meno_mobile/_core/time/clock.dart';
 import 'package:meno_mobile/_core/value_objects/id.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
+import 'package:meno_mobile/features/auth/model/credential_record.dart';
 import 'package:meno_mobile/features/auth/model/entities.dart';
+import 'package:uuid/uuid.dart';
 
 part 'dtos.freezed.dart';
 part 'dtos.g.dart';
@@ -32,9 +36,57 @@ abstract class SessionInfoDto with _$SessionInfoDto {
   factory fromJson(Map<String, dynamic> json) => _$SessionInfoDtoFromJson(json);
 }
 
-/// The domain view of an [AuthResponseDto].
+/// The receipt-time view of an [AuthResponseDto].
 extension AuthResponseDtoDtoX on AuthResponseDto {
-  /// This payload as an account the app can act as.
+  /// This payload as a stored credential.
+  ///
+  /// This is the only place a relative lifetime becomes an instant: the
+  /// server's `expires_in` is added to one reading of the clock, once. Nothing
+  /// downstream may add a duration to "now" again, which is what keeps a
+  /// three-day-old token from looking fresh.
+  ///
+  /// Throws [MalformedResponseException] when the payload cannot produce a
+  /// usable record (an invalid account id, an empty access token, or a
+  /// lifetime outside the accepted range). A fresh login starts a new epoch.
+  CredentialRecord toCredentialRecord(Clock clock) {
+    final accountId = Id.fromString(user.id);
+    if (!accountId.isValid) {
+      throw const MalformedResponseException(
+        message: 'The server sent an account id the app cannot use.',
+      );
+    }
+
+    final token = accessToken.trim();
+    if (token.isEmpty) {
+      throw const MalformedResponseException(
+        message: 'The server sent an empty access token.',
+      );
+    }
+    
+    if (expiresIn <= 0 || expiresIn > _maxAccessTokenLifetimeSeconds) {
+      throw const MalformedResponseException(
+        message: 'The server sent an unusable access-token lifetime.',
+      );
+    }
+
+    final at = clock.nowUtc();
+    final refresh = refreshToken;
+    return CredentialRecord(
+      accountId: accountId,
+      schemaVersion: CredentialRecord.schemaVersionNumber,
+      epoch: const Uuid().v4(),
+      revision: 1,
+      accessToken: token,
+      refreshToken: refresh == null || refresh.isEmpty ? null : refresh,
+      accessExpiresAt: at.add(Duration(seconds: expiresIn)),
+      receivedAt: at,
+      isVerified: user.verified,
+      renewalState: RenewalState.idle,
+    );
+  }
+
+  /// The legacy domain view, used by the pre-vault storage path.
+  @Deprecated('Use [CredentialRecord] instead.')
   UserCredential get toDomain => UserCredential(
     user: user.toDomain,
     session: Session(
@@ -46,6 +98,7 @@ extension AuthResponseDtoDtoX on AuthResponseDto {
 }
 
 /// The wire view of a [UserCredential].
+@Deprecated('Use [CredentialRecord] instead.')
 extension UserCredentialDtoX on UserCredential {
   /// This account as the API writes it, so the vault round-trips exactly.
   AuthResponseDto get toDto => AuthResponseDto(
@@ -67,3 +120,9 @@ extension SessionInfoDtoX on SessionInfoDto {
     rotations: rotations,
   );
 }
+
+/// A lifetime longer than this is not a session the app will honour.
+///
+/// The bound only rejects absurd values; it is deliberately generous so a
+/// server-valid lifetime is never refused (H25).
+const int _maxAccessTokenLifetimeSeconds = 30 * 24 * 60 * 60;
