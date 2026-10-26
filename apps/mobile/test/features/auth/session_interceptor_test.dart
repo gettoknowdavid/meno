@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -100,7 +99,7 @@ void main() {
     platform = _MockPlatform();
     stubStorage();
 
-    clock = FakeClock(DateTime.utc(2026, 1, 1));
+    clock = FakeClock(DateTime.utc(2026));
     store = SessionStore(SecureStorage(platform));
     addTearDown(store.onDispose);
 
