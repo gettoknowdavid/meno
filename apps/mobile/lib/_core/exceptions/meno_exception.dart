@@ -75,6 +75,19 @@ final class MenoErrorCode {
   static const String malformedResponse = 'MALFORMED_RESPONSE';
   static const String unknown = 'UNKNOWN';
 
+  // Client-side only: refused before any bytes left the device, because the
+  // request would have carried a credential somewhere it must not go.
+  static const String wrongOrigin = 'WRONG_ORIGIN';
+
+  // Client-side only: the account a request was made as has no usable session
+  // any more. Sending it anonymously would turn "sign in again" into a server
+  // rejection with no explanation.
+  static const String sessionUnavailable = 'SESSION_UNAVAILABLE';
+
+  // Client-side only: the API answered with a redirect, which is never
+  // followed — a followed redirect would carry whatever it carried onward.
+  static const String redirectNotAllowed = 'REDIRECT_NOT_ALLOWED';
+
   // Client-side only, transport: raised when reaching the server failed rather
   // than the server answering badly, so there is no wire code to mirror and
   // [timeout], [network], [invalidToken] and [unknown] are reused wherever they
@@ -369,6 +382,45 @@ final class CancelledException extends MenoException {
   const new({
     super.message = 'The request was cancelled.',
     super.code = MenoErrorCode.cancelled,
+    super.cause,
+  });
+}
+
+/// A credential was about to be sent somewhere other than the approved API
+/// origin, so the request was refused before it was sent.
+final class WrongOriginException extends MenoException {
+  /// Creates an origin refusal.
+  const new({
+    super.message = 'The request was sent to an untrusted address.',
+    super.code = MenoErrorCode.wrongOrigin,
+    super.cause,
+  });
+}
+
+/// The account a request belongs to has no usable session any more.
+///
+/// "Sign in again" rather than "send it anonymously": the caller asked to act
+/// as somebody, and the API's answer to an anonymous request would hide that.
+final class SessionUnavailableException extends MenoException {
+  /// Creates a session-unavailable failure.
+  const new({
+    super.message = 'Please sign in again.',
+    super.code = MenoErrorCode.sessionUnavailable,
+    super.cause,
+  });
+}
+
+/// The API answered with a redirect.
+///
+/// Redirects are never followed: following one would forward the request — and
+/// anything attached to it — to an address that was never approved.
+final class RedirectNotAllowedException extends MenoException {
+  /// Creates a redirect refusal.
+  const new({
+    super.message = 'The server redirected the request.',
+    super.code = MenoErrorCode.redirectNotAllowed,
+    super.statusCode,
+    super.requestId,
     super.cause,
   });
 }

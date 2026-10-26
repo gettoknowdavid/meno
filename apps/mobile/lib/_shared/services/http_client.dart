@@ -57,7 +57,10 @@ final class HttpClient implements Disposable {
       }
       // Every response is parsed as the envelope, so dio must not turn a 4xx or
       // 5xx into a `badResponse` exception.
-      ..validateStatus = (status) => status != null;
+      ..validateStatus = ((status) => status != null)
+      // A redirect would move the request — and whatever credential it
+      // carries — to an address nobody approved.
+      ..followRedirects = false;
     _dio.interceptors.addAll(interceptors);
   }
 
@@ -91,6 +94,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = true,
   }) {
     return _send<T>(
@@ -99,6 +103,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      authMode: authMode,
       send: (options) => _dio.get<dynamic>(
         path,
         queryParameters: queryParameters,
@@ -116,6 +121,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = true,
   }) {
     return _send<List<T>>(
@@ -124,6 +130,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      authMode: authMode,
       send: (options) => _dio.get<dynamic>(
         path,
         queryParameters: queryParameters,
@@ -163,6 +170,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<T>(
@@ -172,6 +180,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.post<dynamic>(
         path,
         data: data,
@@ -191,6 +200,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<T>(
@@ -200,6 +210,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.put<dynamic>(
         path,
         data: data,
@@ -219,6 +230,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<T>(
@@ -228,6 +240,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.patch<dynamic>(
         path,
         data: data,
@@ -247,6 +260,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<T>(
@@ -256,6 +270,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.delete<dynamic>(
         path,
         data: data,
@@ -274,6 +289,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<void>(
@@ -283,6 +299,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.post<dynamic>(
         path,
         data: data,
@@ -301,6 +318,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<void>(
@@ -310,6 +328,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.put<dynamic>(
         path,
         data: data,
@@ -328,6 +347,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool retry = false,
   }) {
     return _send<void>(
@@ -337,6 +357,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       jsonBody: data != null,
+      authMode: authMode,
       send: (options) => _dio.delete<dynamic>(
         path,
         data: data,
@@ -360,6 +381,7 @@ final class HttpClient implements Disposable {
     Map<String, dynamic>? headers,
     ProgressCallback? onSendProgress,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
   }) {
     return _send<T>(
       method: 'POST',
@@ -367,6 +389,7 @@ final class HttpClient implements Disposable {
       cancelToken: cancelToken,
       headers: headers,
       contentType: null,
+      authMode: authMode,
       send: (options) => _dio.post<dynamic>(
         path,
         data: formData,
@@ -390,6 +413,7 @@ final class HttpClient implements Disposable {
     ProgressCallback? onReceiveProgress,
     Map<String, dynamic>? queryParameters,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool deleteOnError = true,
   }) async {
     final stopwatch = Stopwatch()..start();
@@ -402,6 +426,7 @@ final class HttpClient implements Disposable {
         cancelToken: cancelToken,
         deleteOnError: deleteOnError,
         options: Options(
+          extra: {AuthMode.extraKey: authMode},
           validateStatus: (status) => status == null || status < 300,
         ),
       );
@@ -433,10 +458,12 @@ final class HttpClient implements Disposable {
     bool retry = false,
     Map<String, dynamic>? headers,
     CancelToken? cancelToken,
+    AuthMode authMode = AuthMode.account,
     bool jsonBody = false,
     String? contentType = Headers.jsonContentType,
   }) async {
     final options = Options(
+      extra: {AuthMode.extraKey: authMode},
       headers: {
         if (contentType != null && jsonBody)
           Headers.contentTypeHeader: contentType,
@@ -494,6 +521,16 @@ final class HttpClient implements Disposable {
 
   /// Unwraps [response], throwing the failure it carries when it failed.
   T _decode<T>(Response<dynamic> response, FromJson<T> parse) {
+    final status = response.statusCode;
+    if (status != null && status >= 300 && status < 400) {
+      // Never followed: the redirect target is not the approved origin the
+      // request was dispatched to.
+      throw RedirectNotAllowedException(
+        statusCode: status,
+        cause: response.headers.value('location'),
+      );
+    }
+
     final envelope = MenoResponse<dynamic>.fromJson(
       response.data,
       (data) => data,
@@ -540,7 +577,12 @@ final class HttpClient implements Disposable {
         return CancelledException(cause: error);
       case DioExceptionType.badResponse:
         // Only reachable from `download`, which asks for a non-2xx status to
-        // fail. The body may still be the envelope, so try it first.
+        // fail. A redirect is refused before its body is looked at.
+        final status = error.response?.statusCode;
+        if (status != null && status >= 300 && status < 400) {
+          return RedirectNotAllowedException(statusCode: status, cause: error);
+        }
+        // The body may still be the envelope, so try it first.
         return _failureFromBody(error.response) ??
             ServerException(
               message:
@@ -549,6 +591,11 @@ final class HttpClient implements Disposable {
               cause: error,
             );
       case DioExceptionType.unknown:
+        // An interceptor may have already decided the reason. Keeping it means
+        // a refusal arrives at the caller with its own type instead of being
+        // flattened into "something went wrong".
+        final reason = error.error;
+        if (reason is MenoException) return reason;
         // Reaching this means something else went wrong, not that the device is
         // offline.
         return UnknownException(

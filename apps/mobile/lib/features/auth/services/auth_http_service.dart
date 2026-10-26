@@ -20,6 +20,7 @@ final class AuthHttpService {
   }) {
     return _client.post(
       '/auth/register',
+      authMode: AuthMode.anonymous,
       data: {'full_name': fullName, 'email': email, 'password': password},
       fromJson: _credential,
     );
@@ -32,6 +33,7 @@ final class AuthHttpService {
   }) {
     return _client.post(
       '/auth/login',
+      authMode: AuthMode.anonymous,
       data: {'email': email, 'password': password},
       fromJson: _credential,
     );
@@ -49,6 +51,7 @@ final class AuthHttpService {
   }) {
     return _client.post(
       '/auth/google/mobile',
+      authMode: AuthMode.anonymous,
       data: {'id_token': idToken, 'device_label': ?deviceLabel},
       fromJson: _credential,
     );
@@ -62,6 +65,7 @@ final class AuthHttpService {
   Future<void> logout({required String refreshToken, String? accessToken}) {
     return _client.postUnit(
       '/auth/logout',
+      authMode: AuthMode.anonymous,
       data: {'refresh_token': refreshToken, 'access_token': ?accessToken},
     );
   }
@@ -92,6 +96,7 @@ final class AuthHttpService {
   }) {
     return _client.post(
       '/auth/verify-email',
+      authMode: AuthMode.anonymous,
       data: {'email': email, 'code': code},
       fromJson: _credential,
     );
@@ -101,6 +106,7 @@ final class AuthHttpService {
   Future<void> resendOtp({required String email, required OtpType type}) {
     return _client.postUnit(
       '/auth/resend-otp',
+      authMode: AuthMode.anonymous,
       data: {'email': email, 'otp_type': type.wire},
     );
   }
@@ -109,8 +115,11 @@ final class AuthHttpService {
   ///
   /// Answers the same way whether or not the address exists, so the app must
   /// not treat success here as proof that an account was found.
-  Future<void> forgotPassword(String email) =>
-      _client.postUnit('/auth/forgot-password', data: {'email': email});
+  Future<void> forgotPassword(String email) => _client.postUnit(
+    '/auth/forgot-password',
+    data: {'email': email},
+    authMode: AuthMode.anonymous,
+  );
 
   /// `POST /auth/reset-password` — sets a new password with a reset code.
   Future<void> resetPassword({
@@ -120,6 +129,7 @@ final class AuthHttpService {
   }) {
     return _client.postUnit(
       '/auth/reset-password',
+      authMode: AuthMode.anonymous,
       data: {'email': email, 'code': code, 'new_password': newPassword},
     );
   }

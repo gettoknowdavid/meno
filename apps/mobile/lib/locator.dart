@@ -51,6 +51,7 @@ void configureDependencies(Config config) {
 
 void _registerCore(Config config) {
   di.registerSingleton<Config>(config);
+  di.registerSingleton<Clock>(const SystemClock());
   di.registerSingleton<MenoLogger>(MenoLoggerImpl(config.env));
   di.registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage());
   di.registerLazySingleton<SecureStorage>(
@@ -70,7 +71,8 @@ void _registerCore(Config config) {
       interceptors: [
         SessionInterceptor(
           store: di<SessionStore>(),
-          baseUrl: di<Config>().menoApiUrl,
+          config: config,
+          clock: di<Clock>(),
           logger: di<MenoLogger>(),
         ),
       ],

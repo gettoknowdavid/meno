@@ -82,6 +82,17 @@ final class SessionStore implements Disposable {
     return _decode(raw);
   }
 
+  /// The vault entry for [userId], whichever account is active.
+  ///
+  /// A request that was dispatched as one account must keep using that
+  /// account's tokens until it settles, even if the app has switched to
+  /// another one since. Reading by the captured id — never by "the active
+  /// account" — is what makes that possible.
+  Future<UserCredential?> readCredential(Id userId) async {
+    if (!userId.isValid) return null;
+    return (await _readVault())[userId.getOrCrash];
+  }
+
   /// Every account on this device, keyed by user id.
   ///
   /// An entry that cannot be read is skipped rather than fatal: a vault written

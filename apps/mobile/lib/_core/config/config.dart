@@ -36,6 +36,37 @@ final class Config {
   /// Whether the room server is the local docker one, and so whether a room
   /// token has to be signed here rather than by the API.
   bool get usesLocalRoomServer => env.isDev;
+
+  /// The one origin requests may carry a credential to: scheme, host and
+  /// effective port, normalised so `https://api.test` and
+  /// `https://api.test:443` are the same origin.
+  Uri get apiOrigin => _normalise(Uri.parse(menoApiUrl));
+
+  /// Whether [uri] is the approved API origin.
+  ///
+  /// A production build additionally requires `https`: a plaintext request to
+  /// the right host would still put a bearer token on the wire. Loopback over
+  /// plain HTTP is only ever the development build's own server.
+  bool isApprovedApiOrigin(Uri uri) {
+    final origin = apiOrigin;
+    if (!env.isDev && origin.scheme != 'https') return false;
+    if (!env.isDev && uri.scheme != 'https') return false;
+
+    final candidate = _normalise(uri);
+    return candidate.scheme == origin.scheme &&
+        candidate.host == origin.host &&
+        candidate.port == origin.port;
+  }
+
+  /// [uri] reduced to the three parts that make an origin, with the default
+  /// port made explicit and the scheme lower-cased.
+  static Uri _normalise(Uri uri) => Uri(
+    scheme: uri.scheme.toLowerCase(),
+    host: uri.host.toLowerCase(),
+    port: uri.hasPort
+        ? uri.port
+        : (uri.scheme.toLowerCase() == 'https' ? 443 : 80),
+  );
 }
 
 enum Environment {
