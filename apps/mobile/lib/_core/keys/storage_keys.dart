@@ -11,6 +11,12 @@ final class StorageKeys {
   /// The vault for storing sensitive authentication data.
   static const String vault = 'auth.vault';
 
+  /// The versioned vault document: every account on the device, the active
+  /// one, and the remembered greeting identities, in one JSON value.
+  ///
+  /// This is the only key `SessionService` writes. Older keys are never read.
+  static const String vaultV2 = 'auth.vault.v2';
+
   @Deprecated('Use [vault] instead.')
   static const String accessToken = 'current_user_token';
 

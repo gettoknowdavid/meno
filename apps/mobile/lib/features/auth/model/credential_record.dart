@@ -24,7 +24,7 @@ abstract class CredentialRecord with _$CredentialRecord {
     required String epoch,
     required int revision,
     required String accessToken,
-    required String refreshToken,
+    required String? refreshToken,
     required DateTime accessExpiresAt,
     required DateTime receivedAt,
     required bool isVerified,
@@ -35,29 +35,29 @@ abstract class CredentialRecord with _$CredentialRecord {
 
   static const int schemaVersionNumber = 1;
 
+  /// Decodes a stored record, or returns null when any field is unusable.
+  ///
+  /// Fails closed: a missing or naive expiry is never treated as "fresh", and
+  /// an expired access token is still a readable record — it is what a renewal
+  /// needs.
   static CredentialRecord? tryFromJson(Object? raw) {
     if (raw is! Map<String, Object?>) return null;
     if (raw['schemaVersion'] != schemaVersionNumber) return null;
 
-    final idStr = raw['accountId'] as String?;
-    final accountId = idStr != null ? Id.fromString(idStr) : null;
+    final idText = raw['accountId'];
+    final accountId = idText is String ? Id.fromString(idText) : null;
     final epoch = raw['epoch'];
     final revision = raw['revision'];
     final access = raw['accessToken'];
     final refresh = raw['refreshToken'];
-    final expiryStr = raw['accessExpiresAt'];
-    final expiry = expiryStr is String
-        ? DateTime.tryParse(expiryStr)?.toUtc()
-        : null;
-    final receivedStr = raw['receivedAt'];
-    final receivedAt = receivedStr is String
-        ? DateTime.tryParse(receivedStr)?.toUtc()
-        : null;
+    final expiry = _utcStrict(raw['accessExpiresAt']);
+    final receivedAt = _utc(raw['receivedAt']);
     final verified = raw['isVerified'];
     final renewal = RenewalState.tryParse(raw['renewalState']);
 
-    if (accountId == null || expiry == null || renewal == null) return null;
-    if (expiry.isBefore(DateTime.now())) return null;
+    if (accountId == null || !accountId.isValid) return null;
+    if (expiry == null) return null;
+    if (renewal == null) return null;
     if (epoch is! String || epoch.isEmpty) return null;
     if (revision is! int || revision < 0) return null;
     if (access is! String || access.isEmpty) return null;
@@ -71,7 +71,7 @@ abstract class CredentialRecord with _$CredentialRecord {
       epoch: epoch,
       revision: revision,
       accessToken: access,
-      refreshToken: refresh! as String,
+      refreshToken: refresh as String?,
       accessExpiresAt: expiry,
       receivedAt: receivedAt,
       isVerified: verified,
@@ -94,8 +94,7 @@ abstract class CredentialRecord with _$CredentialRecord {
 
   @override
   String toString() =>
-      'CredentialRecord($accountId, rev: $revision, '
-      '${renewalState.name})';
+      'CredentialRecord($accountId, rev: $revision, ${renewalState.name})';
 }
 
 @Freezed(fromJson: false, toJson: false)
@@ -121,7 +120,9 @@ abstract class RememberedIdentity with _$RememberedIdentity {
     final avatarUri = raw['avatarUrl'];
     final email = raw['email'];
 
-    if (accountId == null || lastUsedAt == null) return null;
+    if (accountId == null || !accountId.isValid || lastUsedAt == null) {
+      return null;
+    }
     if (requiresAuth is! bool) return null;
     if (displayName != null && displayName is! String) return null;
     if (avatarUri != null && avatarUri is! String) return null;
@@ -174,7 +175,7 @@ abstract class VaultEnvelope with _$VaultEnvelope {
     final ordered = <Id>[];
     for (final item in orderRaw) {
       final id = item is String ? Id.fromString(item) : null;
-      if (id == null || ordered.contains(id)) return null;
+      if (id == null || !id.isValid || ordered.contains(id)) return null;
       ordered.add(id);
     }
 
@@ -184,7 +185,9 @@ abstract class VaultEnvelope with _$VaultEnvelope {
     for (final e in credRaw.entries) {
       final key = Id.fromString(e.key);
       final record = CredentialRecord.tryFromJson(e.value);
-      if (key.isEmpty || record == null || record.accountId != key) return null;
+      if (!key.isValid || record == null || record.accountId != key) {
+        return null;
+      }
       credentials[key] = record;
     }
 
@@ -194,16 +197,25 @@ abstract class VaultEnvelope with _$VaultEnvelope {
     for (final e in remRaw.entries) {
       final key = Id.fromString(e.key);
       final identity = RememberedIdentity.tryFromJson(e.value);
-      if (key.isEmpty || identity == null || identity.accountId != key) {
+      if (!key.isValid || identity == null || identity.accountId != key) {
         return null;
       }
       remembered[key] = identity;
     }
 
-    final activeAccountIdStr = raw['activeAccountId'];
-    final activeAccountId = activeAccountIdStr is String
-        ? Id.fromString(activeAccountIdStr)
+    final activeRaw = raw['activeAccountId'];
+    if (activeRaw != null && activeRaw is! String) return null;
+    final activeAccountId = activeRaw is String
+        ? Id.fromString(activeRaw)
         : null;
+    if (activeAccountId != null && !activeAccountId.isValid) return null;
+    if (activeAccountId != null && !credentials.containsKey(activeAccountId)) {
+      return null;
+    }
+    if (ordered.length != credentials.length ||
+        !ordered.toSet().containsAll(credentials.keys)) {
+      return null;
+    }
 
     return VaultEnvelope(
       revision: revision,
@@ -218,12 +230,16 @@ abstract class VaultEnvelope with _$VaultEnvelope {
   Map<String, Object?> toJson() => {
     'revision': revision,
     'schemaVersion': schemaVersionNumber,
-    'orderedAccountIds': [for (final id in orderedAccountIds) id.value],
+    'orderedAccountIds': [
+      for (final id in orderedAccountIds) id.getOrCrash,
+    ],
     'credentials': {
-      for (final e in credentials.entries) e.key.value: e.value.toJson(),
+      for (final e in credentials.entries)
+        e.key.getOrCrash: e.value.toJson(),
     },
     'remembered': {
-      for (final e in remembered.entries) e.key.value: e.value.toJson(),
+      for (final e in remembered.entries)
+        e.key.getOrCrash: e.value.toJson(),
     },
     'activeAccountId': activeAccountId?.getOrCrash,
   };
@@ -236,5 +252,15 @@ abstract class VaultEnvelope with _$VaultEnvelope {
 }
 
 DateTime? _utc(Object? v) => v is String ? DateTime.tryParse(v)?.toUtc() : null;
+
+/// Parses an instant only when the stored text names a UTC instant.
+///
+/// A naive timestamp (no zone) is local time on whatever device wrote it, so
+/// it is not trustworthy as an expiry and decodes to null.
+DateTime? _utcStrict(Object? v) {
+  if (v is! String) return null;
+  final parsed = DateTime.tryParse(v);
+  return parsed != null && parsed.isUtc ? parsed : null;
+}
 
 String _iso(DateTime t) => t.toUtc().toIso8601String();

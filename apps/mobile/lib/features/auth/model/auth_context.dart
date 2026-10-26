@@ -2,7 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:meno_mobile/_core/value_objects/id.dart';
 
 @immutable
-final class AuthContext {
+final class AccountContext {
   const new({required this.accountId, required this.generation});
 
   final Id accountId;
@@ -11,7 +11,7 @@ final class AuthContext {
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||
-      other is AuthContext &&
+      other is AccountContext &&
           runtimeType == other.runtimeType &&
           accountId == other.accountId &&
           generation == other.generation;
@@ -20,7 +20,7 @@ final class AuthContext {
   int get hashCode => Object.hash(accountId, generation);
 
   @override
-  String toString() => 'AuthContext($accountId, generation: $generation)';
+  String toString() => 'AccountContext($accountId, generation: $generation)';
 }
 
 @immutable
