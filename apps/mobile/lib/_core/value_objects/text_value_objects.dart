@@ -7,6 +7,12 @@ class FullName extends ValueObject<String> {
     return FullName._(_validate(clean));
   }
 
+  /// The wire's own value, kept without running the form policy.
+  ///
+  /// A name that survived the server's validation must never be rejected on
+  /// the way into storage.
+  factory fromWire(String input) => FullName._(Right(input.trim()));
+
   const new _(super.value);
 
   static const FullName empty = FullName._(Left(RequiredValueException()));
@@ -14,7 +20,7 @@ class FullName extends ValueObject<String> {
   static Either<ValueException<String>, String> _validate(String input) {
     if (input.isEmpty) return const Left(RequiredValueException());
 
-    if (input.length < _minLength) {
+    if (input.runes.length < _minLength) {
       return Left(
         InvalidValueException(
           input,
@@ -27,12 +33,12 @@ class FullName extends ValueObject<String> {
       return Left(MaxLinesExceededValueException(input, 1));
     }
 
-    if (input.length > _maxLength) {
+    if (input.runes.length > _maxLength) {
       return Left(
         LengthExceededValueException(
           input,
           maxLength: _maxLength,
-          msg: 'Full name must be less than 100 characters.',
+          msg: 'Full name must be less than $_maxLength characters.',
         ),
       );
     }
@@ -49,7 +55,10 @@ class FullName extends ValueObject<String> {
     return Right(input);
   }
 
-  static const int _minLength = 3;
+  /// The bounds `full_name_problems` enforces in
+  /// `apps/api/src/modules/auth/validators.rs`, counted in Unicode scalars as
+  /// the server counts them.
+  static const int _minLength = 2;
   static const int _maxLength = 100;
 }
 

@@ -15,6 +15,27 @@ void configureGlobalExceptionHandler() {
     final logger = di<MenoLogger>();
 
     if (error is MenoException) {
+      // A cancellation is deliberate — a debounce, a screen closing, a request
+      // whose account switched away. It is not a failure and reports nowhere.
+      if (error is CancelledException) return;
+
+      // An authentication refusal is an account matter, not a crash: the
+      // interceptor already classified it, and whoever owns that account's
+      // screen decides what to do. No global sign-out — a request that fails
+      // as one identity must never touch another (design §5, not C01: D-23).
+      if (error is UnauthenticatedException ||
+          error is SessionUnavailableException) {
+        final requestId = error.requestId;
+        logger.w(
+          'Auth refusal ${error.code}'
+          '${requestId == null ? '' : ' [requestId: $requestId]'}',
+          tag: MenoLogTag.auth.label,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        return;
+      }
+
       // The request id is the only handle on the server-side log lines for this
       // failure, so it is worth a line of its own in the message. A
       // [TransportFailure] has none — the API never answered — and the reason

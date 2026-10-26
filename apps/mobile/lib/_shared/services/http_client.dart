@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 import 'dart:math';
 
 import 'package:dio/dio.dart';
@@ -418,7 +419,10 @@ final class HttpClient implements Disposable {
   }) async {
     final stopwatch = Stopwatch()..start();
     try {
-      await _dio.download(
+      // Every status is accepted so the response reaches the same auth policy
+      // as an ordinary request: a 401 on a download renews and replays under
+      // the captured identity instead of becoming a raw `badResponse`.
+      final response = await _dio.download(
         urlPath,
         savePath,
         queryParameters: queryParameters,
@@ -427,9 +431,24 @@ final class HttpClient implements Disposable {
         deleteOnError: deleteOnError,
         options: Options(
           extra: {AuthMode.extraKey: authMode},
-          validateStatus: (status) => status == null || status < 300,
+          validateStatus: (status) => status != null,
         ),
       );
+
+      final status = response.statusCode;
+      if (status != null && (status < 200 || status >= 300)) {
+        // The body of a failed download is not the file the caller wanted:
+        // remove it so a partial answer can never be mistaken for the result.
+        await _deletePartial(savePath);
+        throw status >= 300 && status < 400
+            ? RedirectNotAllowedException(statusCode: status)
+            : MenoException.fromResponse(
+                statusCode: status,
+                code: 'DOWNLOAD_$status',
+                message: 'The file could not be downloaded.',
+              );
+      }
+
       logger.d(
         'GET $urlPath → file (${stopwatch.elapsedMilliseconds}ms)',
         tag: MenoLogTag.network.label,
@@ -572,7 +591,9 @@ final class HttpClient implements Disposable {
       case DioExceptionType.connectionError:
         return NetworkException(cause: error);
       case DioExceptionType.badCertificate:
-        return const NetworkException(message: 'Secure connection failed.');
+        // A security failure, not an outage: retrying cannot help, and
+        // reporting it as "no connection" hides what actually happened.
+        return InsecureConnectionException(cause: error);
       case DioExceptionType.cancel:
         return CancelledException(cause: error);
       case DioExceptionType.badResponse:
@@ -626,6 +647,23 @@ final class HttpClient implements Disposable {
     }
   }
 
+  /// Removes a file a failed download left behind.
+  ///
+  /// Best effort: the reason the download failed is what the caller sees, and
+  /// a leftover file that cannot be deleted will be overwritten or ignored.
+  Future<void> _deletePartial(String savePath) async {
+    try {
+      final file = File(savePath);
+      if (file.existsSync()) file.deleteSync();
+    } on Object catch (error) {
+      logger.w(
+        'A failed download could not remove its partial file',
+        tag: MenoLogTag.network.label,
+        error: error,
+      );
+    }
+  }
+
   /// How long to wait before the next attempt, or null to give up.
   Duration? _retryWait(
     MenoException error,
@@ -646,10 +684,16 @@ final class HttpClient implements Disposable {
 
     final backoff = retryBackoff * (1 << (attempt - 1));
     final capped = backoff > _maxRetryWait ? _maxRetryWait : backoff;
-    final wait = hinted != null && hinted > capped ? hinted : capped;
 
-    // Spread retries out so one outage does not become a stampede on recovery.
-    return wait * (0.5 + _random.nextDouble() / 2);
+    // Spread retries out so one outage does not become a stampede on
+    // recovery. Jitter only ever *adds* to the base wait — it is applied
+    // before the server's minimum, never to it.
+    final jittered = capped * (0.5 + _random.nextDouble() / 2);
+
+    // The server's `Retry-After` is a floor: the wait is at least that long,
+    // whatever the jitter would have chosen (L03).
+    if (hinted != null && hinted > jittered) return hinted;
+    return jittered;
   }
 
   /// Whether repeating the request could plausibly succeed.

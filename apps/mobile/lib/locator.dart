@@ -344,13 +344,15 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
   //   token with the development key pair that server runs with — so going
   //   live on a device costs nothing and needs no internet.
   //
-  // A room server that is not configured at all is walked on the silent
-  // transport: the flow still runs, and nothing is published.
+  // Which transport is not guessed: the silent one is reachable only through
+  // the explicit [Config.useFakeRoomTransport] flag, which validation already
+  // refuses in production. Everything else gets the real one — an unconfigured
+  // room URL becomes a visible failure when the session opens rather than a
+  // broadcast that silently goes nowhere (M18).
   final config = di<Config>();
-  final roomUrl = config.liveKitUrl;
-  if (roomUrl.isEmpty) {
+  if (config.useFakeRoomTransport && !config.env.isProd) {
     di<MenoLogger>().w(
-      'No LiveKit URL is configured; the broadcast will run without a room',
+      'The fake room transport was selected by configuration',
       tag: MenoLogTag.di.label,
     );
     scope.registerLazySingleton<RoomTransport>(
@@ -358,6 +360,7 @@ Future<void> _registerLiveScope(GetIt scope, LiveSession session) async {
       dispose: (transport) => transport.onDispose(),
     );
   } else {
+    final roomUrl = config.liveKitUrl;
     // Lazy: the SDK's room is built when a session enters the room, not when a
     // scope is opened from a deep link that may never join one.
     scope.registerLazySingleton<RoomTransport>(

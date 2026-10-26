@@ -32,10 +32,14 @@ abstract class UserDto with _$UserDto {
 /// The domain view of a [UserDto].
 extension UserDtoX on UserDto {
   /// This user as the app models it.
+  ///
+  /// The wire's own strings are taken as server truth: the form policy lives
+  /// on the registration form, never on this mapping, so a server-valid name
+  /// or address cannot be rejected while it is being stored.
   User get toDomain => User(
     id: Id.fromWire(id),
-    email: Email(email),
-    fullName: FullName(fullName),
+    email: Email.fromWire(email),
+    fullName: FullName.fromWire(fullName),
     bio: bio == null ? null : MultiLineString(bio!),
     verified: verified,
     image: avatarUrl != null ? ImageInput.fromUrl(avatarUrl) : null,
@@ -48,10 +52,14 @@ extension UserDtoX on UserDto {
 /// The wire view of a [User].
 extension UserX on User {
   /// This user as the API writes it.
+  ///
+  /// Serialisation never throws: a value object failing its form policy
+  /// degrades to an empty string rather than crashing the write, so
+  /// invalidity is never *discovered* here.
   UserDto get toDto => UserDto(
     id: id.getOrCrash,
-    fullName: fullName.getOrCrash,
-    email: email.getOrCrash,
+    fullName: fullName.getOrElse((_) => ''),
+    email: email.getOrElse((_) => ''),
     bio: bio?.getOrNull,
     verified: verified,
     avatarUrl: image?.toUrlOrFilePathOrNull,

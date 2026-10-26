@@ -13,6 +13,14 @@ void main() {
     menoLiveKitUrl: ProdEnv.menoLiveKitUrl,
   );
 
+  // A bad production configuration stops here, visibly, instead of falling
+  // through to a frame that silently behaves differently (M18).
+  final failures = config.validate();
+  if (failures.isNotEmpty) {
+    runApp(ConfigurationErrorApp(failures: failures));
+    return;
+  }
+
   configureDependencies(config);
   configureGlobalExceptionHandler();
 

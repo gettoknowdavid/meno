@@ -65,11 +65,16 @@ final class MenoLoggerImpl implements MenoLogger {
 
   late final Logger _backend;
 
-  bool get _on => env.isDev;
+  /// Whether trace and debug lines are written.
+  ///
+  /// Warnings, errors, fatals, info and structured events are written in every
+  /// environment: a production lifecycle or storage failure must leave a
+  /// trace (M23). What dev-only verbosity buys is the noise, not the signal.
+  bool get _verbose => env.isDev;
 
   @override
   void v(String message, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!_on) return;
+    if (!_verbose) return;
     _write(
       Level.trace,
       message,
@@ -81,7 +86,7 @@ final class MenoLoggerImpl implements MenoLogger {
 
   @override
   void d(String message, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!_on) return;
+    if (!_verbose) return;
     _write(
       Level.debug,
       message,
@@ -93,13 +98,11 @@ final class MenoLoggerImpl implements MenoLogger {
 
   @override
   void i(String message, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!_on) return;
     _write(Level.info, message, tag: tag, error: error, stackTrace: stackTrace);
   }
 
   @override
   void w(String message, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!_on) return;
     _write(
       Level.warning,
       message,
@@ -111,7 +114,6 @@ final class MenoLoggerImpl implements MenoLogger {
 
   @override
   void e(String message, {String? tag, Object? error, StackTrace? stackTrace}) {
-    if (!_on) return;
     _write(
       Level.error,
       message,
@@ -128,7 +130,6 @@ final class MenoLoggerImpl implements MenoLogger {
     Object? error,
     StackTrace? stackTrace,
   }) {
-    if (!_on) return;
     _write(
       Level.fatal,
       message,
@@ -140,7 +141,6 @@ final class MenoLoggerImpl implements MenoLogger {
 
   @override
   void event(String name, Map<String, Object> context) {
-    if (!_on) return;
     final parts = <String>[name];
     for (final entry in context.entries) {
       parts.add('${entry.key}=${_sanitize(entry.value)}');
@@ -156,15 +156,49 @@ final class MenoLoggerImpl implements MenoLogger {
     StackTrace? stackTrace,
   }) {
     final prefix = tag == null ? message : '[$tag] $message';
-    if (error != null) {
-      _backend.log(level, prefix, error: error, stackTrace: stackTrace);
+    // Everything written goes through the scrubber: message and error alike,
+    // at every level, so a token embedded in an exception string never lands
+    // in production output (M23).
+    final safeMessage = _scrub(prefix);
+    final safeError = error == null ? null : _scrub(error.toString());
+    if (safeError != null) {
+      _backend.log(
+        level,
+        safeMessage,
+        error: safeError,
+        stackTrace: stackTrace,
+      );
     } else {
-      _backend.log(level, prefix, stackTrace: stackTrace);
+      _backend.log(level, safeMessage, stackTrace: stackTrace);
     }
   }
 
+  /// Masks credential-shaped values in [text] before it is written.
+  ///
+  /// Three shapes cover where secrets actually appear: a bearer header, a
+  /// `key=value` style field of a structured message, and a URL's query
+  /// string (which may carry a token parameter). Exception messages and event
+  /// values are plain strings, so this is the one place that sees them.
+  String _scrub(String text) => text
+      .replaceAll(_bearerPattern, r'$1<redacted>')
+      .replaceAllMapped(_assignmentPattern, (match) => '${match[1]}=<redacted>')
+      .replaceAll(_urlQueryPattern, '?<redacted>');
+
+  static final RegExp _bearerPattern = RegExp(
+    r'(Bearer\s+)\S+',
+    caseSensitive: false,
+  );
+
+  static final RegExp _assignmentPattern = RegExp(
+    r'\b(password|passwd|refresh_token|access_token|refreshToken|accessToken|'
+    r'token|secret|api[_-]?key|code|otp)\b\s*[=:]\s*[^\s,;]+',
+    caseSensitive: false,
+  );
+
+  static final RegExp _urlQueryPattern = RegExp(r'''\?[^\s'"]+''');
+
   String _sanitize(Object value) {
-    final string = value.toString();
+    final string = _scrub(value.toString());
     if (_looksSecret(string)) {
       return '<redacted>';
     }

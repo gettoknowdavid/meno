@@ -160,3 +160,36 @@ class _AppFrame extends StatelessWidget {
     home: child,
   );
 }
+
+/// Shown when startup configuration fails validation, in place of the app.
+///
+/// A configuration mistake must be visible: it never falls through to a frame
+/// that silently behaves differently — an empty room URL quietly walking the
+/// fake transport is exactly the failure M18 describes. Only the field names
+/// are rendered, because a URL's query string may carry a token.
+class ConfigurationErrorApp extends StatelessWidget {
+  const new({super.key, required this.failures});
+
+  /// Every field `Config.validate()` rejected.
+  final List<ConfigurationFailure> failures;
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      home: Scaffold(
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(32),
+            child: Text(
+              'Configuration error\n\n'
+              '${failures.join('\n')}\n\n'
+              'The app cannot start until this is fixed.',
+              textAlign: TextAlign.center,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}

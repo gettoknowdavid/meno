@@ -8,6 +8,7 @@ final class Config {
     required this.menoApiUrl,
     required this.webSocketUrl,
     required this.menoLiveKitUrl,
+    this.useFakeRoomTransport = false,
   });
 
   /// The LiveKit server a development build always talks to.
@@ -23,6 +24,14 @@ final class Config {
   final String menoApiUrl;
   final String webSocketUrl;
   final String menoLiveKitUrl;
+
+  /// Whether the build walks the fake room transport instead of a real server.
+  ///
+  /// Explicit and false by default: the silent transport is reachable only by
+  /// naming it, never by an empty room URL, and [validate] refuses it in
+  /// production — a release that shows "live" with no room behind it is the
+  /// silent failure M18 describes.
+  final bool useFakeRoomTransport;
 
   /// The room server this build connects to.
   ///
@@ -58,6 +67,71 @@ final class Config {
         candidate.port == origin.port;
   }
 
+  /// What is wrong with this configuration; empty when nothing is.
+  ///
+  /// Checked once at startup, before any service is registered: a bad
+  /// configuration must stop the app visibly rather than half-work (M18).
+  /// Failures name the field, never its value — a URL's query string may carry
+  /// a token.
+  List<ConfigurationFailure> validate() {
+    final failures = <ConfigurationFailure>[];
+
+    final api = Uri.tryParse(menoApiUrl);
+    if (api == null || !api.hasScheme || api.host.isEmpty) {
+      failures.add(const ConfigurationFailure('menoApiUrl'));
+    } else if (!env.isDev && api.scheme != 'https') {
+      failures.add(const ConfigurationFailure('menoApiUrl', 'is not https'));
+    }
+
+    final socket = Uri.tryParse(webSocketUrl);
+    final socketScheme = socket?.scheme;
+    final socketOk =
+        socket != null &&
+        socket.hasScheme &&
+        socket.host.isNotEmpty &&
+        (socketScheme == 'ws' || socketScheme == 'wss');
+    if (!socketOk) {
+      failures.add(
+        const ConfigurationFailure(
+          'webSocketUrl',
+          'is not a ws:// or wss:// URL',
+        ),
+      );
+    } else if (!env.isDev && socketScheme != 'wss') {
+      failures.add(const ConfigurationFailure('webSocketUrl', 'is not wss'));
+    }
+
+    final room = Uri.tryParse(menoLiveKitUrl);
+    final roomScheme = room?.scheme;
+    final roomOk =
+        menoLiveKitUrl.isNotEmpty &&
+        room != null &&
+        room.hasScheme &&
+        room.host.isNotEmpty &&
+        (room.scheme == 'ws' || room.scheme == 'wss');
+    if (env.isProd) {
+      // Production never runs without a room server, and never over a
+      // plaintext one.
+      if (!roomOk || roomScheme != 'wss') {
+        failures.add(
+          const ConfigurationFailure('menoLiveKitUrl', 'is missing or not wss'),
+        );
+      }
+      if (useFakeRoomTransport) {
+        failures.add(
+          const ConfigurationFailure(
+            'useFakeRoomTransport',
+            'is not allowed in production',
+          ),
+        );
+      }
+    } else if (menoLiveKitUrl.isNotEmpty && !roomOk) {
+      failures.add(const ConfigurationFailure('menoLiveKitUrl'));
+    }
+
+    return failures;
+  }
+
   /// [uri] reduced to the three parts that make an origin, with the default
   /// port made explicit and the scheme lower-cased.
   static Uri _normalise(Uri uri) => Uri(
@@ -75,6 +149,19 @@ enum Environment {
 
   bool get isProd => this == prod;
   bool get isDev => this == dev;
+}
+
+/// One field that fails `Config.validate()`, naming the field only — never its
+/// value, because a URL can carry a token in its query string.
+@immutable
+final class ConfigurationFailure {
+  const ConfigurationFailure(this.field, [this.reason = 'is invalid']);
+
+  final String field;
+  final String reason;
+
+  @override
+  String toString() => '$field $reason';
 }
 
 final class Scope {

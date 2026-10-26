@@ -56,6 +56,7 @@ ErrorReaction menoExceptionFilter(Object error, StackTrace stackTrace) {
     WrongOriginException() ||
     SessionUnavailableException() ||
     RedirectNotAllowedException() ||
+    InsecureConnectionException() ||
     UnknownException() => .globalHandler,
   };
 }

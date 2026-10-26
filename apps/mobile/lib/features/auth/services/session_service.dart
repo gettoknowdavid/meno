@@ -242,7 +242,7 @@ final class SessionService implements Disposable {
     Id accountId, {
     required String epoch,
     required int revision,
-    required RefreshOutcome outcome,
+    required RefreshOutcome<CredentialRecord> outcome,
   }) {
     return _enqueue(() {
       final guard = _guard();
@@ -255,16 +255,16 @@ final class SessionService implements Disposable {
       final existing = current.credentials[accountId]!;
 
       switch (outcome) {
-        case RefreshSucceeded(:final record):
-          if (record.accountId != accountId) return const MutationStale();
+        case RefreshSucceeded(:final credential):
+          if (credential.accountId != accountId) return const MutationStale();
           return _commit(
             current,
             _putCredential(
               current,
               existing.copyWith(
-                accessToken: record.accessToken,
-                refreshToken: record.refreshToken,
-                accessExpiresAt: record.accessExpiresAt.toUtc(),
+                accessToken: credential.accessToken,
+                refreshToken: credential.refreshToken,
+                accessExpiresAt: credential.accessExpiresAt.toUtc(),
                 revision: existing.revision + 1,
                 renewalState: RenewalState.idle,
               ),

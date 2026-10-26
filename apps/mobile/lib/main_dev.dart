@@ -13,6 +13,12 @@ void main() {
     menoLiveKitUrl: DevEnv.menoLiveKitUrl,
   );
 
+  final failures = config.validate();
+  if (failures.isNotEmpty) {
+    runApp(ConfigurationErrorApp(failures: failures));
+    return;
+  }
+
   configureDependencies(config);
   configureGlobalExceptionHandler();
 

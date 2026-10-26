@@ -88,6 +88,11 @@ final class MenoErrorCode {
   // followed — a followed redirect would carry whatever it carried onward.
   static const String redirectNotAllowed = 'REDIRECT_NOT_ALLOWED';
 
+  // Client-side only: the API's certificate could not be verified. A security
+  // failure, deliberately distinct from an outage: retrying cannot help and
+  // reporting it as "no connection" hides what happened.
+  static const String insecureConnection = 'INSECURE_CONNECTION';
+
   // Client-side only, transport: raised when reaching the server failed rather
   // than the server answering badly, so there is no wire code to mirror and
   // [timeout], [network], [invalidToken] and [unknown] are reused wherever they
@@ -421,6 +426,16 @@ final class RedirectNotAllowedException extends MenoException {
     super.code = MenoErrorCode.redirectNotAllowed,
     super.statusCode,
     super.requestId,
+    super.cause,
+  });
+}
+
+/// The server's certificate could not be verified.
+final class InsecureConnectionException extends MenoException {
+  /// Creates a certificate failure.
+  const new({
+    super.message = 'The secure connection could not be verified.',
+    super.code = MenoErrorCode.insecureConnection,
     super.cause,
   });
 }
