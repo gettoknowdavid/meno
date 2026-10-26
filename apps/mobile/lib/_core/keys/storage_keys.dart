@@ -8,15 +8,28 @@ final class StorageKeys {
   /// Prevents instantiation: this type is a namespace for the keys.
   const new _();
 
-  // Secure storage — the credential the API hands out, split into the fields
-  // the app needs individually so the auth interceptor can read a token without
-  // decoding the whole credential.
+  /// The vault for storing sensitive authentication data.
+  static const String vault = 'auth.vault';
+
+  @Deprecated('Use [vault] instead.')
   static const String accessToken = 'current_user_token';
+
+  @Deprecated('Use [vault] instead.')
   static const String refreshToken = 'current_refresh_token';
+
+  @Deprecated('Use [vault] instead.')
   static const String sessionExpiry = 'session_expiry';
+
+  @Deprecated('Use [vault] instead.')
   static const String credential = 'current_user_credential';
+
+  @Deprecated('Use [vault] instead.')
   static const String accounts = 'all_accounts';
+
+  @Deprecated('Use [vault] instead.')
   static const String userId = 'current_user_id';
+
+  /// The FCM token for the device, used for push notifications.
   static const String fcmToken = 'fcm_token';
 
   // Shared preferences.

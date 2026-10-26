@@ -1,8 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
-import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
 
@@ -18,7 +16,7 @@ import 'package:meno_mobile/_core/_core.dart';
 /// without this service knowing what the secrets mean.
 ///
 /// Keys come from [StorageKeys].
-final class SecureStorage extends ChangeNotifier implements Disposable {
+final class SecureStorage {
   /// Creates secure storage over [_storage].
   new(this._storage);
 
@@ -30,7 +28,6 @@ final class SecureStorage extends ChangeNotifier implements Disposable {
   /// Writes [value] under [key].
   Future<void> write(String key, {required String value}) async {
     await _guard(() => _storage.write(key: key, value: value));
-    notifyListeners();
   }
 
   /// Writes every entry of [values].
@@ -45,7 +42,6 @@ final class SecureStorage extends ChangeNotifier implements Disposable {
           _storage.write(key: entry.key, value: entry.value),
       ]),
     );
-    notifyListeners();
   }
 
   /// Whether [key] holds a value.
@@ -55,7 +51,6 @@ final class SecureStorage extends ChangeNotifier implements Disposable {
   /// Removes [key].
   Future<void> delete(String key) async {
     await _guard(() => _storage.delete(key: key));
-    notifyListeners();
   }
 
   /// Removes every key in [keys].
@@ -65,7 +60,6 @@ final class SecureStorage extends ChangeNotifier implements Disposable {
     await _guard(
       () => Future.wait([for (final key in keyList) _storage.delete(key: key)]),
     );
-    notifyListeners();
   }
 
   /// Removes every stored value.
@@ -73,12 +67,6 @@ final class SecureStorage extends ChangeNotifier implements Disposable {
   /// Used when a session ends and nothing on the device may outlive it.
   Future<void> deleteAll() async {
     await _guard(_storage.deleteAll);
-    notifyListeners();
-  }
-
-  @override
-  FutureOr<dynamic> onDispose() {
-    dispose();
   }
 
   /// Runs [operation], reporting a platform failure as a [StorageException].

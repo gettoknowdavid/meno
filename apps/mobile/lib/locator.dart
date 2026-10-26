@@ -55,7 +55,6 @@ void _registerCore(Config config) {
   di.registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage());
   di.registerLazySingleton<SecureStorage>(
     () => SecureStorage(di<FlutterSecureStorage>()),
-    dispose: (storage) => storage.onDispose(),
   );
   di.registerSingletonAsync<Database>(Database.create);
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
