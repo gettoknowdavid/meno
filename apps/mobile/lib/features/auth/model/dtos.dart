@@ -62,7 +62,7 @@ extension AuthResponseDtoDtoX on AuthResponseDto {
         message: 'The server sent an empty access token.',
       );
     }
-    
+
     if (expiresIn <= 0 || expiresIn > _maxAccessTokenLifetimeSeconds) {
       throw const MalformedResponseException(
         message: 'The server sent an unusable access-token lifetime.',
@@ -86,7 +86,6 @@ extension AuthResponseDtoDtoX on AuthResponseDto {
   }
 
   /// The legacy domain view, used by the pre-vault storage path.
-  @Deprecated('Use [CredentialRecord] instead.')
   UserCredential get toDomain => UserCredential(
     user: user.toDomain,
     session: Session(
@@ -98,7 +97,6 @@ extension AuthResponseDtoDtoX on AuthResponseDto {
 }
 
 /// The wire view of a [UserCredential].
-@Deprecated('Use [CredentialRecord] instead.')
 extension UserCredentialDtoX on UserCredential {
   /// This account as the API writes it, so the vault round-trips exactly.
   AuthResponseDto get toDto => AuthResponseDto(

@@ -118,10 +118,17 @@ final class SessionStore implements Disposable {
   Future<void> saveToVault(UserCredential credential) async {
     if (credential.isEmpty) return;
 
-    await _writeVaultEntry(credential);
-    if (await _readActiveUserIdRaw() == credential.userId.getOrCrash) {
-      await _publish();
-    }
+    final key = credential.userId.getOrCrash;
+    final vault = await _readVault();
+
+    // A renewal may only update an account that is still on the device. After
+    // an explicit logout the entry is gone, and a late renewal must not put it
+    // back — that is exactly the recoverable-session defect C03 describes.
+    if (!vault.containsKey(key)) return;
+
+    vault[key] = credential;
+    await _writeVault(vault);
+    if (await _readActiveUserIdRaw() == key) await _publish();
   }
 
   /// Makes [userId] the active account, when it is in the vault.

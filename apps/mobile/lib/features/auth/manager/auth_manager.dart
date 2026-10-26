@@ -67,7 +67,7 @@ final class AuthManager implements Disposable {
     );
 
     addAccount = .createAsyncNoParamNoResult(
-      _store.clearActive,
+      _addAccount,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.addAccount',
     );
@@ -124,6 +124,7 @@ final class AuthManager implements Disposable {
   final _active = ValueNotifier<UserCredential>(UserCredential.empty);
   final _accounts = ValueNotifier<Map<Id, UserCredential>>({});
   final _lastKnown = ValueNotifier<User>(User.empty);
+  final _formMode = ValueNotifier<LoginFormMode>(LoginFormMode.fullEmail);
 
   StreamSubscription<UserCredential?>? _storeSubscription;
 
@@ -195,6 +196,12 @@ final class AuthManager implements Disposable {
   /// accounts already on the device before any request is made.
   ValueListenable<User> get lastKnownUser => _lastKnown;
 
+  /// Which form the signed-out login screen shows.
+  ///
+  /// A decision the auth flow makes: a remembered identity is a greeting, but
+  /// "use another account" must always show an editable, empty address field.
+  ValueListenable<LoginFormMode> get loginFormMode => _formMode;
+
   /// Adopts the stored accounts and subscribes to storage changes.
   /// Returns `this` so the locator can register it with the `init()` pattern:
   /// the app's startup gate then waits for a restored session instead of
@@ -226,6 +233,7 @@ final class AuthManager implements Disposable {
     _active.dispose();
     _accounts.dispose();
     _lastKnown.dispose();
+    _formMode.dispose();
   }
 
   /// Re-reads the vault.
@@ -242,7 +250,24 @@ final class AuthManager implements Disposable {
   /// already refused, so it must not surface a second failure of its own.
   Future<void> signOut() async {
     _logger.i('Signing out locally', tag: MenoLogTag.lifecycle.label);
-    await _store.clearActive();
+
+    final credential = _active.value;
+    if (credential.isEmpty) {
+      await _store.clearActive();
+      _adopt(UserCredential.empty);
+      return;
+    }
+
+    // Remove the vault entry, not just the active keys. Leaving the vault copy
+    // behind is what makes a logged-out session selectable again later; the
+    // store also refuses to recreate a removed account from a late renewal.
+    await _store.remove(credential.userId);
+    _adopt(UserCredential.empty);
+    await refreshAccounts();
+
+    // The user is still the last person who signed in, so the sign-in screen
+    // can greet them. That is presentation, not authentication.
+    _formMode.value = LoginFormMode.prefillSelectedIdentity;
   }
 
   /// Runs [request] and makes its account the active one.
@@ -254,6 +279,7 @@ final class AuthManager implements Disposable {
     await _store.saveActive(credential);
     _adopt(credential);
     await refreshAccounts();
+    _formMode.value = LoginFormMode.prefillSelectedIdentity;
     return credential;
   }
 
@@ -279,24 +305,29 @@ final class AuthManager implements Disposable {
   /// handed to the API when it answers, so the session is genuinely revoked
   /// rather than merely forgotten.
   Future<void> _logout() async {
+    // Capture the tokens before the local record is removed: the server call
+    // below may use exactly these and nothing else.
     final credential = _active.value;
 
-    if (credential.hasUsableSession) {
-      try {
-        await _http.logout(
-          refreshToken: credential.session.refreshToken ?? '',
-          accessToken: credential.session.accessToken,
-        );
-      } on MenoException catch (error) {
-        _logger.w(
-          'The API could not end the session (${error.code}); '
-          'signing out locally anyway',
-          tag: MenoLogTag.lifecycle.label,
-        );
-      }
-    }
-
+    // Local removal comes first. "Sign out" is an instruction, not a request;
+    // a failure here must be reported as a retry state, never hidden behind a
+    // successful-looking network round trip.
     await signOut();
+
+    if (!credential.hasUsableSession) return;
+
+    try {
+      await _http.logout(
+        refreshToken: credential.session.refreshToken ?? '',
+        accessToken: credential.session.accessToken,
+      );
+    } on MenoException catch (error) {
+      _logger.w(
+        'The API could not end the session (${error.code}); '
+        'the local credentials are already gone',
+        tag: MenoLogTag.lifecycle.label,
+      );
+    }
   }
 
   /// Ends every session the account has, then signs out locally.
@@ -338,6 +369,7 @@ final class AuthManager implements Disposable {
     }
 
     _adopt(credential);
+    _formMode.value = LoginFormMode.prefillSelectedIdentity;
   }
 
   /// Subscribes to the store, which is how a token renewed by the interceptor —
@@ -346,6 +378,17 @@ final class AuthManager implements Disposable {
     _storeSubscription = _store.activeChanges.listen(
       (credential) => _adopt(credential ?? UserCredential.empty),
     );
+  }
+
+  /// Clears the active account so a different one can sign in.
+  ///
+  /// This is a deactivate, not a logout: every other account stays in the
+  /// vault, and the login screen switches to the full form so a second address
+  /// can actually be typed.
+  Future<void> _addAccount() async {
+    await _store.clearActive();
+    _adopt(UserCredential.empty);
+    _formMode.value = LoginFormMode.fullEmail;
   }
 
   /// Makes [userId] the active account.

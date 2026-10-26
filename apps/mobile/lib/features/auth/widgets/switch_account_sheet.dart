@@ -64,7 +64,7 @@ final class SwitchAccountSheet {
                 onTap: () => Navigator.pop(sheetContext, credential.userId),
               ),
             ListTile(
-              title: MText('Add another account', color: colors.primary),
+              title: MText('Use another account', color: colors.primary),
               onTap: () => Navigator.pop(sheetContext, addAccountValue),
             ),
             Spaces.verticalMedium,

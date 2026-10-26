@@ -28,6 +28,10 @@ class LoginPage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
+    final formKey = createOnce(GlobalKey<FormState>.new);
+    final emailCtrl = createOnce(TextEditingController.new);
+    final passwordCtrl = createOnce(TextEditingController.new);
+
     registerHandler<AuthManager, CommandError<LoginArgs>?>(
       select: (manager) => manager.login.errors,
       handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
@@ -40,17 +44,34 @@ class LoginPage extends WatchingWidget {
       },
     );
 
+    // Switching to the full form is a new sign-in attempt: nothing typed for
+    // the previous identity may leak into it.
+    registerHandler<AuthManager, LoginFormMode>(
+      select: (manager) => manager.loginFormMode,
+      handler: (ctx, mode, _) {
+        if (mode == LoginFormMode.fullEmail) {
+          emailCtrl.clear();
+          passwordCtrl.clear();
+        }
+      },
+    );
+
     final account = watchValue<UserManager, User>(
       (manager) => manager.lastKnownUser,
+    );
+
+    final formMode = watchValue<AuthManager, LoginFormMode>(
+      (manager) => manager.loginFormMode,
     );
 
     final isRunning = watchValue<AuthManager, bool>(
       (manager) => manager.login.isRunning,
     );
 
-    final formKey = createOnce(GlobalKey<FormState>.new);
-    final emailCtrl = createOnce(TextEditingController.new);
-    final passwordCtrl = createOnce(TextEditingController.new);
+    // The remembered identity is only a shortcut. When the mode is a fresh
+    // sign-in, the address field is shown and used even if a user is known.
+    final showEmailField =
+        formMode == LoginFormMode.fullEmail || account.isEmpty;
 
     /// Sends the attempt, with the address the screen is showing.
     void submit() {
@@ -58,7 +79,7 @@ class LoginPage extends WatchingWidget {
 
       di<AuthManager>().login.run(
         LoginArgs(
-          email: account.isEmpty ? Email(emailCtrl.text) : account.email,
+          email: showEmailField ? Email(emailCtrl.text) : account.email,
           password: Password.login(passwordCtrl.text),
         ),
       );
@@ -74,7 +95,7 @@ class LoginPage extends WatchingWidget {
           child: Column(
             crossAxisAlignment: .stretch,
             children: [
-              if (account.isEmpty)
+              if (showEmailField)
                 MTextFormField(
                   key: const Key('login_email'),
                   label: 'Email Address',
