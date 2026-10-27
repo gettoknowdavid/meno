@@ -5,8 +5,9 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/app/account_gate.dart';
+import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/manager/user_scope_manager.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
@@ -90,22 +91,19 @@ class MenoApp extends WatchingWidget {
       routerConfig: di<GoRouter>(),
       builder: (context, child) => ResponsiveBreakpoints.builder(
         breakpoints: menoBreakpoints,
-        child: child ?? const SizedBox.shrink(),
+        child: AccountGate(child: child ?? const SizedBox.shrink()),
       ),
     );
   }
 
-  /// Waits for the container and for the account's own scope.
+  /// Waits for the container, then restores the account that was signed in.
   ///
-  /// The account's services are registered in a get_it scope that
-  /// [UserScopeManager] pushes while the container is still starting, so
-  /// waiting on the container alone would let the router build an account's
-  /// first screen against a scope that is still being pushed — a manager that
-  /// is not registered yet. Waiting costs nothing when the scope is already
-  /// there, and a container that fails to start never reaches the second wait.
+  /// [AccountTransitionOwner.restore] publishes `preparing` before it pushes
+  /// the account scope, so the gate never builds a private screen against a
+  /// scope that does not exist yet.
   Future<void> _startup() async {
     await di.allReady(timeout: _kInitTimeout);
-    await di<UserScopeManager>().ready;
+    await di<AccountTransitionOwner>().restore();
   }
 
   /// Re-runs the readiness wait by swapping in a fresh future.

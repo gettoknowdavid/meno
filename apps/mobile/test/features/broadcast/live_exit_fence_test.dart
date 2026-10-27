@@ -6,8 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/local_storage.dart';
 import 'package:meno_mobile/_shared/services/secure_storage.dart';
+import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
-import 'package:meno_mobile/features/auth/manager/user_scope_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
 import 'package:meno_mobile/features/auth/services/session_store.dart';
@@ -182,12 +182,12 @@ void main() {
       ).init();
       addTearDown(auth.onDispose);
 
-      final scopes = await UserScopeManager(
-        auth,
+      final transition = await AccountTransitionOwner(
+        activeCredential: auth.activeCredential,
         logger: MockMenoLogger(),
         beginLiveExit: () async => throw const RequestTimeoutException(),
       ).init();
-      addTearDown(scopes.onDispose);
+      addTearDown(transition.onDispose);
 
       await store.saveActive(_account(_jim));
       await pumpUntil(() => di.isRegistered<UserCredential>());
@@ -196,7 +196,7 @@ void main() {
       await pumpUntil(
         () => auth.activeCredential.value.userId == Id.fromString(_pam),
       );
-      await scopes.ready;
+      await transition.ready;
 
       // The new account is not scoped: the transition is blocked until the
       // live tier can be closed, and the old account keeps what it owns.

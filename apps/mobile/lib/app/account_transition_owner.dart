@@ -1,0 +1,341 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/scheduler.dart';
+import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
+
+/// Registers the services that belong to one account, in that account's scope.
+typedef AccountScopeRegistrar = FutureOr<void> Function(
+  GetIt scope,
+  UserCredential credential,
+);
+
+/// The outcome of one admitted transition.
+sealed class TransitionResult {
+  const new();
+}
+
+/// The account is ready.
+final class TransitionReady extends TransitionResult {
+  const new(this.context);
+
+  final AccountContext context;
+}
+
+/// The transition failed and the app is blocked.
+final class TransitionBlocked extends TransitionResult {
+  const new(this.failure);
+
+  final BlockedFailure failure;
+}
+
+/// A newer intent superseded this transition; nothing was written.
+final class TransitionCancelled extends TransitionResult {
+  const new();
+}
+
+/// The one owner of account activation and deactivation.
+///
+/// Every transition — sign-in, switch, sign-out, startup restore — is appended
+/// to one FIFO queue and applied by this class alone. No other code pushes or
+/// pops [Scope.authenticated], so a slow login cannot land after a logout and
+/// two activations cannot interleave.
+///
+/// The published [snapshot] is the app's readiness signal: `ready` means the
+/// account's scope exists and the account is usable; `preparing`, `quiescing`
+/// and `blocked` are all states in which a private screen must not build.
+final class AccountTransitionOwner implements Disposable {
+  new({
+    required this._activeCredential,
+    required this._logger,
+    this.register,
+    this.beginLiveExit,
+    this.frameWait = const Duration(milliseconds: 250),
+  });
+
+  final ValueListenable<UserCredential> _activeCredential;
+  final MenoLogger _logger;
+  final AccountScopeRegistrar? register;
+
+  /// Drains and closes the live tier before the account scope comes down.
+  final Future<void> Function()? beginLiveExit;
+
+  /// How long [exit] waits for the frame that removes the old subtree.
+  final Duration frameWait;
+
+  /// The single account readiness observable.
+  final ValueNotifier<AccountSnapshot> snapshot = ValueNotifier(
+    AccountSnapshot.signedOut,
+  );
+
+  Future<void> _queue = Future<void>.value();
+  ListenableSubscription? _subscription;
+  bool _hasScope = false;
+  int _generation = 0;
+  int _attemptSerial = 0;
+  UserCredential? _current;
+  Id? _desiredAccountId;
+  bool _disposed = false;
+
+  /// The account currently in scope, or null.
+  AccountContext? get currentContext => snapshot.value.context;
+
+  /// Starts following the active credential.
+  Future<AccountTransitionOwner> init() async {
+    _subscription = _activeCredential.listen(_onCredentialChanged);
+    _desiredAccountId = _accountIdOf(_activeCredential.value);
+    return this;
+  }
+
+  /// Restores the account that was already signed in.
+  Future<void> restore() async {
+    final credential = _activeCredential.value;
+    _desiredAccountId = _accountIdOf(credential);
+
+    if (credential.isEmpty) {
+      _publish(AccountSnapshot.signedOut);
+      return;
+    }
+
+    await _enqueue(() => _prepare(credential));
+  }
+
+  /// Waits for the transition already in flight.
+  Future<void> get ready => _queue;
+
+  /// Starts a new intent and returns its ticket.
+  ///
+  /// Any ticket issued earlier is superseded; a candidate adopted with a stale
+  /// ticket is discarded without writing anything.
+  int beginAttempt() => ++_attemptSerial;
+
+  /// Adopts a freshly issued credential if [ticket] is still the newest intent.
+  Future<TransitionResult> adoptCandidate(
+    UserCredential credential, {
+    required int ticket,
+  }) {
+    if (ticket != _attemptSerial || credential.isEmpty) {
+      return Future.value(const TransitionCancelled());
+    }
+    return _enqueue(() => _prepare(credential));
+  }
+
+  /// Ends the current account and, when [next] is given, prepares it.
+  Future<void> exit({UserCredential? next}) {
+    return _enqueue(() => _exit(next: next));
+  }
+
+  /// Invalidates every admitted intent and drains the queue.
+  Future<void> shutdown() async {
+    _attemptSerial += 1;
+    _desiredAccountId = null;
+    await _enqueue(_exit);
+  }
+
+  @override
+  FutureOr<dynamic> onDispose() async {
+    if (_disposed) return;
+    _disposed = true;
+    _attemptSerial += 1;
+    _desiredAccountId = null;
+    _subscription?.cancel();
+    _subscription = null;
+    // No frame wait on the way out: the container is already tearing down, and
+    // nothing may schedule work against a tree that is going away.
+    await _popScope();
+    snapshot.dispose();
+  }
+
+  void _onCredentialChanged(
+    UserCredential credential,
+    ListenableSubscription _,
+  ) {
+    final accountId = _accountIdOf(credential);
+    _desiredAccountId = accountId;
+
+    if (accountId == _current?.userId) {
+      if (credential.isEmpty) {
+        unawaited(_enqueue(_exit));
+        return;
+      }
+      // A renewal is the same account: only the verified flag may change, and
+      // the scope (and therefore the subtree key) stays.
+      _current = credential;
+      _publish(
+        AccountSnapshot(
+          phase: AccountPhase.ready,
+          context: snapshot.value.context,
+          isEmailVerified: credential.user.verified,
+        ),
+      );
+      return;
+    }
+
+    unawaited(
+      _enqueue(() => _exit(next: credential.isEmpty ? null : credential)),
+    );
+  }
+
+  /// Runs [operation] after every transition admitted before it.
+  Future<T> _enqueue<T>(Future<T> Function() operation) {
+    final completer = Completer<T>();
+    _queue = _queue.then((_) async {
+      try {
+        completer.complete(await operation());
+      } on Object catch (error, stackTrace) {
+        _logger.e(
+          'Account transition failed',
+          tag: MenoLogTag.di.label,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        if (!completer.isCompleted) {
+          completer.completeError(error, stackTrace);
+        }
+      }
+    });
+    return completer.future;
+  }
+
+  Future<TransitionResult> _prepare(UserCredential credential) async {
+    if (_disposed || credential.isEmpty) {
+      return const TransitionCancelled();
+    }
+
+    final accountId = credential.userId;
+    if (_desiredAccountId != accountId) {
+      return const TransitionCancelled();
+    }
+
+    final context = AccountContext(
+      accountId: accountId,
+      generation: ++_generation,
+    );
+    _publish(AccountSnapshot(phase: AccountPhase.preparing, context: context));
+
+    try {
+      await di.pushNewScopeAsync(
+        scopeName: Scope.authenticated,
+        init: (scope) async {
+          scope.registerSingleton<UserCredential>(credential);
+          await register?.call(scope, credential);
+        },
+      );
+
+      // The account may have left while the registrar was running. Nothing
+      // half-built may be advertised as ready, so cancel and take it down.
+      if (_disposed || _desiredAccountId != accountId) {
+        await _popScope();
+        return const TransitionCancelled();
+      }
+
+      _hasScope = true;
+      _current = credential;
+      final ready = AccountSnapshot(
+        phase: AccountPhase.ready,
+        context: context,
+        isEmailVerified: credential.user.verified,
+      );
+      _publish(ready);
+      return TransitionReady(context);
+    } on Object catch (error, stackTrace) {
+      await _popScope();
+      _current = null;
+      const failure = BlockedFailure(
+        reason: BlockedReason.registrationFailed,
+        message: 'The account could not be prepared.',
+      );
+      _publish(
+        const AccountSnapshot(phase: AccountPhase.blocked, failure: failure),
+      );
+      _logger.w(
+        'Scoping the account failed',
+        tag: MenoLogTag.di.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return const TransitionBlocked(failure);
+    }
+  }
+
+  Future<TransitionResult> _exit({UserCredential? next}) async {
+    if (_disposed) return const TransitionCancelled();
+
+    if (_hasScope || di.hasScope(Scope.authenticated)) {
+      final context = _current == null
+          ? null
+          : AccountContext(
+              accountId: _current!.userId,
+              generation: _generation,
+            );
+      _publish(
+        AccountSnapshot(
+          phase: AccountPhase.quiescing,
+          context: context,
+          isEmailVerified: _current?.user.verified ?? false,
+        ),
+      );
+
+      // The gate replaces the subtree with a neutral page in that build, so the
+      // next frame is the signal that the old subtree is gone.
+      await _endOfFrame();
+
+      try {
+        await beginLiveExit?.call();
+        await _popScope();
+      } on Object catch (error, stackTrace) {
+        const failure = BlockedFailure(
+          reason: BlockedReason.cleanupIncomplete,
+          message: 'The previous account could not be closed.',
+        );
+        _publish(
+          const AccountSnapshot(phase: AccountPhase.blocked, failure: failure),
+        );
+        _logger.e(
+          'Closing the account scope failed',
+          tag: MenoLogTag.di.label,
+          error: error,
+          stackTrace: stackTrace,
+        );
+        return const TransitionBlocked(failure);
+      }
+    }
+
+    _current = null;
+    _publish(AccountSnapshot.signedOut);
+
+    if (next != null && _desiredAccountId == next.userId) {
+      return await _prepare(next);
+    }
+    return const TransitionCancelled();
+  }
+
+  Future<void> _popScope() async {
+    if (di.hasScope(Scope.authenticated)) {
+      await di.popScopesTill(Scope.root, inclusive: false);
+    }
+    _hasScope = false;
+  }
+
+  /// Waits for one frame, bounded so a transition cannot hang forever when no
+  /// frame is scheduled (a background isolate or a unit test).
+  Future<void> _endOfFrame() async {
+    try {
+      await SchedulerBinding.instance.endOfFrame.timeout(frameWait);
+    } on TimeoutException {
+      // No frame is coming; the caller's own scope pop still releases
+      // resources.
+    }
+  }
+
+  void _publish(AccountSnapshot next) {
+    if (_disposed) return;
+    if (snapshot.value == next) return;
+    snapshot.value = next;
+  }
+
+  Id? _accountIdOf(UserCredential credential) =>
+      credential.isEmpty ? null : credential.userId;
+}

@@ -1,3 +1,4 @@
+export 'account_snapshot.dart';
 export 'auth_context.dart';
 export 'credential_record.dart';
 export 'dtos.dart';
