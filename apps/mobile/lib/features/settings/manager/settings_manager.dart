@@ -200,20 +200,26 @@ final class SettingsManager implements Disposable {
   /// Unsets the device token on the server.
   late final Command<void, void> clearPushToken;
 
-  /// Installs this account's cached settings, then reads the API.
+  /// Installs this account's cached settings.
   ///
   /// The local half is synchronous, so the registrar can await it before the
-  /// owner publishes `ready`; the remote read runs in the background.
+  /// owner publishes `ready`; no remote read starts here — the first refresh
+  /// begins only after the account is ready, from the account subtree's first
+  /// widget (Step 18/19).
   Future<SettingsManager> init() async {
     _settings.addListener(_applyDisplay);
     final userId = _context.accountId;
     _adopt(userId);
     _applyDisplay();
-    if (userId.isValid) {
-      unawaited(_load(userId));
-    }
     return this;
   }
+
+  /// Starts the first background read after the account is ready.
+  ///
+  /// This is the door the account subtree opens once `ready`; it is the same
+  /// read a retry or a pull-to-refresh asks for, and its failure is logged
+  /// rather than raised because nobody asked for it.
+  Future<void> refresh() => _load(_context.accountId);
 
   @override
   FutureOr<dynamic> onDispose() {

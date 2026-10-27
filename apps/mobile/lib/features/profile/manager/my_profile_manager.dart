@@ -59,17 +59,23 @@ final class MyProfileManager implements Disposable {
   /// Reads the signed-in account's record and saves it for next time.
   late final Command<void, void> fetch;
 
-  /// Installs the cached record for this account, then reads the API.
+  /// Installs the cached record for this account.
   ///
   /// The local half is synchronous, so the registrar can await it before the
-  /// owner publishes `ready`; the remote read starts here and is not awaited by
-  /// readiness — a screen built in the same frame shows the cached record
-  /// rather than a spinner.
+  /// owner publishes `ready`; no remote read starts here — the first refresh
+  /// begins only after the account is ready, from the account subtree's first
+  /// widget (Step 18/19).
   Future<MyProfileManager> init() async {
     _adopt(_context.accountId);
-    unawaited(_read());
     return this;
   }
+
+  /// Starts the first background read after the account is ready.
+  ///
+  /// This is the door the account subtree opens once `ready`; it is the same
+  /// read a retry or a pull-to-refresh asks for, and its failure is logged
+  /// rather than raised because nobody asked for it.
+  Future<void> refresh() => _read();
 
   /// Adopts [profile] as the account's, after a save the API accepted.
   ///

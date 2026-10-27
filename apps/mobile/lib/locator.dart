@@ -38,10 +38,10 @@ final GetIt di = .instance;
 ///
 /// Called once from `main()`, before `runApp`: every registration here is
 /// either synchronous or an async one the app's startup gate waits for.
-void configureDependencies(Config config) {
+void configureDependencies(Config config, {HttpClient? httpClient}) {
   di.pushNewScope(scopeName: Scope.root);
 
-  _registerCore(config);
+  _registerCore(config, httpClient: httpClient);
   _registerPlatformServices();
   _registerOnboarding();
   _registerAuth();
@@ -51,7 +51,7 @@ void configureDependencies(Config config) {
   di.registerLazySingleton<GoRouter>(_createRouter);
 }
 
-void _registerCore(Config config) {
+void _registerCore(Config config, {HttpClient? httpClient}) {
   di.registerSingleton<Config>(config);
   di.registerSingleton<Clock>(const SystemClock());
   di.registerSingleton<MenoLogger>(MenoLoggerImpl(config.env));
@@ -66,21 +66,25 @@ void _registerCore(Config config) {
     dispose: (storage) => storage.onDispose(),
     dependsOn: [SharedPreferences],
   );
-  di.registerLazySingleton<HttpClient>(
-    () => HttpClient(
-      baseUrl: di<Config>().menoApiUrl,
-      logger: di<MenoLogger>(),
-      interceptors: [
-        SessionInterceptor(
-          store: di<SessionStore>(),
-          config: config,
-          clock: di<Clock>(),
-          logger: di<MenoLogger>(),
-        ),
-      ],
-    ),
-    dispose: (client) => client.onDispose(),
-  );
+  if (httpClient != null) {
+    di.registerSingleton<HttpClient>(httpClient, dispose: (client) => client.onDispose());
+  } else {
+    di.registerLazySingleton<HttpClient>(
+      () => HttpClient(
+        baseUrl: di<Config>().menoApiUrl,
+        logger: di<MenoLogger>(),
+        interceptors: [
+          SessionInterceptor(
+            store: di<SessionStore>(),
+            config: config,
+            clock: di<Clock>(),
+            logger: di<MenoLogger>(),
+          ),
+        ],
+      ),
+      dispose: (client) => client.onDispose(),
+    );
+  }
   di.registerLazySingleton<MediaService>(MediaService.new);
 }
 

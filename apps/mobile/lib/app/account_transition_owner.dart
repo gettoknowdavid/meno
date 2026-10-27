@@ -228,6 +228,10 @@ final class AccountTransitionOwner implements Disposable {
       // issues requests, and those requests need this credential on disk.
       await saveCredential?.call(credential);
 
+      // Anything that reaches the network from here on is the account subtree's
+      // first widget (Step 18/19); the managers' eager init now adopts only the
+      // local cache, so prepare() never sends a request.
+
       final ready = AccountSnapshot(
         phase: AccountPhase.ready,
         context: context,
@@ -238,6 +242,26 @@ final class AccountTransitionOwner implements Disposable {
     } on Object catch (error, stackTrace) {
       await _popScope();
       _current = null;
+
+      // A session/token missing during prepare() is the expected boot path when
+      // something still reached the network: publish ready rather than block —
+      // Step 13 says a bare error must not do a blanket sign-out.
+      if (error is MenoException &&
+          error.code == MenoErrorCode.sessionUnavailable) {
+        _logger.w(
+          'A request was refused during prepare(); publishing ready with the '
+          'credential on disk and letting the subtree refresh.',
+          tag: MenoLogTag.di.label,
+        );
+        final ready = AccountSnapshot(
+          phase: AccountPhase.ready,
+          context: context,
+          isEmailVerified: credential.user.verified,
+        );
+        _publish(ready);
+        return TransitionReady(context);
+      }
+
       const failure = BlockedFailure(
         reason: BlockedReason.registrationFailed,
         message: 'The account could not be prepared.',
