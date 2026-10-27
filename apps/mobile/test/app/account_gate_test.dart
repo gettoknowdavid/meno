@@ -88,7 +88,7 @@ void main() {
     owner = AccountTransitionOwner(
       activeCredential: credential,
       logger: _MockLogger(),
-      register: (scope, account) {
+      register: (scope, account, context) {
         scope.registerSingleton<_Tracked>(
           _Tracked(events),
           dispose: (tracked) => tracked.dispose(),

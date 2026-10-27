@@ -47,6 +47,7 @@ void configureDependencies(Config config) {
   _registerAuth();
   _registerAppearance();
 
+  di.registerSingleton<PendingDestinationSlot>(PendingDestinationSlot());
   di.registerLazySingleton<GoRouter>(_createRouter);
 }
 
@@ -125,6 +126,14 @@ void _registerAuth() {
       http: di<AuthHttpService>(),
       store: di<SessionStore>(),
       logger: di<MenoLogger>(),
+      // The owner's single attempt counter — AuthManager keeps none of its own.
+      // Resolved through `di` at call time: the two are wired to each other.
+      beginAttempt: () => di<AccountTransitionOwner>().beginAttempt(),
+      adoptCandidate: (credential, {required ticket}) =>
+          di<AccountTransitionOwner>().adoptCandidate(
+            credential,
+            ticket: ticket,
+          ),
     ).init(),
     dispose: (manager) => manager.onDispose(),
   );
@@ -147,6 +156,12 @@ void _registerAuth() {
           if (!di.isRegistered<LiveScopeManager>()) return;
           await di<LiveScopeManager>().beginAccountExit();
         },
+        // The owner writes the credential itself, right after the scope's
+        // registrations exist — no other writer decides when an account is
+        // active.
+        saveCredential: (credential) => di<SessionStore>().saveActive(
+          credential,
+        ),
       );
       unawaited(owner.init());
       return owner;
@@ -172,8 +187,9 @@ void _registerAppearance() {
 
 GoRouter _createRouter() {
   return createRouter(
-    auth: di<AuthManager>(),
     onboarding: di<OnboardingManager>(),
+    owner: di<AccountTransitionOwner>(),
+    pending: di<PendingDestinationSlot>(),
     debugLogDiagnostics: di<Config>().env.isDev,
   );
 }

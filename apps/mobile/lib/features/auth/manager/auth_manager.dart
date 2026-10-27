@@ -11,7 +11,20 @@ import 'package:meno_mobile/features/auth/services/session_store.dart';
 /// A manager for the authentication state of the app.
 final class AuthManager implements Disposable {
   /// Creates a manager over its service, its store and the log.
-  new({required this._http, required this._store, required this._logger}) {
+  ///
+  /// [beginAttempt] and [adoptCandidate] are the transition owner's two
+  /// hooks: every sign-in attempt takes a ticket from the owner's single
+  /// counter, and the response is handed back for adoption — cancelled when a
+  /// newer intent superseded it. When they are absent (a unit test that wires
+  /// this manager alone) the credential is written directly, which is the
+  /// legacy path and nothing else uses it.
+  new({
+    required this._http,
+    required this._store,
+    required this._logger,
+    this.beginAttempt,
+    this.adoptCandidate,
+  }) {
     login = .createAsync<LoginArgs, UserCredential>(
       (args) => _accept(
         () => _http.login(
@@ -122,6 +135,17 @@ final class AuthManager implements Disposable {
   final SessionStore _store;
   final MenoLogger _logger;
 
+  /// Asks the transition owner for the next attempt ticket.
+  final int Function()? beginAttempt;
+
+  /// Hands a freshly issued credential to the transition owner, which is now
+  /// the only code that activates an account.
+  final Future<TransitionResult> Function(
+    UserCredential credential, {
+    required int ticket,
+  })?
+  adoptCandidate;
+
   final _active = ValueNotifier<UserCredential>(UserCredential.empty);
   final _accounts = ValueNotifier<Map<Id, UserCredential>>({});
   final _lastKnown = ValueNotifier<User>(User.empty);
@@ -181,14 +205,17 @@ final class AuthManager implements Disposable {
   ValueListenable<UserCredential> get activeCredential => _active;
 
   /// Whether the active account's address has been confirmed.
-  ValueListenable<bool> get emailVerified =>
+  ///
+  /// A `late final` field rather than a getter: a `select` built per access is
+  /// a new notifier every call, which no watcher can keep subscribed to (L02).
+  late final ValueListenable<bool> emailVerified =
       _active.select((credential) => credential.user.verified);
 
   /// Whether an account is signed in.
   ///
   /// Derived, so there is no second flag that can disagree with
-  /// [activeCredential].
-  ValueListenable<bool> get isAuthenticated =>
+  /// [activeCredential]. Cached once, for the same reason as [emailVerified].
+  late final ValueListenable<bool> isAuthenticated =
       _active.select((credential) => !credential.isEmpty);
 
   /// The last account that signed in, kept across a sign-out.
@@ -271,13 +298,32 @@ final class AuthManager implements Disposable {
     _formMode.value = LoginFormMode.prefillSelectedIdentity;
   }
 
-  /// Runs [request] and makes its account the active one.
+  /// Runs [request] and adopts its account through the transition owner.
+  ///
+  /// The ticket is taken *before* the request goes out, so a response that
+  /// lands after a newer intent (a logout, a switch) settles as
+  /// [TransitionCancelled] and writes nothing — the race audit C02 describes.
   Future<UserCredential> _accept(
     Future<UserCredential> Function() request,
   ) async {
+    final ticket = beginAttempt?.call() ?? 0;
     final credential = await request();
 
-    await _store.saveActive(credential);
+    final adopt = adoptCandidate;
+    if (adopt != null) {
+      final result = await adopt(credential, ticket: ticket);
+      if (result is TransitionCancelled) {
+        throw const CancelledException();
+      }
+      if (result is TransitionBlocked) {
+        throw const ServerException(
+          message: 'We could not open this account. Please try again.',
+        );
+      }
+    } else {
+      await _store.saveActive(credential);
+    }
+
     _adopt(credential);
     await refreshAccounts();
     _formMode.value = LoginFormMode.prefillSelectedIdentity;

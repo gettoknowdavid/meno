@@ -56,7 +56,7 @@ void main() {
     owner = AccountTransitionOwner(
       activeCredential: credential,
       logger: _MockLogger(),
-      register: (scope, account) async {
+      register: (scope, account, context) async {
         order.add(account.userId.getOrCrash);
         if (account.userId.getOrCrash == _a) await firstHeld.future;
         scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
@@ -84,7 +84,7 @@ void main() {
     owner = AccountTransitionOwner(
       activeCredential: credential,
       logger: _MockLogger(),
-      register: (_, _) => throw const NetworkException(),
+      register: (_, _, _) => throw const NetworkException(),
     );
     await owner.init();
     await owner.restore();
@@ -103,7 +103,7 @@ void main() {
     owner = AccountTransitionOwner(
       activeCredential: credential,
       logger: _MockLogger(),
-      register: (scope, account) {
+      register: (scope, account, context) {
         registrations++;
         scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
       },
@@ -126,7 +126,7 @@ void main() {
     owner = AccountTransitionOwner(
       activeCredential: credential,
       logger: _MockLogger(),
-      register: (scope, account) {
+      register: (scope, account, context) {
         scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
       },
     );

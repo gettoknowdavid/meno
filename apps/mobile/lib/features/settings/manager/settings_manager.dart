@@ -3,26 +3,26 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:meno_mobile/features/settings/manager/theme_manager.dart';
 import 'package:meno_mobile/features/settings/model/_model.dart';
 import 'package:meno_mobile/features/settings/services/_services.dart';
 
 /// The signed-in account's settings, and the cache behind it.
 ///
-/// It follows [UserManager.currentUserId] rather than taking an id when it is
-/// built, for the same reason the profile manager does: accounts are switched
-/// without restarting the app, and a manager that captured one id would keep
-/// serving — and writing — the previous account's switches. Every change is
-/// applied locally first and persisted through the API, so a switch flips the
-/// moment it is tapped; a failed save is rolled back by the command's undo.
+/// The account it answers for is injected once, as an immutable
+/// [AccountContext], rather than followed from a global selector: this manager
+/// lives in that account's get_it scope, so a switch builds a new manager and
+/// disposes this one — a disposed manager can never begin loading the *next*
+/// account's switches (M14/H15). Every change is applied locally first and
+/// persisted through the API, so a switch flips the moment it is tapped; a
+/// failed save is rolled back by the command's undo.
 final class SettingsManager implements Disposable {
-  /// Creates a manager over its service, its cache, the active account and the
-  /// log.
+  /// Creates a manager for the context's account over its service and cache.
   new({
+    required this._context,
     required this._http,
     required this._local,
-    required this._user,
     required this._theme,
     required this._logger,
   }) {
@@ -154,9 +154,9 @@ final class SettingsManager implements Disposable {
     );
   }
 
+  final AccountContext _context;
   final SettingsHttpService _http;
   final SettingsLocalService _local;
-  final UserManager _user;
   final ThemeManager _theme;
   final MenoLogger _logger;
 
@@ -164,7 +164,7 @@ final class SettingsManager implements Disposable {
     UserSettings.empty,
   );
 
-  ListenableSubscription? _subscription;
+  bool _disposed = false;
 
   /// The signed-in account's settings, or [UserSettings.empty] when there are
   /// none.
@@ -200,18 +200,16 @@ final class SettingsManager implements Disposable {
   /// Unsets the device token on the server.
   late final Command<void, void> clearPushToken;
 
-  /// Adopts the account already signed in, then follows the active one.
+  /// Installs this account's cached settings, then reads the API.
   ///
-  /// Returns `this` so the locator can register it with the `init()` pattern:
-  /// the subscription has to exist before the app starts, or the first account
-  /// switch would go unnoticed.
+  /// The local half is synchronous, so the registrar can await it before the
+  /// owner publishes `ready`; the remote read runs in the background.
   Future<SettingsManager> init() async {
-    _subscription = _user.currentUserId.listen(_onAccountChanged);
     _settings.addListener(_applyDisplay);
-    final userId = _user.currentUserId.value;
+    final userId = _context.accountId;
     _adopt(userId);
     _applyDisplay();
-    if (userId != null && userId.isValid) {
+    if (userId.isValid) {
       unawaited(_load(userId));
     }
     return this;
@@ -219,8 +217,7 @@ final class SettingsManager implements Disposable {
 
   @override
   FutureOr<dynamic> onDispose() {
-    _subscription?.cancel();
-
+    _disposed = true;
     changeLanguage.dispose();
     toggleDarkMode.dispose();
     setAppNotifications.dispose();
@@ -235,8 +232,8 @@ final class SettingsManager implements Disposable {
     _settings.dispose();
   }
 
-  /// The active account's id, or null when nobody is signed in.
-  Id? get _userId => _user.currentUserId.value;
+  /// The account these settings belong to.
+  Id get _userId => _context.accountId;
 
   /// Reads the settings for [userId] and saves them for next time.
   ///
@@ -246,7 +243,9 @@ final class SettingsManager implements Disposable {
   Future<void> _load(Id userId) async {
     try {
       final remote = await _http.getSettings();
-      if (_user.currentUserId.value != userId) return;
+      // The manager can be torn down while the request is in flight; the
+      // answer then belongs to a moment that has passed.
+      if (_disposed) return;
       _settings.value = remote;
       await _local.saveSettings(userId, remote);
     } on MenoException catch (error) {
@@ -259,8 +258,7 @@ final class SettingsManager implements Disposable {
 
   /// Unsets the device token, then reflects that locally.
   Future<void> _clearPushToken() async {
-    final userId = _userId;
-    if (userId == null || userId.isEmpty) return;
+    if (_userId.isEmpty) return;
     await _http.clearPushToken();
     _apply(_settings.value.copyWith(hasPushToken: false));
   }
@@ -304,7 +302,7 @@ final class SettingsManager implements Disposable {
     String? language,
     NotificationPreferences? notificationPreferences,
   }) async {
-    if (_userId == null || _userId!.isEmpty) return;
+    if (_userId.isEmpty) return;
     await _http.updateSettings(
       pushNotifications: pushNotifications,
       appNotifications: appNotifications,
@@ -317,9 +315,8 @@ final class SettingsManager implements Disposable {
 
   /// Writes the current settings to the device cache. No-op for guests.
   void _persistLocally() {
-    final userId = _userId;
-    if (userId == null || userId.isEmpty) return;
-    unawaited(_local.saveSettings(userId, _settings.value));
+    if (_userId.isEmpty) return;
+    unawaited(_local.saveSettings(_userId, _settings.value));
   }
 
   /// Repaints the app in whatever theme the current account's settings ask for.
@@ -338,27 +335,16 @@ final class SettingsManager implements Disposable {
   /// to sign in repaints from its own cached settings.
 
   void _applyDisplay() {
-    final userId = _userId;
-    if (userId == null || userId.isEmpty) return;
+    if (_userId.isEmpty) return;
     _theme.apply(_settings.value.display);
   }
 
-  /// Follows the active account, putting its cached settings in place.
-  void _onAccountChanged(Id? userId, ListenableSubscription _) {
-    _adopt(userId);
-    if (userId != null && userId.isValid) {
-      unawaited(_load(userId));
-    }
-  }
-
-  /// Puts [userId]'s cached settings in place, or the defaults when nobody is
-  /// signed in.
-  void _adopt(Id? userId) {
-    if (userId == null || userId.isEmpty) {
+  /// Puts this account's cached settings in place.
+  void _adopt(Id userId) {
+    if (userId.isEmpty) {
       _settings.value = UserSettings.empty;
       return;
     }
-    _settings.value =
-        _local.getSettings(userId) ?? UserSettings.empty;
+    _settings.value = _local.getSettings(userId) ?? UserSettings.empty;
   }
 }

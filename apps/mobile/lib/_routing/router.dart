@@ -1,10 +1,12 @@
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/value_objects/id.dart';
+import 'package:meno_mobile/_routing/pending_destination.dart';
 import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/broadcast_tab_widget.dart';
@@ -362,21 +364,28 @@ List<RouteBase> get _standaloneRoutes => [
 /// files: at this size a single route table reads clearly and keeps the guard
 /// and shell logic next to the routes they cover.
 GoRouter createRouter({
-  required AuthManager auth,
   required OnboardingManager onboarding,
+  required AccountTransitionOwner owner,
+  required PendingDestinationSlot pending,
   bool debugLogDiagnostics = false,
 }) {
-  final guard = RouterGuard(auth: auth, onboarding: onboarding);
+  final guard = RouterGuard(
+    onboarding: onboarding,
+    owner: owner,
+    pending: pending,
+  );
+
+  // Built once, as a local: a fresh merge per access would hand the router a
+  // new listenable every time and re-register its listener (audit L02).
+  // Refreshing on the *snapshot* — not on two booleans — is what makes an A→B
+  // switch, a quiesce and a blockage all re-run the guard.
+  final refresh = Listenable.merge([owner.snapshot, onboarding.isOnboarded]);
 
   return GoRouter(
     debugLogDiagnostics: debugLogDiagnostics,
     navigatorKey: rootNavigatorKey,
     initialLocation: MRoutes.home,
-    refreshListenable: Listenable.merge([
-      onboarding.isOnboarded,
-      auth.isAuthenticated,
-      auth.emailVerified,
-    ]),
+    refreshListenable: refresh,
     redirect: guard.redirect,
     routes: [
       ..._publicRoutes,

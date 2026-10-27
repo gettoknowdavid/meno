@@ -3,7 +3,6 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -58,8 +57,11 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
 
   @override
   Widget build(BuildContext context) {
-    final user = watchValue<UserManager, User>(
-      (manager) => manager.currentUser,
+    // One presentation source: the ready account's own profile manager. The
+    // stored auth user is no longer consulted, so a name edit on the profile
+    // screen reaches this chrome without a restart (M12).
+    final profile = watchValue<MyProfileManager, MyProfile>(
+      (manager) => manager.profile,
     );
 
     const unreadCount = 0;
@@ -87,7 +89,7 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                   children: [
                     MText('Hello,', style: textTheme.captionRegular),
                     MText(
-                      user.fullName.orEmpty,
+                      profile.fullName.orEmpty,
                       style: textTheme.subheadingMedium,
                     ),
                   ],
@@ -108,12 +110,7 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                     ),
                   ),
                   const SizedBox(width: 24),
-                  MAvatar(
-                    radius: Insets.lg,
-                    url: user.image?.getUrl,
-                    onTap: () => context.go(MRoutes.myProfile),
-                    hasBorder: false,
-                  ),
+                  CurrentUserAvatar(onTap: () => context.go(MRoutes.myProfile)),
                 ],
               ),
             ],

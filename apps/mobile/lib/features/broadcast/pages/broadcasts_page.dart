@@ -53,7 +53,7 @@ class BroadcastsPage extends WatchingWidget {
         title: MText(type.title, overflow: .ellipsis, maxLines: 1),
         bottom: _SearchBar(onChanged: (input) => keywords.value = input),
         centerTitle: true,
-        actions: const [UserAvatarWidget(), Spaces.horizontalLarge],
+        actions: const [CurrentUserAvatar(), Spaces.horizontalLarge],
       ),
       padding: .zero,
       body: FeedWidget<Broadcast?>(

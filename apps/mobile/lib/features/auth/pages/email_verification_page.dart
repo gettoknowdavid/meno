@@ -39,23 +39,6 @@ class EmailVerificationPage extends WatchingWidget {
       },
     );
 
-    registerHandler<EmailVerificationManager, void>(
-      select: (m) => m.canResend,
-      handler: (ctx, _, cancel) {
-        // if (cancel) return;
-
-        final address = email != null
-            ? Email(email!)
-            : di<UserManager>().currentUser.value.email;
-
-        if (!address.isValid) return;
-        di<EmailVerificationManager>().startCooldown();
-        di<AuthManager>().resendOtp.run(
-          OtpRequestArgs(email: address, type: .verifyEmail),
-        );
-      },
-    );
-
     registerHandler<AuthManager, void>(
       select: (manager) => manager.resendOtp,
       handler: (ctx, _, _) => ctx.showSuccessToast('A new code is on its way.'),
@@ -70,11 +53,8 @@ class EmailVerificationPage extends WatchingWidget {
       select: (m) => m.resendOtp.errors,
       handler: (context, error, _) {
         context.showErrorToast(errorMessage(error?.error));
-
-        // A failed resend is still a resend attempt, so the cooldown still
-        // starts: the timer is about rate-limiting the link, not about whether
-        // the network answered.
-        di<EmailVerificationManager>().startCooldown();
+        // The cooldown was already started by the manager's tap — a failed
+        // attempt is still an attempt, and nothing here sends a second code.
       },
     );
 
@@ -86,13 +66,6 @@ class EmailVerificationPage extends WatchingWidget {
       handler: (context, result, _) {
         if (!result.isSuccess) return;
         context.go(MRoutes.home);
-      },
-    );
-
-    registerHandler<AuthManager, CommandError<VerifyEmailArgs>?>(
-      select: (manager) => manager.verifyEmail.errors,
-      handler: (ctx, error, _) {
-        ctx.showErrorToast(errorMessage(error?.error));
       },
     );
 
@@ -180,7 +153,7 @@ class EmailVerificationPage extends WatchingWidget {
                 ),
                 actionLabelTextStyle: textTheme.captionMedium,
                 onAction: canResend && isValidAddress
-                    ? () => di<EmailVerificationManager>().startCooldown()
+                    ? () => di<EmailVerificationManager>().resend.run(address)
                     : null,
               ),
             Spaces.verticalXXLarge,

@@ -33,7 +33,11 @@ const Duration _kInitTimeout = Duration(seconds: 30);
 /// listens to `Command.globalErrors` and reports them.
 class MenoApp extends WatchingWidget {
   /// Creates the app.
-  const new({super.key});
+  const new({super.key, this.onRetryBootstrap});
+
+  /// Rebuilds the container and its registrations, then lets this widget wait
+  /// on the fresh ones. From `bootstrap()` in `main.dart`.
+  final Future<void> Function()? onRetryBootstrap;
 
   @override
   Widget build(BuildContext context) {
@@ -106,9 +110,18 @@ class MenoApp extends WatchingWidget {
     await di<AccountTransitionOwner>().restore();
   }
 
-  /// Re-runs the readiness wait by swapping in a fresh future.
+  /// Rebuilds what failed, then re-runs the readiness wait.
+  ///
+  /// The rebuild is [onRetryBootstrap]'s: it resets get_it with its dispose
+  /// callbacks and registers everything again, so the failure is genuinely
+  /// retried rather than the same failed future awaited a second time.
   void _retry(ValueNotifier<Future<void>> readiness) {
-    readiness.value = _startup();
+    final retry = onRetryBootstrap;
+    if (retry == null) {
+      readiness.value = _startup();
+      return;
+    }
+    unawaited(retry().then((_) => readiness.value = _startup()));
   }
 
   /// Tells the user a command failed, and ends a session that has expired.
@@ -166,7 +179,7 @@ class _AppFrame extends StatelessWidget {
 /// fake transport is exactly the failure M18 describes. Only the field names
 /// are rendered, because a URL's query string may carry a token.
 class ConfigurationErrorApp extends StatelessWidget {
-  const new({super.key, required this.failures});
+  const new({required this.failures, super.key});
 
   /// Every field `Config.validate()` rejected.
   final List<ConfigurationFailure> failures;

@@ -54,6 +54,30 @@ final class BlockedFailure {
   String toString() => 'BlockedFailure(${reason.name}, $message)';
 }
 
+/// The outcome of one admitted account transition.
+sealed class TransitionResult {
+  const new();
+}
+
+/// The account is ready.
+final class TransitionReady extends TransitionResult {
+  const new(this.context);
+
+  final AccountContext context;
+}
+
+/// The transition failed and the app is blocked.
+final class TransitionBlocked extends TransitionResult {
+  const new(this.failure);
+
+  final BlockedFailure failure;
+}
+
+/// A newer intent superseded this transition; nothing was written.
+final class TransitionCancelled extends TransitionResult {
+  const new();
+}
+
 /// The single readiness observable for the account lifecycle.
 ///
 /// Equality matters: a same-value re-publish must not rebuild a watcher, and a

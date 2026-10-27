@@ -17,7 +17,7 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// models and layouts that depend on no feature.
 final class UserManager {
   /// Creates a view over [_auth].
-  const new(this._auth);
+  new(this._auth);
 
   final AuthManager _auth;
 
@@ -26,18 +26,21 @@ final class UserManager {
       _auth.activeCredential;
 
   /// The signed-in user, or [User.empty].
-  ValueListenable<User> get currentUser =>
+  ///
+  /// Cached once as a field: a `select` built on every getter access is a new
+  /// notifier each call, which no watcher can stay subscribed to (L02).
+  late final ValueListenable<User> currentUser =
       _auth.activeCredential.select((credential) => credential.user);
 
   /// The id of the signed-in account, or null.
-  ValueListenable<Id?> get currentUserId =>
+  late final ValueListenable<Id?> currentUserId =
       _auth.activeCredential.select((credential) => credential.userId);
 
   /// Whether an account is signed in.
-  ValueListenable<bool> get isAuthenticated => _auth.isAuthenticated;
+  late final ValueListenable<bool> isAuthenticated = _auth.isAuthenticated;
 
   /// Whether the signed-in account's address has been confirmed.
-  ValueListenable<bool> get isEmailVerified => _auth.emailVerified;
+  late final ValueListenable<bool> isEmailVerified = _auth.emailVerified;
 
   /// The account that last signed in on this device, kept across a sign-out.
   ValueListenable<User> get lastKnownUser => _auth.lastKnownUser;

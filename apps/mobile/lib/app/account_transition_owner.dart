@@ -10,31 +10,8 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 typedef AccountScopeRegistrar = FutureOr<void> Function(
   GetIt scope,
   UserCredential credential,
+  AccountContext context,
 );
-
-/// The outcome of one admitted transition.
-sealed class TransitionResult {
-  const new();
-}
-
-/// The account is ready.
-final class TransitionReady extends TransitionResult {
-  const new(this.context);
-
-  final AccountContext context;
-}
-
-/// The transition failed and the app is blocked.
-final class TransitionBlocked extends TransitionResult {
-  const new(this.failure);
-
-  final BlockedFailure failure;
-}
-
-/// A newer intent superseded this transition; nothing was written.
-final class TransitionCancelled extends TransitionResult {
-  const new();
-}
 
 /// The one owner of account activation and deactivation.
 ///
@@ -52,6 +29,7 @@ final class AccountTransitionOwner implements Disposable {
     required this._logger,
     this.register,
     this.beginLiveExit,
+    this.saveCredential,
     this.frameWait = const Duration(milliseconds: 250),
   });
 
@@ -61,6 +39,10 @@ final class AccountTransitionOwner implements Disposable {
 
   /// Drains and closes the live tier before the account scope comes down.
   final Future<void> Function()? beginLiveExit;
+
+  /// Writes the credential to the store once its scope exists — the owner is
+  /// the only caller, so "stored" and "ready" cannot drift apart.
+  final Future<void> Function(UserCredential credential)? saveCredential;
 
   /// How long [exit] waits for the frame that removes the old subtree.
   final Duration frameWait;
@@ -119,7 +101,12 @@ final class AccountTransitionOwner implements Disposable {
     if (ticket != _attemptSerial || credential.isEmpty) {
       return Future.value(const TransitionCancelled());
     }
-    return _enqueue(() => _prepare(credential));
+    // An account already in scope is taken down first; two accounts must never
+    // overlap (H02).
+    final leaving = _hasScope || di.hasScope(Scope.authenticated);
+    return _enqueue(
+      () => leaving ? _exit(next: credential) : _prepare(credential),
+    );
   }
 
   /// Ends the current account and, when [next] is given, prepares it.
@@ -220,7 +207,7 @@ final class AccountTransitionOwner implements Disposable {
         scopeName: Scope.authenticated,
         init: (scope) async {
           scope.registerSingleton<UserCredential>(credential);
-          await register?.call(scope, credential);
+          await register?.call(scope, credential, context);
         },
       );
 
@@ -233,6 +220,11 @@ final class AccountTransitionOwner implements Disposable {
 
       _hasScope = true;
       _current = credential;
+
+      // Stored before `ready` is published: a screen that builds on ready
+      // issues requests, and those requests need this credential on disk.
+      await saveCredential?.call(credential);
+
       final ready = AccountSnapshot(
         phase: AccountPhase.ready,
         context: context,

@@ -22,6 +22,7 @@ import 'package:meno_mobile/features/settings/settings.dart';
 Future<void> registerAccountScope(
   GetIt scope,
   UserCredential credential,
+  AccountContext context,
 ) async {
   // The container disposes all of this: dropping the scope asks everything
   // registered in it that implements `Disposable` to tear down, and the
@@ -110,18 +111,16 @@ Future<void> registerAccountScope(
   );
 
   scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);
-  // Started, not awaited. `init` puts this account's cached record in place
-  // synchronously and reads the API behind it, so the manager is useful the
-  // moment it exists — a screen built in the same frame shows the record rather
-  // than a spinner — and the scope stays a synchronous push, with nothing
-  // registered that is not yet ready to be resolved.
+  // Awaiting the local half is what makes `ready` mean something: when the
+  // owner publishes ready, this account's cached record and switches are
+  // already in place. The remote reads behind them are started, not awaited.
   final profile = MyProfileManager(
+    context: context,
     http: di<ProfileHttpService>(),
     cache: di<ProfileCacheService>(),
-    user: di<UserManager>(),
     logger: di<MenoLogger>(),
   );
-  unawaited(profile.init());
+  await profile.init();
   scope.registerSingleton<MyProfileManager>(profile);
 
   // The account's switches, and the cache behind them — also per account, since
@@ -135,17 +134,18 @@ Future<void> registerAccountScope(
     () => SettingsLocalService(di<LocalStorage>()),
   );
 
-  // Started for the same reason, and eagerly rather than on first use: the
-  // account's own display choice has to reach the theme as soon as the account
-  // is active, not when somebody opens the settings screen.
+  // Eager for the same reason: the account's own display choice has to reach
+  // the theme as soon as the account is active, not when somebody opens the
+  // settings screen. Awaiting its local install before returning is what puts
+  // the account's theme in place before `ready`.
   final settings = SettingsManager(
+    context: context,
     http: di<SettingsHttpService>(),
     local: di<SettingsLocalService>(),
-    user: di<UserManager>(),
     theme: di<ThemeManager>(),
     logger: di<MenoLogger>(),
   );
-  unawaited(settings.init());
+  await settings.init();
   scope.registerSingleton<SettingsManager>(settings);
 
   // The live tier sits on top of this one, and is handed the registrar that
