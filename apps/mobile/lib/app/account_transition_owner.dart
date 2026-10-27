@@ -101,6 +101,9 @@ final class AccountTransitionOwner implements Disposable {
     if (ticket != _attemptSerial || credential.isEmpty) {
       return Future.value(const TransitionCancelled());
     }
+    // The credential's account becomes the desired one so that _prepare's
+    // guard passes even when no stored session exists yet (first login).
+    _desiredAccountId = credential.userId;
     // An account already in scope is taken down first; two accounts must never
     // overlap (H02).
     final leaving = _hasScope || di.hasScope(Scope.authenticated);
