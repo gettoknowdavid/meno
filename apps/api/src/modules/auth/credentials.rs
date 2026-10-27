@@ -160,19 +160,19 @@ impl CredentialService {
     ///
     /// # Errors
     ///
-    /// Currently nothing, for the enumeration reason on [`Self::resend_otp`]. A session
-    /// revocation failure is logged rather than propagated: telling the requester that
-    /// sessions could not be ended would also tell them the account exists, and the
-    /// reset itself still goes out.
+    /// Currently nothing, for the enumeration reason on [`Self::resend_otp`]. An unknown
+    /// address and a known one send the same response and touch no session: requesting a
+    /// reset is not proof of ownership, so it must not be able to sign the account out.
+    /// Revocation belongs to [`Self::reset_password`], after the code is verified.
     #[tracing::instrument(skip_all, fields(user_email = %super::services::redact(&req.email)))]
     pub async fn forgot_password(&self, req: &ForgotPasswordRequest) -> Result<(), MenoError> {
         req.validate()?;
 
         let email = User::normalized_email(&req.email);
-        let Some(user) = self.repo.find_user_by_email(&email).await? else {
+        if self.repo.find_user_by_email(&email).await?.is_none() {
             tracing::info!("password reset requested for an unknown address");
             return Ok(());
-        };
+        }
 
         send_code(
             self.repo.as_ref(),
@@ -181,12 +181,6 @@ impl CredentialService {
             OtpType::ResetPassword,
         )
         .await;
-
-        // A reset request ends every session: the requester may not be the owner, and
-        // leaving the old devices signed in would defeat the point of resetting.
-        if let Err(problem) = self.tokens.revoke_all_for_user(user.id).await {
-            tracing::error!(user_id = %user.id, error = %problem, "could not end sessions on reset");
-        }
 
         Ok(())
     }

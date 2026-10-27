@@ -34,6 +34,10 @@
 
 mod support;
 
+use std::sync::Arc;
+use std::time::Duration;
+
+use async_trait::async_trait;
 use axum::Router;
 use axum::body::Body;
 use axum::extract::Request;
@@ -41,9 +45,12 @@ use axum::http::{Request as HttpRequest, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::routing::{get, post};
 use http_body_util::BodyExt;
-use meno_api::middleware::auth::AuthUser;
+use meno_api::middleware::auth::{
+    AuthState as GuardState, AuthUser, JwtVerifier, TokenBlocklist, auth_middleware,
+};
 use meno_api::modules::auth::model::{AuthProvider, UserRole};
 use meno_api::modules::auth::state::AuthState;
+use meno_core::Error as MenoError;
 use support::{Harness, PASSWORD, harness, last_mail, registered};
 use time::OffsetDateTime;
 use time::format_description::well_known::Rfc3339;
@@ -73,6 +80,14 @@ fn router(state: AuthState) -> Router {
             "/auth/sessions",
             get(meno_api::modules::auth::handlers::list_sessions),
         )
+        .route(
+            "/auth/forgot-password",
+            post(meno_api::modules::auth::handlers::forgot_password),
+        )
+        .route(
+            "/auth/reset-password",
+            post(meno_api::modules::auth::handlers::reset_password),
+        )
         .with_state(state)
 }
 
@@ -90,6 +105,62 @@ fn json_get(uri: &str) -> HttpRequest<Body> {
         .uri(uri)
         .body(Body::empty())
         .expect("the request is well formed")
+}
+
+fn bearer_get(uri: &str, token: &str) -> HttpRequest<Body> {
+    HttpRequest::builder()
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .expect("the request is well formed")
+}
+
+/// The production guard, with the harness's own blocklist.
+fn guard(cache: Arc<dyn TokenBlocklist>) -> GuardState {
+    GuardState::new(
+        Arc::new(
+            JwtVerifier::new("integration-access-secret")
+                .expect("the fixture access secret builds a verifier"),
+        ),
+        cache,
+    )
+}
+
+/// One protected route behind the real middleware, as the router wires it.
+fn protected(guard: GuardState) -> Router {
+    Router::new()
+        .route("/protected", get(|| async { StatusCode::OK }))
+        .layer(middleware::from_fn_with_state(guard, auth_middleware))
+}
+
+/// The status a bearer request gets through the production guard.
+async fn guarded_status(guard: GuardState, token: &str) -> StatusCode {
+    protected(guard)
+        .oneshot(bearer_get("/protected", token))
+        .await
+        .expect("the router answers")
+        .status()
+}
+
+/// A blocklist whose backend is down, for the infrastructure-error case.
+#[derive(Debug)]
+struct FailingBlocklist;
+
+#[async_trait]
+impl TokenBlocklist for FailingBlocklist {
+    async fn is_revoked(&self, _jti: Uuid, _expires_at: i64) -> Result<bool, MenoError> {
+        Err(MenoError::Upstream {
+            service: "blocklist",
+            detail: "unreachable in the fixture".to_owned(),
+        })
+    }
+
+    async fn is_user_revoked(&self, _user_id: Uuid, _issued_at: i64) -> Result<bool, MenoError> {
+        Err(MenoError::Upstream {
+            service: "blocklist",
+            detail: "unreachable in the fixture".to_owned(),
+        })
+    }
 }
 
 /// The same router with the identity [`auth_middleware`] would have inserted.
@@ -429,6 +500,152 @@ async fn an_unknown_route_is_404_rather_than_a_500() {
     .await;
 
     assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+// ── Steps 65 and 67: revocation, through the real guard ─────────────────────
+
+#[tokio::test]
+async fn logout_all_invalidates_existing_access_tokens_but_not_a_fresh_login() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    let pair = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("issuing an access token");
+
+    let cache = Arc::clone(&h.cache) as Arc<dyn TokenBlocklist>;
+    assert_eq!(
+        guarded_status(guard(Arc::clone(&cache)), &pair.access_token).await,
+        StatusCode::OK
+    );
+
+    h.service
+        .logout_everywhere(user.id)
+        .await
+        .expect("logout-all");
+
+    assert_eq!(
+        guarded_status(guard(Arc::clone(&cache)), &pair.access_token).await,
+        StatusCode::UNAUTHORIZED,
+        "an access token minted before logout-all must stop working"
+    );
+
+    // The marker is a wall-clock second, so a token minted in the same second would
+    // legitimately be covered by it. Wait past the boundary rather than weakening the
+    // comparison to `<` in the implementation.
+    tokio::time::sleep(Duration::from_millis(1_100)).await;
+    let fresh = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("a fresh login");
+    assert_eq!(
+        guarded_status(guard(cache), &fresh.access_token).await,
+        StatusCode::OK,
+        "a token issued after the marker must survive"
+    );
+}
+
+#[tokio::test]
+async fn a_revoked_jti_is_still_refused() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    let pair = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("issuing a token");
+
+    h.tokens
+        .revoke(&pair.refresh_token, Some(&pair.access_token))
+        .await
+        .expect("revoking one session");
+
+    let cache = Arc::clone(&h.cache) as Arc<dyn TokenBlocklist>;
+    assert_eq!(
+        guarded_status(guard(cache), &pair.access_token).await,
+        StatusCode::UNAUTHORIZED
+    );
+}
+
+#[tokio::test]
+async fn a_blocklist_outage_is_not_an_authentication_failure() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    let pair = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("issuing a token");
+
+    let status = guarded_status(guard(Arc::new(FailingBlocklist)), &pair.access_token).await;
+    assert!(
+        status.is_server_error(),
+        "an unreachable blocklist must not log the user out: got {status}"
+    );
+}
+
+#[tokio::test]
+async fn a_reset_request_does_not_revoke_but_a_completed_reset_does() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    let pair = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("issuing a token");
+    let cache = Arc::clone(&h.cache) as Arc<dyn TokenBlocklist>;
+
+    let forgot = serde_json::json!({ "email": "ada@example.com" }).to_string();
+    let (status, _) = send(
+        router(h.state.clone()),
+        json_post("/auth/forgot-password", forgot),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        guarded_status(guard(Arc::clone(&cache)), &pair.access_token).await,
+        StatusCode::OK,
+        "requesting a reset is not ownership proof, so it must not revoke"
+    );
+
+    let reset = serde_json::json!({
+        "email": "ada@example.com",
+        "code": "000000",
+        "new_password": "A completely new password",
+    })
+    .to_string();
+    let (status, body) = send(
+        router(h.state.clone()),
+        json_post("/auth/reset-password", reset),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::BAD_REQUEST,
+        "a wrong code is refused: {body}"
+    );
+    assert_eq!(
+        guarded_status(guard(Arc::clone(&cache)), &pair.access_token).await,
+        StatusCode::OK,
+        "a failed code attempt must leave the session alone"
+    );
+
+    let code = last_mail(&h).expect("the reset code was mailed").code;
+    let reset = serde_json::json!({
+        "email": "ada@example.com",
+        "code": code,
+        "new_password": "A completely new password",
+    })
+    .to_string();
+    let (status, body) = send(router(h.state), json_post("/auth/reset-password", reset)).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        guarded_status(guard(cache), &pair.access_token).await,
+        StatusCode::UNAUTHORIZED,
+        "a completed reset must invalidate the old access token"
+    );
 }
 
 // ── what the harness itself guarantees ──────────────────────────────────────

@@ -71,6 +71,9 @@ pub struct Harness {
     pub tokens: TokenService,
     /// The repository, typed so its session and OTP queries can be asserted on.
     pub repo: Arc<InMemoryAuthRepo>,
+    /// The blocklist, typed so a guard test can read the same revocations the
+    /// services write.
+    pub cache: Arc<InMemoryAuthCache>,
     /// The mailer, typed so a test can assert what was *sent*.
     pub mailer: Arc<RecordingAuthMailer>,
     /// The Google seam and its call counters.
@@ -155,6 +158,7 @@ pub fn harness_with(google: StubExchange) -> Harness {
         credentials: Arc::new(credentials),
         tokens,
         repo,
+        cache,
         mailer,
         google,
     }

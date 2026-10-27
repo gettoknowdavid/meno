@@ -47,6 +47,7 @@ use crate::infrastructure::constants::BLOCKLIST_PREFIX;
 use crate::infrastructure::redis::Redis;
 use crate::infrastructure::redis::keys::{RedisKey, ttl};
 use crate::middleware::from_error;
+use crate::modules::auth::cache::AuthCache;
 
 /// The identity providers a user can sign in with.
 ///
@@ -281,14 +282,24 @@ impl AuthState {
     pub async fn authenticate(&self, token: &str) -> Result<AuthUser, MenoError> {
         let claims = self.verifier.verify(token).await?;
 
-        match self.blocklist.is_revoked(claims.jti, claims.exp).await {
-            Ok(false) => Ok(AuthUser::from_claims(claims)),
-            Ok(true) => Err(MenoError::Unauthorized {
-                code: ErrorCode::InvalidToken,
-                message: "the access token is not valid".to_owned(),
-            }),
-            Err(error) => Err(error),
+        // A token-specific revocation first: it is the narrowest answer and does not
+        // need the user-wide marker.
+        if self.blocklist.is_revoked(claims.jti, claims.exp).await? {
+            return Err(invalid_token());
         }
+
+        // Then the account-wide answer. Both checks use verified claims only: `sub` is
+        // the subject the signature vouched for and `iat` is the instant the token was
+        // issued, so a token minted after a logout-all marker survives it.
+        if self
+            .blocklist
+            .is_user_revoked(claims.sub, claims.iat)
+            .await?
+        {
+            return Err(invalid_token());
+        }
+
+        Ok(AuthUser::from_claims(claims))
     }
 }
 
@@ -330,6 +341,28 @@ pub trait TokenBlocklist: Send + Sync + std::fmt::Debug {
     /// not check" and "you are revoked" have opposite remedies, and conflating them logs
     /// every user out during a Redis blip.
     async fn is_revoked(&self, jti: Uuid, expires_at: i64) -> Result<bool, MenoError>;
+
+    /// Whether `user_id` has revoked every token issued at or before `issued_at`.
+    ///
+    /// This is the question a token-specific `jti` lookup cannot answer: logout-all and
+    /// password reset write one user-wide marker instead of enumerating tokens.
+    ///
+    /// # Errors
+    ///
+    /// A backend failure, treated exactly like [`Self::is_revoked`]'s: an unavailable
+    /// blocklist is a 503, never a silent "not revoked".
+    async fn is_user_revoked(&self, user_id: Uuid, issued_at: i64) -> Result<bool, MenoError>;
+}
+
+/// The one rejection every revoked token gets.
+///
+/// Generic on purpose: telling a caller whether the token was revoked, expired or never
+/// existed is an oracle for which tokens are worth stealing.
+fn invalid_token() -> MenoError {
+    MenoError::Unauthorized {
+        code: ErrorCode::InvalidToken,
+        message: "the access token is not valid".to_owned(),
+    }
 }
 
 /// [`TokenVerifier`] over HMAC-SHA256.
@@ -418,7 +451,7 @@ impl TokenVerifier for JwtVerifier {
 /// passed costs nothing: it is already unusable.
 #[derive(Clone)]
 pub struct RedisTokenBlocklist {
-    redis: Redis,
+    cache: crate::modules::auth::cache::RedisAuthCache,
 }
 
 impl std::fmt::Debug for RedisTokenBlocklist {
@@ -434,7 +467,9 @@ impl RedisTokenBlocklist {
     /// Build a blocklist over `redis`, using the canonical §3.2 TTL.
     #[must_use]
     pub fn new(redis: Redis) -> Self {
-        Self { redis }
+        Self {
+            cache: crate::modules::auth::cache::RedisAuthCache::new(redis),
+        }
     }
 }
 
@@ -455,22 +490,16 @@ pub fn blocklist_key(jti: Uuid) -> RedisKey {
 #[async_trait]
 impl TokenBlocklist for RedisTokenBlocklist {
     async fn is_revoked(&self, jti: Uuid, _expires_at: i64) -> Result<bool, MenoError> {
-        self.redis
-            .exists(&blocklist_key(jti))
-            .await
-            // Logged with the driver error, erased before it reaches the taxonomy: §5.5 and
-            // §9.1. The client learns the blocklist is unavailable and nothing more.
-            .map_err(|error| {
-                tracing::error!(
-                    service = "redis",
-                    detail = %error,
-                    "could not read the token blocklist"
-                );
-                MenoError::Upstream {
-                    service: "blocklist",
-                    detail: error.to_string(),
-                }
-            })
+        // Delegated so the guard and the token service read the *same* key: this is the
+        // adapter `RedisAuthCache::is_token_blocked` already owns, including its error
+        // mapping and canonical TTL.
+        self.cache.is_token_blocked(jti).await
+    }
+
+    async fn is_user_revoked(&self, user_id: Uuid, issued_at: i64) -> Result<bool, MenoError> {
+        // Delegated to the marker comparison logout-all and password reset already
+        // write; a second implementation is how the guard and the token service drift.
+        self.cache.is_user_tokens_blocked(user_id, issued_at).await
     }
 }
 
@@ -658,9 +687,35 @@ mod tests {
     }
 
     /// A blocklist that answers whatever it was built with.
+    ///
+    /// The token-specific and account-wide answers are separate fields: the guard asks
+    /// both questions, and a fake that collapsed them could not tell them apart.
     #[derive(Debug)]
     struct FakeBlocklist {
         outcome: FakeOutcome<bool>,
+        user_outcome: FakeOutcome<bool>,
+    }
+
+    impl FakeBlocklist {
+        /// A blocklist answering `outcome` for one token and nothing for its user.
+        fn new(outcome: FakeOutcome<bool>) -> Self {
+            Self {
+                outcome,
+                user_outcome: FakeOutcome::Allow(false),
+            }
+        }
+
+        /// The same blocklist, with an account-wide revocation in place.
+        fn user_revoked(mut self) -> Self {
+            self.user_outcome = FakeOutcome::Allow(true);
+            self
+        }
+
+        /// The same blocklist, with an account-wide backend failure.
+        fn user_unavailable(mut self, service: &'static str) -> Self {
+            self.user_outcome = FakeOutcome::Unavailable(service);
+            self
+        }
     }
 
     #[async_trait]
@@ -674,6 +729,14 @@ mod tests {
     impl TokenBlocklist for FakeBlocklist {
         async fn is_revoked(&self, _jti: Uuid, _expires_at: i64) -> Result<bool, MenoError> {
             self.outcome.resolve()
+        }
+
+        async fn is_user_revoked(
+            &self,
+            _user_id: Uuid,
+            _issued_at: i64,
+        ) -> Result<bool, MenoError> {
+            self.user_outcome.resolve()
         }
     }
 
@@ -701,9 +764,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(claims()),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(false),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false))),
         )
     }
 
@@ -822,9 +883,67 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(claims()),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(true),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(true))),
+        );
+
+        let response = router(state)
+            .oneshot(get_request("/me", Some("Bearer good")))
+            .await
+            .expect("the router answers");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body_of(response).await["code"], "INVALID_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn an_account_wide_revocation_is_401_even_when_the_jti_is_clean() {
+        // The Step 65 failure: logout-all and password reset write one user marker, so a
+        // guard that only asks about `jti` lets every existing token survive.
+        let state = AuthState::new(
+            Arc::new(FakeVerifier {
+                outcome: FakeOutcome::Allow(claims()),
             }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false)).user_revoked()),
+        );
+
+        let response = router(state)
+            .oneshot(get_request("/me", Some("Bearer good")))
+            .await
+            .expect("the router answers");
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(body_of(response).await["code"], "INVALID_TOKEN");
+    }
+
+    #[tokio::test]
+    async fn an_account_wide_blocklist_outage_is_503_not_401() {
+        // The account-wide question runs after the token-specific one, so its backend
+        // failure must map to the same infrastructure answer rather than a false 401.
+        let state = AuthState::new(
+            Arc::new(FakeVerifier {
+                outcome: FakeOutcome::Allow(claims()),
+            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false)).user_unavailable("blocklist")),
+        );
+
+        let response = router(state)
+            .oneshot(get_request("/me", Some("Bearer good")))
+            .await
+            .expect("the router answers");
+
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(body_of(response).await["code"], "UPSTREAM_UNAVAILABLE");
+    }
+
+    #[tokio::test]
+    async fn a_jti_revocation_short_circuits_the_account_wide_read() {
+        // A revoked token is already refused; asking the wider question would be a
+        // second round trip for an answer nobody reads.
+        let state = AuthState::new(
+            Arc::new(FakeVerifier {
+                outcome: FakeOutcome::Allow(claims()),
+            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(true)).user_unavailable("blocklist")),
         );
 
         let response = router(state)
@@ -844,9 +963,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(claims()),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Unavailable("blocklist"),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Unavailable("blocklist"))),
         );
 
         let response = router(state)
@@ -865,9 +982,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Reject("nope"),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(false),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false))),
         );
 
         let response = router(state)
@@ -889,9 +1004,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(claims()),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Unavailable("blocklist"),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Unavailable("blocklist"))),
         );
 
         let response = router(state)
@@ -916,9 +1029,7 @@ mod tests {
                 outcome: FakeOutcome::Reject("nope"),
             }),
             // Would answer "revoked" if consulted. The failure reported is verification's.
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(true),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(true))),
         );
 
         let response = router(state)
@@ -946,9 +1057,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(unverified),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(false),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false))),
         );
 
         let response = router(state)
@@ -983,9 +1092,7 @@ mod tests {
             Arc::new(FakeVerifier {
                 outcome: FakeOutcome::Allow(unverified),
             }),
-            Arc::new(FakeBlocklist {
-                outcome: FakeOutcome::Allow(false),
-            }),
+            Arc::new(FakeBlocklist::new(FakeOutcome::Allow(false))),
         );
 
         let response = router(state)

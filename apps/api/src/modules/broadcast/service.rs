@@ -1000,7 +1000,11 @@ impl BroadcastService {
         if row.creator_id == user_id {
             return Ok(ParticipantRole::Host);
         }
-        Ok(role_in(row, &self.repo.list_cohosts(row.id).await?, user_id))
+        Ok(role_in(
+            row,
+            &self.repo.list_cohosts(row.id).await?,
+            user_id,
+        ))
     }
 
     /// The caller's view of a broadcast, or `None` when they are not a live account.
@@ -1085,9 +1089,12 @@ impl BroadcastService {
         actor: Uuid,
     ) {
         let mut recipients = Vec::with_capacity(1 + cohosts.len());
-        for id in std::iter::once(row.creator_id)
-            .chain(cohosts.iter().filter(|c| c.is_current()).map(|c| c.cohost_id))
-        {
+        for id in std::iter::once(row.creator_id).chain(
+            cohosts
+                .iter()
+                .filter(|c| c.is_current())
+                .map(|c| c.cohost_id),
+        ) {
             if id != actor && !recipients.contains(&id) {
                 recipients.push(id);
             }
@@ -1161,11 +1168,7 @@ fn require_creator(broadcast: &Broadcast, actor: &UserSummary) -> Result<(), Men
 /// Split out from [`BroadcastService::role_for`] so the flows that need the cohost list
 /// for a second reason — join and leave, which also address the roster announcement —
 /// compute the role from the list they already have instead of reading it twice.
-fn role_in(
-    broadcast: &Broadcast,
-    cohosts: &[BroadcastCohost],
-    user_id: Uuid,
-) -> ParticipantRole {
+fn role_in(broadcast: &Broadcast, cohosts: &[BroadcastCohost], user_id: Uuid) -> ParticipantRole {
     if broadcast.creator_id == user_id {
         return ParticipantRole::Host;
     }

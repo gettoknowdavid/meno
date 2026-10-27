@@ -18,6 +18,7 @@ use meno_core::Error as MenoError;
 use uuid::Uuid;
 
 use super::AuthCache;
+use crate::middleware::auth::TokenBlocklist;
 use crate::modules::auth::error;
 
 /// A blocklist backed by `HashMap`s.
@@ -113,5 +114,18 @@ impl AuthCache for InMemoryAuthCache {
         // a conversion -- and a conversion is where a units bug hides.
         let issued_at = issued_at.max(0);
         Ok(issued_at <= marked_at)
+    }
+}
+
+/// The guard's view of this cache, so a router test exercises the real middleware
+/// against the same in-memory marker the services write.
+#[async_trait]
+impl TokenBlocklist for InMemoryAuthCache {
+    async fn is_revoked(&self, jti: Uuid, _expires_at: i64) -> Result<bool, MenoError> {
+        AuthCache::is_token_blocked(self, jti).await
+    }
+
+    async fn is_user_revoked(&self, user_id: Uuid, issued_at: i64) -> Result<bool, MenoError> {
+        AuthCache::is_user_tokens_blocked(self, user_id, issued_at).await
     }
 }

@@ -30,6 +30,7 @@ use super::AuthCache;
 use super::BLOCKLIST_PREFIX;
 use crate::infrastructure::redis::Redis;
 use crate::infrastructure::redis::keys::{RedisKey, ttl};
+use crate::middleware::auth::TokenBlocklist;
 
 /// The value stored under a blocked `jti`.
 ///
@@ -185,6 +186,22 @@ impl AuthCache for RedisAuthCache {
             .map_err(|e| unavailable("is_user_tokens_blocked", e))?;
 
         Ok(marker.is_some_and(|marked_at| issued_at <= marked_at))
+    }
+}
+
+/// The guard's view of this cache.
+///
+/// Both methods delegate to the [`AuthCache`] implementation above, so a token revoked
+/// by logout and a token the middleware reads are the same entry, written by the same
+/// code, with the same key and TTL.
+#[async_trait]
+impl TokenBlocklist for RedisAuthCache {
+    async fn is_revoked(&self, jti: Uuid, _expires_at: i64) -> Result<bool, MenoError> {
+        AuthCache::is_token_blocked(self, jti).await
+    }
+
+    async fn is_user_revoked(&self, user_id: Uuid, issued_at: i64) -> Result<bool, MenoError> {
+        AuthCache::is_user_tokens_blocked(self, user_id, issued_at).await
     }
 }
 

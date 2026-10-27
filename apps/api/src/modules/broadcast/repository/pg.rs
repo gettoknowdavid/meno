@@ -711,10 +711,7 @@ mod tests {
         }
         // `none` is not a value the column allows, and there is no variant for it any
         // more: a broadcast that has not ended stores NULL.
-        assert!(!matches!(
-            EndReason::from_wire("none"),
-            Some(_)
-        ));
+        assert!(!matches!(EndReason::from_wire("none"), Some(_)));
     }
 
     /// Every placeholder in every template is one of the four `const`s.

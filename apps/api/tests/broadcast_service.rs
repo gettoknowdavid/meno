@@ -1269,7 +1269,10 @@ async fn ending_announces_the_ending_and_the_home_change() {
         .await
         .expect("join");
     // The listener is still in the room as far as the media server knows.
-    media.set_room_participants(created.id, &[user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id]);
+    media.set_room_participants(
+        created.id,
+        &[user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id],
+    );
 
     svc.end(created.id, &user(1, "Ada Lovelace"))
         .await
@@ -1288,7 +1291,11 @@ async fn ending_announces_the_ending_and_the_home_change() {
         [user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id]
     );
 
-    assert_eq!(events.home_invalidations(), 2, "one for go live, one for the end");
+    assert_eq!(
+        events.home_invalidations(),
+        2,
+        "one for go live, one for the end"
+    );
 }
 
 #[tokio::test]

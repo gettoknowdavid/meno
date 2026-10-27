@@ -197,7 +197,7 @@ async fn a_mailed_code_still_verifies_even_though_storage_holds_a_digest() {
 #[tokio::test]
 async fn a_reset_code_is_also_stored_as_a_digest() {
     // The reset flow is the higher-value target: the code authorises a password change,
-    // and `forgot_password` ends every session when it succeeds.
+    // and a completed `reset_password` ends every session.
     let h = harness();
     registered(&h).await;
 
@@ -388,9 +388,9 @@ async fn resend_and_forgot_password_answer_the_same_way_for_an_unknown_address()
 }
 
 #[tokio::test]
-async fn a_password_reset_request_ends_every_session() {
-    // The requester may not be the owner; leaving the old devices signed in would defeat
-    // the point of resetting.
+async fn a_password_reset_request_leaves_every_session_alone() {
+    // The requester may not be the owner, so a request is not proof of ownership and must
+    // not be able to sign the account out. Step 67 moves revocation to a completed reset.
     let h = harness();
     let (user, _) = registered(&h).await;
     second_device(&h, &user).await;
@@ -403,12 +403,12 @@ async fn a_password_reset_request_ends_every_session() {
         .expect("requesting a reset");
 
     assert!(
-        h.repo
+        !h.repo
             .list_sessions(user.id)
             .await
             .expect("listing")
             .is_empty(),
-        "a reset request ends every session"
+        "a reset request must not end any session"
     );
     assert_eq!(
         h.mailer.last().expect("sent").kind,

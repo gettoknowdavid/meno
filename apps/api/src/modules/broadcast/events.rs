@@ -368,20 +368,22 @@ pub mod recording {
         }
 
         async fn broadcast_created(&self, broadcast: &BroadcastResponse, recipients: &[Uuid]) {
-            self.lock().push(RecordingEvent::BroadcastCreated(AnnouncedCreated {
-                // A response that cannot serialise is a bug in the response type, and
-                // failing the test that announced it is the loudest way to find out.
-                broadcast: serde_json::to_value(broadcast).unwrap_or_default(),
-                recipients: recipients.to_vec(),
-            }));
+            self.lock()
+                .push(RecordingEvent::BroadcastCreated(AnnouncedCreated {
+                    // A response that cannot serialise is a bug in the response type, and
+                    // failing the test that announced it is the loudest way to find out.
+                    broadcast: serde_json::to_value(broadcast).unwrap_or_default(),
+                    recipients: recipients.to_vec(),
+                }));
         }
 
         async fn participant_changed(&self, change: &ParticipantChange, recipients: &[Uuid]) {
-            self.lock()
-                .push(RecordingEvent::ParticipantChanged(AnnouncedParticipantChanged {
+            self.lock().push(RecordingEvent::ParticipantChanged(
+                AnnouncedParticipantChanged {
                     change: change.clone(),
                     recipients: recipients.to_vec(),
-                }));
+                },
+            ));
         }
 
         async fn home_invalidated(&self) {
