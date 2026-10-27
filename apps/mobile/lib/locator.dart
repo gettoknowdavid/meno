@@ -137,6 +137,13 @@ void _registerAuth() {
       di<AuthManager>(),
       logger: di<MenoLogger>(),
       register: _registerAccountScope,
+      // The live tier is fenced before the account scope is popped: new opens
+      // refused, the in-flight one drained and closed. Resolved lazily, since
+      // the live manager exists only while an account is scoped.
+      beginLiveExit: () async {
+        if (!di.isRegistered<LiveScopeManager>()) return;
+        await di<LiveScopeManager>().beginAccountExit();
+      },
     ).init(),
     dependsOn: [AuthManager, LocalStorage],
     dispose: (manager) => manager.onDispose(),
@@ -239,7 +246,9 @@ Future<void> _registerAccountScope(
   );
 
   scope.registerLazySingleton<ProfileCacheService>(
-    () => ProfileCacheService(di<LocalStorage>()),
+    // Viewer-bound: every cached profile is keyed by who is looking, so two
+    // accounts never share what they saw of the same subject.
+    () => ProfileCacheService(di<LocalStorage>(), viewerId: credential.userId),
   );
 
   scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);

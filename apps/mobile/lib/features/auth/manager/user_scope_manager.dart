@@ -37,11 +37,22 @@ typedef AccountScopeRegistrar = FutureOr<void> Function(
 /// from a clean stack.
 final class UserScopeManager implements Disposable {
   /// Creates a manager that follows [_auth].
-  new(this._auth, {required this._logger, this._register});
+  ///
+  /// [_beginLiveExit] runs immediately before the account scope is popped. It
+  /// is handed in rather than resolved here so this manager keeps no import
+  /// of the live tier it only needs to *begin the exit of*; the locator wires
+  /// it to the live manager's `beginAccountExit`.
+  new(this._auth, {required this._logger, this._register, this._beginLiveExit});
 
   final AuthManager _auth;
   final MenoLogger _logger;
   final AccountScopeRegistrar? _register;
+
+  /// Drains and closes the live tier before the account scope comes down, or
+  /// null when this build has no live tier.
+  ///
+  /// Throws when the drain cannot finish, which blocks the transition.
+  final Future<void> Function()? _beginLiveExit;
 
   ListenableSubscription? _subscription;
   Future<void> _queue = Future<void>.value();
@@ -109,10 +120,24 @@ final class UserScopeManager implements Disposable {
       return;
     }
 
+    // The live tier is drained before anything is popped. A drain that cannot
+    // finish blocks the transition outright: the old account keeps its scope
+    // and the new one is not scoped, because two accounts must never overlap.
     try {
       await _popScope();
-      if (userId == null) return;
+    } on Object catch (error, stackTrace) {
+      _logger.e(
+        'Blocked the account transition: the live session could not be closed',
+        tag: MenoLogTag.di.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return;
+    }
 
+    if (userId == null) return;
+
+    try {
       await di.pushNewScopeAsync(
         scopeName: Scope.authenticated,
         init: (scope) async {
@@ -126,7 +151,7 @@ final class UserScopeManager implements Disposable {
       // thing left to put right is this manager's own idea of what is scoped.
       _scopedUserId = null;
       _logger.w(
-        'Could not scope the account ${userId?.orEmpty}',
+        'Could not scope the account ${userId.orEmpty}',
         tag: MenoLogTag.di.label,
         error: error,
         stackTrace: stackTrace,
@@ -136,10 +161,19 @@ final class UserScopeManager implements Disposable {
 
   /// Pops the account scope, if one is open — and with it anything that was
   /// pushed on top of the account, such as a live broadcast's session.
+  ///
+  /// The live tier is fenced first: [_beginLiveExit] refuses new opens, drains
+  /// the one in flight and closes it. If it cannot, the exception leaves this
+  /// method before the pop — the transition stays blocked and the account
+  /// scope stays open, because two accounts must never overlap (H02).
   Future<void> _popScope() async {
+    if (di.hasScope(Scope.authenticated)) {
+      await _beginLiveExit?.call();
+      _scopedUserId = null;
+      await di.popScopesTill(Scope.root, inclusive: false);
+      return;
+    }
     _scopedUserId = null;
-    if (!di.hasScope(Scope.authenticated)) return;
-    await di.popScopesTill(Scope.root, inclusive: false);
   }
 
   /// Hands the scope the account's refreshed credential.

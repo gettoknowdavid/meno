@@ -3,7 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/_shared/services/secure_storage.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
 /// Where the accounts signed in on this device live.

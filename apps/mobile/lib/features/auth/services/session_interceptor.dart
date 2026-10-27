@@ -8,6 +8,7 @@ import 'package:flutter/services.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/auth/services/session_store.dart';
 
 /// Decides what credential each request travels with, and never changes that
 /// decision once the request is in flight.

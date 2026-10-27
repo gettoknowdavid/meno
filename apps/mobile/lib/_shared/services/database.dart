@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_rows.dart';
 import 'package:meno_mobile/objectbox.g.dart';
@@ -21,6 +22,14 @@ final class Database implements Disposable {
     _draftBox = _store.box<BroadcastDraftRow>();
     _favouriteBroadcastBox = _store.box<FavouriteBroadcastRow>();
   }
+
+  /// Opens a database over an already-open [store].
+  ///
+  /// The app opens its store in the documents directory; a test opens one in
+  /// memory and hands it here, so the services under test use the same
+  /// [Database] type instead of a second, test-only one.
+  @visibleForTesting
+  factory fromStore(Store store) => ._(store);
 
   final Store _store;
 

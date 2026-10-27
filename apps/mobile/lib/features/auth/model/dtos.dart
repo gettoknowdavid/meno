@@ -5,6 +5,7 @@ import 'package:meno_mobile/_core/value_objects/id.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 import 'package:meno_mobile/features/auth/model/credential_record.dart';
 import 'package:meno_mobile/features/auth/model/entities.dart';
+import 'package:meno_mobile/features/auth/model/session.dart';
 import 'package:uuid/uuid.dart';
 
 part 'dtos.freezed.dart';

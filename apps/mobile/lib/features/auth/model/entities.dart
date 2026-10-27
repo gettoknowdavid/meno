@@ -1,6 +1,7 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:meno_mobile/_core/value_objects/_value_objects.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
+import 'package:meno_mobile/features/auth/model/session.dart';
 
 part 'entities.freezed.dart';
 

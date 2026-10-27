@@ -93,6 +93,11 @@ final class MenoErrorCode {
   // reporting it as "no connection" hides what happened.
   static const String insecureConnection = 'INSECURE_CONNECTION';
 
+  // Client-side only: a local object belongs to another account, so reading or
+  // writing it was refused (M05). Typed rather than an empty result: a foreign
+  // row is a bug or an attack, not a cache miss.
+  static const String ownerViolation = 'OWNER_VIOLATION';
+
   // Client-side only, transport: raised when reaching the server failed rather
   // than the server answering badly, so there is no wire code to mirror and
   // [timeout], [network], [invalidToken] and [unknown] are reused wherever they
@@ -426,6 +431,16 @@ final class RedirectNotAllowedException extends MenoException {
     super.code = MenoErrorCode.redirectNotAllowed,
     super.statusCode,
     super.requestId,
+    super.cause,
+  });
+}
+
+/// A local object belongs to another account.
+final class OwnerViolationException extends MenoException {
+  /// Creates an ownership refusal.
+  const new({
+    super.message = 'That item belongs to another account.',
+    super.code = MenoErrorCode.ownerViolation,
     super.cause,
   });
 }

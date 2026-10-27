@@ -7,6 +7,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/session_interceptor.dart';
+import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../../_support/fake_clock.dart';

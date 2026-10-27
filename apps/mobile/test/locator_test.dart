@@ -8,6 +8,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';

@@ -6,6 +6,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
+import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../../_support/stub_api.dart';

@@ -58,6 +58,7 @@ final class LiveScopeManager implements Disposable {
     required this._http,
     required this._endedBroadcasts,
     this._register,
+    this._exitDrainTimeout = const Duration(seconds: 10),
   });
 
   final Id _userId;
@@ -76,6 +77,22 @@ final class LiveScopeManager implements Disposable {
   StreamSubscription<EndedBroadcast>? _endedSubscription;
 
   bool _disposed = false;
+
+  /// Whether new opens may still be admitted.
+  ///
+  /// Flipped to false by [beginAccountExit] at the instant an account
+  /// transition starts, so a late `_open` — from a recovery, a deep link, a
+  /// socket event — can never push a scope onto a stack that is being popped.
+  /// Checked before anything is pushed and again after every await inside
+  /// [start]'s work; [beginAccountExit] drains whatever is already in flight.
+  bool _acceptingEntries = true;
+
+  /// How long an account transition waits for an in-flight open before giving
+  /// up. The transition stays blocked rather than overlapping two accounts.
+  ///
+  /// A parameter only so a test can prove the blocked case without waiting the
+  /// real ten seconds; production always takes the default.
+  final Duration _exitDrainTimeout;
 
   final ValueNotifier<Id?> _broadcastId = ValueNotifier(null);
 
@@ -159,6 +176,35 @@ final class LiveScopeManager implements Disposable {
   /// Closes the session, or the one [broadcastId] names.
   Future<void> end([Id? broadcastId]) => _enqueue(() => _close(broadcastId));
 
+  /// Refuses new opens from this instant, drains what is open, and closes it.
+  ///
+  /// Called by the account scope's owner immediately before the account scope
+  /// is popped, so nothing live can outlive its account (H02):
+  ///
+  /// * the flag goes down first, so a queued open is cancelled rather than
+  ///   pushed onto a stack that is about to disappear;
+  /// * everything already queued or in flight is awaited (bounded) — a
+  ///   cancelled open may still have created a transport, and whatever it
+  ///   created must be closed, not abandoned;
+  /// * a drain that outlives [beginAccountExit]'s deadline **throws**, which
+  ///   keeps the transition blocked: two accounts must never overlap, even
+  ///   when an open refuses to finish.
+  Future<void> beginAccountExit() async {
+    _acceptingEntries = false;
+
+    try {
+      await _queue.timeout(_exitDrainTimeout);
+    } on TimeoutException {
+      throw const RequestTimeoutException(
+        message: 'A live session could not be closed in time.',
+      );
+    }
+
+    // Whatever the drain left behind — a cancelled open that still built its
+    // scope — is closed here. A cancelled open is not a closed one.
+    await _close();
+  }
+
   @override
   FutureOr<dynamic> onDispose() async {
     _disposed = true;
@@ -194,9 +240,9 @@ final class LiveScopeManager implements Disposable {
   /// next launch can try again; a refusal that says the room is over drops it.
   Future<void> _recover() async {
     final stored = _store.read();
-    if (stored == null || stored.isEmpty) return;
+    if (stored == null) return;
 
-    final broadcastId = stored.broadcast.id;
+    final broadcastId = stored.broadcastId;
 
     try {
       final broadcast = await _http.getBroadcast(broadcastId);
@@ -216,6 +262,12 @@ final class LiveScopeManager implements Disposable {
 
       _logger.i('Recovering the live session for ${broadcastId.orEmpty}');
       await start(broadcastId, session: resumed);
+
+      // The account may have started leaving while the API was answering. The
+      // open was then refused (and its refusal swallowed by `_enqueue`), so
+      // there is no room to walk into: advertising one here would navigate
+      // into a scope that was never pushed.
+      if (!_acceptingEntries) return;
 
       // And now the part that was missing: the room is open, and the app
       // has to walk into it. The root shell navigates on this; the
@@ -291,6 +343,9 @@ final class LiveScopeManager implements Disposable {
       error,
       stackTrace,
     ) {
+      // A cancelled open is the fence working, not a failure to report: the
+      // account it belonged to is already leaving.
+      if (error is CancelledException) return;
       _logger.w(
         'Could not change the live scope',
         tag: MenoLogTag.di.label,
@@ -312,11 +367,16 @@ final class LiveScopeManager implements Disposable {
   /// would land in whatever scope happens to be current rather than this
   /// room's.
   Future<void> _open(Id broadcastId, BroadcastSession? broadcast) async {
+    // Admission is checked before anything is pushed: an open queued behind
+    // an account exit must not resurrect the tier it is leaving behind.
+    if (!_acceptingEntries) throw const CancelledException();
+
     if (_broadcastId.value == broadcastId) {
       if (broadcast == null || _hasSession) return;
     }
 
     await _close();
+    if (!_acceptingEntries) throw const CancelledException();
 
     final live = LiveSession(broadcastId: broadcastId, userId: _userId);
     await di.pushNewScopeAsync(
@@ -332,6 +392,16 @@ final class LiveScopeManager implements Disposable {
         await _register?.call(scope, live);
       },
     );
+
+    // The exit may have begun while that scope was being built. Closing what
+    // was just created here keeps the drain in `beginAccountExit` from ever
+    // finding a half-open session — and stops the remember/assign below from
+    // advertising a room that is already on its way out.
+    if (!_acceptingEntries) {
+      await _drop(Scope.liveFor(broadcastId));
+      throw const CancelledException();
+    }
+
     _hasSession = broadcast != null;
     _broadcastId.value = broadcastId;
 

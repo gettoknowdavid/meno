@@ -27,23 +27,55 @@ final class BroadcastLocalService {
         .toList();
   }
 
-  /// The draft with [draftId], or null.
-  BroadcastDraft? draft(core.Id draftId) {
-    return _findDraft(draftId.getOrCrash)?.toDomain(logger: _logger);
+  /// The draft with [draftId] as [ownerId] knows it, or null.
+  ///
+  /// A row owned by another account is not a miss and not a result: it is an
+  /// [core.OwnerViolationException] (M05), because silently returning null
+  /// would hide that foreign data is reachable at all.
+  BroadcastDraft? draft({required core.Id draftId, required core.Id ownerId}) {
+    final row = _findDraft(draftId.getOrCrash);
+    if (row == null) return null;
+    _requireOwner(row.ownerId, ownerId);
+    return row.toDomain(logger: _logger);
   }
 
   /// Stores [draft], replacing the stored copy of the same draft.
-  Future<void> saveDraft(BroadcastDraft draft) async {
+  ///
+  /// [ownerId] is required: the write either lands under the caller's own id or
+  /// is refused. An existing row's owner is never rewritten — a draft that
+  /// somehow became another account's is rejected rather than quietly
+  /// re-owned.
+  Future<void> saveDraft(
+    BroadcastDraft draft, {
+    required core.Id ownerId,
+  }) async {
+    // A draft that already names a different owner is foreign input.
+    if (draft.ownerId.isValid && draft.ownerId != ownerId) {
+      throw const core.OwnerViolationException();
+    }
+
     final stored = _findDraft(draft.id.getOrCrash);
-    final row = draft.copyWith(lastModified: DateTime.now()).toRow;
+    if (stored != null) _requireOwner(stored.ownerId, ownerId);
+
+    final row = draft
+        .copyWith(ownerId: ownerId, lastModified: DateTime.now())
+        .toRow;
     if (stored != null) row.id = stored.id;
     await _database.draftBox.putAsync(row);
   }
 
   /// Forgets the draft with [draftId].
-  Future<void> deleteDraft(core.Id draftId) async {
+  ///
+  /// A foreign row is rejected rather than deleted: "not mine" must never be
+  /// able to destroy anything.
+  Future<void> deleteDraft({
+    required core.Id draftId,
+    required core.Id ownerId,
+  }) async {
     final stored = _findDraft(draftId.getOrCrash);
-    if (stored != null) await _database.draftBox.removeAsync(stored.id);
+    if (stored == null) return;
+    _requireOwner(stored.ownerId, ownerId);
+    await _database.draftBox.removeAsync(stored.id);
   }
 
   /// Whether [ownerId] keeps [broadcastId] for later.
@@ -102,6 +134,16 @@ final class BroadcastLocalService {
         .query(BroadcastDraftRow_.draftId.equals(draftId))
         .build()
         .findFirst();
+  }
+
+  /// Throws unless [storedOwnerId] is [requestedOwner].
+  void _requireOwner(String storedOwnerId, core.Id requestedOwner) {
+    if (storedOwnerId == requestedOwner.getOrCrash) return;
+    _logger.w(
+      'Refused a draft owned by another account',
+      tag: core.MenoLogTag.di.label,
+    );
+    throw const core.OwnerViolationException();
   }
 
   QueryBuilder<FavouriteBroadcastRow> _query({

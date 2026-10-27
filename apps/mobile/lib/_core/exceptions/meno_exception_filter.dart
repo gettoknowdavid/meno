@@ -33,6 +33,10 @@ ErrorReaction menoExceptionFilter(Object error, StackTrace stackTrace) {
   return switch (error) {
     CancelledException() => .none,
     ValidationException() => .localHandler,
+    // A local object that belongs to another account (M05): the caller asked
+    // for something that is not theirs, so the refusal is shown where it
+    // happened instead of only in the log.
+    OwnerViolationException() => .firstLocalThenGlobalHandler,
     UnauthenticatedException() =>
       error.code == MenoErrorCode.invalidCredentials
           ? .localHandler

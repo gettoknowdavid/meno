@@ -17,6 +17,5 @@ export 'services/permissions_service.dart';
 export 'services/push_notifications_service.dart';
 export 'services/room_transport.dart';
 export 'services/secure_storage.dart';
-export 'services/session_store.dart';
 export 'services/socket_client.dart';
 export 'widgets/_widgets.dart';

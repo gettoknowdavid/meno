@@ -90,7 +90,10 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
         // The draft the host created this broadcast from has become a real
         // broadcast; keeping it would offer to resume a creation that is done.
         if (isHost.value) {
-          await _local.deleteDraft(broadcast.value.id);
+          await _local.deleteDraft(
+            draftId: broadcast.value.id,
+            ownerId: _session.userId,
+          );
         }
       },
       errorFilterFn: menoExceptionFilter,
