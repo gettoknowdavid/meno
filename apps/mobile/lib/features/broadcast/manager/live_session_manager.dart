@@ -36,6 +36,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     required this._room,
     required this._live,
     required this._logger,
+    this._clock = const SystemClock(),
   }) {
     setupConfigs = .createSyncNoParamNoResult(
       () {
@@ -49,17 +50,22 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
         // which is what reset the timer to zero after a recovery and left a
         // late listener at zero too.
         final startedAt =
-            broadcast.value.startTime ?? broadcast.value.publishedAt;
+            broadcast.value.startTime ??
+            broadcast.value.publishedAt ??
+            _session.timestamp;
+        final sinceStart = startedAt == null
+            ? Duration.zero
+            : _clock.nowUtc().difference(startedAt);
+        // The initial elapsed is handed to the timer rather than applied after
+        // construction, so the frame that opens on this room already shows the
+        // right time and a late listener still sees the broadcast's own clock.
         timer = BroadcastTimerManager(
-          broadcastStartTime: startedAt ?? _session.timestamp ?? DateTime.now(),
-          initialElapsed: startedAt == null
-              ? null
-              : DateTime.now().difference(startedAt),
+          clock: _clock,
           logger: _logger,
+          initialElapsed: sinceStart < Duration.zero
+              ? Duration.zero
+              : sinceStart,
         );
-        // Sets `elapsed` now rather than on the first tick a second later, so
-        // the frame that opens on this room already shows the right time.
-        timer.initialize.run();
 
         _setupListeners();
       },
@@ -109,7 +115,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
             : const LiveSessionState.streaming();
         status.value = LiveStatus.live;
         _reconnectionAttempts = 0;
-        timer.start.run();
+        timer.start();
 
         // The live scope's registrations are done; anything waiting on
         // `allReady`— the transition page, the router — may proceed.
@@ -124,7 +130,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
         if (_isLeaving.value) return;
         _isLeaving.value = true;
         status.value = LiveStatus.disconnecting;
-        timer.stop.run();
+        timer.stop();
 
         try {
           if (isHost.value) {
@@ -186,6 +192,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
   final RoomTransport _room;
   final LiveScopeManager _live;
   final MenoLogger _logger;
+  final Clock _clock;
 
   static const int _maxReconnectionAttempts = 5;
 
@@ -315,18 +322,18 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
         status.value = LiveStatus.live;
         _reconnectionAttempts = 0;
         _reconnectionTimer?.cancel();
-        if (!timer.isRunning.value) timer.resume.run();
+        if (!timer.isRunning.value) timer.resume();
 
       case RoomConnectionState.connecting:
         status.value = LiveStatus.connecting;
 
       case RoomConnectionState.reconnecting:
         status.value = LiveStatus.reconnecting;
-        if (timer.isRunning.value) timer.pause.run();
+        if (timer.isRunning.value) timer.pause();
 
       case RoomConnectionState.disconnected:
         status.value = LiveStatus.disconnected;
-        if (timer.isRunning.value) timer.pause.run();
+        if (timer.isRunning.value) timer.pause();
 
         // An ending session disconnects on purpose; retrying it would put the
         // client back in a room it just left.
@@ -345,7 +352,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
       _logger.i('The host came back');
       status.value = LiveStatus.live;
       state.value = const LiveSessionState.streaming();
-      if (!timer.isRunning.value) timer.resume.run();
+      if (!timer.isRunning.value) timer.resume();
       return;
     }
 
@@ -353,7 +360,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     _logger.w('The host dropped out of the room');
     status.value = LiveStatus.hostDisconnected;
     state.value = const LiveSessionState.hostDisconnected();
-    if (timer.isRunning.value) timer.pause.run();
+    if (timer.isRunning.value) timer.pause();
   }
 
   /// The broadcast ended: stop drawing the room, then ask the API what ended.
@@ -366,7 +373,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     if (ended.broadcastId != broadcast.value.id) return;
 
     _logger.i('The broadcast ended');
-    timer.stop.run();
+    timer.stop();
     state.value = const LiveSessionState.ended();
     status.value = LiveStatus.offAir;
 
@@ -414,7 +421,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
         'Connection lost. Please start again.',
       );
       status.value = LiveStatus.offAir;
-      timer.stop.run();
+      timer.stop();
       return;
     }
 

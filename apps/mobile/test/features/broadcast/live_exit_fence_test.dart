@@ -51,7 +51,7 @@ void main() {
 
   late LocalStorage storage;
   late LiveSessionStore liveStore;
-  late StreamController<EndedBroadcast> ended;
+  late StreamController<EndedSignal> ended;
   late StubApi api;
 
   setUp(() async {
@@ -61,7 +61,7 @@ void main() {
 
     storage = LocalStorage(await SharedPreferences.getInstance());
     liveStore = LiveSessionStore(storage, userId: Id.fromString(_jim));
-    ended = StreamController<EndedBroadcast>.broadcast();
+    ended = StreamController<EndedSignal>.broadcast();
     api = StubApi();
   });
 

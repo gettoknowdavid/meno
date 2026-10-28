@@ -5,13 +5,27 @@ final class FakeClock implements Clock {
   new(DateTime start) : _now = start.toUtc();
 
   DateTime _now;
+  Duration _monotonic = Duration.zero;
 
   @override
   DateTime nowUtc() => _now;
 
-  /// Moves the clock forward by [by].
-  void advance(Duration by) => _now = _now.add(by);
+  @override
+  Duration monotonic() => _monotonic;
 
-  /// Jumps to [at].
+  /// Moves both readings forward by [by].
+  void advance(Duration by) {
+    _now = _now.add(by);
+    _monotonic += by;
+  }
+
+  /// Jumps the wall clock by [by] and leaves the monotonic reading alone.
+  ///
+  /// What a device does when it syncs or corrects its time: [nowUtc] changes,
+  /// [monotonic] does not — which is exactly the case a broadcast clock must
+  /// ignore.
+  void jumpWallClock(Duration by) => _now = _now.add(by);
+
+  /// Jumps to [at], leaving the monotonic reading alone.
   void set(DateTime at) => _now = at.toUtc();
 }

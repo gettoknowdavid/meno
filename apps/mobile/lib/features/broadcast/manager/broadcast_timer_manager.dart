@@ -6,33 +6,59 @@ import 'package:meno_mobile/_core/_core.dart';
 
 /// How long a broadcast has been on air.
 ///
-/// The clock is derived rather than accumulated: every tick recomputes
-/// `now - start - paused`, so a suspended app, a missed tick or a device clock
-/// change cannot make the timer drift the way counting seconds can. Pausing is
-/// what the interruption cases need — a dropped connection, an incoming call —
-/// and the time spent paused is subtracted rather than forgotten, so it also
-/// answers how reliable the broadcast was.
+/// # Why a monotonic anchor
+///
+/// The elapsed time is measured against [Clock.monotonic], never against the
+/// wall clock. A device that corrects its time zone or syncs its clock mid
+/// broadcast moves `now - startedAt` by hours; a monotonic reading only ever
+/// moves forward at one second per second, so the clock on screen cannot jump
+/// (audit L03). The API's own elapsed is applied once, by [reconcile], and from
+/// then on the local anchor is the truth.
+///
+/// # Why plain methods
+///
+/// Starting, pausing and stopping the clock are orchestration inside a session,
+/// not user actions, so they are methods rather than commands (audit M21).
+/// Nothing here reports a failure or waits to be watched — a `Command` per
+/// method only added a result nobody read.
+///
+/// The notifier is updated at most once a second: the ticker runs more often so
+/// pausing and resuming do not lose a fraction, but a frame is only rebuilt
+/// when the displayed second actually changes (audit L01's granularity).
 final class BroadcastTimerManager implements Disposable {
   new({
-    required this._broadcastStartTime,
+    required this._clock,
     required this._logger,
-    Duration? initialElapsed,
-  }) : _initialElapsed = initialElapsed ?? Duration.zero {
-    initialize = .createSyncNoParamNoResult(_initialize);
-    start = .createSyncNoParamNoResult(_start);
-    pause = .createSyncNoParamNoResult(_pause);
-    resume = .createSyncNoParamNoResult(_resume);
-    stop = .createSyncNoParamNoResult(_stop);
-    reset = .createSyncNoParamNoResult(_reset);
+    Duration initialElapsed = Duration.zero,
+  }) : _accumulated = initialElapsed < Duration.zero
+           ? Duration.zero
+           : initialElapsed {
+    elapsed.value = _accumulated;
   }
 
-  final DateTime _broadcastStartTime;
-  final Duration _initialElapsed;
+  final Clock _clock;
   final MenoLogger _logger;
 
-  Timer? _timer;
-  DateTime? _pausedAt;
+  /// Time measured before the current run, and while paused.
+  Duration _accumulated;
+
+  /// When the running stretch began, on the monotonic clock.
+  Duration? _segmentStart;
+
+  /// When the current pause began, on the monotonic clock.
+  Duration? _pausedAt;
+
   Duration _pausedTotal = Duration.zero;
+
+  bool _running = false;
+
+  /// Whether the API's elapsed has already been applied.
+  bool _reconciled = false;
+
+  Timer? _ticker;
+
+  /// The last second published, so equal ticks do not notify.
+  int _publishedSeconds = 0;
 
   /// How long the broadcast has been on air.
   final elapsed = ValueNotifier<Duration>(Duration.zero);
@@ -46,18 +72,15 @@ final class BroadcastTimerManager implements Disposable {
   /// [elapsed] as `2h ago`, `5m ago` or `9s ago`.
   late final ValueListenable<String> timeAgo = elapsed.map(_ago);
 
-  late final Command<void, void> initialize;
-  late final Command<void, void> start;
-  late final Command<void, void> pause;
-  late final Command<void, void> resume;
-  late final Command<void, void> stop;
-  late final Command<void, void> reset;
-
   /// How long the broadcast has been on air.
   Duration get currentElapsed => elapsed.value;
 
-  /// How long it was paused for in total.
-  Duration get pausedTotal => _pausedTotal;
+  /// How long it was paused for in total, including a pause in progress.
+  Duration get pausedTotal {
+    final pausedAt = _pausedAt;
+    if (pausedAt == null) return _pausedTotal;
+    return _pausedTotal + (_clock.monotonic() - pausedAt);
+  }
 
   /// [currentElapsed] as `HH:MM:SS`.
   String get formatted => _format(elapsed.value);
@@ -73,73 +96,133 @@ final class BroadcastTimerManager implements Disposable {
     return (100 - pausedShare).clamp(0, 100);
   }
 
-  @override
-  FutureOr<dynamic> onDispose() {
-    _timer?.cancel();
-    _timer = null;
+  /// Starts, or continues after a [pause].
+  void start() {
+    if (_running) return;
+    _running = true;
+    isRunning.value = true;
 
-    elapsed.dispose();
-    isRunning.dispose();
+    // A pause ends here for good: its length is kept for [qualityScore], not
+    // subtracted again by the running segment.
+    final pausedAt = _pausedAt;
+    if (pausedAt != null) {
+      _pausedTotal += _clock.monotonic() - pausedAt;
+      _pausedAt = null;
+    }
 
-    initialize.dispose();
-    start.dispose();
-    pause.dispose();
-    resume.dispose();
-    stop.dispose();
-    reset.dispose();
-  }
+    _segmentStart = _clock.monotonic();
+    _publish(force: true);
 
-  void _initialize() {
-    final sinceStart = DateTime.now().difference(_broadcastStartTime);
-    elapsed.value = sinceStart > _initialElapsed ? sinceStart : _initialElapsed;
+    _ticker ??= Timer.periodic(
+      const Duration(milliseconds: 250),
+      (_) => _tick(),
+    );
     _logger.d(
-      'Timer: starting from ${elapsed.value.inSeconds}s',
+      'Timer: running from ${elapsed.value.inSeconds}s',
       tag: MenoLogTag.lifecycle.label,
     );
   }
 
-  void _start() {
-    if (_timer?.isActive ?? false) return;
-    isRunning.value = true;
-    _pausedAt = null;
-    _timer = Timer.periodic(const Duration(seconds: 1), (_) => _tick());
-  }
-
-  void _pause() {
-    if (!isRunning.value) return;
-    _timer?.cancel();
-    _timer = null;
-    _pausedAt = DateTime.now();
+  /// Holds the clock where it is. The time is kept, not discarded: it is what
+  /// a dropped connection cost, and it is subtracted from elapsed.
+  void pause() {
+    if (!_running) return;
+    _accumulate();
+    _running = false;
     isRunning.value = false;
+    _ticker?.cancel();
+    _ticker = null;
+    _pausedAt = _clock.monotonic();
+    _publish();
   }
 
-  void _resume() {
-    if (isRunning.value) return;
+  /// Continues after a [pause].
+  void resume() => start();
+
+  /// Stops the clock without resetting what it measured.
+  void stop() {
+    if (!_running) {
+      _ticker?.cancel();
+      _ticker = null;
+      return;
+    }
+    _accumulate();
+    _running = false;
+    isRunning.value = false;
+    _ticker?.cancel();
+    _ticker = null;
+    _publish();
+  }
+
+  /// Stops and forgets everything measured.
+  void reset() {
+    _ticker?.cancel();
+    _ticker = null;
+    _segmentStart = null;
+    _accumulated = Duration.zero;
+    _pausedAt = null;
+    _pausedTotal = Duration.zero;
+    _reconciled = false;
+    _running = false;
+    isRunning.value = false;
+    _publish(force: true);
+  }
+
+  /// Moves the elapsed time to the API's own figure, once.
+  ///
+  /// Applied at most once per session: a later answer would undo the time this
+  /// device measured while the API's snapshot was in flight, and reconciliation
+  /// exists to correct the starting point, not to keep correcting it. Rebased
+  /// on the monotonic clock rather than assigned, so the run continues from the
+  /// reconciled figure without a jump on the next tick.
+  void reconcile(Duration serverElapsed) {
+    if (_reconciled) return;
+    _reconciled = true;
+
+    _accumulated = serverElapsed < Duration.zero
+        ? Duration.zero
+        : serverElapsed;
+    if (_running) {
+      _segmentStart = _clock.monotonic();
+    }
+    _publish(force: true);
+  }
+
+  void _accumulate() {
+    final segmentStart = _segmentStart;
+    if (segmentStart != null) {
+      _accumulated += _clock.monotonic() - segmentStart;
+    }
+    _segmentStart = null;
+
     final pausedAt = _pausedAt;
     if (pausedAt != null) {
-      _pausedTotal += DateTime.now().difference(pausedAt);
+      _pausedTotal += _clock.monotonic() - pausedAt;
+      _pausedAt = null;
     }
-    _start();
-  }
-
-  void _stop() {
-    _timer?.cancel();
-    _timer = null;
-    isRunning.value = false;
-  }
-
-  void _reset() {
-    _timer?.cancel();
-    _timer = null;
-    isRunning.value = false;
-    elapsed.value = Duration.zero;
-    _pausedTotal = Duration.zero;
-    _pausedAt = null;
   }
 
   void _tick() {
-    elapsed.value =
-        DateTime.now().difference(_broadcastStartTime) - _pausedTotal;
+    if (!_running) return;
+    _publish();
+  }
+
+  /// Recomputes [elapsed] now, without waiting for the next tick.
+  ///
+  /// The ticker runs on real time; this is how a session — or a test with a
+  /// clock it controls — asks for the value at a chosen instant.
+  void refresh() => _publish();
+
+  /// Publishes [elapsed] when the displayed second changed.
+  void _publish({bool force = false}) {
+    final segmentStart = _segmentStart;
+    final value = _running && segmentStart != null
+        ? _accumulated + (_clock.monotonic() - segmentStart)
+        : _accumulated;
+    final seconds = value.inSeconds;
+    if (!force && seconds == _publishedSeconds) return;
+    _publishedSeconds = seconds;
+    elapsed.value = value;
   }
 
   static String _format(Duration duration) {
@@ -153,5 +236,14 @@ final class BroadcastTimerManager implements Disposable {
     if (duration.inHours > 0) return '${duration.inHours}h ago';
     if (duration.inMinutes > 0) return '${duration.inMinutes}m ago';
     return '${duration.inSeconds}s ago';
+  }
+
+  @override
+  FutureOr<dynamic> onDispose() {
+    _ticker?.cancel();
+    _ticker = null;
+
+    elapsed.dispose();
+    isRunning.dispose();
   }
 }

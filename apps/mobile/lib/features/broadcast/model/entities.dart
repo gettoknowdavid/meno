@@ -205,7 +205,18 @@ abstract class Broadcast with _$Broadcast {
   static const Broadcast empty = Broadcast(id: .empty, title: .empty);
 
   /// Whether the viewer may publish into the room.
+  ///
+  /// Publishing is not authority over the broadcast: a cohost publishes and
+  /// still may not end it (audit §3 H08). Which of the two a control asks for
+  /// is [canPublish] versus [canEndBroadcast].
   bool get canPublish => participantRole.isHost || participantRole.isCohost;
+
+  /// Whether [accountId] may end this broadcast for everyone.
+  ///
+  /// Creator identity only — never [canPublish], which is true for a cohost
+  /// too. This is the one predicate the "End broadcast" control and the
+  /// `/end` call may consult.
+  bool canEndBroadcast(Id accountId) => isHostedBy(accountId);
 
   /// How long an ended broadcast ran, when the API stated it.
   Duration? get duration =>
