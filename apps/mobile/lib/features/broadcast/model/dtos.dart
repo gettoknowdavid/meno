@@ -103,16 +103,41 @@ abstract class CohostDto with _$CohostDto {
   factory fromJson(Map<String, dynamic> json) => _$CohostDtoFromJson(json);
 }
 
+/// Parses a timestamp the socket sent, or fails.
+///
+/// RFC3339 only: the API's contract is a text instant (`2026-10-28T09:15:00Z`),
+/// and anything else is a payload this build cannot act on. That matters
+/// because the alternative is silent — `DateTime.parse` accepts a bare date,
+/// and a `tryParse`/`catch` that fell back to `DateTime.now()` would turn a
+/// serialisation bug into a plausible-looking time (the H10 shape). An
+/// `OffsetDateTime` serialised as an array — which is what serde does without
+/// its RFC3339 adapter — therefore fails here, visibly, in a test fixture.
+DateTime parseRfc3339(Object? value) {
+  if (value is! String) {
+    throw FormatException('Expected an RFC3339 timestamp string', value);
+  }
+  if (!_rfc3339.hasMatch(value)) {
+    throw FormatException('Not an RFC3339 timestamp', value);
+  }
+  return DateTime.parse(value);
+}
+
+/// A full RFC3339 instant: date, time, optional fraction, and an offset or `Z`.
+final _rfc3339 = RegExp(
+  r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$',
+);
+
 /// The socket's `homeInvalidated` frame.
 ///
 /// The API's `EndBroadcastResponse` is the richer type: it carries the ending
 /// summary. The socket's `homeInvalidated` is a bare timestamp the client uses
 /// as a nudge, and the client decodes it through a DTO of its own so the parse
-/// path is explicit rather than conditional.
+/// path is explicit rather than conditional — [parseRfc3339], not a permissive
+/// `DateTime.parse` and never a `tryParse` that defaults to now.
 @freezed
 abstract class HomeInvalidatedDto with _$HomeInvalidatedDto {
   const factory({
-    required DateTime timestamp,
+    @JsonKey(fromJson: parseRfc3339) required DateTime timestamp,
   }) = _HomeInvalidatedDto;
 
   factory fromJson(Map<String, dynamic> json) =>

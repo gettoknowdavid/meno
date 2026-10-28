@@ -70,11 +70,11 @@ final class LiveScopeManager implements Disposable {
   ///
   /// A stream rather than the socket service: this manager has nothing to say
   /// to a room, so it is given only what it listens to.
-  final Stream<EndedBroadcast> _endedBroadcasts;
+  final Stream<EndedSignal> _endedBroadcasts;
 
   final LiveScopeRegistrar? _register;
 
-  StreamSubscription<EndedBroadcast>? _endedSubscription;
+  StreamSubscription<EndedSignal>? _endedSubscription;
 
   bool _disposed = false;
 

@@ -35,8 +35,7 @@ final class StreamManager implements Disposable {
       (broadcastId) async {
         _isRunning.value = true;
         try {
-          final joined = (await _http.join(broadcastId))
-              .toDomain(_userId);
+          final joined = (await _http.join(broadcastId)).toDomain(_userId);
           session.value = joined;
           broadcast.value = joined.broadcast;
           _logger.d(

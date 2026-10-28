@@ -24,10 +24,18 @@ final class NewBroadcastEvent extends BroadcastEvent {
 }
 
 /// A broadcast ended, in any of the ways it can.
-final class EndedBroadcastEvent extends BroadcastEvent {
-  const new({required this.ended});
+///
+/// Deliberately *only* the id and the reason. The socket's `endedBroadcast`
+/// frame carries nothing else (`WsPayload::ended_broadcast` in
+/// `apps/api/src/infrastructure/ws/dto.rs`), so a client that turned it into a
+/// full card was inventing a title, a creator and a duration it had never been
+/// sent. Whoever reacts to this asks the API for the real summary instead — see
+/// the feed's refetch and `LiveSessionManager`'s ended path.
+final class EndedSignal extends BroadcastEvent {
+  const new({required this.broadcastId, required this.reason});
 
-  final EndedBroadcast ended;
+  final Id broadcastId;
+  final EndReason reason;
 }
 
 /// The home sections the socket told this client to refetch.

@@ -186,10 +186,8 @@ final class ParticipantsManager implements Disposable {
                 ? participants
                 : participants
                       .where(
-                        (p) => p.fullName
-                            .orEmpty
-                            .toLowerCase()
-                            .contains(trimmed),
+                        (p) =>
+                            p.fullName.orEmpty.toLowerCase().contains(trimmed),
                       )
                       .toList();
 

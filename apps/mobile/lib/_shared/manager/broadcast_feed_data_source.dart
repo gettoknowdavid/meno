@@ -19,7 +19,7 @@ import 'package:meno_mobile/features/broadcast/broadcast.dart';
 /// |---------------|------------------------|---------------------------|
 /// | now live      | prepended              | removed                   |
 /// | for you       | prepended              | removed                   |
-/// | recently live | —                      | prepended (and dated)     |
+/// | recently live | —                      | refetched (real summary)  |
 /// | anything else | —                      | —                         |
 ///
 /// A socket is optional: a feed built without one is purely HTTP-backed, which
@@ -59,7 +59,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
   String? _cursor;
 
   StreamSubscription<Broadcast>? _newBroadcastSub;
-  StreamSubscription<EndedBroadcast>? _endedBroadcastSub;
+  StreamSubscription<EndedSignal>? _endedBroadcastSub;
   StreamSubscription<HomeInvalidatedDto>? _homeInvalidatedSub;
 
   /// The filters the feed is currently built from.
@@ -149,9 +149,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     // Every list is affected by a mutation it was not told about, whatever its
     // filters — including the unfiltered one, which is why this is bound above
     // the type switch rather than inside it.
-    _homeInvalidatedSub = socket.onHomeInvalidated.listen(
-      _onHomeInvalidated,
-    );
+    _homeInvalidatedSub = socket.onHomeInvalidated.listen(_onHomeInvalidated);
 
     final type = _query.type;
     if (type == null) return;
@@ -192,17 +190,24 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     addItemAtStart(broadcast);
   }
 
-  void _onEndedBroadcast(EndedBroadcast ended) {
+  void _onEndedBroadcast(EndedSignal ended) {
     final index = items.indexWhere((item) => item.id == ended.broadcastId);
     if (index == -1) return;
 
     removeObject(items[index]);
   }
 
-  void _onRecentlyEnded(EndedBroadcast event) {
-    final broadcast = event.details;
-    if (items.any((existing) => itemsAreEqual(existing, broadcast))) return;
-    addItemAtStart(broadcast);
+  /// A broadcast ended while this list was showing it.
+  ///
+  /// The signal carries an id and a reason and nothing else, so there is no
+  /// card to build from it — doing that once produced rows with an empty title
+  /// and no host (audit §3 M10). The ended broadcast reaches a recently-live
+  /// list by refetching the first page, which is also where its real summary
+  /// comes from. Guarded like the invalidation path: a burst of endings is one
+  /// refresh, not one per frame.
+  void _onRecentlyEnded(EndedSignal ended) {
+    if (updateDataCommand.isRunning.value) return;
+    updateDataCommand.run();
   }
 
   /// Convenience: update only the keyword filter and refresh.

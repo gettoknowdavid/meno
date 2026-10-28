@@ -29,7 +29,8 @@ final class FavouritesManager implements Disposable {
     );
     remove = .createAsyncNoResult<Id>(
       (broadcastId) async {
-        final stored = _local.favourites(_userId)
+        final stored = _local
+            .favourites(_userId)
             .firstWhere((favourite) => favourite.broadcastId == broadcastId);
         await _local.toggleIsFavourite(
           broadcast: Broadcast(id: stored.broadcastId, title: stored.title),

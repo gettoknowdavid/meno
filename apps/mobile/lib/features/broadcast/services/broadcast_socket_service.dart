@@ -9,7 +9,7 @@ import 'package:meno_mobile/features/broadcast/model/_model.dart';
 /// The broadcast events the socket carries.
 ///
 /// Each is exposed as a stream and decoded once here, so a manager that listens
-/// for "a broadcast ended" gets an [EndedBroadcast] rather than a map it has to
+/// for "a broadcast ended" gets an [EndedSignal] rather than a map it has to
 /// remember the keys of.
 ///
 /// # Installing is explicit
@@ -35,7 +35,7 @@ final class BroadcastSocketService implements Disposable {
   final MenoLogger _logger;
 
   final _newBroadcast = StreamController<Broadcast>.broadcast();
-  final _ended = StreamController<EndedBroadcast>.broadcast();
+  final _ended = StreamController<EndedSignal>.broadcast();
   final _homeInvalidated = StreamController<HomeInvalidatedDto>.broadcast();
   final _joined = StreamController<BroadcastParticipantEvent>.broadcast();
   final _left = StreamController<BroadcastParticipantEvent>.broadcast();
@@ -51,7 +51,10 @@ final class BroadcastSocketService implements Disposable {
   Stream<Broadcast> get onNewBroadcast => _newBroadcast.stream;
 
   /// A broadcast ended, in any of the ways it can.
-  Stream<EndedBroadcast> get onEndedBroadcast => _ended.stream;
+  ///
+  /// Carries [EndedSignal]'s id and reason and nothing else: the frame has no
+  /// summary, and fabricating one is what audit §3 M10 was.
+  Stream<EndedSignal> get onEndedBroadcast => _ended.stream;
 
   /// The home sections the socket told this client to refetch.
   Stream<HomeInvalidatedDto> get onHomeInvalidated => _homeInvalidated.stream;
@@ -180,8 +183,8 @@ final class BroadcastSocketService implements Disposable {
         return;
       case NewBroadcastEvent(:final broadcast):
         _emit(_newBroadcast, broadcast);
-      case EndedBroadcastEvent(:final ended):
-        _emit(_ended, ended);
+      case final EndedSignal event:
+        _emit(_ended, event);
       case HomeInvalidatedEvent(:final invalidation):
         _emit(_homeInvalidated, invalidation);
       case ParticipantJoinedEvent(:final participant):
@@ -209,36 +212,22 @@ final class BroadcastSocketService implements Disposable {
 
   /// A broadcast ending.
   ///
-  /// The socket's frame is the *ending*, not the whole summary: it carries
-  /// the id and the reason, which is all a client needs to stop drawing a room
-  /// and to ask the API what to show instead. It is decoded here rather than
-  /// through [EndBroadcastDto] so the two spellings the API has used for it —
-  /// the response's `broadcast_id` and the event's `broadcastId` — both land,
-  /// and a frame with no id is dropped rather than becoming an
-  /// `EndedBroadcast` that matches no room.
+  /// The socket's frame is the *ending*, not the whole summary: `{broadcastId,
+  /// reason}` and nothing more. Both spellings the API has used are accepted —
+  /// the response's `broadcast_id` and the event's `broadcastId` — and a frame
+  /// with no valid id is dropped rather than becoming a signal that matches no
+  /// room. No title, creator or duration is read here, because the frame has
+  /// none: inventing them is exactly the M10 bug.
   BroadcastEvent? _endedBroadcastEvent(dynamic data) {
     return _decode<BroadcastEvent?>(data, (json) {
       final rawId = json['broadcast_id'] ?? json['broadcastId'];
       final broadcastId = Id.fromWire(rawId as String? ?? '');
       if (!broadcastId.isValid) return null;
 
-      final rawTitle = json['broadcast_title'] ?? json['broadcastTitle'];
-
-      return EndedBroadcastEvent(
-        ended: EndedBroadcast(
-          broadcastId: broadcastId,
-          title: rawTitle is String && rawTitle.isNotEmpty
-              ? SingleLineString(rawTitle)
-              : SingleLineString.empty,
-          creatorId: Id.fromWire(
-            (json['creator_id'] ?? json['creatorId']) as String? ?? '',
-          ),
-          endedAt: DateTime.tryParse(
-            (json['ended_at'] ?? json['endedAt']) as String? ?? '',
-          ),
-          reason: EndReason.fromWire(
-            (json['ended_reason'] ?? json['reason']) as String?,
-          ),
+      return EndedSignal(
+        broadcastId: broadcastId,
+        reason: EndReason.fromWire(
+          (json['ended_reason'] ?? json['reason']) as String?,
         ),
       );
     });

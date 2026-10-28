@@ -223,7 +223,7 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
 
   StreamSubscription<RoomConnectionState>? _roomStateSubscription;
   StreamSubscription<HostConnectionEvent>? _hostConnectionSubscription;
-  StreamSubscription<EndedBroadcast>? _endedBroadcastSubscription;
+  StreamSubscription<EndedSignal>? _endedBroadcastSubscription;
 
   Timer? _reconnectionTimer;
   int _reconnectionAttempts = 0;
@@ -356,16 +356,55 @@ final class LiveSessionManager implements Disposable, WillSignalReady {
     if (timer.isRunning.value) timer.pause.run();
   }
 
-  Future<void> _handleEndedBroadcast(EndedBroadcast ended) async {
+  /// The broadcast ended: stop drawing the room, then ask the API what ended.
+  ///
+  /// The socket's frame is a signal — `{broadcastId, reason}` — not a summary.
+  /// Turning it into an [EndedBroadcast] and showing it produced a card with an
+  /// empty title and creator (audit §3 M10); the summary is fetched from REST
+  /// instead, and the page shows nothing to summarise until that answer lands.
+  Future<void> _handleEndedBroadcast(EndedSignal ended) async {
     if (ended.broadcastId != broadcast.value.id) return;
 
     _logger.i('The broadcast ended');
     timer.stop.run();
-    endedBroadcast.value = ended;
     state.value = const LiveSessionState.ended();
     status.value = LiveStatus.offAir;
 
     await _room.disconnect();
+    await _loadEndedSummary(ended);
+  }
+
+  /// Reads the real summary of the broadcast that just ended.
+  ///
+  /// [EndedSignal] carries an id and a reason, so every field the ended screen
+  /// draws — title, host, duration, participants — has to come from the API.
+  /// The reason is kept from the signal when it is a real one, because the
+  /// summary's own `endReason` can still read `none` while the write settles.
+  Future<void> _loadEndedSummary(EndedSignal ended) async {
+    try {
+      final summary = await _http.getBroadcast(ended.broadcastId);
+      endedBroadcast.value = EndedBroadcast(
+        broadcastId: summary.id,
+        title: summary.title,
+        creatorId: summary.hostId,
+        creatorName: summary.creator?.fullName ?? SingleLineString.empty,
+        endedAt: summary.endTime,
+        image: summary.image,
+        reason: ended.reason == EndReason.none
+            ? summary.endReason
+            : ended.reason,
+        duration: summary.duration ?? Duration.zero,
+        totalParticipants: summary.totalParticipants,
+        recordingEnabled: summary.recordingEnabled,
+      );
+    } on Object catch (error, stackTrace) {
+      _logger.w(
+        'Could not read the ended broadcast summary',
+        tag: MenoLogTag.network.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   /// Retries the connection with a growing delay, up to a ceiling.
