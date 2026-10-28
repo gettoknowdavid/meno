@@ -519,90 +519,35 @@ abstract class FavouriteBroadcast with _$FavouriteBroadcast {
   const new _();
 }
 
-final class LiveSessionBroadcasting extends LiveSessionState {
-  const new();
-}
+/// What an account may do in a broadcast.
+///
+/// The API spells the listening role `participant`; the screens call that
+/// person a listener, so the wire value is mapped here rather than renamed at
+/// every call site.
+enum ParticipantRole {
+  host('host'),
+  cohost('cohost'),
+  listener('participant'),
+  unknown('none');
 
-final class LiveSessionEnded extends LiveSessionState {
-  const new();
-}
+  new(this.wire);
 
-final class LiveSessionError extends LiveSessionState {
-  const new(this.message);
+  final String wire;
 
-  final String message;
-}
+  bool get isCohost => this == cohost;
 
-final class LiveSessionHostDisconnected extends LiveSessionState {
-  const new();
-}
+  bool get isHost => this == host;
 
-final class LiveSessionInitializing extends LiveSessionState {
-  const new();
-}
+  bool get isInRoom => this != unknown;
 
-/// Where a live session has got to.
-sealed class LiveSessionState {
-  const new();
+  bool get isListener => this == listener;
 
-  const factory broadcasting() = LiveSessionBroadcasting;
-
-  const factory ended() = LiveSessionEnded;
-
-  const factory error(String message) = LiveSessionError;
-
-  const factory hostDisconnected() = LiveSessionHostDisconnected;
-
-  const factory initializing() = LiveSessionInitializing;
-
-  const factory streaming() = LiveSessionStreaming;
-}
-
-final class LiveSessionStreaming extends LiveSessionState {
-  const new();
-}
-
-/// The connection status a live screen shows.
-enum LiveStatus {
-  initializing,
-  connecting,
-  live,
-  reconnecting,
-  disconnected,
-  hostDisconnected,
-  disconnecting,
-  offAir;
-
-  String get hostTitle => switch (this) {
-    .live => 'Now Live',
-    .reconnecting => 'Reconnecting',
-    _ => '',
-  };
-
-  bool get isActive => this == live;
-
-  bool get isInitializing => this == initializing || this == connecting;
-
-  bool get isNotLive => this != live && this != reconnecting;
-
-  String get label => switch (this) {
-    .initializing => 'Initializing...',
-    .connecting => 'Connecting...',
-    .live => 'Live',
-    .reconnecting => 'Reconnecting...',
-    .disconnected => 'Disconnected',
-    .hostDisconnected => 'Host disconnected',
-    .disconnecting => 'Ending...',
-    .offAir => 'Off air',
-  };
-
-  String get participantTitle => switch (this) {
-    .live => 'Now Streaming',
-    .reconnecting => 'Reconnecting',
-    _ => '',
-  };
-
-  bool get showReconnecting => this == reconnecting || this == connecting;
+  static ParticipantRole fromWire(String? wire) {
+    for (final role in ParticipantRole.values) {
+      if (role.wire == wire) return role;
+    }
+    return ParticipantRole.unknown;
+  }
 }
 
 /// An account as a broadcast sees it.
@@ -639,41 +584,4 @@ abstract class Participant with _$Participant {
   bool get isHost => role.isHost;
 
   bool get isListener => role.isListener;
-}
-
-/// What an account may do in a broadcast.
-///
-/// The API spells the listening role `participant`; the screens call that
-/// person a listener, so the wire value is mapped here rather than renamed at
-/// every call site.
-enum ParticipantRole {
-  host('host'),
-  cohost('cohost'),
-  listener('participant'),
-  unknown('none');
-
-  new(this.wire);
-
-  final String wire;
-
-  bool get isCohost => this == cohost;
-
-  bool get isHost => this == host;
-
-  bool get isInRoom => this != unknown;
-
-  bool get isListener => this == listener;
-
-  static ParticipantRole fromWire(String? wire) {
-    for (final role in ParticipantRole.values) {
-      if (role.wire == wire) return role;
-    }
-    return ParticipantRole.unknown;
-  }
-}
-
-/// The broadcast one live scope is open for.
-@freezed
-abstract class LiveSession with _$LiveSession {
-  const factory({required Id broadcastId, required Id userId}) = _LiveSession;
 }

@@ -34,7 +34,8 @@ class HomePage extends WatchingWidget {
         ),
         child: Column(
           children: <Widget>[
-            const LiveSessionBanner(),
+            // The live banner lives in the authenticated chrome now, above
+            // every tab rather than only this one.
             Spaces.verticalXLarge,
             if (isNewUser)
               const _LiveForYouSection()

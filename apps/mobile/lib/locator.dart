@@ -22,9 +22,9 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///   signs in and must survive signing out.
 /// * [Scope.authenticated] holds what belongs to one account, and is pushed and
 ///   popped by [AccountTransitionOwner] as accounts change — see
-///   [registerAccountScope] for what goes in it. A live broadcast's session is
-///   pushed on top of it by [LiveScopeManager], so signing out ends the
-///   broadcast's services along with the account's.
+///   [registerAccountScope] for what goes in it. A live broadcast is an
+///   ordinary object owned by [ActiveBroadcastManager] inside that scope, so
+///   signing out closes the room along with the account.
 ///
 /// The test for which layer something belongs in is not "does it need a
 /// session" but "is there anything sensible it could do for a device nobody is
@@ -67,7 +67,10 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
     dependsOn: [SharedPreferences],
   );
   if (httpClient != null) {
-    di.registerSingleton<HttpClient>(httpClient, dispose: (client) => client.onDispose());
+    di.registerSingleton<HttpClient>(
+      httpClient,
+      dispose: (client) => client.onDispose(),
+    );
   } else {
     di.registerLazySingleton<HttpClient>(
       () => HttpClient(
@@ -152,20 +155,19 @@ void _registerAuth() {
         activeCredential: di<AuthManager>().activeCredential,
         logger: di<MenoLogger>(),
         register: registerAccountScope,
-        // The live tier is fenced before the account scope is popped: new
-        // opens refused, the in-flight one drained and closed. Resolved
-        // lazily, since the live manager exists only while an account is
+        // The live owner is fenced before the account scope is popped: new
+        // entries refused, the in-flight one drained and the session closed.
+        // Resolved lazily, since the manager exists only while an account is
         // scoped.
         beginLiveExit: () async {
-          if (!di.isRegistered<LiveScopeManager>()) return;
-          await di<LiveScopeManager>().beginAccountExit();
+          if (!di.isRegistered<ActiveBroadcastManager>()) return;
+          await di<ActiveBroadcastManager>().closeForAccountExit();
         },
         // The owner writes the credential itself, right after the scope's
         // registrations exist — no other writer decides when an account is
         // active.
-        saveCredential: (credential) => di<SessionStore>().saveActive(
-          credential,
-        ),
+        saveCredential: (credential) =>
+            di<SessionStore>().saveActive(credential),
       );
       unawaited(owner.init());
       return owner;

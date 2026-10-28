@@ -17,13 +17,14 @@ import 'package:meno_ui/meno_ui.dart';
 /// in step is this widget's whole job — a shell that let them drift would swipe
 /// to one screen and highlight another.
 ///
-/// # Leaving
+/// # Entering and leaving
 ///
-/// A session ends for two reasons: the host ended it, or the room did. Both
-/// arrive on the manager's `state`, and both leave the client on the page that
-/// says what happened, because the room it was in no longer exists. Stepping
-/// out of the room is not this widget's business: the session lives in a scope,
-/// so changing the location only changes which screen is drawn.
+/// Visibility is the manager's [LiveSnapshot.phase], never a container lookup:
+/// the shell is drawn for every phase that still has a room (including one that
+/// failed to connect, which must be able to say so) and steps out for `idle`
+/// and `ended`. When the broadcast ends, whether by the host or by the server,
+/// the shell hands the client to the ended screen with the broadcast it
+/// retained.
 class LiveSessionShell extends WatchingStatefulWidget {
   const new _({
     required this.navigationShell,
@@ -77,28 +78,22 @@ class LiveSessionShellState extends State<LiveSessionShell>
 
   @override
   Widget build(BuildContext context) {
-    // The room can be closed under this screen: the broadcast ended — the host
-    // ended it, or the server ended it because nobody came back to it — and the
-    // scope that owned the room's services was dropped with it. Asking the
-    // container for a manager it no longer has would throw inside `build`, so
-    // the screen steps out of the way instead.
-    if (!di.isRegistered<LiveSessionManager>()) {
+    final snapshot = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
+    );
+
+    if (snapshot.phase == LivePhase.idle || snapshot.phase == LivePhase.ended) {
+      final endedId = snapshot.endedSummary?.id;
       callOnceAfterThisBuild((_) {
-        if (context.mounted) context.go(MRoutes.home);
+        if (!context.mounted) return;
+        if (endedId != null && endedId.isValid) {
+          context.go(MRoutes.endedBroadcastRoute(endedId));
+        } else {
+          context.go(MRoutes.home);
+        }
       });
       return const SizedBox.shrink();
     }
-
-    final manager = di<LiveSessionManager>();
-
-    registerHandler<LiveSessionManager, LiveSessionState>(
-      select: (manager) => manager.state,
-      handler: (context, state, _) {
-        if (state is LiveSessionEnded) {
-          context.go(MRoutes.endedBroadcastRoute(manager.broadcast.value.id));
-        }
-      },
-    );
 
     return PopScope(
       onPopInvokedWithResult: (_, _) => context.go(MRoutes.home),

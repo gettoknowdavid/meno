@@ -5,11 +5,11 @@ import 'package:meno_mobile/_routing/pending_destination.dart';
 import 'package:meno_mobile/_routing/route_pages.dart';
 import 'package:meno_mobile/_routing/router_guard.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
+import 'package:meno_mobile/app/layouts/root_shell.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/broadcast/layouts/live_session_shell.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
-import 'package:meno_mobile/features/broadcast/widgets/broadcast_tab_widget.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
@@ -167,7 +167,14 @@ List<RouteBase> get _broadcastRoutes => [
               return ModalPage<dynamic>(child: PreStreamModal(id: broadcastId));
             },
           ),
-          GoRoute(path: 'ended', builder: (_, _) => const EndedBroadcastPage()),
+          GoRoute(
+            path: 'ended',
+            builder: (_, state) {
+              final broadcastId = _pathId(state, 'broadcastId');
+              if (broadcastId == null) return const StubPage(_notFound);
+              return EndedBroadcastPage(broadcastId: broadcastId);
+            },
+          ),
         ],
       ),
     ],
@@ -185,7 +192,7 @@ List<RouteBase> get _liveSessionRoutes => [
         routes: [
           GoRoute(
             path: MRoutes.liveBroadcast,
-            builder: (_, _) => const BroadcastTabWidget(),
+            builder: (_, _) => const LiveBroadcastPage(),
           ),
         ],
       ),

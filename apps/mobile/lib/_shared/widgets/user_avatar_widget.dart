@@ -8,12 +8,7 @@ import 'package:meno_ui/meno_ui.dart';
 /// data comes from, which is what keeps current-user presentation to a single
 /// source (M12).
 class UserAvatarWidget extends StatelessWidget {
-  const new({
-    required this.name,
-    this.imageUrl,
-    this.onTap,
-    super.key,
-  });
+  const new({required this.name, this.imageUrl, this.onTap, super.key});
 
   /// The display name; used for the fallback initial.
   final String name;
@@ -39,11 +34,6 @@ class UserAvatarWidget extends StatelessWidget {
       );
     }
 
-    return MAvatar(
-      radius: Insets.lg,
-      url: url,
-      onTap: onTap,
-      hasBorder: false,
-    );
+    return MAvatar(radius: Insets.lg, url: url, onTap: onTap, hasBorder: false);
   }
 }

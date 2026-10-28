@@ -91,9 +91,7 @@ final class EmailVerificationManager implements Disposable {
     if (!email.isValid || !canResend.value) return;
 
     startCooldown();
-    _auth.resendOtp.run(
-      OtpRequestArgs(email: email, type: .verifyEmail),
-    );
+    _auth.resendOtp.run(OtpRequestArgs(email: email, type: .verifyEmail));
   }
 
   void _setDeadline(DateTime deadline) {

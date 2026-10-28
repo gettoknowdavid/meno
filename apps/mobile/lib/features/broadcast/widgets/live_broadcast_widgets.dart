@@ -86,14 +86,13 @@ class BroadcastStatusWidget extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    final status = watchValue<LiveSessionManager, LiveStatus>(
-      (manager) => manager.status,
-    );
+    final phase = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
+    ).phase;
 
-    return switch (status) {
-      .live => const MBadge.live(),
-      .offAir => MBadge.offAir(context),
-      .reconnecting => MBadge.reconnecting(context),
+    return switch (phase) {
+      LivePhase.live => const MBadge.live(),
+      LivePhase.reconnecting => MBadge.reconnecting(context),
       _ => MBadge.offAir(context),
     };
   }
@@ -104,9 +103,9 @@ class BroadcastAboutTab extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    final broadcast = watchValue<LiveSessionManager, Broadcast>(
-      (manager) => manager.broadcast,
-    );
+    final broadcast = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
+    ).broadcast;
 
     return SingleChildScrollView(
       padding: const .symmetric(horizontal: Insets.lg),
@@ -123,7 +122,7 @@ class BroadcastAboutTab extends WatchingWidget {
           ),
           const MSpacer.v(Insets.lg),
           MText(
-            broadcast.description?.orEmpty ?? '',
+            broadcast?.description?.orEmpty ?? '',
             style: MTextTheme.of(context).captionRegular.copyWith(height: 1.4),
           ),
         ],
@@ -137,17 +136,21 @@ class BroadcastListeningTab extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    final list = watchValue<ParticipantsManager, List<Participant>>(
-      (manager) => manager.displayedParticipants,
-    );
+    // The roster belongs to the session, so it is read from the open one rather
+    // than resolved from the container: a room that closed has no roster left
+    // to ask (audit H04).
+    final participants = di<ActiveBroadcastManager>().session?.participants;
 
-    final hasMore = watchValue<ParticipantsManager, bool>(
-      (manager) => manager.hasMore,
-    );
+    if (participants == null) {
+      return const Center(
+        child: MText('No one is in this broadcast yet.'),
+        key: Key('BroadcastListeningTab'),
+      );
+    }
 
-    final isLoading = watchValue<ParticipantsManager, bool>(
-      (manager) => manager.isLoading,
-    );
+    final list = watch(participants.displayedParticipants).value;
+    final hasMore = watch(participants.hasMore).value;
+    final isLoading = watch(participants.isLoading).value;
 
     return Column(
       key: const Key('BroadcastListeningTab'),
@@ -162,7 +165,7 @@ class BroadcastListeningTab extends WatchingWidget {
           Spaces.verticalLarge,
           MSecondaryButton(
             label: 'Load More',
-            onPressed: () => di<ParticipantsManager>().loadMore(),
+            onPressed: () => participants.loadMore(),
           ),
         ],
       ],

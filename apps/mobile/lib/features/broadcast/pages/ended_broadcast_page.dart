@@ -2,49 +2,71 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
-import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-
 import 'package:meno_ui/meno_ui.dart';
 
-/// The screen a host lands on after their broadcast ends.
+/// The screen shown after a broadcast ends.
 ///
-/// It is reached in two ways: the live shell hands the client here when
-/// the room does (`LiveSessionShell` watches `LiveSessionManager.state`),
-/// and the editor hands the host here when going live succeeds
-/// (`BroadcastEditorPage` chains`createBroadcast` → `startBroadcast`
-/// and navigates on the latter's success).
-///
-/// What it draws comes from the ended broadcast the API minted when
-/// it was taken off air — that answer is what
-/// [LiveSessionManager.endedBroadcast] holds once the host's `end`
-/// call answered, and what the socket's `endedBroadcast` event
-/// carries for a listener whose room vanished under them. Both roads
-/// ship the same shape, so this page reads from the manager that
-/// already has it rather than from a repository method the new
-/// implementation does not have.
+/// It is addressed by its broadcast id, so it works after the session that
+/// ended it is gone — including a process-level termination that removed the
+/// room entirely. The manager's retained summary is used when it is this
+/// broadcast's; otherwise the page loads the broadcast by id with a manager it
+/// owns itself (audit H04).
 class EndedBroadcastPage extends WatchingWidget {
-  const new({super.key});
+  const new({required this.broadcastId, super.key});
+
+  /// The broadcast this screen is about.
+  final Id broadcastId;
 
   @override
   Widget build(BuildContext context) {
-    final ended = watchValue<LiveSessionManager, EndedBroadcast?>(
-      (manager) => manager.endedBroadcast,
+    final snapshot = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
     );
 
-    final currentUserId = watchValue<UserManager, Id?>(
-      (manager) => manager.currentUserId,
-    );
+    final summary = snapshot.endedSummary;
 
-    final isOwnBroadcastEnded =
-        ended?.isHostedBy(currentUserId ?? .empty) ?? false;
+    final accountId = di<ActiveBroadcastManager>().accountId;
 
-    Widget? child;
+    final retained = summary?.id == broadcastId ? summary : null;
 
-    if (ended == null || ended.isEmpty) {
-      child = const _ErrorView(message: 'No broadcast summary available');
+    Widget child;
+
+    if (retained != null) {
+      child = _PageView(
+        broadcast: retained,
+        isOwnBroadcastEnded: retained.isHostedBy(accountId),
+      );
     } else {
-      child = _PageView(ended: ended, isOwnBroadcastEnded: isOwnBroadcastEnded);
+      // The ended screen only needs the broadcast's own record — duration,
+      // participants, artwork — so it reads it directly by id rather than
+      // through a proxy built for a live details page.
+      final load = createOnce(
+        () => ValueNotifier<Future<Broadcast>>(
+          di<BroadcastHttpService>().getBroadcast(broadcastId),
+        ),
+      );
+
+      final request = watchFuture<ValueNotifier<Future<Broadcast>>, Broadcast>(
+        (notifier) => notifier.value,
+        target: load,
+        initialValue: Broadcast.empty,
+        allowFutureChange: true,
+      );
+
+      if (request.hasError) {
+        // The id names nothing this account may see: a typed refusal, not an
+        // empty screen that waits forever.
+        child = const _ErrorView(message: 'This broadcast could not be found.');
+      } else if (request.connectionState != .done) {
+        child = const MScaffold(body: Center(child: MLoadingIndicator(80, 80)));
+      } else {
+        final broadcast = request.data!;
+        child = _PageView(
+          broadcast: broadcast,
+          isOwnBroadcastEnded: broadcast.isHostedBy(accountId),
+        );
+      }
     }
 
     return PopScope(
@@ -57,21 +79,21 @@ class EndedBroadcastPage extends WatchingWidget {
 }
 
 class _PageView extends StatelessWidget {
-  const new({required this.ended, required this.isOwnBroadcastEnded});
+  const new({required this.broadcast, required this.isOwnBroadcastEnded});
 
-  final EndedBroadcast ended;
+  final Broadcast broadcast;
   final bool isOwnBroadcastEnded;
 
   @override
   Widget build(BuildContext context) {
     final textTheme = MTextTheme.of(context);
 
-    final formattedDuration = _formatDuration(ended.duration);
+    final formattedDuration = _formatDuration(
+      broadcast.duration ?? Duration.zero,
+    );
 
-    // The recent joiner avatars are not wired yet: the ended broadcast
-    // the API returns carries a total count and a duration, but
-    // not the join roster. The widget still gets a stack to draw,
-    // so pass an empty list and keep the count.
+    // The recent joiner avatars are not wired yet: the ended broadcast the API
+    // returns carries a total count and a duration, but not the join roster.
     final recentParticipants = <Participant>[];
 
     return MScaffold(
@@ -89,7 +111,7 @@ class _PageView extends StatelessWidget {
               ),
             ),
             Spaces.verticalXLarge,
-            BroadcastArtworkWidget(image: ended.image),
+            BroadcastArtworkWidget(image: broadcast.image),
             Spaces.verticalLarge,
             MTimerDisplay(
               formattedTime: formattedDuration,
@@ -98,7 +120,7 @@ class _PageView extends StatelessWidget {
             ),
             Spaces.verticalXLarge,
             EndedBroadcastParticipantsWidget(
-              allTimeCount: ended.totalParticipants,
+              allTimeCount: broadcast.totalParticipants,
               recentParticipants: recentParticipants,
             ),
             const SizedBox(height: 40),
@@ -115,10 +137,7 @@ class _PageView extends StatelessWidget {
   }
 }
 
-/// Turns an [EndedBroadcast.duration] into the HH:MM:SS the timer widget
-/// expects. The old summary carried a pre-formatted string; the new
-/// one carries a [Duration], so this keeps the screen's contract without
-/// adding one to the entity.
+/// Turns a [Broadcast.duration] into the HH:MM:SS the timer widget expects.
 String _formatDuration(Duration duration) {
   final hours = duration.inHours.toString().padLeft(2, '0');
   final minutes = (duration.inMinutes % 60).toString().padLeft(2, '0');

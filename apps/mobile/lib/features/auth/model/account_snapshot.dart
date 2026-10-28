@@ -123,8 +123,7 @@ final class AccountSnapshot {
           failure == other.failure;
 
   @override
-  int get hashCode =>
-      Object.hash(phase, context, isEmailVerified, failure);
+  int get hashCode => Object.hash(phase, context, isEmailVerified, failure);
 
   @override
   String toString() =>

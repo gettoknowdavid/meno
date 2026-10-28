@@ -16,6 +16,10 @@ import 'package:meno_mobile/features/settings/settings.dart';
 /// caches that are keyed by it, the managers that write its name into what they
 /// save, and the room it may be in.
 ///
+/// There is exactly one live owner — [ActiveBroadcastManager] — and its session
+/// is an ordinary object it creates and closes itself. No scope is pushed for a
+/// room, so "is it registered?" is never asked to mean "is it on air?".
+///
 /// Nothing here is reachable while nobody is signed in — the router sends every
 /// signed-out visitor to a sign-in screen — so registering it later costs a
 /// frame nothing and buys a lifetime that ends where it should.
@@ -38,10 +42,25 @@ Future<void> registerAccountScope(
   // The token is a supplier, not a value: the client reads it on every connect
   // and reconnect, so a reconnect after a refresh presents the new token and
   // nothing here has to notice that it changed.
+  //
+  // The supplier is a read, not a value: it answers with the credential as it
+  // is committed *now*, so a reconnect after a refresh presents the new token
+  // and an account switch can never reuse the old one (audit M03).
+  Future<String?> currentAccessToken() async {
+    final current = await di<SessionStore>().readCredential(context.accountId);
+    if (current == null || !current.hasUsableSession) return null;
+
+    final expiresAt = current.session.expiresAt;
+    if (expiresAt != null && !expiresAt.isAfter(di<Clock>().nowUtc())) {
+      return null;
+    }
+    return current.session.accessToken;
+  }
+
   scope.registerLazySingleton<SocketClient>(
     () => SocketClient(
       uri: Uri.parse(di<Config>().webSocketUrl),
-      credentialSupplier: () => credential.session.accessToken,
+      credentialSupplier: currentAccessToken,
       logger: di<MenoLogger>(),
       clock: di<Clock>(),
     ),
@@ -69,32 +88,10 @@ Future<void> registerAccountScope(
 
   // The account's own broadcasts. A draft carries the id that wrote it and a
   // favourite carries the id that kept it, so both go with the account; the
-  // lobby is where a broadcast is browsed, which an account is what does.
-  scope.registerLazySingleton<BroadcastEditorManager>(
-    () => BroadcastEditorManager(
-      http: di<BroadcastHttpService>(),
-      local: di<BroadcastLocalService>(),
-      media: di<MediaService>(),
-      live: di<LiveScopeManager>(),
-      userId: credential.userId,
-      logger: di<MenoLogger>(),
-    ),
-    dispose: (manager) => manager.onDispose(),
-  );
-
+  // editor itself is created by its page, not here (Step 34).
   scope.registerLazySingleton<FavouritesManager>(
     () => FavouritesManager(
       local: di<BroadcastLocalService>(),
-      userId: credential.userId,
-      logger: di<MenoLogger>(),
-    ),
-    dispose: (manager) => manager.onDispose(),
-  );
-
-  scope.registerLazySingleton<StreamManager>(
-    () => StreamManager(
-      http: di<BroadcastHttpService>(),
-      live: di<LiveScopeManager>(),
       userId: credential.userId,
       logger: di<MenoLogger>(),
     ),
@@ -153,114 +150,96 @@ Future<void> registerAccountScope(
   await settings.init();
   scope.registerSingleton<SettingsManager>(settings);
 
-  // The live tier sits on top of this one, and is handed the registrar that
-  // fills it — so opening a room is `start(broadcastId)` and nothing else has
-  // to remember what a session needs. The record of the session this device was
-  // in is the account's too: it is the account that would go back to it.
+  // Delivery starts here and nowhere else: the adapters' handlers are attached
+  // before the socket is asked to connect, and everything is stopped before the
+  // scope takes the socket away. Registered after the socket, so it is disposed
+  // before it.
+  final connection = AccountConnectionOwner(
+    context: context,
+    socket: di<SocketClient>(),
+    adapters: [di<BroadcastSocketService>()],
+    credentials: di<SessionStore>(),
+    logger: di<MenoLogger>(),
+    clock: di<Clock>(),
+  );
+  scope.registerSingleton<AccountConnectionOwner>(connection);
+  connection.initialize();
+  unawaited(connection.start(verified: credential.user.verified));
+
+  // The record of the session this device was in is the account's too: it is
+  // the account that would go back to it.
   scope.registerSingleton<LiveSessionStore>(
     LiveSessionStore(di<LocalStorage>(), userId: credential.userId),
   );
-  final live = LiveScopeManager(
-    credential.userId,
-    logger: di<MenoLogger>(),
-    store: di<LiveSessionStore>(),
-    http: di<BroadcastHttpService>(),
-    endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
-    register: registerLiveScope,
+
+  // The account's one live owner. Its session is built by the factory below —
+  // an ordinary object, created and closed by the manager — so nothing about a
+  // room is registered in the container.
+  scope.registerSingleton<ActiveBroadcastManager>(
+    ActiveBroadcastManager(
+      context: context,
+      gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
+      store: di<LiveSessionStore>(),
+      logger: di<MenoLogger>(),
+      createSession: ({required session, required exitOnServer}) {
+        final participants = ParticipantsManager(
+          http: di<BroadcastHttpService>(),
+          socket: di<BroadcastSocketService>(),
+          broadcastId: session.broadcast.id,
+        );
+        return ActiveBroadcastSession(
+          session: session,
+          room: _createRoomTransport(session.broadcast.id, session.userId),
+          roster: ParticipantsRoster(participants),
+          participants: participants,
+          clock: di<Clock>(),
+          logger: di<MenoLogger>(),
+          exitOnServer: exitOnServer,
+        );
+      },
+    ),
   );
-  unawaited(live.init());
-  scope.registerSingleton<LiveScopeManager>(live);
+
+  // A process that died inside a room comes back to it. Queued behind nothing
+  // else yet, and refused once an account exit has begun.
+  unawaited(di<ActiveBroadcastManager>().recover());
 }
 
-/// Registers one live session's services, in that session's own scope.
+/// The room transport one session opens.
 ///
-/// Everything here is created when a room opens and disposed when it closes:
-/// the room's transport, the roster, and the manager that owns the room's
-/// state.
-/// The [LiveSession] the scope is opened for is registered by
-/// [LiveScopeManager] before this runs, which is why the registrations below
-/// can take it.
+/// Which server it opens, and where its token comes from, is the one difference
+/// between a development build and a release one:
 ///
-/// # One of them needs a token, and a room may not have one yet
+/// * a release build joins [Config.menoLiveKitUrl] with the token the API
+///   minted for the session;
+/// * a development build joins the LiveKit `ops/docker-compose.yml` starts,
+///   over the loopback address `adb reverse` forwards, and signs its own
+///   token with the development key pair that server runs with — so going
+///   live on a device costs nothing and needs no internet.
 ///
-/// Entering a room is `POST …/join` or `…/live`, and the answer is the only
-/// thing that carries a LiveKit token. A scope opened from a broadcast id alone
-/// — a deep link that has not joined yet — registers the room's client and its
-/// roster but not the session manager, because a session manager without a
-/// token could only fabricate a connection.
-/// `di.isRegistered<LiveSessionManager>()` is the question a caller asks before
-/// entering.
-Future<void> registerLiveScope(GetIt scope, LiveSession session) async {
-  final participants = ParticipantsManager(
-    http: di<BroadcastHttpService>(),
-    socket: di<BroadcastSocketService>(),
-    broadcastId: session.broadcastId,
-  );
-  scope.registerSingleton<ParticipantsManager>(participants);
-
-  // The roster fills itself — it subscribes to the room's join/leave frames
-  // and then reads the API's page once — and nothing else starts it. A screen
-  // that only ever *reads* this manager draws an empty room whatever the API
-  // answered, which is what the host's own tile did. Started here rather than
-  // when the tab first builds, so a join in between is not missed, and not
-  // awaited, so opening a room never waits on a page of participants.
-  participants.initialize.run();
-
-  // The room itself. Which server it opens, and where its token comes from, is
-  // the one difference between a development build and a release one:
-  //
-  // * a release build joins [Config.menoLiveKitUrl] with the token the API
-  //   minted for the session;
-  // * a development build joins the LiveKit `ops/docker-compose.yml` starts,
-  //   over the loopback address `adb reverse` forwards, and signs its own
-  //   token with the development key pair that server runs with — so going
-  //   live on a device costs nothing and needs no internet.
-  //
-  // Which transport is not guessed: the silent one is reachable only through
-  // the explicit [Config.useFakeRoomTransport] flag, which validation already
-  // refuses in production. Everything else gets the real one — an unconfigured
-  // room URL becomes a visible failure when the session opens rather than a
-  // broadcast that silently goes nowhere (M18).
+/// Which transport is not guessed: the silent one is reachable only through the
+/// explicit [Config.useFakeRoomTransport] flag, which validation already
+/// refuses in production. Everything else gets the real one — an unconfigured
+/// room URL becomes a visible failure when the session opens rather than a
+/// broadcast that silently goes nowhere (M18).
+RoomTransport _createRoomTransport(Id broadcastId, Id userId) {
   final config = di<Config>();
   if (config.useFakeRoomTransport && !config.env.isProd) {
     di<MenoLogger>().w(
       'The fake room transport was selected by configuration',
       tag: MenoLogTag.di.label,
     );
-    scope.registerLazySingleton<RoomTransport>(
-      SilentRoomTransport.new,
-      dispose: (transport) => transport.onDispose(),
-    );
-  } else {
-    final roomUrl = config.liveKitUrl;
-    // Lazy: the SDK's room is built when a session enters the room, not when a
-    // scope is opened from a deep link that may never join one.
-    scope.registerLazySingleton<RoomTransport>(
-      () => LiveKitRoomTransport(
-        url: roomUrl,
-        logger: di<MenoLogger>(),
-        devToken: config.usesLocalRoomServer
-            ? DevRoomTokenSource(
-                room: session.broadcastId.getOrCrash,
-                identity: session.userId.getOrCrash,
-              )
-            : null,
-      ),
-      dispose: (transport) => transport.onDispose(),
-    );
+    return SilentRoomTransport();
   }
 
-  if (!scope.isRegistered<BroadcastSession>()) return;
-
-  scope.registerSingleton<LiveSessionManager>(
-    LiveSessionManager(
-      session: di<BroadcastSession>(),
-      http: di<BroadcastHttpService>(),
-      local: di<BroadcastLocalService>(),
-      socket: di<BroadcastSocketService>(),
-      room: di<RoomTransport>(),
-      live: di<LiveScopeManager>(),
-      logger: di<MenoLogger>(),
-    ),
+  return LiveKitRoomTransport(
+    url: config.liveKitUrl,
+    logger: di<MenoLogger>(),
+    devToken: config.usesLocalRoomServer
+        ? DevRoomTokenSource(
+            room: broadcastId.getOrCrash,
+            identity: userId.getOrCrash,
+          )
+        : null,
   );
 }

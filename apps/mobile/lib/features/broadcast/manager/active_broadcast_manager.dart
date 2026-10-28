@@ -159,7 +159,7 @@ final class ActiveBroadcastManager implements Disposable {
     join = .createAsyncNoResult<LiveEnterRequest>((request) async {
       await enter(request);
     });
-    leaveOrEnd = .createAsyncNoParamNoResult(_leaveOrEndNow);
+    leaveOrEnd = .createAsyncNoParamNoResult(exitRoom);
   }
 
   final AccountContext _context;
@@ -172,6 +172,10 @@ final class ActiveBroadcastManager implements Disposable {
   final snapshot = ValueNotifier<LiveSnapshot>(LiveSnapshot.idle());
 
   ActiveBroadcastSession? _session;
+
+  /// The request the last entry was made with, kept so a failed entry can be
+  /// retried without the page guessing a mode.
+  LiveEnterRequest? _lastRequest;
 
   /// The FIFO every entry, exit and recovery is appended to.
   Future<void> _queue = Future<void>.value();
@@ -200,6 +204,21 @@ final class ActiveBroadcastManager implements Disposable {
   /// Whether a room is open right now.
   bool get hasSession => _session != null;
 
+  /// The open session, for the screen that draws its clock and roster. Null
+  /// whenever no room is open.
+  ActiveBroadcastSession? get session => _session;
+
+  /// The account this manager belongs to.
+  Id get accountId => _context.accountId;
+
+  /// The request the last entry was made with.
+  LiveEnterRequest? get lastRequest => _lastRequest;
+
+  /// Re-runs the last entry after a failure.
+  Future<EnterResult> retry() => _lastRequest == null
+      ? Future.value(const EnterResult.rejected())
+      : enter(_lastRequest!);
+
   /// Puts a recovered session back, if there is one and nothing newer is open.
   ///
   /// Runs inside the queue and calls the *private* entry rather than [enter]:
@@ -223,7 +242,11 @@ final class ActiveBroadcastManager implements Disposable {
   });
 
   /// Ends or leaves the room the account is in.
-  Future<void> _leaveOrEndNow() => _enqueue(() async {
+  ///
+  /// Plain and awaitable, because it is also the step the pre-stream lobby
+  /// takes before opening another room; the command above is only the room's
+  /// own button pair.
+  Future<void> exitRoom() => _enqueue(() async {
     final session = _session;
     if (session == null) return;
 
@@ -283,6 +306,7 @@ final class ActiveBroadcastManager implements Disposable {
   Future<EnterResult> _enter(LiveEnterRequest request) async {
     if (_exiting) return const EnterResult.rejected();
 
+    _lastRequest = request;
     final generation = ++_operationGeneration;
     snapshot.value = LiveSnapshot(
       phase: .connecting,

@@ -174,8 +174,8 @@ void main() {
 
       expect(di.isRegistered<MyProfileManager>(), isFalse);
       expect(di.isRegistered<SettingsManager>(), isFalse);
-      expect(di.isRegistered<StreamManager>(), isFalse);
-      expect(di.isRegistered<LiveScopeManager>(), isFalse);
+      expect(di.isRegistered<ActiveBroadcastManager>(), isFalse);
+      expect(di.isRegistered<BroadcastEditorManager>(), isFalse);
 
       await di<SessionStore>().saveActive(_account);
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
@@ -184,17 +184,18 @@ void main() {
       // built on this frame shows the cached record rather than nothing.
       expect(di<MyProfileManager>().profile.value.isEmpty, isTrue);
       expect(di<SettingsManager>().settings.value.display, UserDisplay.system);
-      expect(di.isRegistered<StreamManager>(), isTrue);
+      expect(di.isRegistered<ActiveBroadcastManager>(), isTrue);
       expect(di.isRegistered<LiveSessionStore>(), isTrue);
-      expect(di.isRegistered<LiveScopeManager>(), isTrue);
+      // Widget-owned since Step 34: the editor exists only while its page does.
+      expect(di.isRegistered<BroadcastEditorManager>(), isFalse);
 
       await di<SessionStore>().clearActive();
       await pumpUntil(() => di.currentScopeName == Scope.root);
 
       expect(di.isRegistered<MyProfileManager>(), isFalse);
       expect(di.isRegistered<SettingsManager>(), isFalse);
-      expect(di.isRegistered<StreamManager>(), isFalse);
-      expect(di.isRegistered<LiveScopeManager>(), isFalse);
+      expect(di.isRegistered<ActiveBroadcastManager>(), isFalse);
+      expect(di.isRegistered<LiveSessionStore>(), isFalse);
     });
 
     test('an account that signs in is scoped, with the session inside it',
@@ -207,12 +208,12 @@ void main() {
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
       expect(di<UserCredential>().userId, '1');
-      expect(di.isRegistered<LiveScopeManager>(), isTrue);
+      expect(di.isRegistered<ActiveBroadcastManager>(), isTrue);
 
       await di<SessionStore>().clearActive();
       await pumpUntil(() => di.currentScopeName == Scope.root);
 
-      expect(di.isRegistered<LiveScopeManager>(), isFalse);
+      expect(di.isRegistered<ActiveBroadcastManager>(), isFalse);
     });
 
     test('wires the logger policy to the config environment', () {

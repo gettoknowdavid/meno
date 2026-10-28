@@ -117,6 +117,7 @@ final class ActiveBroadcastSession {
     required this._roster,
     required Clock clock,
     required MenoLogger logger,
+    this.participants,
     this._exitOnServer,
     Duration? initialElapsed,
   }) : _session = session,
@@ -139,6 +140,13 @@ final class ActiveBroadcastSession {
   final LiveRoster _roster;
   final MenoLogger _logger;
   final LiveServerExit? _exitOnServer;
+
+  /// The roster the room's screens read, when there is one.
+  ///
+  /// Owned by the session — created with it and closed with it — but exposed so
+  /// the listening tab does not have to resolve a manager that no longer
+  /// exists (audit H04).
+  final ParticipantsManager? participants;
 
   /// The on-air clock, owned for as long as this session is.
   late final BroadcastTimerManager timer;

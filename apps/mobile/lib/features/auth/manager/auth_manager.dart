@@ -208,15 +208,17 @@ final class AuthManager implements Disposable {
   ///
   /// A `late final` field rather than a getter: a `select` built per access is
   /// a new notifier every call, which no watcher can keep subscribed to (L02).
-  late final ValueListenable<bool> emailVerified =
-      _active.select((credential) => credential.user.verified);
+  late final ValueListenable<bool> emailVerified = _active.select(
+    (credential) => credential.user.verified,
+  );
 
   /// Whether an account is signed in.
   ///
   /// Derived, so there is no second flag that can disagree with
   /// [activeCredential]. Cached once, for the same reason as [emailVerified].
-  late final ValueListenable<bool> isAuthenticated =
-      _active.select((credential) => !credential.isEmpty);
+  late final ValueListenable<bool> isAuthenticated = _active.select(
+    (credential) => !credential.isEmpty,
+  );
 
   /// The last account that signed in, kept across a sign-out.
   ///

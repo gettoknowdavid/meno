@@ -22,9 +22,8 @@ final class SettingsLocalService {
       StorageKeys.forUser(StorageKeys.settings, userId.getOrCrash),
     );
     if (json == null) return null;
-    return SettingsDto.fromJson(
-      jsonDecode(json) as Map<String, dynamic>,
-    ).toDomain;
+    return SettingsDto.fromJson(jsonDecode(json) as Map<String, dynamic>)
+        .toDomain;
   }
 
   /// Stores [settings] for [userId].

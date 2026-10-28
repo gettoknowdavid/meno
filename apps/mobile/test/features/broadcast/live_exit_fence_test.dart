@@ -5,6 +5,7 @@ import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/local_storage.dart';
+import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/_shared/services/secure_storage.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
@@ -12,6 +13,7 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
 import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -24,12 +26,83 @@ const _broadcast = '018f2b1e-0000-7000-8000-000000000002';
 
 class _MockPlatform extends Mock implements FlutterSecureStorage;
 
-/// A service that belongs to one session, and records that it was torn down.
-final class _LiveService implements Disposable {
-  bool disposed = false;
+BroadcastSession _details() => BroadcastSession(
+  userId: Id.fromString(_jim),
+  broadcast: Broadcast(
+    id: Id.fromString(_broadcast),
+    title: SingleLineString('Morning show'),
+    state: .live,
+    status: .active,
+    participantRole: .host,
+    creator: Participant(
+      id: Id.fromString(_jim),
+      fullName: SingleLineString('Jim'),
+    ),
+  ),
+  token: 'room-token',
+  canPublish: true,
+);
+
+final class _FakeRoom implements RoomTransport {
+  final _states = StreamController<RoomConnectionState>.broadcast();
 
   @override
-  FutureOr<dynamic> onDispose() => disposed = true;
+  Stream<RoomConnectionState> get connectionState => _states.stream;
+
+  @override
+  bool get isConnected => false;
+
+  @override
+  bool get isMicrophoneEnabled => false;
+
+  @override
+  Future<void> connect(String token, {required bool canPublish}) async {}
+
+  @override
+  Future<void> disconnect() async {}
+
+  @override
+  Future<void> setMicrophoneEnabled(bool enabled) async {}
+
+  @override
+  FutureOr<dynamic> onDispose() async => _states.close();
+}
+
+final class _FakeRoster implements LiveRoster {
+  @override
+  Future<void> attach() async {}
+
+  @override
+  Future<void> detach() async {}
+}
+
+/// A gateway whose next entry can be held open by the test.
+final class _HoldingGateway implements LiveGateway {
+  int enterCalls = 0;
+  Completer<BroadcastSession>? holdNextEnter;
+
+  @override
+  Future<BroadcastSession> enter(
+    LiveEnterRequest request,
+    AccountContext context,
+  ) {
+    enterCalls++;
+    final held = holdNextEnter;
+    if (held != null) {
+      holdNextEnter = null;
+      return held.future;
+    }
+    return Future.value(_details());
+  }
+
+  @override
+  Future<EndedBroadcast> end(Id broadcastId) async => EndedBroadcast(
+    broadcastId: broadcastId,
+    title: SingleLineString('Morning show'),
+  );
+
+  @override
+  Future<void> leave(Id broadcastId) async {}
 }
 
 UserCredential _account(String id) {
@@ -51,106 +124,107 @@ void main() {
 
   late LocalStorage storage;
   late LiveSessionStore liveStore;
-  late StreamController<EndedSignal> ended;
   late StubApi api;
 
   setUp(() async {
+    Command.globalExceptionHandler = (_, _) {};
     SharedPreferences.setMockInitialValues({});
     await di.reset();
     di.pushNewScope(scopeName: Scope.root);
 
     storage = LocalStorage(await SharedPreferences.getInstance());
     liveStore = LiveSessionStore(storage, userId: Id.fromString(_jim));
-    ended = StreamController<EndedSignal>.broadcast();
     api = StubApi();
   });
 
   tearDown(() async {
-    await ended.close();
+    Command.globalExceptionHandler = null;
     await di.reset();
   });
 
-  LiveScopeManager newLiveManager({
-    LiveScopeRegistrar? register,
-    Duration drain = const Duration(seconds: 10),
-  }) {
-    return LiveScopeManager(
-      Id.fromString(_jim),
-      logger: MockMenoLogger(),
+  ActiveBroadcastManager newLiveManager(_HoldingGateway gateway) {
+    final manager = ActiveBroadcastManager(
+      context: AccountContext(accountId: Id.fromString(_jim), generation: 1),
+      gateway: gateway,
       store: liveStore,
-      http: BroadcastHttpService(stubClient(api)),
-      endedBroadcasts: ended.stream,
-      register:
-          register ??
-          (scope, _) => scope.registerSingleton<_LiveService>(_LiveService()),
-      exitDrainTimeout: drain,
+      logger: MockMenoLogger(),
+      createSession: ({required session, required exitOnServer}) =>
+          ActiveBroadcastSession(
+            session: session,
+            room: _FakeRoom(),
+            roster: _FakeRoster(),
+            clock: const SystemClock(),
+            logger: MockMenoLogger(),
+            exitOnServer: exitOnServer,
+          ),
     );
+    addTearDown(manager.onDispose);
+    return manager;
   }
+
+  final request = LiveEnterRequest(
+    broadcastId: Id.fromString(_broadcast),
+    mode: LiveEnterMode.listen,
+  );
 
   group('the live fence', () {
     test(
-      'an exit during an open closes locally and pushes nothing else',
+      'an exit during an open closes locally and publishes nothing',
       () async {
-        final gate = Completer<void>();
-        var built = false;
-        final live = newLiveManager(
-          register: (scope, _) async {
-            built = true;
-            scope.registerSingleton<_LiveService>(_LiveService());
-            await gate.future;
-          },
-        );
+        final held = Completer<BroadcastSession>();
+        final gateway = _HoldingGateway()..holdNextEnter = held;
+        final live = newLiveManager(gateway);
 
-        final opening = live.start(Id.fromString(_broadcast));
-        await pumpUntil(() => built);
+        final entering = live.enter(request);
+        await pumpUntil(() => gateway.enterCalls == 1);
 
-        final exiting = live.beginAccountExit();
-        gate.complete();
+        final exiting = live.closeForAccountExit();
+        held.complete(_details());
+
+        final result = await entering;
         await exiting;
-        await opening;
 
-        expect(di.hasScope(Scope.liveFor(Id.fromString(_broadcast))), isFalse);
-        expect(di.isRegistered<LiveSession>(), isFalse);
-        expect(di.isRegistered<_LiveService>(), isFalse);
-        expect(live.isLive.value, isFalse);
+        expect(result.outcome, EnterOutcome.rejected);
+        expect(live.hasSession, isFalse);
+        expect(live.snapshot.value.phase, LivePhase.idle);
       },
     );
 
-    test('no open is admitted once the exit has begun', () async {
-      final live = newLiveManager();
-      await live.beginAccountExit();
+    test('no entry is admitted once the exit has begun', () async {
+      final gateway = _HoldingGateway();
+      final live = newLiveManager(gateway);
+      await live.closeForAccountExit();
 
-      await live.start(Id.fromString(_broadcast));
+      final result = await live.enter(request);
 
-      expect(di.hasScope(Scope.liveFor(Id.fromString(_broadcast))), isFalse);
-      expect(di.isRegistered<LiveSession>(), isFalse);
-      expect(live.activeBroadcastId.value, isNull);
+      expect(result.outcome, EnterOutcome.rejected);
+      expect(gateway.enterCalls, 0);
+      expect(live.hasSession, isFalse);
     });
 
-    test('a drain that cannot finish throws instead of completing', () async {
-      final gate = Completer<void>();
-      var built = false;
-      final live = newLiveManager(
-        drain: const Duration(milliseconds: 20),
-        register: (scope, _) async {
-          built = true;
-          scope.registerSingleton<_LiveService>(_LiveService());
-          await gate.future;
-        },
-      );
+    test('the exit waits for an entry that is still in flight', () async {
+      final held = Completer<BroadcastSession>();
+      final gateway = _HoldingGateway()..holdNextEnter = held;
+      final live = newLiveManager(gateway);
 
-      unawaited(live.start(Id.fromString(_broadcast)));
-      await pumpUntil(() => built);
+      final entering = live.enter(request);
+      await pumpUntil(() => gateway.enterCalls == 1);
 
-      // The transition must not complete while an open is still in flight:
-      // that is what keeps two accounts from overlapping.
-      await expectLater(
-        live.beginAccountExit(),
-        throwsA(isA<RequestTimeoutException>()),
-      );
-
-      gate.complete();
+      var closed = false;
+      final exiting = live.closeForAccountExit().then((_) => closed = true);
       await pumpEventQueue();
+      expect(
+        closed,
+        isFalse,
+        reason: 'the transition must not finish while an open is in flight',
+      );
+
+      held.complete(_details());
+      await exiting.timeout(const Duration(seconds: 2));
+      expect(closed, isTrue);
+
+      // The entry was released by the generation bump, not by the caller.
+      await entering.timeout(const Duration(seconds: 2));
     });
 
     test('a failed drain leaves the old account scoped', () async {

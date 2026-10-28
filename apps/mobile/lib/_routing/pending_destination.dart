@@ -72,7 +72,10 @@ final class PendingDestinationSlot {
     if (!path.startsWith('/')) return false;
     if (path.contains('://') || path.contains('@')) return false;
 
-    final firstSegment = path.split('/').where((part) => part.isNotEmpty).firstOrNull;
+    final firstSegment = path
+        .split('/')
+        .where((part) => part.isNotEmpty)
+        .firstOrNull;
     if (firstSegment == null) return false;
 
     const blocked = {

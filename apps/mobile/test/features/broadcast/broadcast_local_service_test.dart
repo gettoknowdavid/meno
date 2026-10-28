@@ -23,7 +23,8 @@ void main() {
     setUp(() {
       store = Store(
         getObjectBoxModel(),
-        directory: '${Store.inMemoryPrefix}'
+        directory:
+            '${Store.inMemoryPrefix}'
             'fence-${DateTime.now().microsecondsSinceEpoch}',
       );
       service = BroadcastLocalService(

@@ -13,31 +13,71 @@ class PreStreamModal extends WatchingWidget {
 
   final Id id;
 
-  static Future<void> show(BuildContext ctx, Id id) {
-    final activeId = di<LiveScopeManager>().activeBroadcastId.value;
-    if (activeId == id) return ctx.push(MRoutes.liveBroadcast);
-    return ctx.push(MRoutes.preStreamRoute(id));
+  /// Opens the lobby for [id], unless this account is already in a room.
+  ///
+  /// The decision comes from [LivePhase], never from "is there an active id":
+  /// while a session is connecting, live, reconnecting or ending, a second
+  /// entry would replace the room the person is in. The same broadcast means
+  /// "return to it"; another one means leaving first, explicitly.
+  static Future<void> show(BuildContext ctx, Id id) async {
+    final snapshot = di<ActiveBroadcastManager>().snapshot.value;
+
+    if (snapshot.isInRoom) {
+      if (snapshot.broadcast?.id == id) {
+        await ctx.push(MRoutes.liveBroadcast);
+        return;
+      }
+
+      final leave = await PreStreamLeaveDialog.show(ctx);
+      if (!(leave ?? false)) return;
+      if (!di.isRegistered<ActiveBroadcastManager>()) return;
+      await di<ActiveBroadcastManager>().exitRoom();
+      if (!ctx.mounted) return;
+    }
+
+    await ctx.push(MRoutes.preStreamRoute(id));
   }
 
   @override
   Widget build(BuildContext context) {
-    callOnce((_) => di<StreamManager>().fetchBroadcast.run(id));
-
-    final isLoading = watchValue<StreamManager, bool>(
-      (manager) => manager.fetchBroadcast.isRunning,
+    // The lobby owns its own details manager: it is created with the sheet and
+    // disposed with it, so a page that closes never leaves one behind.
+    final details = createOnce(
+      () => BroadcastDetailsManager(
+        http: di<BroadcastHttpService>(),
+        userId: di<ActiveBroadcastManager>().accountId,
+        broadcastId: id,
+        logger: di<MenoLogger>(),
+      ),
     );
 
-    final broadcast = watchValue<StreamManager, Broadcast>(
-      (manager) => manager.broadcast,
-    );
+    callOnce((_) => details.fetch.run());
+
+    final isRunning = watch(details.fetch.isRunning).value;
+    final proxy = watch(details.proxy).value;
 
     return MModal(
       title: 'Stream',
       padding: const .fromLTRB(16, 0, 16, 0),
       builder: (context) {
-        if (isLoading) return const _LoadingSheet();
-        return _LoadedSheet(broadcast: broadcast);
+        if (proxy == null) {
+          return isRunning ? const _LoadingSheet() : const _MissingSheet();
+        }
+        return _LoadedSheet(broadcast: proxy.broadcast);
       },
+    );
+  }
+}
+
+/// The API had nothing to say about this broadcast.
+class _MissingSheet extends StatelessWidget {
+  const new() : super(key: const Key('pre-stream-modal-missing'));
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: MediaQuery.sizeOf(context).height * 0.20,
+      child: const Center(child: MText('This broadcast is not available.')),
     );
   }
 }
@@ -51,12 +91,12 @@ class _LoadedSheet extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     // The sheet closes and the transition page takes over as soon as the join
-    // has produced a session. The handler has to name the command it follows:
-    // a `select` is not optional, because a manager is not a `ValueListenable`
-    // and registering without one throws during build.
-    registerHandler<StreamManager, void>(
-      select: (manager) => manager.joinBroadcast,
+    // has produced a session. A failed join leaves the sheet where it is: the
+    // command's own error handling has already said why.
+    registerHandler<ActiveBroadcastManager, void>(
+      select: (manager) => manager.join,
       handler: (context, _, _) async {
+        if (!di<ActiveBroadcastManager>().snapshot.value.isInRoom) return;
         context.pop();
         await context.push(MRoutes.liveSessionInit);
       },
@@ -200,10 +240,10 @@ class PreStreamActionButtons extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    final stream = di<StreamManager>();
+    final live = di<ActiveBroadcastManager>();
 
-    final isJoining = watchValue<StreamManager, bool>(
-      (manager) => manager.isRunning,
+    final isJoining = watchValue<ActiveBroadcastManager, bool>(
+      (manager) => manager.join.isRunning,
     );
 
     return SizedBox(
@@ -214,7 +254,12 @@ class PreStreamActionButtons extends WatchingWidget {
             child: MPrimaryButton(
               label: 'Join',
               loading: isJoining,
-              onPressed: () => stream.joinBroadcast.run(broadcast.id),
+              onPressed: () => live.join.run(
+                LiveEnterRequest(
+                  broadcastId: broadcast.id,
+                  mode: LiveEnterMode.listen,
+                ),
+              ),
             ),
           ),
           Spaces.horizontalSmall,

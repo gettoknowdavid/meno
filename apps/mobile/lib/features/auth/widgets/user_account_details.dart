@@ -35,10 +35,7 @@ class UserAccountDetails extends StatelessWidget {
             mainAxisAlignment: .center,
             children: [
               MText('Welcome back,', style: textTheme.subheadingMedium),
-              MText(
-                user.fullName.orEmpty,
-                style: textTheme.heading2Medium,
-              ),
+              MText(user.fullName.orEmpty, style: textTheme.heading2Medium),
             ],
           ),
         ),

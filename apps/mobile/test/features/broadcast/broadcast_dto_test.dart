@@ -153,10 +153,7 @@ void main() {
       final homeInvalidated = HomeInvalidatedDto.fromJson({
         'timestamp': '2026-10-01T10:30:00Z',
       });
-      expect(
-        homeInvalidated.timestamp,
-        DateTime.utc(2026, 10, 1, 10, 30),
-      );
+      expect(homeInvalidated.timestamp, DateTime.utc(2026, 10, 1, 10, 30));
     });
   });
 }

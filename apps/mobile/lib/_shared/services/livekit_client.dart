@@ -35,11 +35,7 @@ final class LiveKitRoomTransport implements RoomTransport {
   /// The room is built here rather than at the first join: its listener has to
   /// exist before [connect] runs, or the connection events that arrive while it
   /// is still connecting are lost.
-  new({
-    required this.url,
-    required this._logger,
-    this.devToken,
-  })
+  new({required this.url, required this._logger, this.devToken})
     : _room = sdk.Room(
         roomOptions: const sdk.RoomOptions(
           adaptiveStream: true,
@@ -69,8 +65,12 @@ final class LiveKitRoomTransport implements RoomTransport {
   final _states = StreamController<RoomConnectionState>.broadcast();
 
   RoomConnectionState _state = RoomConnectionState.disconnected;
+  RoomDisconnectReason? _lastReason;
 
   bool _disposed = false;
+
+  @override
+  RoomDisconnectReason? get lastDisconnectReason => _lastReason;
 
   @override
   Stream<RoomConnectionState> get connectionState => _states.stream;
@@ -144,6 +144,7 @@ final class LiveKitRoomTransport implements RoomTransport {
       return;
     }
 
+    _lastReason = RoomDisconnectReason.clientInitiated;
     _logger.i('Leaving the room');
     try {
       await _room.disconnect();
@@ -275,6 +276,7 @@ final class LiveKitRoomTransport implements RoomTransport {
 
       case sdk.RoomDisconnectedEvent(:final reason):
         _logger.w('Left the room - $reason');
+        _lastReason = _disconnectReason(reason);
         _emit(RoomConnectionState.disconnected);
 
       case sdk.ParticipantConnectedEvent(:final participant):
@@ -288,6 +290,28 @@ final class LiveKitRoomTransport implements RoomTransport {
         // log carries it.
         _logger.v('Room event ${event.runtimeType}');
     }
+  }
+
+  /// The SDK's reason, in this app's words.
+  ///
+  /// Kept explicit rather than a `name` lookup: a kick and a room deletion are
+  /// what the manager must treat as terminal, and a silent SDK rename would
+  /// turn both back into an unknown drop it retries (audit H07).
+  RoomDisconnectReason _disconnectReason(sdk.DisconnectReason reason) {
+    return switch (reason) {
+      sdk.DisconnectReason.clientInitiated =>
+        RoomDisconnectReason.clientInitiated,
+      sdk.DisconnectReason.duplicateIdentity =>
+        RoomDisconnectReason.duplicateIdentity,
+      sdk.DisconnectReason.participantRemoved =>
+        RoomDisconnectReason.partyRemoved,
+      sdk.DisconnectReason.roomDeleted => RoomDisconnectReason.roomDeleted,
+      sdk.DisconnectReason.serverShutdown =>
+        RoomDisconnectReason.serverShutdown,
+      sdk.DisconnectReason.stateMismatch => RoomDisconnectReason.stateMismatch,
+      sdk.DisconnectReason.signalClose => RoomDisconnectReason.signalClose,
+      _ => RoomDisconnectReason.unknown,
+    };
   }
 
   /// Publishes [next] unless it is where the room already is.

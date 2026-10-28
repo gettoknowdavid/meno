@@ -4,17 +4,17 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/broadcast/manager/live_scope_manager.dart';
+import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
 ///
 /// Creating a broadcast is four steps the API has no single call for — create
-/// the row, store its cover, go live for a token, hand the session to the room
-/// — and the draft records how far it got, so a creation interrupted between
-/// two of them is resumed rather than started again. A draft is written on
-/// every edit for the
+/// the row, store its cover, go live for a token, hand the session to the live
+/// owner — and the draft records how far it got, so a creation interrupted
+/// between two of them is resumed rather than started again. A draft is written
+/// on every edit for the
 /// same reason: the form is the only place the user's work lives until the API
 /// has it.
 final class BroadcastEditorManager implements Disposable {
@@ -22,7 +22,7 @@ final class BroadcastEditorManager implements Disposable {
     required this._http,
     required this._local,
     required this._media,
-    required this._live,
+    required this._active,
     required this._userId,
     required this._logger,
   }) {
@@ -78,10 +78,18 @@ final class BroadcastEditorManager implements Disposable {
         } finally {
           _isRunning.value = false;
         }
+        // Going live is also entering the room: the manager owns the only
+        // session, so this is the one place a newly started broadcast becomes
+        // one. A failed entry publishes its own failure and leaves the form on
+        // screen, which is why nothing is recorded as started here.
+        final entry = await _active.enter(
+          LiveEnterRequest(broadcastId: broadcastId, mode: LiveEnterMode.host),
+        );
+        if (!entry.isEntered) return;
+
         session.value = created;
         step.value = .started;
         await _persistCreationState(broadcastId, step.value);
-        await _live.start(broadcastId, session: created);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.start',
@@ -145,7 +153,7 @@ final class BroadcastEditorManager implements Disposable {
   final BroadcastHttpService _http;
   final BroadcastLocalService _local;
   final MediaService _media;
-  final LiveScopeManager _live;
+  final ActiveBroadcastManager _active;
   final Id _userId;
   final MenoLogger _logger;
 
@@ -242,12 +250,12 @@ final class BroadcastEditorManager implements Disposable {
   /// `POST /broadcasts`, resuming a half-made one when there is one.
   late final Command<BroadcastDraft, void> createBroadcast;
 
-  /// `POST /broadcasts/{id}/live`, answering with the session to enter with.
+  /// `POST /broadcasts/{id}/live`, then the entry that opens the room.
   ///
   /// The session is the only thing that carries a room token, so going on air
-  /// is also what opens the live scope: from here the LiveKit client, the
-  /// session manager and the room's other services exist, and the screen that
-  /// navigates to the room finds them already there.
+  /// is also what opens the session: the live owner creates the transport, the
+  /// roster and the clock, and the screen that navigates to the room finds the
+  /// snapshot already live.
   late final Command<void, void> startBroadcast;
 
   /// Empties the form and forgets the draft it was editing.

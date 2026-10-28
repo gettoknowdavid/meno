@@ -29,12 +29,14 @@ final class UserManager {
   ///
   /// Cached once as a field: a `select` built on every getter access is a new
   /// notifier each call, which no watcher can stay subscribed to (L02).
-  late final ValueListenable<User> currentUser =
-      _auth.activeCredential.select((credential) => credential.user);
+  late final ValueListenable<User> currentUser = _auth.activeCredential.select(
+    (credential) => credential.user,
+  );
 
   /// The id of the signed-in account, or null.
-  late final ValueListenable<Id?> currentUserId =
-      _auth.activeCredential.select((credential) => credential.userId);
+  late final ValueListenable<Id?> currentUserId = _auth.activeCredential.select(
+    (credential) => credential.userId,
+  );
 
   /// Whether an account is signed in.
   late final ValueListenable<bool> isAuthenticated = _auth.isAuthenticated;

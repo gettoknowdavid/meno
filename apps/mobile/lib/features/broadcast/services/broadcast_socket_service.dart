@@ -28,7 +28,7 @@ import 'package:meno_mobile/features/broadcast/model/_model.dart';
 /// reconnect, so installing once covers every socket the client builds —
 /// [onReconnected] is how a manager hears that the socket is new and the server
 /// has forgotten its rooms.
-final class BroadcastSocketService implements Disposable {
+final class BroadcastSocketService implements Disposable, ConnectionAdapter {
   new({required this._client, required this._logger});
 
   final SocketClient _client;
@@ -80,13 +80,14 @@ final class BroadcastSocketService implements Disposable {
   ///
   /// The client is looking at a fresh socket with no rooms on it, so a client
   /// that is still in a broadcast has to say so again — see
-  /// `LiveSessionManager.reconnectToSocket`.
+  /// the live session's transport reconnect.
   Stream<void> get onReconnected => _client.onReconnected;
 
   /// Attaches one handler per event, for the life of the account.
   ///
   /// Idempotent: a second call while installed does nothing, because attaching
   /// twice would deliver every event twice.
+  @override
   void install() {
     if (_installed) return;
     _installed = true;
@@ -151,6 +152,7 @@ final class BroadcastSocketService implements Disposable {
   /// Idempotent, and the handles are copied to a local first: a new install
   /// racing this one would otherwise overwrite the list mid-detach and leave
   /// the old handlers attached (the M09 bug shape).
+  @override
   void detach() {
     if (!_installed) return;
     _installed = false;

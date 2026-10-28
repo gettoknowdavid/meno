@@ -7,67 +7,77 @@ import 'package:meno_ui/meno_ui.dart';
 
 /// The way back into a broadcast this account is still in.
 ///
-/// # The banner is drawn outside the room, so it cannot live in it
+/// It sits in the authenticated chrome rather than inside one page, so it is
+/// visible on every tab (audit §1.2). Everything it draws is one snapshot from
+/// [ActiveBroadcastManager], which exists for as long as the account does —
+/// there is no scope to probe and no second manager to merge.
 ///
-/// The home page is not inside the live scope, so the room's own services —
-/// [LiveSessionManager], [LiveSession] — are *not registered* while this widget
-/// builds. Resolving one here would be a get_it error, and there is nothing to
-/// resolve in the first place: the banner has to answer "am I on air, and in
-/// which broadcast" for a device that may not be in a room at all.
-///
-/// So the two halves are taken from where each one lives. Which broadcast is
-/// open comes from [LiveScopeManager], registered for as long as the account
-/// is; the broadcast itself, its status and who is hosting come from the
-/// room's own [LiveSessionManager], read through `maybeGet` because its absence
-/// *is* the answer to "is there a room to draw".
-///
-/// The rebuild that turns the one into the other is
-/// [LiveScopeManager.activeBroadcastId]: it changes once the scope has been
-/// pushed, which is exactly when the room's manager becomes resolvable — so a
-/// room that opens while this banner is on screen paints itself, and one that
-/// closes takes the card away again.
+/// The leave/end confirmation captures the values it needs *before* awaiting
+/// the dialog and re-checks the snapshot afterwards: a dialog left open across
+/// an account switch must not act on the session it was opened for (audit H02).
 class LiveSessionBanner extends WatchingWidget {
   const new({super.key});
 
   @override
   Widget build(BuildContext context) {
-    final activeId = watchValue<LiveScopeManager, Id?>(
-      (manager) => manager.activeBroadcastId,
+    final snapshot = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
     );
 
-    // Nothing of a room exists before the scope above was pushed, and a room a
-    // deep link opened has no session manager at all: it can be listed but not
-    // entered, and a card offering "End" for one would be offering an action
-    // with nothing behind it.
-    final manager = activeId == null ? null : di.maybeGet<LiveSessionManager>();
-    if (manager == null) return const SizedBox.shrink();
-
-    final status = watch(manager.status).value;
-    final broadcast = watch(manager.broadcast).value;
-    final isHost = watch(manager.isHost).value;
-
-    if (status.isNotLive) return const SizedBox.shrink();
+    final broadcast = snapshot.broadcast;
+    if (broadcast == null ||
+        snapshot.phase == .idle ||
+        snapshot.phase == .ended) {
+      return const SizedBox.shrink();
+    }
 
     return _Banner(
       key: ValueKey('broadcastBanner-${broadcast.id.orEmpty}'),
-      badgeTitle: status.label,
+      badgeTitle: _badgeLabel(snapshot.phase),
       broadcastTitle: broadcast.title.orEmpty,
       broadcastCreatorName: broadcast.hostName.orEmpty,
-      actionButtonLabel: isHost ? 'End' : 'Leave',
-      action: () => _handleAction(context),
-      onTap: () async {
-        await context.push<void>(MRoutes.liveBroadcast);
-      },
+      actionButtonLabel: snapshot.canEndBroadcast ? 'End' : 'Leave',
+      action: () => _handleAction(
+        context,
+        broadcastId: broadcast.id,
+        exitsByEnding: snapshot.canEndBroadcast,
+      ),
+      onTap: snapshot.isInRoom
+          ? () async => await context.push<void>(MRoutes.liveBroadcast)
+          : null,
     );
   }
 
-  Future<void> _handleAction(BuildContext context) async {
-    final manager = di<LiveSessionManager>();
-    final isHost = manager.isHost.value;
+  Future<void> _handleAction(
+    BuildContext context, {
+    required Id broadcastId,
+    required bool exitsByEnding,
+  }) async {
+    final confirmed = await BroadcastExitAlertDialog.show(
+      context,
+      exitsByEnding,
+    );
+    if (!(confirmed ?? false)) return;
 
-    final result = await BroadcastExitAlertDialog.show(context, isHost);
-    if (result ?? false) manager.endSession.run();
+    // A switch during the dialog takes the manager away with the account, and
+    // a newer session in another broadcast is not the one the dialog asked
+    // about.
+    if (!di.isRegistered<ActiveBroadcastManager>()) return;
+    final manager = di<ActiveBroadcastManager>();
+    final snapshot = manager.snapshot.value;
+    if (snapshot.broadcast?.id != broadcastId || !snapshot.isInRoom) return;
+
+    await manager.leaveOrEnd.runAsync();
   }
+
+  static String _badgeLabel(LivePhase phase) => switch (phase) {
+    LivePhase.connecting => 'Connecting',
+    LivePhase.live => 'Live',
+    LivePhase.reconnecting => 'Reconnecting',
+    LivePhase.ending => 'Ending',
+    LivePhase.failed => 'Off air',
+    LivePhase.idle || LivePhase.ended => '',
+  };
 }
 
 class _Banner extends StatelessWidget {
@@ -130,7 +140,7 @@ class _Banner extends StatelessWidget {
                     const SizedBox(height: 2),
                     Container(
                       height: 24,
-                      alignment: Alignment.centerLeft,
+                      alignment: .centerLeft,
                       child: MText(
                         broadcastTitle,
                         style: MTextTheme.of(context).captionMedium,

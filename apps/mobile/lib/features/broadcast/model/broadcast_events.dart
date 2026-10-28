@@ -30,7 +30,7 @@ final class NewBroadcastEvent extends BroadcastEvent {
 /// `apps/api/src/infrastructure/ws/dto.rs`), so a client that turned it into a
 /// full card was inventing a title, a creator and a duration it had never been
 /// sent. Whoever reacts to this asks the API for the real summary instead — see
-/// the feed's refetch and `LiveSessionManager`'s ended path.
+/// the feed's refetch and the ended screen's summary.
 final class EndedSignal extends BroadcastEvent {
   const new({required this.broadcastId, required this.reason});
 

@@ -111,7 +111,9 @@ final class MRoutes {
   static const String userProfilePattern = '/users/:userId';
 
   static String userProfileRoute(Id userId, {String? tab}) {
-    return _withQuery('/users/${Uri.encodeComponent(userId.getOrCrash)}', {'tab': tab});
+    return _withQuery('/users/${Uri.encodeComponent(userId.getOrCrash)}', {
+      'tab': tab,
+    });
   }
 
   static const String switchAccountPrefix = '/switch-account';

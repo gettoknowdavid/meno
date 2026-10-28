@@ -4,6 +4,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/_shared/services/permission_prompts.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -14,12 +15,55 @@ import 'package:meno_ui/meno_ui.dart';
 /// carry is stated once here instead.
 const _emptyFieldMessage = 'This value cannot be empty.';
 
-class BroadcastEditorPage extends WatchingWidget {
+class BroadcastEditorPage extends WatchingStatefulWidget {
   const new({super.key});
 
   @override
+  State<BroadcastEditorPage> createState() => _BroadcastEditorPageState();
+}
+
+/// The editor's page owns its manager.
+///
+/// It used to live in the account scope, where a draft opened on one account
+/// outlived it and a second editor page shared the first one's state. Pushing a
+/// short-lived scope for this page gives every screen exactly one manager —
+/// created in `initState`, disposed when the scope is popped in `dispose` —
+/// while the form's own widgets keep resolving it by type (audit M21).
+class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
+  late final String _scopeName;
+  late final BroadcastEditorManager _manager;
+
+  @override
+  void initState() {
+    super.initState();
+
+    _scopeName = 'broadcast-editor-${identityHashCode(this)}';
+    di.pushNewScope(scopeName: _scopeName);
+
+    final active = di<ActiveBroadcastManager>();
+    _manager = BroadcastEditorManager(
+      http: di<BroadcastHttpService>(),
+      local: di<BroadcastLocalService>(),
+      media: di<MediaService>(),
+      active: active,
+      userId: active.accountId,
+      logger: di<MenoLogger>(),
+    );
+    di.registerSingleton<BroadcastEditorManager>(
+      _manager,
+      dispose: (manager) => manager.onDispose(),
+    );
+  }
+
+  @override
+  void dispose() {
+    if (di.currentScopeName == _scopeName) unawaited(di.popScope());
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final manager = di<BroadcastEditorManager>();
+    final manager = _manager;
 
     // Watched, because it decides whether a pop is allowed: `PopScope.canPop`
     // has to be re-evaluated when the form becomes dirty, not only when some
