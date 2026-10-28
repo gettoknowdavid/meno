@@ -34,11 +34,16 @@ Future<void> registerAccountScope(
   // access token this credential carries, so it is created when an account
   // becomes active and thrown away with it. Registering it in the root scope
   // would leave one signed-in user's socket live for the next one.
+  //
+  // The token is a supplier, not a value: the client reads it on every connect
+  // and reconnect, so a reconnect after a refresh presents the new token and
+  // nothing here has to notice that it changed.
   scope.registerLazySingleton<SocketClient>(
     () => SocketClient(
-      url: di<Config>().webSocketUrl,
-      token: credential.session.accessToken,
+      uri: Uri.parse(di<Config>().webSocketUrl),
+      credentialSupplier: () => credential.session.accessToken,
       logger: di<MenoLogger>(),
+      clock: di<Clock>(),
     ),
     dispose: (client) => client.onDispose(),
   );

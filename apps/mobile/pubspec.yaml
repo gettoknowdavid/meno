@@ -45,7 +45,6 @@ dependencies:
   scroll_to_index: ^3.0.1
   shared_preferences: ^2.5.6
   skeletonizer: ^3.0.0
-  socket_io_client: ^3.1.6
   timeago: ^3.7.1
   uuid: ^4.6.0
 
