@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
+import 'package:meno_mobile/features/broadcast/model/broadcast_events.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
 /// A logger that writes nothing, so a test's only output is its assertions.
