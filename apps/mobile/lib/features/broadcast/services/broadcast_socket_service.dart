@@ -5,14 +5,30 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/socket.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
+import 'package:meno_mobile/features/broadcast/services/broadcast_events.dart';
 
 /// The broadcast events the socket carries.
 ///
 /// Each is exposed as a stream and decoded once here, so a manager that listens
 /// for "a broadcast ended" gets an [EndedBroadcast] rather than a map it has to
-/// remember the keys of. The client reattaches handlers after a reconnect, so a
-/// subscription stays live across one — [onReconnected] is where a client is
-/// told that it happened and that the server has forgotten its rooms.
+/// remember the keys of.
+///
+/// # Installing is explicit
+///
+/// [install] attaches the handlers and [detach] removes them; neither is
+/// implied by anything else. This adapter used to attach them inside
+/// `listen()`, which nothing called — subscribing to its streams did not
+/// install anything, so even a working transport delivered nothing (audit §3
+/// H06). The account connection owner now decides when delivery is active: it
+/// calls [install] before the socket connects and [detach] when the account
+/// goes away.
+///
+/// Both are idempotent. A second [install] would attach a second set of
+/// handlers and every event would arrive twice; a second [detach] would cancel
+/// handles that are already gone. The client keeps the handlers across a
+/// reconnect, so installing once covers every socket the client builds —
+/// [onReconnected] is how a manager hears that the socket is new and the server
+/// has forgotten its rooms.
 final class BroadcastSocketService implements Disposable {
   new({required this._client, required this._logger});
 
@@ -27,9 +43,10 @@ final class BroadcastSocketService implements Disposable {
   final _hostState = StreamController<HostConnectionEvent>.broadcast();
   final _error = StreamController<BroadcastErrorEvent>.broadcast();
 
-  final List<SocketSubscription> _subscriptions = [];
+  /// The handles [install] created, held so [detach] can cancel exactly them.
+  List<SocketSubscription> _handles = [];
 
-  bool _listening = false;
+  bool _installed = false;
 
   /// A broadcast was created or went on air.
   Stream<Broadcast> get onNewBroadcast => _newBroadcast.stream;
@@ -64,78 +81,88 @@ final class BroadcastSocketService implements Disposable {
   /// `LiveSessionManager.reconnectToSocket`.
   Stream<void> get onReconnected => _client.onReconnected;
 
-  /// Starts listening for the broadcast events.
+  /// Attaches one handler per event, for the life of the account.
   ///
-  /// Called once when the account's scope is opened. A second call is a no-op:
-  /// every call appends handlers to the client, which keeps them for the life
-  /// of the account, so listening twice would deliver each event twice.
-  void listen() {
-    if (_listening) return;
-    _listening = true;
+  /// Idempotent: a second call while installed does nothing, because attaching
+  /// twice would deliver every event twice.
+  void install() {
+    if (_installed) return;
+    _installed = true;
 
-    _subscriptions
-      ..add(
-        _client.on(
-          SocketEvent.newBroadcast,
-          (data) => _emit(_newBroadcast, _broadcast(data)),
+    _handles = [
+      _client.on(
+        SocketEvent.newBroadcast,
+        (data) => _dispatch(_newBroadcastEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.endedBroadcast,
+        (data) => _dispatch(_endedBroadcastEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.participantJoined,
+        (data) => _dispatch(
+          _decode(
+            data,
+            (json) =>
+                ParticipantJoinedEvent(participant: _participantEvent(json)),
+          ),
         ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.endedBroadcast,
-          (data) => _emit(_ended, _endedBroadcast(data)),
+      ),
+      _client.on(
+        SocketEvent.participantLeft,
+        (data) => _dispatch(
+          _decode(
+            data,
+            (json) =>
+                ParticipantLeftEvent(participant: _participantEvent(json)),
+          ),
         ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.participantJoined,
-          (data) => _emit(_joined, _participantEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.hostDisconnected,
+        (data) => _dispatch(_hostStateEvent(data, connected: false)),
+      ),
+      _client.on(
+        SocketEvent.hostReconnected,
+        (data) => _dispatch(_hostStateEvent(data, connected: true)),
+      ),
+      _client.on(
+        SocketEvent.broadcastError,
+        (data) => _dispatch(_broadcastErrorEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.homeInvalidated,
+        (data) => _dispatch(
+          _decode(
+            data,
+            (json) => HomeInvalidatedEvent(
+              invalidation: HomeInvalidatedDto.fromJson(json),
+            ),
+          ),
         ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.participantLeft,
-          (data) => _emit(_left, _participantEvent(data)),
-        ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.hostDisconnected,
-          (data) => _emit(_hostState, _hostStateEvent(data, connected: false)),
-        ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.hostReconnected,
-          (data) => _emit(_hostState, _hostStateEvent(data, connected: true)),
-        ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.broadcastError,
-          (data) => _emit(_error, _broadcastError(data)),
-        ),
-      )
-      ..add(
-        _client.on(
-          SocketEvent.homeInvalidated,
-          (data) {
-            final frame = HomeInvalidatedDto.fromJson(
-              _asMap(data) ?? <String, dynamic>{},
-            );
-            _emit(_homeInvalidated, frame);
-          },
-        ),
-      );
+      ),
+    ];
+  }
+
+  /// Removes every handler [install] attached.
+  ///
+  /// Idempotent, and the handles are copied to a local first: a new install
+  /// racing this one would otherwise overwrite the list mid-detach and leave
+  /// the old handlers attached (the M09 bug shape).
+  void detach() {
+    if (!_installed) return;
+    _installed = false;
+
+    final handles = _handles;
+    _handles = [];
+    for (final handle in handles) {
+      handle.cancel();
+    }
   }
 
   @override
   FutureOr<dynamic> onDispose() async {
-    for (final subscription in _subscriptions) {
-      subscription.cancel();
-    }
-    _subscriptions.clear();
-    _listening = false;
+    detach();
     await Future.wait([
       _newBroadcast.close(),
       _ended.close(),
@@ -147,12 +174,38 @@ final class BroadcastSocketService implements Disposable {
     ]);
   }
 
+  /// Routes one decoded event to its stream.
+  void _dispatch(BroadcastEvent? event) {
+    switch (event) {
+      case null:
+        return;
+      case NewBroadcastEvent(:final broadcast):
+        _emit(_newBroadcast, broadcast);
+      case EndedBroadcastEvent(:final ended):
+        _emit(_ended, ended);
+      case HomeInvalidatedEvent(:final invalidation):
+        _emit(_homeInvalidated, invalidation);
+      case ParticipantJoinedEvent(:final participant):
+        _emit(_joined, participant);
+      case ParticipantLeftEvent(:final participant):
+        _emit(_left, participant);
+      case HostConnectionChangedEvent(:final host):
+        _emit(_hostState, host);
+      case BroadcastFailedEvent(:final error):
+        _emit(_error, error);
+    }
+  }
+
   /// Decodes a broadcast payload, or reports why it could not be.
   ///
   /// A malformed event is dropped rather than thrown: it arrives on a stream
   /// nothing awaits, and one bad frame must not take the room down.
-  Broadcast? _broadcast(dynamic data) {
-    return _decode(data, (json) => BroadcastDto.fromJson(json).toDomain);
+  BroadcastEvent? _newBroadcastEvent(dynamic data) {
+    return _decode(
+      data,
+      (json) =>
+          NewBroadcastEvent(broadcast: BroadcastDto.fromJson(json).toDomain),
+    );
   }
 
   /// A broadcast ending.
@@ -164,54 +217,53 @@ final class BroadcastSocketService implements Disposable {
   /// the response's `broadcast_id` and the event's `broadcastId` — both land,
   /// and a frame with no id is dropped rather than becoming an
   /// `EndedBroadcast` that matches no room.
-  EndedBroadcast? _endedBroadcast(dynamic data) {
-    return _decode<EndedBroadcast?>(data, (json) {
+  BroadcastEvent? _endedBroadcastEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
       final rawId = json['broadcast_id'] ?? json['broadcastId'];
       final broadcastId = Id.fromWire(rawId as String? ?? '');
       if (!broadcastId.isValid) return null;
 
       final rawTitle = json['broadcast_title'] ?? json['broadcastTitle'];
 
-      return EndedBroadcast(
-        broadcastId: broadcastId,
-        title: rawTitle is String && rawTitle.isNotEmpty
-            ? SingleLineString(rawTitle)
-            : SingleLineString.empty,
-        creatorId: Id.fromWire(
-          (json['creator_id'] ?? json['creatorId']) as String? ?? '',
-        ),
-        endedAt: DateTime.tryParse(
-          (json['ended_at'] ?? json['endedAt']) as String? ?? '',
-        ),
-        reason: EndReason.fromWire(
-          (json['ended_reason'] ?? json['reason']) as String?,
+      return EndedBroadcastEvent(
+        ended: EndedBroadcast(
+          broadcastId: broadcastId,
+          title: rawTitle is String && rawTitle.isNotEmpty
+              ? SingleLineString(rawTitle)
+              : SingleLineString.empty,
+          creatorId: Id.fromWire(
+            (json['creator_id'] ?? json['creatorId']) as String? ?? '',
+          ),
+          endedAt: DateTime.tryParse(
+            (json['ended_at'] ?? json['endedAt']) as String? ?? '',
+          ),
+          reason: EndReason.fromWire(
+            (json['ended_reason'] ?? json['reason']) as String?,
+          ),
         ),
       );
     });
   }
 
-  BroadcastParticipantEvent? _participantEvent(dynamic data) {
-    return _decode(data, (json) {
-      final participant = json['participant'];
-      return BroadcastParticipantEvent(
-        broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
-        count: (json['count'] as num?)?.toInt() ?? 0,
-        participant: participant == null
-            ? null
-            : ParticipantDto.fromJson(_asMap(participant)!).toDomain,
-      );
-    });
+  BroadcastParticipantEvent _participantEvent(Map<String, dynamic> json) {
+    final participant = json['participant'];
+    return BroadcastParticipantEvent(
+      broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
+      count: (json['count'] as num?)?.toInt() ?? 0,
+      participant: participant == null
+          ? null
+          : ParticipantDto.fromJson(_asMap(participant)!).toDomain,
+    );
   }
 
-  HostConnectionEvent? _hostStateEvent(
-    dynamic data, {
-    required bool connected,
-  }) {
+  BroadcastEvent? _hostStateEvent(dynamic data, {required bool connected}) {
     return _decode(
       data,
-      (json) => HostConnectionEvent(
-        broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
-        connected: connected,
+      (json) => HostConnectionChangedEvent(
+        host: HostConnectionEvent(
+          broadcastId: Id.fromWire(json['broadcastId'] as String? ?? ''),
+          connected: connected,
+        ),
       ),
     );
   }
@@ -223,19 +275,21 @@ final class BroadcastSocketService implements Disposable {
   /// from the code server-side so it can never contradict it. A frame with no
   /// recognisable code is dropped rather than treated as fatal — an unknown
   /// error is not a reason to tear down a working room.
-  BroadcastErrorEvent? _broadcastError(dynamic data) {
-    return _decode<BroadcastErrorEvent?>(data, (json) {
+  BroadcastEvent? _broadcastErrorEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
       final rawCode = json['code'] as String?;
       final code = BroadcastErrorCode.fromWire(rawCode);
       if (code == null) return null;
 
-      return BroadcastErrorEvent(
-        broadcastId: json['broadcastId'] == null
-            ? null
-            : Id.fromWire(json['broadcastId'] as String),
-        code: code,
-        message: (json['message'] as String? ?? '').trim(),
-        recoverable: json['recoverable'] as bool? ?? code.isRecoverable,
+      return BroadcastFailedEvent(
+        error: BroadcastErrorEvent(
+          broadcastId: json['broadcastId'] == null
+              ? null
+              : Id.fromWire(json['broadcastId'] as String),
+          code: code,
+          message: (json['message'] as String? ?? '').trim(),
+          recoverable: json['recoverable'] as bool? ?? code.isRecoverable,
+        ),
       );
     });
   }
@@ -256,95 +310,10 @@ final class BroadcastSocketService implements Disposable {
     }
   }
 
-  void _emit<T>(StreamController<T> controller, T? event) {
-    if (event != null) controller.add(event);
+  void _emit<T>(StreamController<T> controller, T event) {
+    if (!controller.isClosed) controller.add(event);
   }
 
   static Map<String, dynamic>? _asMap(dynamic data) =>
       data is Map<String, dynamic> ? data : null;
-}
-
-/// Somebody joined or left a broadcast.
-final class BroadcastParticipantEvent {
-  const new({required this.broadcastId, required this.count, this.participant});
-
-  final Id broadcastId;
-
-  /// How many accounts are in the room after the change.
-  final int count;
-  final Participant? participant;
-}
-
-/// The host's socket is in its grace window, or came back.
-final class HostConnectionEvent {
-  const new({required this.broadcastId, required this.connected});
-
-  final Id broadcastId;
-  final bool connected;
-}
-
-/// Why the server sent a `broadcastError`, mirroring `WsErrorCode` in
-/// `apps/api/src/infrastructure/ws/errors.rs`.
-///
-/// The wire value is SCREAMING_SNAKE_CASE and is a stability contract: the API
-/// may add a code but never rename one, so matching on it is safe.
-enum BroadcastErrorCode {
-  tokenExpired('TOKEN_EXPIRED'),
-  broadcastForciblyEnded('BROADCAST_FORCIBLY_ENDED'),
-  kickedFromRoom('KICKED_FROM_ROOM'),
-  roomNotFound('ROOM_NOT_FOUND'),
-  mediaServerError('MEDIA_SERVER_ERROR'),
-  unsupported('UNSUPPORTED');
-
-  new(this.wire);
-
-  /// The exact string the API sends.
-  final String wire;
-
-  /// Whether retrying the same action can succeed.
-  ///
-  /// Mirrors `WsErrorCode::is_recoverable`: the socket flag is derived from
-  /// this server-side, so this default only applies when the frame omits it.
-  bool get isRecoverable =>
-      this == tokenExpired || this == mediaServerError;
-
-  /// Whether this error means the room is gone and the client should leave it.
-  ///
-  /// Mirrors `WsErrorCode::is_fatal`: an `unsupported` frame is not recoverable
-  /// by retrying, but it is also not a reason to drop a working connection.
-  bool get isFatal =>
-      this == broadcastForciblyEnded ||
-      this == kickedFromRoom ||
-      this == roomNotFound;
-
-  static BroadcastErrorCode? fromWire(String? wire) {
-    for (final code in BroadcastErrorCode.values) {
-      if (code.wire == wire) return code;
-    }
-    return null;
-  }
-}
-
-/// A `broadcastError` frame, decoded once here.
-final class BroadcastErrorEvent {
-  const new({
-    required this.code,
-    required this.message,
-    required this.recoverable,
-    this.broadcastId,
-  });
-
-  /// The room this concerns, when it concerns one. Connection-scoped errors
-  /// (a malformed heartbeat, an unsupported frame, a server shutdown) carry
-  /// no id.
-  final Id? broadcastId;
-
-  /// The stable code to branch on; never match on [message].
-  final BroadcastErrorCode code;
-
-  /// Human-readable detail. Safe to show, never used for control flow.
-  final String message;
-
-  /// Whether retrying can succeed — the server derives this from [code].
-  final bool recoverable;
 }
