@@ -78,7 +78,7 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
         logger: di<MenoLogger>(),
         interceptors: [
           SessionInterceptor(
-            store: di<SessionStore>(),
+            store: di<SessionService>(),
             config: config,
             clock: di<Clock>(),
             logger: di<MenoLogger>(),
@@ -121,8 +121,8 @@ void _registerOnboarding() {
 }
 
 void _registerAuth() {
-  di.registerLazySingleton<SessionStore>(
-    () => SessionStore(di<SecureStorage>()),
+  di.registerLazySingleton<SessionService>(
+    () => SessionService(di<SecureStorage>()),
     dispose: (store) => store.onDispose(),
   );
   di.registerLazySingleton<AuthHttpService>(
@@ -131,7 +131,8 @@ void _registerAuth() {
   di.registerSingletonAsync<AuthManager>(
     () => AuthManager(
       http: di<AuthHttpService>(),
-      store: di<SessionStore>(),
+      store: di<SessionService>(),
+      clock: di<Clock>(),
       logger: di<MenoLogger>(),
       // The owner's single attempt counter — AuthManager keeps none of its own.
       // Resolved through `di` at call time: the two are wired to each other.
@@ -152,7 +153,7 @@ void _registerAuth() {
   di.registerSingletonWithDependencies<AccountTransitionOwner>(
     () {
       final owner = AccountTransitionOwner(
-        activeCredential: di<AuthManager>().activeCredential,
+        activeRecord: di<AuthManager>().activeRecord,
         logger: di<MenoLogger>(),
         register: registerAccountScope,
         // The live owner is fenced before the account scope is popped: new
@@ -165,9 +166,12 @@ void _registerAuth() {
         },
         // The owner writes the credential itself, right after the scope's
         // registrations exist — no other writer decides when an account is
-        // active.
-        saveCredential: (credential) =>
-            di<SessionStore>().saveActive(credential),
+        // active. The vault files the record before it is made active, so a
+        // crash in between leaves an account that can be switched back to.
+        saveCredential: (record) async {
+          await di<SessionService>().adoptCandidate(record);
+          await di<SessionService>().activate(record.accountId);
+        },
       );
       unawaited(owner.init());
       return owner;

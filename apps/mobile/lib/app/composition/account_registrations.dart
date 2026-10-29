@@ -25,7 +25,7 @@ import 'package:meno_mobile/features/settings/settings.dart';
 /// frame nothing and buys a lifetime that ends where it should.
 Future<void> registerAccountScope(
   GetIt scope,
-  UserCredential credential,
+  CredentialRecord credential,
   AccountContext context,
 ) async {
   // The container disposes all of this: dropping the scope asks everything
@@ -176,18 +176,18 @@ Future<void> registerAccountScope(
     context: context,
     socket: di<SocketClient>(),
     adapters: [di<BroadcastSocketService>()],
-    credentials: di<SessionStore>(),
+    credentials: di<SessionService>(),
     logger: di<MenoLogger>(),
     clock: di<Clock>(),
   );
   scope.registerSingleton<AccountConnectionOwner>(connection);
   connection.initialize();
-  unawaited(connection.start(verified: credential.user.verified));
+  unawaited(connection.start(verified: credential.isVerified));
 
   // The record of the session this device was in is the account's too: it is
   // the account that would go back to it.
   scope.registerSingleton<LiveSessionStore>(
-    LiveSessionStore(di<LocalStorage>(), userId: credential.userId),
+    LiveSessionStore(di<LocalStorage>(), userId: credential.accountId),
   );
 
   // The account's one live owner. Its session is built by the factory below —

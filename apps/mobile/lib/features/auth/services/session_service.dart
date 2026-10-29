@@ -10,6 +10,7 @@ import 'package:meno_mobile/_shared/services/secure_storage.dart';
 import 'package:meno_mobile/features/auth/model/credential_record.dart';
 import 'package:meno_mobile/features/auth/model/mutation_result.dart';
 import 'package:meno_mobile/features/auth/model/refresh_outcome.dart';
+import 'package:meno_mobile/features/auth/services/connection_credentials.dart';
 
 /// Where the accounts signed in on this device live.
 ///
@@ -31,7 +32,7 @@ import 'package:meno_mobile/features/auth/model/refresh_outcome.dart';
 /// The queue never waits on the network or on the account transition; it only
 /// waits on the secure store. That keeps a slow logout from blocking a token
 /// renewal and vice versa.
-final class SessionService implements Disposable {
+final class SessionService implements Disposable, ConnectionCredentials {
   new(this._storage);
 
   final SecureStorage _storage;
@@ -87,6 +88,7 @@ final class SessionService implements Disposable {
   /// expired and there is no refresh token left to recover it. An expired
   /// access token that still has a refresh token is returned: the interceptor
   /// needs the record in order to renew it.
+  @override
   CredentialRecord? usableCredential(Id accountId) {
     final record = _envelope?.credentials[accountId];
     if (record == null) return null;

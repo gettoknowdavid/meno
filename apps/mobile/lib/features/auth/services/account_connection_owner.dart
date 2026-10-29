@@ -4,17 +4,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-
-/// The credential reads the connection needs.
-///
-/// Narrow on purpose: the owner asks for one account's committed credential,
-/// and `SessionStore` is the only implementation. That is what makes a
-/// reconnect after a refresh present the *new* token — the value is read when
-/// it is needed, never captured with the account.
-abstract interface class ConnectionCredentials {
-  /// The vault entry for [userId], whichever account is active.
-  Future<UserCredential?> readCredential(Id userId);
-}
+import 'package:meno_mobile/features/auth/services/connection_credentials.dart';
 
 /// The account's realtime lifecycle: install, start, stop.
 ///
@@ -73,13 +63,12 @@ final class AccountConnectionOwner implements Disposable {
   /// that has already expired — a socket that presented an expired token would
   /// be closed as unauthorised and retried for nothing.
   Future<String?> accessToken() async {
-    final credential = await _credentials.readCredential(_context.accountId);
-    if (credential == null || !credential.hasUsableSession) return null;
+    final credential = _credentials.usableCredential(_context.accountId);
+    if (credential == null || credential.accessToken.isEmpty) return null;
 
-    final expiresAt = credential.session.expiresAt;
-    if (expiresAt != null && !expiresAt.isAfter(_clock.nowUtc())) return null;
+    if (!credential.accessExpiresAt.isAfter(_clock.nowUtc())) return null;
 
-    return credential.session.accessToken;
+    return credential.accessToken;
   }
 
   /// Attaches every adapter's handlers.

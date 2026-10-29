@@ -4,11 +4,12 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
+import 'package:meno_mobile/features/auth/services/session_service.dart';
 
 /// Decides what credential each request travels with, and never changes that
 /// decision once the request is in flight.
@@ -75,7 +76,7 @@ final class SessionInterceptor extends Interceptor {
   /// The identity captured when a request was dispatched.
   static const String identityKey = 'meno.session.identity';
 
-  final SessionStore store;
+  final SessionService store;
   final Config config;
   final Clock clock;
   final MenoLogger logger;
@@ -91,7 +92,8 @@ final class SessionInterceptor extends Interceptor {
   ///
   /// One dispatch per account: N concurrent 401s spend exactly one refresh
   /// token, and every caller receives the same classified outcome.
-  final Map<Id, Future<RefreshOutcome<UserCredential>>> _renewals = {};
+  final Map<_RenewalKey, Future<RefreshOutcome<CredentialRecord>>> _renewals =
+      {};
 
   @override
   Future<void> onRequest(
@@ -100,6 +102,10 @@ final class SessionInterceptor extends Interceptor {
   ) async {
     final done = _CompleteOnce();
     try {
+      // A token only ever comes from the vault, and a request can arrive
+      // before startup finished waiting on it — initialize() is idempotent.
+      await store.initialize();
+
       final mode = options.extra[AuthMode.extraKey];
 
       switch (mode) {
@@ -155,12 +161,12 @@ final class SessionInterceptor extends Interceptor {
       // whichever account is active *now* instead of the one it started as.
       final previous = options.extra[identityKey];
       final _Identity identity;
-      UserCredential credential;
+      CredentialRecord credential;
 
       if (previous is _Identity) {
         identity = previous;
-        final byId = await store.readCredential(identity.accountId);
-        if (byId == null || !byId.hasUsableSession) {
+        final byId = store.usableCredential(identity.accountId);
+        if (byId == null) {
           return done.run(
             () => _rejectRequest(
               options,
@@ -173,8 +179,11 @@ final class SessionInterceptor extends Interceptor {
       } else {
         // The capture: everything after this point uses [identity], never
         // "whichever account is active now".
-        final captured = await store.readActiveCredential();
-        if (captured == null || !captured.hasUsableSession) {
+        final activeId = store.readSnapshot().activeAccountId;
+        final captured = activeId == null
+            ? null
+            : store.usableCredential(activeId);
+        if (captured == null) {
           return done.run(
             () => _rejectRequest(
               options,
@@ -183,26 +192,16 @@ final class SessionInterceptor extends Interceptor {
             ),
           );
         }
-        identity = _Identity(captured.userId);
+        identity = _Identity(captured.accountId);
         credential = captured;
         options.extra[identityKey] = identity;
       }
 
-      if (_isBeyondRecovery(credential)) {
-        return done.run(
-          () => _rejectRequest(
-            options,
-            handler,
-            const SessionUnavailableException(),
-          ),
-        );
-      }
-
       if (_needsRefresh(credential)) {
-        final outcome = await _renew(identity.accountId, credential);
+        final outcome = await _renew(credential);
         switch (outcome) {
           case RefreshSucceeded(credential: final issued):
-            if (!await _isStillActive(identity)) {
+            if (!_isStillActive(identity)) {
               return done.run(
                 () => _rejectRequest(
                   options,
@@ -213,9 +212,9 @@ final class SessionInterceptor extends Interceptor {
             }
             credential = issued;
           case RefreshRejected():
-            // The server documented the session as dead. Sign it out rather
-            // than leaving every later request to fail one at a time.
-            if (await _isStillActive(identity)) await store.clearActive();
+            // The server documented the session as dead, and settling the
+            // outcome removed the record: the account is signed out rather than
+            // left to fail every later request one at a time.
             return done.run(
               () => _rejectRequest(
                 options,
@@ -241,13 +240,14 @@ final class SessionInterceptor extends Interceptor {
             }
           case RefreshUncertain(:final reason):
             // The refresh token may already have been spent: this account must
-            // sign in again, and the same token must never be sent twice.
+            // sign in again, and the same token must never be sent twice. The
+            // vault has already marked the record unusable, which is what makes
+            // the projection sign the account out.
             logger.w(
               'Session renewal for ${identity.accountId.orEmpty} is '
-              'uncertain ($reason); signing the account out',
+              'uncertain ($reason); the account must sign in again',
               tag: MenoLogTag.auth.label,
             );
-            if (await _isStillActive(identity)) await store.clearActive();
             return done.run(
               () => _rejectRequest(
                 options,
@@ -258,8 +258,7 @@ final class SessionInterceptor extends Interceptor {
         }
       }
 
-      options.headers[authorizationHeader] =
-          'Bearer ${credential.session.accessToken}';
+      options.headers[authorizationHeader] = 'Bearer ${credential.accessToken}';
       return done.run(() => handler.next(options));
     } on Object catch (error, stackTrace) {
       // Anything unexpected — a storage failure, a bug in here — still
@@ -308,21 +307,30 @@ final class SessionInterceptor extends Interceptor {
       // The request belongs to an account that is no longer active: the switch
       // already invalidated it. Refuse instead of renewing somebody else's
       // session or replaying with the new account's token.
-      if (!await _isStillActive(identity)) {
+      if (!_isStillActive(identity)) {
         return done.run(
           () => _rejectResponse(response, handler, const CancelledException()),
         );
       }
 
-      final stored = await store.readCredential(identity.accountId);
-      final outcome = await _renew(
-        identity.accountId,
-        stored ?? UserCredential.empty,
-      );
+      final stored = _recordOf(identity.accountId);
+      if (stored == null) {
+        // The record went away while this request was in flight, so there is
+        // nothing left to renew the refusal with.
+        return done.run(
+          () => _rejectResponse(
+            response,
+            handler,
+            const SessionUnavailableException(),
+          ),
+        );
+      }
+
+      final outcome = await _renew(stored);
 
       switch (outcome) {
         case RefreshSucceeded(credential: final issued):
-          if (!await _isStillActive(identity)) {
+          if (!_isStillActive(identity)) {
             return done.run(
               () => _rejectResponse(
                 response,
@@ -336,11 +344,12 @@ final class SessionInterceptor extends Interceptor {
             'replaying the request',
             tag: MenoLogTag.network.label,
           );
-          final replayed = await _replay(request, issued.session.accessToken);
+          final replayed = await _replay(request, issued.accessToken);
           return done.run(() => handler.resolve(replayed));
 
         case RefreshRejected():
-          if (await _isStillActive(identity)) await store.clearActive();
+          // Settling the outcome dropped the record, so the account is signed
+          // out by the projection; nothing else has to be cleared here.
           return done.run(
             () => _rejectResponse(
               response,
@@ -357,10 +366,9 @@ final class SessionInterceptor extends Interceptor {
         case RefreshUncertain(:final reason):
           logger.w(
             'Session renewal for ${identity.accountId.orEmpty} is '
-            'uncertain ($reason); signing the account out',
+            'uncertain ($reason); the account must sign in again',
             tag: MenoLogTag.auth.label,
           );
-          if (await _isStillActive(identity)) await store.clearActive();
           return done.run(
             () => _rejectResponse(
               response,
@@ -405,68 +413,123 @@ final class SessionInterceptor extends Interceptor {
     return _dio.fetch<dynamic>(request);
   }
 
-  /// Whether [credential] is expired with no way back.
-  bool _isBeyondRecovery(UserCredential credential) {
-    if (!_isExpired(credential)) return false;
-    return !credential.session.isRefreshable;
+  /// The committed record for [accountId], or null when there is none or it
+  /// must not be spent again.
+  ///
+  /// Unlike `usableCredential` this keeps an expired record — renewing it is
+  /// what the interceptor is for — but still refuses an uncertain one, whose
+  /// refresh token may already have been consumed.
+  CredentialRecord? _recordOf(Id accountId) {
+    final record = store.readSnapshot().credentials[accountId];
+    if (record == null || record.renewalState == RenewalState.uncertain) {
+      return null;
+    }
+    return record;
   }
 
   /// Whether [credential]'s access token is past its expiry.
-  bool _isExpired(UserCredential credential) {
-    final expiry = credential.session.expiresAt;
-    if (expiry == null) return false;
-    return !expiry.isAfter(clock.nowUtc());
-  }
+  bool _isExpired(CredentialRecord credential) =>
+      !credential.accessExpiresAt.isAfter(clock.nowUtc());
 
   /// Whether [credential] is inside the renewal window.
-  bool _needsRefresh(UserCredential credential) {
-    if (!credential.session.isRefreshable) return false;
-    final expiry = credential.session.expiresAt;
-    if (expiry == null) return false;
-    return !expiry.isAfter(clock.nowUtc().add(refreshMargin));
+  bool _needsRefresh(CredentialRecord credential) {
+    final refreshToken = credential.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) return false;
+    final threshold = clock.nowUtc().add(refreshMargin);
+    return !credential.accessExpiresAt.isAfter(threshold);
   }
 
   /// Whether [identity] is still the account the app acts as.
-  Future<bool> _isStillActive(_Identity identity) async =>
-      await store.readActiveUserId() == identity.accountId;
+  bool _isStillActive(_Identity identity) =>
+      store.readSnapshot().activeAccountId == identity.accountId;
 
-  /// Renews the session of the account [accountId], sharing one attempt — and
-  /// one classified outcome — between every caller for that account.
-  Future<RefreshOutcome<UserCredential>> _renew(
-    Id accountId,
-    UserCredential stale,
-  ) {
-    final inFlight = _renewals[accountId];
+  /// Renews [stale], sharing one attempt — and one classified outcome — between
+  /// every caller holding the same version of that record.
+  ///
+  /// The key is the whole identity, not just the account: a caller holding an
+  /// older revision must not join an attempt that already advanced it, or the
+  /// same single-use refresh token would be presented twice.
+  Future<RefreshOutcome<CredentialRecord>> _renew(CredentialRecord stale) {
+    final key = _RenewalKey(stale.accountId, stale.epoch, stale.revision);
+    final inFlight = _renewals[key];
     if (inFlight != null) return inFlight;
 
-    final renewal = _performRenewal(accountId, stale);
-    _renewals[accountId] = renewal;
+    final renewal = _performRenewal(stale);
+    _renewals[key] = renewal;
     unawaited(
       renewal.whenComplete(() {
-        if (identical(_renewals[accountId], renewal)) {
-          _renewals.remove(accountId);
+        if (identical(_renewals[key], renewal)) {
+          _renewals.remove(key);
         }
       }),
     );
     return renewal;
   }
 
-  /// Exchanges the captured account's refresh token for a fresh pair and
-  /// classifies what came back.
+  /// One attempt, ordered so a possibly spent token is never presented twice.
+  Future<RefreshOutcome<CredentialRecord>> _performRenewal(
+    CredentialRecord stale,
+  ) async {
+    final accountId = stale.accountId;
+    final epoch = stale.epoch;
+    final revision = stale.revision;
+
+    // A newer revision is already committed: that pair is the answer, and the
+    // token this attempt would have presented is already spent.
+    final current = _recordOf(accountId);
+    if (current != null && current.revision > revision) {
+      return RefreshSucceeded(current);
+    }
+
+    final refreshToken = stale.refreshToken;
+    if (refreshToken == null || refreshToken.isEmpty) {
+      return const RefreshUncertain('missingRefreshToken');
+    }
+
+    // Written down before the request leaves: a crash from here on reads back
+    // as an uncertain outcome, never as a token that is safe to spend again.
+    final marked = await store.markRenewalInFlight(
+      accountId,
+      epoch: epoch,
+      revision: revision,
+    );
+    if (marked is! MutationCommitted) {
+      return const RefreshUncertain('dispatchNotPrepared');
+    }
+
+    final outcome = await _exchange(accountId, refreshToken);
+
+    // Applied inside the vault's queue and only while the record is still the
+    // one this attempt started from.
+    final settled = await store.settleRenewal(
+      accountId,
+      epoch: epoch,
+      revision: revision,
+      outcome: outcome,
+    );
+    switch (settled) {
+      case MutationCommitted():
+        return outcome;
+      case MutationStale():
+        // The record moved on — a logout, a switch or a newer login — while
+        // this attempt was in flight, so nothing was written.
+        return const RefreshUncertain('renewalSuperseded');
+      case MutationStorageFailed():
+      case MutationRejected():
+        return const RefreshUncertain('renewalNotSettled');
+    }
+  }
+
+  /// The network half: exchanges [refreshToken] and classifies what came back.
   ///
   /// Classification is deliberate, never a guess: a lost response must never
   /// become "unavailable" (the token may already be spent), and an unclassified
   /// non-success must never become "outage" (the backend rotates the token
   /// before its later fallible work).
-  Future<RefreshOutcome<UserCredential>> _performRenewal(
+  Future<RefreshOutcome<CredentialRecord>> _exchange(
     Id accountId,
-    UserCredential stale,
+    String refreshToken,
   ) async {
-    final refreshToken = stale.session.refreshToken;
-    if (refreshToken == null || refreshToken.isEmpty) {
-      return const RefreshUncertain('missingRefreshToken');
-    }
-
     try {
       final response = await _dio.post<dynamic>(
         refreshPath,
@@ -488,19 +551,12 @@ final class SessionInterceptor extends Interceptor {
           return const RefreshUncertain('malformedSuccess');
         }
 
-        final renewed = AuthResponseDto.fromJson(payload).toDomain;
-        if (renewed.userId != accountId) {
+        // Mapped at receipt, once, against this reading of the clock (Step 6).
+        final renewed = AuthResponseDto.fromJson(payload)
+            .toCredentialRecord(clock);
+        if (renewed.accountId != accountId) {
           // A pair minted for another identity is never adopted.
           return const RefreshUncertain('accountMismatch');
-        }
-
-        // The account may have been switched away from while the renewal was
-        // in flight. The new tokens are still worth keeping, but not as the
-        // active account.
-        if (await _isStillActive(_Identity(accountId))) {
-          await store.saveActive(renewed);
-        } else {
-          await store.saveToVault(renewed);
         }
         return RefreshSucceeded(renewed);
       }
@@ -624,6 +680,26 @@ final class _Identity {
   const new(this.accountId);
 
   final Id accountId;
+}
+
+/// One renewal attempt, named by everything that makes it conditional.
+@immutable
+final class _RenewalKey {
+  const new(this.accountId, this.epoch, this.revision);
+
+  final Id accountId;
+  final String epoch;
+  final int revision;
+
+  @override
+  bool operator ==(Object other) =>
+      other is _RenewalKey &&
+      other.accountId == accountId &&
+      other.epoch == epoch &&
+      other.revision == revision;
+
+  @override
+  int get hashCode => Object.hash(accountId, epoch, revision);
 }
 
 /// Runs a dio handler exactly once.

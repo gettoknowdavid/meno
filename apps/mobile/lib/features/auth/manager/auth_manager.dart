@@ -6,7 +6,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
+import 'package:meno_mobile/features/auth/services/session_service.dart';
 
 /// A manager for the authentication state of the app.
 final class AuthManager implements Disposable {
@@ -16,11 +16,12 @@ final class AuthManager implements Disposable {
   /// hooks: every sign-in attempt takes a ticket from the owner's single
   /// counter, and the response is handed back for adoption — cancelled when a
   /// newer intent superseded it. When they are absent (a unit test that wires
-  /// this manager alone) the credential is written directly, which is the
-  /// legacy path and nothing else uses it.
+  /// this manager alone) the record is written straight to the vault, which is
+  /// the legacy path and nothing else uses it.
   new({
     required this._http,
     required this._store,
+    required this._clock,
     required this._logger,
     this.beginAttempt,
     this.adoptCandidate,
@@ -132,7 +133,8 @@ final class AuthManager implements Disposable {
   }
 
   final AuthHttpService _http;
-  final SessionStore _store;
+  final SessionService _store;
+  final Clock _clock;
   final MenoLogger _logger;
 
   /// Asks the transition owner for the next attempt ticket.
@@ -141,7 +143,7 @@ final class AuthManager implements Disposable {
   /// Hands a freshly issued credential to the transition owner, which is now
   /// the only code that activates an account.
   final Future<TransitionResult> Function(
-    UserCredential credential, {
+    CredentialRecord record, {
     required int ticket,
   })?
   adoptCandidate;
@@ -151,7 +153,14 @@ final class AuthManager implements Disposable {
   final _lastKnown = ValueNotifier<User>(User.empty);
   final _formMode = ValueNotifier<LoginFormMode>(LoginFormMode.fullEmail);
 
-  StreamSubscription<UserCredential?>? _storeSubscription;
+  /// The active account as the vault keeps it.
+  ///
+  /// The transition owner follows this rather than [activeCredential], because
+  /// an epoch and a revision cannot be read back out of a projection, and a
+  /// token renewal has to be conditional on exactly those two.
+  final _record = ValueNotifier<CredentialRecord?>(null);
+
+  ListenableSubscription? _storeSubscription;
 
   /// Signs an account in with an email address and a password.
   late final Command<LoginArgs, UserCredential> login;
@@ -232,19 +241,28 @@ final class AuthManager implements Disposable {
   /// "use another account" must always show an editable, empty address field.
   ValueListenable<LoginFormMode> get loginFormMode => _formMode;
 
-  /// Adopts the stored accounts and subscribes to storage changes.
+  /// The active account as the vault keeps it, or null when signed out.
+  ///
+  /// Only the transition owner needs this: everything a screen renders comes
+  /// from [activeCredential], [accounts] and [lastKnownUser].
+  ValueListenable<CredentialRecord?> get activeRecord => _record;
+
+  /// Reads the vault and subscribes to its changes.
+  ///
   /// Returns `this` so the locator can register it with the `init()` pattern:
   /// the app's startup gate then waits for a restored session instead of
   /// rendering the sign-in screen for one frame and then navigating away.
   Future<AuthManager> init() async {
+    await _store.initialize();
     _startListening();
-    await _restore();
+    await _dropUnrecoverable();
+    _applyEnvelope(_store.readSnapshot());
     return this;
   }
 
   @override
   FutureOr<dynamic> onDispose() {
-    unawaited(_storeSubscription?.cancel());
+    _storeSubscription?.cancel();
 
     login.dispose();
     register.dispose();
@@ -266,14 +284,6 @@ final class AuthManager implements Disposable {
     _formMode.dispose();
   }
 
-  /// Re-reads the vault.
-  ///
-  /// Cheap (one secure-storage read) and called after every mutation that can
-  /// change it, so [accounts] is never a stale snapshot of the sheet.
-  Future<void> refreshAccounts() async {
-    _accounts.value = await _store.readAccounts();
-  }
-
   /// Signs the active account out locally.
   ///
   /// Deliberately not a [Command]: it is the reaction to a session the API has
@@ -281,19 +291,30 @@ final class AuthManager implements Disposable {
   Future<void> signOut() async {
     _logger.i('Signing out locally', tag: MenoLogTag.lifecycle.label);
 
-    final credential = _active.value;
-    if (credential.isEmpty) {
-      await _store.clearActive();
-      _adopt(UserCredential.empty);
+    final record = _record.value;
+    if (record == null) {
+      await _store.deactivate();
+      _formMode.value = LoginFormMode.prefillSelectedIdentity;
       return;
     }
 
-    // Remove the vault entry, not just the active keys. Leaving the vault copy
-    // behind is what makes a logged-out session selectable again later; the
-    // store also refuses to recreate a removed account from a late renewal.
-    await _store.remove(credential.userId);
-    _adopt(UserCredential.empty);
-    await refreshAccounts();
+    // The record itself goes, not just the active pointer: leaving it behind is
+    // what makes a logged-out session selectable again later, and the vault
+    // refuses to recreate a removed account from a late renewal.
+    final result = await _store.removeCredentials(
+      record.accountId,
+      epoch: record.epoch,
+    );
+    if (result is MutationStorageFailed) {
+      // The device refused the write, so the account is still signed in. Saying
+      // otherwise would be a lie the next launch would contradict.
+      _logger.w(
+        'The account could not be removed from this device, so it stays '
+        'signed in',
+        tag: MenoLogTag.lifecycle.label,
+      );
+      throw const StorageException();
+    }
 
     // The user is still the last person who signed in, so the sign-in screen
     // can greet them. That is presentation, not authentication.
@@ -306,14 +327,18 @@ final class AuthManager implements Disposable {
   /// lands after a newer intent (a logout, a switch) settles as
   /// [TransitionCancelled] and writes nothing — the race audit C02 describes.
   Future<UserCredential> _accept(
-    Future<UserCredential> Function() request,
+    Future<AuthResponseDto> Function() request,
   ) async {
     final ticket = beginAttempt?.call() ?? 0;
-    final credential = await request();
+    final response = await request();
+
+    // Receipt-time conversion, once: the relative lifetime becomes an instant
+    // against this one reading of the clock (guide Step 6).
+    final record = response.toCredentialRecord(_clock);
 
     final adopt = adoptCandidate;
     if (adopt != null) {
-      final result = await adopt(credential, ticket: ticket);
+      final result = await adopt(record, ticket: ticket);
       if (result is TransitionCancelled) {
         throw const CancelledException();
       }
@@ -323,11 +348,22 @@ final class AuthManager implements Disposable {
         );
       }
     } else {
-      await _store.saveActive(credential);
+      final adopted = await _store.adoptCandidate(record);
+      if (adopted is MutationStorageFailed) throw const StorageException();
+      await _store.activate(record.accountId);
     }
 
+    // Greeting metadata only, and only once the attempt was admitted: an
+    // attempt superseded by a logout must leave nothing on the sign-in screen.
+    await _store.updateRememberedIdentity(
+      response.toRememberedIdentity(_clock),
+    );
+
+    // The sign-in response knows the whole account, so the in-session
+    // projection carries it; after a restart the vault's thinner restored one
+    // does, and the chrome reads the profile for anything richer (Step 24).
+    final credential = record.toUserCredential(user: response.user.toDomain);
     _adopt(credential);
-    await refreshAccounts();
     _formMode.value = LoginFormMode.prefillSelectedIdentity;
     return credential;
   }
@@ -394,39 +430,86 @@ final class AuthManager implements Disposable {
     await signOut();
   }
 
-  /// Loads what is on disk, if anything.
-  Future<void> _restore() async {
-    await refreshAccounts();
+  /// Applies the committed vault to everything the UI reads.
+  ///
+  /// The vault publishes after every successful write, so this is the only
+  /// place active state is derived: a sign-in, a renewal, a switch and a logout
+  /// all arrive here as one envelope.
+  void _applyEnvelope(VaultEnvelope envelope) {
+    _accounts.value = _projectAccounts(envelope);
 
-    final credential = await _store.readActiveCredential();
-    if (credential == null || credential.isEmpty) return;
+    final activeId = envelope.activeAccountId;
+    // `usableCredential` answers null for a session that has to be signed into
+    // again — a renewal whose outcome cannot be known, or an expired token with
+    // nothing left to renew it with — which is exactly "signed out".
+    final record = activeId == null ? null : _store.usableCredential(activeId);
 
-    // The account is remembered either way, so the sign-in screen can greet the
-    // returning user and pre-fill their address.
-    _lastKnown.value = credential.user;
-
-    if (credential.session.isExpired && !credential.session.isRefreshable) {
-      // Nothing can bring this session back — there is no refresh token left —
-      // so it is cleared now rather than left to fail on the first request.
-      _logger.w(
-        'The stored session for ${credential.userId.orEmpty} expired '
-        'and cannot be renewed',
-        tag: MenoLogTag.lifecycle.label,
-      );
-      await _store.clearActive();
-      return;
+    _record.value = record;
+    _adopt(
+      record?.toUserCredential(
+            remembered: envelope.remembered[record.accountId],
+          ) ??
+          UserCredential.empty,
+    );
+    _lastKnown.value = _greeting(envelope);
+    if (record != null) {
+      _formMode.value = LoginFormMode.prefillSelectedIdentity;
     }
-
-    _adopt(credential);
-    _formMode.value = LoginFormMode.prefillSelectedIdentity;
   }
 
-  /// Subscribes to the store, which is how a token renewed by the interceptor —
+  /// Every account on this device, in the presentation shape.
+  Map<Id, UserCredential> _projectAccounts(VaultEnvelope envelope) => {
+    for (final record in envelope.credentials.values)
+      record.accountId: record.toUserCredential(
+        remembered: envelope.remembered[record.accountId],
+      ),
+  };
+
+  /// The account the signed-out screen greets: the one used most recently.
+  ///
+  /// Greeting metadata, never authentication: it says who was here, not that
+  /// their session is still usable.
+  User _greeting(VaultEnvelope envelope) {
+    RememberedIdentity? latest;
+    for (final identity in envelope.remembered.values) {
+      if (latest == null || identity.lastUsedAt.isAfter(latest.lastUsedAt)) {
+        latest = identity;
+      }
+    }
+    return latest?.toUser() ?? User.empty;
+  }
+
+  /// Drops an active record that nothing can revive.
+  ///
+  /// An expired access token with no refresh token left is not a session the
+  /// app can recover, so it is removed now rather than left to fail the first
+  /// request. A refreshable one is kept: the interceptor renews it.
+  Future<void> _dropUnrecoverable() async {
+    final envelope = _store.readSnapshot();
+    final activeId = envelope.activeAccountId;
+    if (activeId == null) return;
+
+    final record = envelope.credentials[activeId];
+    if (record == null) return;
+
+    final refreshToken = record.refreshToken;
+    final refreshable = refreshToken != null && refreshToken.isNotEmpty;
+    if (refreshable || record.accessExpiresAt.isAfter(_clock.nowUtc())) return;
+
+    _logger.w(
+      'The stored session for ${activeId.orEmpty} expired '
+      'and cannot be renewed',
+      tag: MenoLogTag.lifecycle.label,
+    );
+    await _store.removeCredentials(activeId, epoch: record.epoch);
+  }
+
+  /// Subscribes to the vault, which is how a token renewed by the interceptor —
   /// or a session it had to drop — reaches the UI.
   void _startListening() {
-    _storeSubscription = _store.activeChanges.listen(
-      (credential) => _adopt(credential ?? UserCredential.empty),
-    );
+    _storeSubscription = _store.changes.listen((envelope, _) {
+      if (envelope != null) _applyEnvelope(envelope);
+    });
   }
 
   /// Clears the active account so a different one can sign in.
@@ -435,20 +518,25 @@ final class AuthManager implements Disposable {
   /// vault, and the login screen switches to the full form so a second address
   /// can actually be typed.
   Future<void> _addAccount() async {
-    await _store.clearActive();
-    _adopt(UserCredential.empty);
+    final result = await _store.deactivate();
+    if (result is MutationStorageFailed) throw const StorageException();
     _formMode.value = LoginFormMode.fullEmail;
   }
 
   /// Makes [userId] the active account.
   Future<void> _switchAccount(Id userId) async {
-    final switched = await _store.activate(userId);
-    if (!switched) {
-      throw const NotFoundException(
-        message: 'That account is no longer signed in on this device.',
-      );
+    final result = await _store.activate(userId);
+    switch (result) {
+      case MutationCommitted():
+        return;
+      case MutationStorageFailed():
+        throw const StorageException();
+      case MutationStale():
+      case MutationRejected():
+        throw const NotFoundException(
+          message: 'That account is no longer signed in on this device.',
+        );
     }
-    await refreshAccounts();
   }
 }
 

@@ -9,7 +9,7 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// Registers the services that belong to one account, in that account's scope.
 typedef AccountScopeRegistrar = FutureOr<void> Function(
   GetIt scope,
-  UserCredential credential,
+  CredentialRecord credential,
   AccountContext context,
 );
 
@@ -25,7 +25,7 @@ typedef AccountScopeRegistrar = FutureOr<void> Function(
 /// and `blocked` are all states in which a private screen must not build.
 final class AccountTransitionOwner implements Disposable {
   new({
-    required this._activeCredential,
+    required this._activeRecord,
     required this._logger,
     this.register,
     this.beginLiveExit,
@@ -33,16 +33,16 @@ final class AccountTransitionOwner implements Disposable {
     this.frameWait = const Duration(milliseconds: 250),
   });
 
-  final ValueListenable<UserCredential> _activeCredential;
+  final ValueListenable<CredentialRecord?> _activeRecord;
   final MenoLogger _logger;
   final AccountScopeRegistrar? register;
 
   /// Drains and closes the live tier before the account scope comes down.
   final Future<void> Function()? beginLiveExit;
 
-  /// Writes the credential to the store once its scope exists — the owner is
+  /// Writes the credential to the vault once its scope exists — the owner is
   /// the only caller, so "stored" and "ready" cannot drift apart.
-  final Future<void> Function(UserCredential credential)? saveCredential;
+  final Future<void> Function(CredentialRecord credential)? saveCredential;
 
   /// How long [exit] waits for the frame that removes the old subtree.
   final Duration frameWait;
@@ -57,31 +57,31 @@ final class AccountTransitionOwner implements Disposable {
   bool _hasScope = false;
   int _generation = 0;
   int _attemptSerial = 0;
-  UserCredential? _current;
+  CredentialRecord? _current;
   Id? _desiredAccountId;
   bool _disposed = false;
 
   /// The account currently in scope, or null.
   AccountContext? get currentContext => snapshot.value.context;
 
-  /// Starts following the active credential.
+  /// Starts following the active record.
   Future<AccountTransitionOwner> init() async {
-    _subscription = _activeCredential.listen(_onCredentialChanged);
-    _desiredAccountId = _accountIdOf(_activeCredential.value);
+    _subscription = _activeRecord.listen(_onCredentialChanged);
+    _desiredAccountId = _accountIdOf(_activeRecord.value);
     return this;
   }
 
   /// Restores the account that was already signed in.
   Future<void> restore() async {
-    final credential = _activeCredential.value;
-    _desiredAccountId = _accountIdOf(credential);
+    final record = _activeRecord.value;
+    _desiredAccountId = _accountIdOf(record);
 
-    if (credential.isEmpty) {
+    if (record == null) {
       _publish(AccountSnapshot.signedOut);
       return;
     }
 
-    await _enqueue(() => _prepare(credential));
+    await _enqueue(() => _prepare(record));
   }
 
   /// Waits for the transition already in flight.
@@ -95,25 +95,23 @@ final class AccountTransitionOwner implements Disposable {
 
   /// Adopts a freshly issued credential if [ticket] is still the newest intent.
   Future<TransitionResult> adoptCandidate(
-    UserCredential credential, {
+    CredentialRecord record, {
     required int ticket,
   }) {
-    if (ticket != _attemptSerial || credential.isEmpty) {
+    if (ticket != _attemptSerial) {
       return Future.value(const TransitionCancelled());
     }
-    // The credential's account becomes the desired one so that _prepare's
-    // guard passes even when no stored session exists yet (first login).
-    _desiredAccountId = credential.userId;
+    // The record's account becomes the desired one so that _prepare's guard
+    // passes even when no stored session exists yet (first login).
+    _desiredAccountId = record.accountId;
     // An account already in scope is taken down first; two accounts must never
     // overlap (H02).
     final leaving = _hasScope || di.hasScope(Scope.authenticated);
-    return _enqueue(
-      () => leaving ? _exit(next: credential) : _prepare(credential),
-    );
+    return _enqueue(() => leaving ? _exit(next: record) : _prepare(record));
   }
 
   /// Ends the current account and, when [next] is given, prepares it.
-  Future<void> exit({UserCredential? next}) {
+  Future<void> exit({CredentialRecord? next}) {
     return _enqueue(() => _exit(next: next));
   }
 
@@ -139,33 +137,31 @@ final class AccountTransitionOwner implements Disposable {
   }
 
   void _onCredentialChanged(
-    UserCredential credential,
+    CredentialRecord? record,
     ListenableSubscription _,
   ) {
-    final accountId = _accountIdOf(credential);
+    final accountId = _accountIdOf(record);
     _desiredAccountId = accountId;
 
-    if (accountId == _current?.userId) {
-      if (credential.isEmpty) {
+    if (accountId == _current?.accountId) {
+      if (record == null) {
         unawaited(_enqueue(_exit));
         return;
       }
-      // A renewal is the same account: only the verified flag may change, and
-      // the scope (and therefore the subtree key) stays.
-      _current = credential;
+      // A renewal, or a verification, is the same account: only the verified
+      // flag may change, and the scope (and therefore the subtree key) stays.
+      _current = record;
       _publish(
         AccountSnapshot(
           phase: AccountPhase.ready,
           context: snapshot.value.context,
-          isEmailVerified: credential.user.verified,
+          isEmailVerified: record.isVerified,
         ),
       );
       return;
     }
 
-    unawaited(
-      _enqueue(() => _exit(next: credential.isEmpty ? null : credential)),
-    );
+    unawaited(_enqueue(() => _exit(next: record)));
   }
 
   /// Runs [operation] after every transition admitted before it.
@@ -189,12 +185,12 @@ final class AccountTransitionOwner implements Disposable {
     return completer.future;
   }
 
-  Future<TransitionResult> _prepare(UserCredential credential) async {
-    if (_disposed || credential.isEmpty) {
+  Future<TransitionResult> _prepare(CredentialRecord credential) async {
+    if (_disposed) {
       return const TransitionCancelled();
     }
 
-    final accountId = credential.userId;
+    final accountId = credential.accountId;
     if (_desiredAccountId != accountId) {
       return const TransitionCancelled();
     }
@@ -209,7 +205,7 @@ final class AccountTransitionOwner implements Disposable {
       await di.pushNewScopeAsync(
         scopeName: Scope.authenticated,
         init: (scope) async {
-          scope.registerSingleton<UserCredential>(credential);
+          scope.registerSingleton<CredentialRecord>(credential);
           await register?.call(scope, credential, context);
         },
       );
@@ -235,7 +231,7 @@ final class AccountTransitionOwner implements Disposable {
       final ready = AccountSnapshot(
         phase: AccountPhase.ready,
         context: context,
-        isEmailVerified: credential.user.verified,
+        isEmailVerified: credential.isVerified,
       );
       _publish(ready);
       return TransitionReady(context);
@@ -256,7 +252,7 @@ final class AccountTransitionOwner implements Disposable {
         final ready = AccountSnapshot(
           phase: AccountPhase.ready,
           context: context,
-          isEmailVerified: credential.user.verified,
+          isEmailVerified: credential.isVerified,
         );
         _publish(ready);
         return TransitionReady(context);
@@ -279,21 +275,21 @@ final class AccountTransitionOwner implements Disposable {
     }
   }
 
-  Future<TransitionResult> _exit({UserCredential? next}) async {
+  Future<TransitionResult> _exit({CredentialRecord? next}) async {
     if (_disposed) return const TransitionCancelled();
 
     if (_hasScope || di.hasScope(Scope.authenticated)) {
       final context = _current == null
           ? null
           : AccountContext(
-              accountId: _current!.userId,
+              accountId: _current!.accountId,
               generation: _generation,
             );
       _publish(
         AccountSnapshot(
           phase: AccountPhase.quiescing,
           context: context,
-          isEmailVerified: _current?.user.verified ?? false,
+          isEmailVerified: _current?.isVerified ?? false,
         ),
       );
 
@@ -325,7 +321,7 @@ final class AccountTransitionOwner implements Disposable {
     _current = null;
     _publish(AccountSnapshot.signedOut);
 
-    if (next != null && _desiredAccountId == next.userId) {
+    if (next != null && _desiredAccountId == next.accountId) {
       return await _prepare(next);
     }
     return const TransitionCancelled();
@@ -355,6 +351,5 @@ final class AccountTransitionOwner implements Disposable {
     snapshot.value = next;
   }
 
-  Id? _accountIdOf(UserCredential credential) =>
-      credential.isEmpty ? null : credential.userId;
+  Id? _accountIdOf(CredentialRecord? record) => record?.accountId;
 }

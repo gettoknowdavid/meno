@@ -86,6 +86,20 @@ extension AuthResponseDtoDtoX on AuthResponseDto {
     );
   }
 
+  /// The greeting metadata for the account this payload belongs to.
+  ///
+  /// Written beside the credential so the switch-account sheet and the
+  /// signed-out greeting show who this is without reading a token. Never
+  /// carries a token, and never claims the session is unusable.
+  RememberedIdentity toRememberedIdentity(Clock clock) => RememberedIdentity(
+    accountId: Id.fromWire(user.id),
+    displayName: user.fullName,
+    email: user.email,
+    avatarUrl: user.avatarUrl,
+    lastUsedAt: clock.nowUtc(),
+    requiresAuthentication: false,
+  );
+
   /// The legacy domain view, used by the pre-vault storage path.
   UserCredential get toDomain => UserCredential(
     user: user.toDomain,

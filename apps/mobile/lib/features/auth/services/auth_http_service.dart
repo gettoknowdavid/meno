@@ -13,7 +13,7 @@ final class AuthHttpService {
   ///
   /// Answers 201 with a usable token pair: the API does not make a new account
   /// sign in again after registering.
-  Future<UserCredential> register({
+  Future<AuthResponseDto> register({
     required String fullName,
     required String email,
     required String password,
@@ -22,12 +22,12 @@ final class AuthHttpService {
       '/auth/register',
       authMode: AuthMode.anonymous,
       data: {'full_name': fullName, 'email': email, 'password': password},
-      fromJson: _credential,
+      fromJson: _response,
     );
   }
 
   /// `POST /auth/login` — exchanges credentials for a token pair.
-  Future<UserCredential> login({
+  Future<AuthResponseDto> login({
     required String email,
     required String password,
   }) {
@@ -35,7 +35,7 @@ final class AuthHttpService {
       '/auth/login',
       authMode: AuthMode.anonymous,
       data: {'email': email, 'password': password},
-      fromJson: _credential,
+      fromJson: _response,
     );
   }
 
@@ -45,7 +45,7 @@ final class AuthHttpService {
   /// token and the API verifies it, so there is no browser round trip and no
   /// web `state` token involved. [deviceLabel] is what the account's device
   /// list shows later.
-  Future<UserCredential> signInWithGoogle({
+  Future<AuthResponseDto> signInWithGoogle({
     required String idToken,
     String? deviceLabel,
   }) {
@@ -53,7 +53,7 @@ final class AuthHttpService {
       '/auth/google/mobile',
       authMode: AuthMode.anonymous,
       data: {'id_token': idToken, 'device_label': ?deviceLabel},
-      fromJson: _credential,
+      fromJson: _response,
     );
   }
 
@@ -90,7 +90,7 @@ final class AuthHttpService {
       _client.postUnit('/auth/sessions/${sessionId.getOrCrash}');
 
   /// `POST /auth/verify-email` — confirms the address with a code.
-  Future<UserCredential> verifyEmail({
+  Future<AuthResponseDto> verifyEmail({
     required String email,
     required String code,
   }) {
@@ -98,7 +98,7 @@ final class AuthHttpService {
       '/auth/verify-email',
       authMode: AuthMode.anonymous,
       data: {'email': email, 'code': code},
-      fromJson: _credential,
+      fromJson: _response,
     );
   }
 
@@ -134,7 +134,11 @@ final class AuthHttpService {
     );
   }
 
-  /// Reads the token payload every session-establishing call returns.
-  static UserCredential _credential(dynamic data) =>
-      AuthResponseDto.fromJson(data as Map<String, dynamic>).toDomain;
+  /// Reads the payload every session-establishing call returns.
+  ///
+  /// Left as the wire's own shape: turning it into a stored record is the
+  /// vault's receipt-time conversion, which needs the app's clock and must
+  /// happen exactly once (guide Step 6).
+  static AuthResponseDto _response(dynamic data) =>
+      AuthResponseDto.fromJson(data as Map<String, dynamic>);
 }
