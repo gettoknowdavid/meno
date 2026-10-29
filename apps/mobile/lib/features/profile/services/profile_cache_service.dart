@@ -29,14 +29,15 @@ import 'package:meno_mobile/features/profile/model/_model.dart';
 /// treated as a miss *and removed*, so a malformed entry cannot survive to be
 /// misread again — the next fetch refills it.
 final class ProfileCacheService {
-  /// Creates a cache over [_storage] for the signed-in [_viewerId].
+  /// Creates a cache over [_storage] for the signed-in [_ownerId].
   ///
-  /// A viewer is required rather than optional: a cache with no viewer part
-  /// could only key a profile by its subject, which is the H14 leak. An
-  /// invalid id is refused here instead of being flattened into a key that
-  /// belongs to nobody.
-  new(this._storage, {required this._viewerId}) {
-    if (!_viewerId.isValid) {
+  /// The viewer is part of the service, not an argument: a cache with no viewer
+  /// part could only key a profile by its subject, which is the H14 leak, and a
+  /// caller that could name the viewer could name somebody else's. An invalid
+  /// id is refused here instead of being flattened into a key that belongs to
+  /// nobody.
+  new(this._ownerId, this._storage) {
+    if (!_ownerId.isValid) {
       throw const OwnerViolationException(
         message: 'A profile cache needs the viewer it belongs to.',
       );
@@ -46,19 +47,22 @@ final class ProfileCacheService {
   final LocalStorage _storage;
 
   /// The account reading and writing this cache.
-  final Id _viewerId;
+  final Id _ownerId;
 
-  /// The cached profile of [userId], or null when nothing usable is stored.
-  MyProfile? myProfile(Id userId) => _read(
-    StorageKeys.forUser(StorageKeys.profile, userId.getOrCrash),
-    (json) => MeDto.fromJson(json).toDomain,
-  );
+  /// This account's own cached profile, or null when nothing usable is stored.
+  MyProfile? myProfile() =>
+      _read(_ownProfileKey, (json) => MeDto.fromJson(json).toDomain);
 
-  /// Stores [profile] as the signed-in account's own.
-  Future<void> saveMyProfile(MyProfile profile) => _write(
-    StorageKeys.forUser(StorageKeys.profile, profile.id.getOrCrash),
-    profile.toDto.toJson(),
-  );
+  /// Stores [profile] as this account's own.
+  ///
+  /// A profile for another account is foreign input: the own record is keyed by
+  /// the service's owner, so writing somebody else's here would be a lie.
+  Future<void> saveMyProfile(MyProfile profile) {
+    if (profile.id.isValid && profile.id != _ownerId) {
+      throw const OwnerViolationException();
+    }
+    return _write(_ownProfileKey, profile.toDto.toJson());
+  }
 
   /// The cached copy of [userId]'s profile *as this viewer saw it*, or null
   /// on a miss.
@@ -74,9 +78,32 @@ final class ProfileCacheService {
   Future<void> saveProfile(Profile profile) =>
       _write(_publicProfileKey(profile.id), profile.toDto.toJson());
 
+  /// The key this account's own record is stored under.
+  String get _ownProfileKey =>
+      '$_prefix/${_ownerId.getOrCrash}/${_ownerId.getOrCrash}';
+
   /// Viewer-relative key for [subject]'s profile.
   String _publicProfileKey(Id subject) =>
-      'profile.v2/${_viewerId.getOrCrash}/${subject.getOrCrash}';
+      '$_prefix/${_ownerId.getOrCrash}/${subject.getOrCrash}';
+
+  /// The cache's namespace on the device.
+  static const _prefix = 'profile.v2';
+
+  /// Removes the keys older builds wrote without a viewer segment.
+  ///
+  /// Those entries were written by whichever account fetched a profile first,
+  /// so their `isFollowing` belongs to nobody in particular — they cannot be
+  /// migrated, only deleted (audit H14, assumption A13: installed builds may
+  /// exist). Nothing here ever read them; this is the sweep that takes them off
+  /// the device.
+  Future<void> purgeLegacyEntries() async {
+    final legacy = _storage.keys
+        .where((key) => key.startsWith(StorageKeys.publicProfile))
+        .toList();
+    for (final key in legacy) {
+      await _storage.remove(key);
+    }
+  }
 
   /// Reads and decodes [key], treating anything unreadable as a miss.
   ///

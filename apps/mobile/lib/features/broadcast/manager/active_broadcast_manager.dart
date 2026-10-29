@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_http_service.dart';
@@ -155,11 +156,17 @@ final class ActiveBroadcastManager implements Disposable {
     required this._store,
     required this._createSession,
     required this._logger,
+    this.endedBroadcasts,
+    this.reconnectBudget = const Duration(seconds: 10),
   }) {
     join = .createAsyncNoResult<LiveEnterRequest>((request) async {
       await enter(request);
     });
     leaveOrEnd = .createAsyncNoParamNoResult(exitRoom);
+
+    // One listener for the server's endings: a host-end or a forced end ends
+    // this session exactly once, with no reconnect afterwards.
+    _endedSubscription = endedBroadcasts?.listen(_onEndedSignal);
   }
 
   final AccountContext _context;
@@ -167,6 +174,16 @@ final class ActiveBroadcastManager implements Disposable {
   final LiveSessionStore _store;
   final LiveSessionFactory _createSession;
   final MenoLogger _logger;
+
+  /// The socket's endings, when the manager is wired to one. Null in tests
+  /// that drive the room directly.
+  final Stream<EndedSignal>? endedBroadcasts;
+
+  /// How long the room may stay down before a fresh entry is fetched.
+  ///
+  /// The SDK owns the first reconnect attempt; past this budget its old media
+  /// token is stale, so a new one is minted rather than reused (audit H07).
+  final Duration reconnectBudget;
 
   /// The one authoritative view of the live broadcast.
   final snapshot = ValueNotifier<LiveSnapshot>(LiveSnapshot.idle());
@@ -189,6 +206,17 @@ final class ActiveBroadcastManager implements Disposable {
 
   /// The memoised account-exit close.
   Future<void>? _exitPending;
+
+  /// The open session's room subscription, and the outage budget.
+  StreamSubscription<RoomConnectionState>? _roomSubscription;
+  Timer? _outage;
+  StreamSubscription<EndedSignal>? _endedSubscription;
+
+  /// Whether the manager itself is closing the room.
+  ///
+  /// The transport reports this client's own hang-up as a disconnect, which is
+  /// not a drop worth reconnecting from.
+  bool _closingRoom = false;
 
   /// Enters a live room: the creator's go-live, a listener's join, or a
   /// recovery. Queued, so two entries cannot overlap.
@@ -253,6 +281,9 @@ final class ActiveBroadcastManager implements Disposable {
     final phase = snapshot.value.phase;
     if (phase == .failed || phase == .ended) return;
 
+    _closingRoom = true;
+    _cancelRoomWatch();
+
     snapshot.value = LiveSnapshot.room(
       phase: .ending,
       broadcast: session.broadcast,
@@ -261,6 +292,7 @@ final class ActiveBroadcastManager implements Disposable {
     );
 
     final outcome = await session.close(LiveCloseReason.userExit);
+    _closingRoom = false;
     if (identical(_session, session)) _session = null;
 
     // The summary is retained here, outside the closed session, so the ended
@@ -292,11 +324,15 @@ final class ActiveBroadcastManager implements Disposable {
 
     await _queue;
 
+    _closingRoom = true;
+    _cancelRoomWatch();
+
     final session = _session;
     _session = null;
     if (session != null) {
       await session.close(LiveCloseReason.accountExit);
     }
+    _closingRoom = false;
 
     await _quietly(_store.clear, 'clearing the recovery record');
     snapshot.value = LiveSnapshot.idle();
@@ -333,8 +369,10 @@ final class ActiveBroadcastManager implements Disposable {
       );
 
       // Assigned before start(), so a start that throws still leaves the
-      // half-built session findable for the local close below (D-5).
+      // half-built session findable for the local close below (D-5). The room
+      // is watched before connecting, so no event of the join is missed.
       _session = session;
+      _watchRoom(session);
       await session.start();
 
       if (generation != _operationGeneration) {
@@ -365,18 +403,163 @@ final class ActiveBroadcastManager implements Disposable {
         return const EnterResult.rejected();
       }
 
-      final failure = LiveFailure(
-        message: errorMessage(error),
-        retryable: _isRetryable(error),
-        cause: error,
-      );
+      final message = errorMessage(error);
+      final failure = _isRetryable(error)
+          ? LiveFailure(message: message, retryable: true, cause: error)
+          : LiveFailure.terminal(message);
       snapshot.value = LiveSnapshot(phase: .failed, failure: failure);
       return EnterResult.failed(request.broadcastId, failure);
     }
   }
 
+  /// Follows one session's room for as long as it is the open one.
+  ///
+  /// This is the *only* listener that feeds the published phase; the session's
+  /// own reader only pauses the clock. Two listeners that each publish is how
+  /// the old manager's `state` and `status` came to disagree (audit H07).
+  void _watchRoom(ActiveBroadcastSession session) {
+    unawaited(_roomSubscription?.cancel() ?? Future<void>.value());
+    _roomSubscription = session.connectionState.listen(
+      (state) => _onRoomState(session, state),
+    );
+  }
+
+  void _cancelRoomWatch() {
+    unawaited(_roomSubscription?.cancel() ?? Future<void>.value());
+    _roomSubscription = null;
+    _outage?.cancel();
+    _outage = null;
+  }
+
+  void _onRoomState(ActiveBroadcastSession session, RoomConnectionState state) {
+    if (!identical(_session, session) || _closingRoom) return;
+
+    final phase = snapshot.value.phase;
+    switch (state) {
+      case RoomConnectionState.connected:
+        _outage?.cancel();
+        _outage = null;
+        // The SDK's own reconnect succeeded: the same session is live again,
+        // with the same token, so nothing is re-entered.
+        if (phase == LivePhase.reconnecting) _publishLive(session);
+
+      case RoomConnectionState.reconnecting:
+        if (phase == LivePhase.live) _publishReconnecting(session);
+
+      case RoomConnectionState.disconnected:
+        final reason = session.disconnectReason;
+        if (_isTerminal(reason)) {
+          unawaited(_endTerminally(_endReasonFor(reason)));
+          return;
+        }
+        if (phase != LivePhase.live && phase != LivePhase.reconnecting) return;
+
+        _publishReconnecting(session);
+        _startOutageBudget(session);
+
+      case RoomConnectionState.connecting:
+        // The entry already published `connecting`; nothing new to say.
+        return;
+    }
+  }
+
+  /// Gives the transport one budget to come back before asking for a new token.
+  ///
+  /// A media token minted before a long outage is the wrong one to resume
+  /// with, so the retry is a fresh entry — the API's `/resume` answers with a
+  /// new token — rather than a reconnect with the old one (audit H07).
+  void _startOutageBudget(ActiveBroadcastSession session) {
+    _outage ??= Timer(reconnectBudget, () {
+      _outage = null;
+      if (!identical(_session, session) ||
+          _closingRoom ||
+          session.isClosed ||
+          snapshot.value.phase != LivePhase.reconnecting) {
+        return;
+      }
+
+      unawaited(() async {
+        _closingRoom = true;
+        _cancelRoomWatch();
+        if (identical(_session, session)) _session = null;
+        await session.close(LiveCloseReason.replaced);
+        _closingRoom = false;
+
+        await enter(
+          LiveEnterRequest(
+            broadcastId: session.broadcast.id,
+            mode: LiveEnterMode.resume,
+          ),
+        );
+      }());
+    });
+  }
+
+  /// The server said the broadcast is over.
+  void _onEndedSignal(EndedSignal signal) {
+    final session = _session;
+    if (session == null || session.broadcast.id != signal.broadcastId) return;
+    if (!snapshot.value.isInRoom) return;
+    unawaited(_endTerminally(signal.reason));
+  }
+
+  /// Ends the session because the room is gone, keeping its summary.
+  ///
+  /// No server call: the room ended, or was taken away; the only way to make
+  /// that worse is to ask the API to end it again. Everything local is closed,
+  /// once, and the published phase never returns to live from here.
+  Future<void> _endTerminally(EndReason reason) async {
+    final session = _session;
+    if (session == null || _closingRoom) return;
+
+    _closingRoom = true;
+    _cancelRoomWatch();
+    _session = null;
+
+    await session.close(LiveCloseReason.ended);
+    _closingRoom = false;
+
+    final summary = session.broadcast;
+    await _quietly(_store.clear, 'clearing the recovery record');
+
+    snapshot.value = LiveSnapshot(
+      phase: LivePhase.ended,
+      endReason: reason == EndReason.none ? null : reason,
+      endedSummary: summary,
+      role: summary.participantRole,
+      canPublish: session.canPublish,
+      canEndBroadcast: summary.canEndBroadcast(_context.accountId),
+    );
+  }
+
+  void _publishReconnecting(ActiveBroadcastSession session) {
+    snapshot.value = LiveSnapshot.room(
+      phase: LivePhase.reconnecting,
+      broadcast: session.broadcast,
+      accountId: _context.accountId,
+      canPublish: session.canPublish,
+    );
+  }
+
+  /// Whether a disconnect means the room is gone rather than briefly away.
+  bool _isTerminal(RoomDisconnectReason? reason) => switch (reason) {
+    RoomDisconnectReason.duplicateIdentity ||
+    RoomDisconnectReason.partyRemoved ||
+    RoomDisconnectReason.roomDeleted => true,
+    _ => false,
+  };
+
+  /// The ending a terminal reason corresponds to.
+  EndReason _endReasonFor(RoomDisconnectReason? reason) => switch (reason) {
+    RoomDisconnectReason.partyRemoved ||
+    RoomDisconnectReason.duplicateIdentity ||
+    RoomDisconnectReason.roomDeleted => EndReason.adminForced,
+    _ => EndReason.none,
+  };
+
   /// Closes a session that never became live.
   Future<void> _closeLocal() async {
+    _cancelRoomWatch();
     final session = _session;
     _session = null;
     if (session != null) {
@@ -448,9 +631,20 @@ final class ActiveBroadcastManager implements Disposable {
     }
   }
 
+  /// Whether this manager has been disposed.
+  ///
+  /// Disposal is idempotent: a test that rebuilds over the same gateway and an
+  /// exit that already ran both call it, and disposing a Command twice throws.
+  bool _disposed = false;
+
   @override
   FutureOr<dynamic> onDispose() async {
+    if (_disposed) return;
+    _disposed = true;
+
     await closeForAccountExit();
+    await _endedSubscription?.cancel();
+    _endedSubscription = null;
     join.dispose();
     leaveOrEnd.dispose();
     snapshot.dispose();

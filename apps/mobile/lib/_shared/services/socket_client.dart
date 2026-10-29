@@ -7,6 +7,33 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/socket.dart';
 
+/// The transport surface the connection owner drives.
+///
+/// A narrow seam, so the owner can be tested without a real WebSocket and the
+/// client stays the only thing that knows the protocol.
+abstract interface class SocketEndpoint {
+  /// Connects, and keeps the connection up until [stop].
+  Future<void> start();
+
+  /// Stops the connection and every attempt to restore it.
+  Future<void> stop();
+
+  /// Whether a frame can be sent right now.
+  bool get isOpen;
+}
+
+/// One adapter whose handlers must exist before the socket connects.
+///
+/// The broadcast adapter implements this already (`install`/`detach`); the
+/// account connection owner only decides *when*.
+abstract interface class ConnectionAdapter {
+  /// Attaches handlers. Idempotent.
+  void install();
+
+  /// Removes them. Idempotent.
+  void detach();
+}
+
 /// The app's one realtime transport: a raw WebSocket speaking the backend's
 /// own framing.
 ///
@@ -30,7 +57,7 @@ import 'package:meno_mobile/_shared/model/socket.dart';
 /// The credential is read from [_credentialSupplier] on every connect — never
 /// captured in the constructor — because a reconnect after a token refresh must
 /// present the new token, and an account switch must not reuse the old one.
-final class SocketClient implements Disposable {
+final class SocketClient implements Disposable, SocketEndpoint {
   new({
     required this._uri,
     required this._credentialSupplier,
@@ -131,12 +158,14 @@ final class SocketClient implements Disposable {
   Stream<void> get onReconnected => _reconnectedContr.stream;
 
   /// Whether a frame can be sent right now.
+  @override
   bool get isOpen => phase.value == .open;
 
   /// Connects, and keeps the connection up until [stop].
   ///
   /// Idempotent for the current iteration: a second call while a connection is
   /// being established, open or waiting to retry does nothing.
+  @override
   Future<void> start() async {
     if (_active) return;
     _active = true;
@@ -329,6 +358,7 @@ final class SocketClient implements Disposable {
   /// Idempotent, and safe in any phase: listeners are detached before the
   /// socket is closed, so the close it provokes cannot be read as a drop worth
   /// reconnecting from.
+  @override
   Future<void> stop() async {
     _active = false;
     _run++;

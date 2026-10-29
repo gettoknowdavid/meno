@@ -23,10 +23,10 @@ import 'package:crypto/crypto.dart';
 /// The key pair is the one LiveKit prints in its own documentation and baked
 /// into its development mode, so it authenticates nothing outside a server
 /// running with `--dev` on the loopback address. A release build is never
-/// handed one of these: the live session factory only builds the transport with a
-/// [DevRoomTokenSource] in a development environment, and the URL it is given
-/// is the local room server. There is no branch in which a production build can
-/// mint a token or reach this server.
+/// handed one of these: the live session factory only builds the transport
+/// with a [DevRoomTokenSource] in a development environment, and the URL it
+/// is given is the local room server. There is no branch in which a production
+/// build can mint a token or reach this server.
 final class DevRoomTokenSource {
   /// Creates a source for one client in one room.
   ///

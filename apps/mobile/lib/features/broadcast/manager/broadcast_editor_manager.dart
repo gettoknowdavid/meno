@@ -136,7 +136,7 @@ final class BroadcastEditorManager implements Disposable {
 
     deleteDraft = .createAsyncNoResult<Id>(
       (draftId) async {
-        await _local.deleteDraft(draftId: draftId, ownerId: _userId);
+        await _local.deleteDraft(draftId);
         if (_draftId == draftId) resetForm.run();
         _loadDrafts();
       },
@@ -285,7 +285,7 @@ final class BroadcastEditorManager implements Disposable {
 
     if (draft.isEmpty) return draft;
 
-    await _local.saveDraft(draft, ownerId: _userId);
+    await _local.saveDraft(draft);
     hasUnsavedChanges.value = false;
     _loadDrafts();
     return draft;
@@ -339,7 +339,7 @@ final class BroadcastEditorManager implements Disposable {
   static const int _maxCohosts = 2;
 
   void _loadDrafts() {
-    final stored = _local.drafts(_userId);
+    final stored = _local.drafts();
     drafts.startTransAction();
     drafts.clear();
     drafts.addAll(stored);
@@ -393,7 +393,7 @@ final class BroadcastEditorManager implements Disposable {
     final draftId = _draftId;
     if (draftId == null) return;
 
-    final existing = _local.draft(draftId: draftId, ownerId: _userId);
+    final existing = _local.draft(draftId);
     if (existing == null) return;
 
     await _local.saveDraft(
@@ -403,7 +403,6 @@ final class BroadcastEditorManager implements Disposable {
         imagePath: imagePath.value,
         imageId: imageId ?? existing.imageId,
       ),
-      ownerId: _userId,
     );
     _loadDrafts();
   }

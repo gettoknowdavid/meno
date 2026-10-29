@@ -30,7 +30,7 @@ final class SettingsManager implements Disposable {
       (language, stack) async {
         stack.push(_settings.value.language);
         _apply(_settings.value.copyWith(language: language));
-        await _patch(language: language);
+        await _patch(SettingsPatchDto(language: language));
       },
       undo: (stack, _) =>
           _apply(_settings.value.copyWith(language: stack.pop())),
@@ -43,7 +43,7 @@ final class SettingsManager implements Disposable {
         stack.push(_settings.value.display);
         final display = dark ? UserDisplay.dark : UserDisplay.light;
         _apply(_settings.value.copyWith(display: display));
-        await _patch(display: display);
+        await _patch(SettingsPatchDto(display: display));
       },
       undo: (stack, _) =>
           _apply(_settings.value.copyWith(display: stack.pop())),
@@ -55,7 +55,7 @@ final class SettingsManager implements Disposable {
       (enabled, stack) async {
         stack.push(_settings.value.appNotifications);
         _apply(_settings.value.copyWith(appNotifications: enabled));
-        await _patch(appNotifications: enabled);
+        await _patch(SettingsPatchDto(appNotifications: enabled));
       },
       undo: (stack, _) =>
           _apply(_settings.value.copyWith(appNotifications: stack.pop())),
@@ -67,7 +67,7 @@ final class SettingsManager implements Disposable {
       (enabled, stack) async {
         stack.push(_settings.value.pushNotifications);
         _apply(_settings.value.copyWith(pushNotifications: enabled));
-        await _patch(pushNotifications: enabled);
+        await _patch(SettingsPatchDto(pushNotifications: enabled));
       },
       undo: (stack, _) =>
           _apply(_settings.value.copyWith(pushNotifications: stack.pop())),
@@ -79,7 +79,7 @@ final class SettingsManager implements Disposable {
       (enabled, stack) async {
         stack.push(_settings.value.emailNotifications);
         _apply(_settings.value.copyWith(emailNotifications: enabled));
-        await _patch(emailNotifications: enabled);
+        await _patch(SettingsPatchDto(emailNotifications: enabled));
       },
       undo: (stack, _) =>
           _apply(_settings.value.copyWith(emailNotifications: stack.pop())),
@@ -92,9 +92,7 @@ final class SettingsManager implements Disposable {
         final current = _settings.value;
         stack.push(current.notificationPreferences.liveBroadcastStarted);
         _apply(_updatedPreferences(liveBroadcastStarted: enabled));
-        await _patch(
-          notificationPreferences: _settings.value.notificationPreferences,
-        );
+        await _patch(_preferencesPatch());
       },
       undo: (stack, _) =>
           _apply(_updatedPreferences(liveBroadcastStarted: stack.pop())),
@@ -107,9 +105,7 @@ final class SettingsManager implements Disposable {
         final current = _settings.value;
         stack.push(current.notificationPreferences.userSubscribed);
         _apply(_updatedPreferences(userSubscribed: enabled));
-        await _patch(
-          notificationPreferences: _settings.value.notificationPreferences,
-        );
+        await _patch(_preferencesPatch());
       },
       undo: (stack, _) =>
           _apply(_updatedPreferences(userSubscribed: stack.pop())),
@@ -122,9 +118,7 @@ final class SettingsManager implements Disposable {
         final current = _settings.value;
         stack.push(current.notificationPreferences.addedAsCoHost);
         _apply(_updatedPreferences(addedAsCoHost: enabled));
-        await _patch(
-          notificationPreferences: _settings.value.notificationPreferences,
-        );
+        await _patch(_preferencesPatch());
       },
       undo: (stack, _) =>
           _apply(_updatedPreferences(addedAsCoHost: stack.pop())),
@@ -137,9 +131,7 @@ final class SettingsManager implements Disposable {
         final current = _settings.value;
         stack.push(current.notificationPreferences.scheduledBroadcast);
         _apply(_updatedPreferences(scheduledBroadcast: enabled));
-        await _patch(
-          notificationPreferences: _settings.value.notificationPreferences,
-        );
+        await _patch(_preferencesPatch());
       },
       undo: (stack, _) =>
           _apply(_updatedPreferences(scheduledBroadcast: stack.pop())),
@@ -165,6 +157,21 @@ final class SettingsManager implements Disposable {
   );
 
   bool _disposed = false;
+
+  /// The FIFO every settings write runs on.
+  ///
+  /// One request at a time, in the order the switches were tapped: the API's
+  /// deep-merge is order-sensitive, and two overlapping patches used to race so
+  /// that one of them was lost (audit M13). This is the only concurrency
+  /// control — no revisions, no overlay, no conflict state.
+  Future<void> _serial = Future<void>.value();
+
+  /// Patches queued or in flight.
+  ///
+  /// A read that lands while this is above zero is stale by construction: the
+  /// user has already moved past what the server sent, so the answer is dropped
+  /// rather than painted over the edit.
+  int _editsQueued = 0;
 
   /// The signed-in account's settings, or [UserSettings.empty] when there are
   /// none.
@@ -252,8 +259,13 @@ final class SettingsManager implements Disposable {
       // The manager can be torn down while the request is in flight; the
       // answer then belongs to a moment that has passed.
       if (_disposed) return;
+
+      // An edit is queued or on its way, so this answer predates it. Adopting
+      // it would put the old value back on screen until the patch answered.
+      if (_editsQueued > 0) return;
+
       _settings.value = remote;
-      await _local.saveSettings(userId, remote);
+      await _local.saveSettings(remote);
     } on MenoException catch (error) {
       _logger.w(
         'Could not load settings (${error.code}); showing the cached copy',
@@ -264,8 +276,11 @@ final class SettingsManager implements Disposable {
 
   /// Unsets the device token, then reflects that locally.
   Future<void> _clearPushToken() async {
-    if (_userId.isEmpty) return;
+    if (_disposed || _userId.isEmpty) return;
     await _http.clearPushToken();
+    // The account may have gone while the call was out; its settings object is
+    // not this manager's to touch any more.
+    if (_disposed) return;
     _apply(_settings.value.copyWith(hasPushToken: false));
   }
 
@@ -296,33 +311,56 @@ final class SettingsManager implements Disposable {
     );
   }
 
-  /// Sends a partial update for whichever field changed.
+  /// Queues [patch] behind every write already in flight.
+  ///
+  /// Only the fields the user moved are in [patch], so an unknown preference
+  /// key is never sent and therefore never deleted. The API's answer is adopted
+  /// as canonical, which settles the optimistic value the command already
+  /// painted; a rejection propagates, and the command's undo reverts that one
+  /// field.
   ///
   /// A guest has no row to write, so the optimistic change stays local — which
   /// is also why [_persistLocally] skips them: device storage is keyed by user.
-  Future<void> _patch({
-    bool? pushNotifications,
-    bool? appNotifications,
-    bool? emailNotifications,
-    UserDisplay? display,
-    String? language,
-    NotificationPreferences? notificationPreferences,
-  }) async {
-    if (_userId.isEmpty) return;
-    await _http.updateSettings(
-      pushNotifications: pushNotifications,
-      appNotifications: appNotifications,
-      emailNotifications: emailNotifications,
-      display: display,
-      language: language,
-      notificationPreferences: notificationPreferences,
-    );
+  Future<void> _patch(SettingsPatchDto patch) {
+    if (_disposed || _userId.isEmpty) return Future<void>.value();
+    return _enqueue(patch);
   }
+
+  /// Appends [patch] to the FIFO and waits for its turn.
+  Future<void> _enqueue(SettingsPatchDto patch) async {
+    _editsQueued += 1;
+
+    final result = _serial.then((_) async {
+      // Queued work for an account that is gone sends nothing (audit H15).
+      if (_disposed) return;
+
+      final remote = await _http.updateSettings(patch);
+      if (_disposed) return;
+
+      _settings.value = remote;
+      _persistLocally();
+    });
+
+    // The chain must survive a rejected patch, or one failure would stop every
+    // later write from being sent.
+    _serial = result.then((_) {}, onError: (Object _) {});
+
+    try {
+      await result;
+    } finally {
+      _editsQueued -= 1;
+    }
+  }
+
+  /// A patch carrying the notification preferences as they now stand.
+  SettingsPatchDto _preferencesPatch() => SettingsPatchDto(
+    notificationPreferences: _settings.value.notificationPreferences.toDto,
+  );
 
   /// Writes the current settings to the device cache. No-op for guests.
   void _persistLocally() {
     if (_userId.isEmpty) return;
-    unawaited(_local.saveSettings(_userId, _settings.value));
+    unawaited(_local.saveSettings(_settings.value));
   }
 
   /// Repaints the app in whatever theme the current account's settings ask for.
@@ -351,6 +389,6 @@ final class SettingsManager implements Disposable {
       _settings.value = UserSettings.empty;
       return;
     }
-    _settings.value = _local.getSettings(userId) ?? UserSettings.empty;
+    _settings.value = _local.getSettings() ?? UserSettings.empty;
   }
 }

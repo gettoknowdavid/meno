@@ -182,6 +182,9 @@ final class ActiveBroadcastSession {
   /// Whether the room is up right now.
   bool get isConnected => _room.isConnected;
 
+  /// Why the room's last connection ended, when the transport knows.
+  RoomDisconnectReason? get disconnectReason => _room.lastDisconnectReason;
+
   /// Joins the room and starts following the roster.
   ///
   /// Listeners first, connect second: a transport that reports its state

@@ -38,10 +38,15 @@ final class UserProfileManager implements Disposable {
       debugName: 'userProfile.fetch',
     );
 
+    // Acquired by the *requested* account, which is what the repository keys
+    // on and what a release looks up — never the id of a fetched answer.
+    _proxy = _profiles.acquire(userId);
+
     // Whatever the last visit saw is shown straight away, and the fetch that
     // follows replaces it. The repository hands back the proxy somebody else
     // may already be watching, which is the point.
-    _proxy = _profiles.acquire(_cache.profile(userId) ?? .empty);
+    final cached = _cache.profile(userId);
+    if (cached != null) _proxy.target = cached;
   }
 
   /// The account whose profile this is.
@@ -52,6 +57,12 @@ final class UserProfileManager implements Disposable {
   final UserProfileRepository _profiles;
 
   late final UserProfileProxy _proxy;
+
+  /// Whether this manager has been disposed.
+  ///
+  /// Disposing a command does not cancel its body, so every continuation after
+  /// an await checks this before touching a notifier or the cache (audit H15).
+  bool _disposed = false;
 
   /// The profile, with the viewer's own standing layered on top.
   ///
@@ -64,6 +75,7 @@ final class UserProfileManager implements Disposable {
 
   @override
   FutureOr<dynamic> onDispose() {
+    _disposed = true;
     fetch.dispose();
     // One hold given up. The proxy itself lives until the last holder lets go,
     // which may be a card behind this page.
@@ -75,10 +87,14 @@ final class UserProfileManager implements Disposable {
   /// The answer is adopted through the proxy's `target`, which also settles any
   /// optimistic follow against what the API actually recorded.
   Future<void> _fetch() async {
-    if (userId.isEmpty) return;
+    if (_disposed || userId.isEmpty) return;
 
     final remote = await _http.profile(userId);
-    _proxy.target = remote;
+    // The page may have closed while the answer was on its way; adopting it
+    // then would write to a disposed proxy.
+    if (_disposed) return;
+
+    _profiles.apply(_proxy, remote);
     await _cache.saveProfile(remote);
   }
 }

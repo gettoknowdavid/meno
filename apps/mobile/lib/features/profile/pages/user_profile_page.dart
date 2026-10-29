@@ -15,9 +15,14 @@ const double _kTabBarHeight = 32;
 
 /// Somebody else's profile, addressed by their account id.
 ///
-/// The page owns its manager: a scope is pushed for the visit, so leaving and
-/// coming back reads the cache and refetches instead of showing whatever an
-/// earlier visit left behind.
+/// The page owns its manager: `createOnce` builds one for this page and the
+/// framework disposes it on unmount, so leaving and coming back reads the cache
+/// and refetches instead of showing whatever an earlier visit left behind.
+///
+/// Because the manager is the page's, so is the profile proxy it holds, and
+/// every handler below targets that object directly. Asking DI for a
+/// `UserProfileProxy` used to throw: nothing registers one, and registering
+/// entity proxies globally is how state leaks between pages (audit M04).
 class UserProfilePage extends WatchingWidget {
   /// Creates the page for [userId].
   const new({required this.userId, super.key});
@@ -27,25 +32,20 @@ class UserProfilePage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    pushScope(
-      init: (getIt) {
-        getIt.registerSingleton<UserProfileManager>(
-          UserProfileManager(
-            userId: userId,
-            http: di<ProfileHttpService>(),
-            cache: di<ProfileCacheService>(),
-            profiles: di<UserProfileRepository>(),
-          ),
-        );
-      },
+    final manager = createOnce(
+      () => UserProfileManager(
+        userId: userId,
+        http: di<ProfileHttpService>(),
+        cache: di<ProfileCacheService>(),
+        profiles: di<UserProfileRepository>(),
+      ),
     );
 
     registerHandler<UserProfileManager, CommandError<void>?>(
-      select: (manager) => manager.fetch.errors,
+      target: manager,
+      select: (m) => m.fetch.errors,
       handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );
-
-    final manager = di<UserProfileManager>();
 
     // The proxy, not a value: watching it is what makes an optimistic follow
     // repaint this screen, and what keeps it in step with any card behind it
@@ -56,6 +56,7 @@ class UserProfilePage extends WatchingWidget {
     // A refused follow is the visitor's business, so it is reported where they
     // are looking; the proxy has already rolled the label back by then.
     registerHandler<UserProfileProxy, CommandError<void>?>(
+      target: manager.profile,
       select: (m) => m.toggleFollow.errors,
       handler: (ctx, e, _) => ctx.showErrorToast(errorMessage(e?.error)),
     );

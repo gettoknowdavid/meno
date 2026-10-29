@@ -600,13 +600,7 @@ final class SessionInterceptor extends Interceptor {
     RequestInterceptorHandler handler,
     MenoException error,
   ) {
-    handler.reject(
-      DioException(
-        requestOptions: options,
-        error: error,
-        type: DioExceptionType.unknown,
-      ),
-    );
+    handler.reject(DioException(requestOptions: options, error: error));
   }
 
   /// Refuses an answer, carrying the reason to the caller.
@@ -620,7 +614,6 @@ final class SessionInterceptor extends Interceptor {
         requestOptions: response.requestOptions,
         response: response,
         error: error,
-        type: DioExceptionType.unknown,
       ),
     );
   }

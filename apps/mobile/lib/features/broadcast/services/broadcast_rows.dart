@@ -3,6 +3,13 @@ import 'package:meno_mobile/_core/logging/meno_logger.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:objectbox/objectbox.dart';
 
+/// The `<owner>/<logicalId>` key both rows are unique by.
+///
+/// Encoded as well as separated, so an id that somehow contains the separator
+/// cannot name a key that belongs to another account.
+String logicalKey(String ownerId, String logicalId) =>
+    '${Uri.encodeComponent(ownerId)}/${Uri.encodeComponent(logicalId)}';
+
 /// One row of the drafts box.
 ///
 /// A storage row, not a domain entity: ObjectBox needs a mutable identity and
@@ -22,7 +29,8 @@ class BroadcastDraftRow {
     this.createdBroadcastId,
     this.creationStepValue = 0,
     DateTime? lastModified,
-  }) : lastModified = lastModified ?? DateTime.now();
+  }) : uniqueKey = logicalKey(ownerId, draftId),
+       lastModified = lastModified ?? DateTime.now();
 
   @Id()
   int id = 0;
@@ -32,6 +40,15 @@ class BroadcastDraftRow {
 
   @Index()
   final String ownerId;
+
+  /// The logical key: one row per draft per account.
+  ///
+  /// Enforced by a unique index that *replaces* the conflicting row, so saving
+  /// a draft is one `put` and two concurrent saves cannot leave two rows
+  /// (audit M06). Every owner's rows are untouched by another owner's save,
+  /// because the owner segment is part of the key.
+  @Unique(onConflict: ConflictStrategy.replace)
+  String uniqueKey;
 
   String title;
 
@@ -68,7 +85,8 @@ class FavouriteBroadcastRow {
     this.creatorName = '',
     this.imageUrl,
     DateTime? savedAt,
-  }) : savedAt = savedAt ?? DateTime.now();
+  }) : uniqueKey = logicalKey(ownerId, broadcastId),
+       savedAt = savedAt ?? DateTime.now();
 
   @Id()
   int id = 0;
@@ -78,6 +96,13 @@ class FavouriteBroadcastRow {
 
   @Index()
   final String ownerId;
+
+  /// The logical key: one favourite row per broadcast per account.
+  ///
+  /// A unique index with replace-on-conflict is what makes keeping a broadcast
+  /// idempotent: setting the same favourite twice leaves one row, not two.
+  @Unique(onConflict: ConflictStrategy.replace)
+  String uniqueKey;
 
   final String title;
 

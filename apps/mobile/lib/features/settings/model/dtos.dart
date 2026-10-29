@@ -50,6 +50,44 @@ abstract class SettingsDto with _$SettingsDto {
   factory fromJson(Map<String, dynamic> json) => _$SettingsDtoFromJson(json);
 }
 
+/// A `PATCH /settings` body carrying only what changed.
+///
+/// # Why not the whole record
+///
+/// The API deep-merges what it is sent, so a field that is absent is untouched.
+/// Sending the whole preferences object (or the whole settings record) means
+/// every key this build does not know about is deleted — a newer client's
+/// preference, removed by an older one (audit M13). A patch built field by
+/// field cannot do that: a null field is simply not in the JSON, because
+/// `includeIfNull: false` drops it.
+@freezed
+abstract class SettingsPatchDto with _$SettingsPatchDto {
+  /// One changed setting, or several changed together.
+  const factory({
+    @JsonKey(name: 'push_notifications', includeIfNull: false)
+    bool? pushNotifications,
+    @JsonKey(name: 'app_notifications', includeIfNull: false)
+    bool? appNotifications,
+    @JsonKey(name: 'email_notifications', includeIfNull: false)
+    bool? emailNotifications,
+    @JsonKey(includeIfNull: false) UserDisplay? display,
+    @JsonKey(includeIfNull: false) String? language,
+    @JsonKey(name: 'notification_preferences', includeIfNull: false)
+    NotificationPreferencesDto? notificationPreferences,
+    @JsonKey(name: 'push_notification_token', includeIfNull: false)
+    String? pushNotificationToken,
+  }) = _SettingsPatchDto;
+
+  const new _();
+
+  /// Reads a patch back, for symmetry and for tests that assert its shape.
+  factory fromJson(Map<String, dynamic> json) =>
+      _$SettingsPatchDtoFromJson(json);
+
+  /// Whether this patch would send nothing, which the API refuses.
+  bool get isEmpty => toJson().isEmpty;
+}
+
 /// The domain view of a [NotificationPreferencesDto].
 extension NotificationPreferencesDtoX on NotificationPreferencesDto {
   /// This sub-object as the app models it.

@@ -25,6 +25,10 @@ enum LivePhase { idle, connecting, live, reconnecting, ending, ended, failed }
 final class LiveFailure {
   const new({required this.message, required this.retryable, this.cause});
 
+  /// A failure no retry can fix: a refused token, a room that no longer
+  /// exists. The screen offers an exit rather than a retry button.
+  const new terminal(this.message) : retryable = false, cause = null;
+
   /// What to show a person. Never a raw exception string.
   final String message;
 

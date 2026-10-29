@@ -18,32 +18,25 @@ final class SettingsHttpService {
   Future<UserSettings> getSettings() =>
       _client.get('/settings', fromJson: _settings);
 
-  /// `PATCH /settings` — a partial update, answering with the fresh record.
+  /// `PATCH /settings` — a patch of the fields that changed, answering with the
+  /// fresh record.
   ///
-  /// A field left null is untouched by the API. The API refuses a patch that
-  /// carries nothing, so callers send only what changed. [display] is sent as
-  /// its wire spelling; [notificationPreferences] as the free-form JSON object
-  /// the API stores verbatim.
-  Future<UserSettings> updateSettings({
-    bool? pushNotifications,
-    bool? appNotifications,
-    bool? emailNotifications,
-    UserDisplay? display,
-    String? language,
-    NotificationPreferences? notificationPreferences,
-    String? pushNotificationToken,
-  }) {
+  /// The body is [patch]'s own JSON, and a field the caller did not set is not
+  /// in it at all. The API deep-merges, so an absent key is untouched rather
+  /// than cleared — that is what keeps preferences this build does not know
+  /// about alive (audit M13). The API refuses a patch that carries nothing, so
+  /// an empty one is refused here instead of costing a round trip.
+  Future<UserSettings> updateSettings(SettingsPatchDto patch) {
+    if (patch.isEmpty) {
+      throw ArgumentError.value(
+        patch,
+        'patch',
+        'A settings patch cannot be empty',
+      );
+    }
     return _client.patch(
       '/settings',
-      data: {
-        'push_notifications': ?pushNotifications,
-        'app_notifications': ?appNotifications,
-        'email_notifications': ?emailNotifications,
-        'display': ?display?.wire,
-        'language': ?language,
-        'notification_preferences': ?notificationPreferences?.toDto.toJson(),
-        'push_notification_token': ?pushNotificationToken,
-      },
+      data: patch.toJson(),
       fromJson: _settings,
     );
   }

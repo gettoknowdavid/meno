@@ -297,7 +297,7 @@ final class LiveKitRoomTransport implements RoomTransport {
   /// Kept explicit rather than a `name` lookup: a kick and a room deletion are
   /// what the manager must treat as terminal, and a silent SDK rename would
   /// turn both back into an unknown drop it retries (audit H07).
-  RoomDisconnectReason _disconnectReason(sdk.DisconnectReason reason) {
+  RoomDisconnectReason _disconnectReason(sdk.DisconnectReason? reason) {
     return switch (reason) {
       sdk.DisconnectReason.clientInitiated =>
         RoomDisconnectReason.clientInitiated,

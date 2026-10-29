@@ -32,7 +32,7 @@ class ParticipantInfoModal extends WatchingWidget {
         bio: participant.bio,
         avatarUrl: participant.avatar,
       );
-      return UserProfileProxy(profile);
+      return UserProfileProxy(profile.id, profile: profile);
     });
 
     final textTheme = MTextTheme.of(context);

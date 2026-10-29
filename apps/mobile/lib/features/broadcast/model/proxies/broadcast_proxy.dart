@@ -13,20 +13,16 @@ import 'package:meno_mobile/features/broadcast/services/broadcast_local_service.
 /// answer feels broken.
 final class BroadcastProxy extends ChangeNotifier {
   new(this._broadcast, this._ownerId) {
-    _isFavourited = _storage.isFavourited(
-      broadcastId: _broadcast.id,
-      ownerId: _ownerId,
-    );
+    _isFavourited = _storage.isFavourited(_broadcast.id);
 
     toggleIsFavourite = .createUndoableNoParamNoResult<bool>(
       (stack) async {
         stack.push(_isFavourited);
         _isFavourited = !_isFavourited;
         notifyListeners();
-        await _storage.toggleIsFavourite(
-          broadcast: _broadcast,
-          ownerId: _ownerId,
-        );
+        // The desired state that was just shown, not a toggle: if the write is
+        // retried or the disk already holds it, the result is the same row.
+        await _storage.setFavourite(_broadcast, isFavourite: _isFavourited);
       },
       undo: (stack, _) {
         _isFavourited = stack.pop();

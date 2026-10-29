@@ -10,11 +10,15 @@ import 'package:meno_mobile/features/broadcast/services/_services.dart';
 /// The list is read from the device rather than the API: keeping a broadcast is
 /// a local decision until it is not — the API's `is_bookmarked` has no endpoint
 /// behind it yet — so the screen answers from the store it writes to.
+///
+/// Which account's list this is, is the store's answer, not this manager's: the
+/// local service is created for one owner in the account scope, so nothing here
+/// can ask for somebody else's favourites (audit M05).
 final class FavouritesManager implements Disposable {
-  new({required this._local, required this._userId, required this._logger}) {
+  new({required this._local, required this._logger}) {
     fetch = .createSyncNoParamNoResult(
       () {
-        final stored = _local.favourites(_userId);
+        final stored = _local.favourites();
         favourites.startTransAction();
         favourites.clear();
         favourites.addAll(stored);
@@ -29,12 +33,12 @@ final class FavouritesManager implements Disposable {
     );
     remove = .createAsyncNoResult<Id>(
       (broadcastId) async {
-        final stored = _local
-            .favourites(_userId)
-            .firstWhere((favourite) => favourite.broadcastId == broadcastId);
-        await _local.toggleIsFavourite(
-          broadcast: Broadcast(id: stored.broadcastId, title: stored.title),
-          ownerId: _userId,
+        final stored = _local.favourites().firstWhere(
+          (favourite) => favourite.broadcastId == broadcastId,
+        );
+        await _local.setFavourite(
+          Broadcast(id: stored.broadcastId, title: stored.title),
+          isFavourite: false,
         );
         fetch.run();
       },
@@ -44,7 +48,6 @@ final class FavouritesManager implements Disposable {
   }
 
   final BroadcastLocalService _local;
-  final Id _userId;
   final MenoLogger _logger;
 
   /// The account's kept broadcasts, most recently saved first.

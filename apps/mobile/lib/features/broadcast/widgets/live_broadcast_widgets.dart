@@ -143,8 +143,8 @@ class BroadcastListeningTab extends WatchingWidget {
 
     if (participants == null) {
       return const Center(
-        child: MText('No one is in this broadcast yet.'),
         key: Key('BroadcastListeningTab'),
+        child: MText('No one is in this broadcast yet.'),
       );
     }
 

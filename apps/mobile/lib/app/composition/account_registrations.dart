@@ -43,19 +43,15 @@ Future<void> registerAccountScope(
   // and reconnect, so a reconnect after a refresh presents the new token and
   // nothing here has to notice that it changed.
   //
-  // The supplier is a read, not a value: it answers with the credential as it
-  // is committed *now*, so a reconnect after a refresh presents the new token
-  // and an account switch can never reuse the old one (audit M03).
-  Future<String?> currentAccessToken() async {
-    final current = await di<SessionStore>().readCredential(context.accountId);
-    if (current == null || !current.hasUsableSession) return null;
-
-    final expiresAt = current.session.expiresAt;
-    if (expiresAt != null && !expiresAt.isAfter(di<Clock>().nowUtc())) {
-      return null;
-    }
-    return current.session.accessToken;
-  }
+  // The supplier is a read, not a value: it asks the connection owner, whose
+  // `accessToken` reads the committed credential at the moment of the
+  // handshake, so a reconnect after a refresh presents the new token and an
+  // account switch can never reuse the old one (audit M03).
+  //
+  // The owner is resolved lazily rather than captured — it is registered after
+  // this client, and asking for it here is only ever done at connect time.
+  Future<String?> currentAccessToken() =>
+      di<AccountConnectionOwner>().accessToken();
 
   scope.registerLazySingleton<SocketClient>(
     () => SocketClient(
@@ -82,8 +78,27 @@ Future<void> registerAccountScope(
   );
 
   scope.registerSingletonWithDependencies<BroadcastLocalService>(
-    () => BroadcastLocalService(di<Database>(), logger: di<MenoLogger>()),
+    () => BroadcastLocalService(
+      context.accountId,
+      di<Database>(),
+      logger: di<MenoLogger>(),
+    ),
     dependsOn: [Database],
+  );
+
+  // A database written before the unique logical keys existed can hold two rows
+  // for one draft or favourite. Clearing that up is part of becoming
+  // owner-bound (audit M06, assumption A13); it is best-effort, so a store
+  // that cannot be scanned is retried on the next launch rather than failing
+  // sign-in.
+  unawaited(
+    di<BroadcastLocalService>().dedupe().catchError((Object error) {
+      di<MenoLogger>().w(
+        'Could not clean up duplicate local rows',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+      );
+    }),
   );
 
   // The account's own broadcasts. A draft carries the id that wrote it and a
@@ -92,7 +107,6 @@ Future<void> registerAccountScope(
   scope.registerLazySingleton<FavouritesManager>(
     () => FavouritesManager(
       local: di<BroadcastLocalService>(),
-      userId: credential.userId,
       logger: di<MenoLogger>(),
     ),
     dispose: (manager) => manager.onDispose(),
@@ -109,8 +123,12 @@ Future<void> registerAccountScope(
   scope.registerLazySingleton<ProfileCacheService>(
     // Viewer-bound: every cached profile is keyed by who is looking, so two
     // accounts never share what they saw of the same subject.
-    () => ProfileCacheService(di<LocalStorage>(), viewerId: credential.userId),
+    () => ProfileCacheService(context.accountId, di<LocalStorage>()),
   );
+
+  // Subject-only profile entries from older builds belong to no particular
+  // viewer; they are deleted rather than read (audit H14, assumption A13).
+  unawaited(di<ProfileCacheService>().purgeLegacyEntries());
 
   scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);
   // Awaiting the local half is what makes `ready` mean something: when the
@@ -133,7 +151,7 @@ Future<void> registerAccountScope(
   );
 
   scope.registerLazySingleton<SettingsLocalService>(
-    () => SettingsLocalService(di<LocalStorage>()),
+    () => SettingsLocalService(context.accountId, di<LocalStorage>()),
   );
 
   // Eager for the same reason: the account's own display choice has to reach
@@ -181,6 +199,9 @@ Future<void> registerAccountScope(
       gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
       store: di<LiveSessionStore>(),
       logger: di<MenoLogger>(),
+      // A host-end or a forced end arrives on the socket: the manager ends the
+      // room once from here rather than waiting for the room to be taken away.
+      endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
       createSession: ({required session, required exitOnServer}) {
         final participants = ParticipantsManager(
           http: di<BroadcastHttpService>(),

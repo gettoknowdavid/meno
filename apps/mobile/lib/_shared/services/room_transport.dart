@@ -22,6 +22,13 @@ import 'package:meno_mobile/_core/_core.dart';
 /// branch the error filter routes as a group, and splitting it in two would
 /// make a room failure mean two different things depending on who raised it.
 abstract interface class RoomTransport implements Disposable {
+  /// Why the last connection ended, when the transport knows.
+  ///
+  /// Only meaningful alongside [RoomConnectionState.disconnected]: a kick and a
+  /// network drop look identical in the state alone, and only one of them is
+  /// worth reconnecting from (audit H07).
+  RoomDisconnectReason? get lastDisconnectReason;
+
   /// The room's connection, as it changes under the session.
   ///
   /// Broadcast rather than single-subscription: the session watches it for as
@@ -62,6 +69,37 @@ abstract interface class RoomTransport implements Disposable {
 /// first connection is free to stay disconnected until it is back.
 enum RoomConnectionState { connecting, connected, reconnecting, disconnected }
 
+/// Why a room's connection ended, in this app's vocabulary.
+///
+/// The transport translates its vendor's reason into these; the live manager
+/// classifies them — removals and deletions are terminal, a dropped network is
+/// not.
+enum RoomDisconnectReason {
+  /// This client hung up; nothing to report.
+  clientInitiated,
+
+  /// Another client joined with the same identity. The room is no longer ours.
+  duplicateIdentity,
+
+  /// A moderator removed this participant.
+  partyRemoved,
+
+  /// The room was deleted.
+  roomDeleted,
+
+  /// The media server is shutting down; worth reconnecting later.
+  serverShutdown,
+
+  /// The SDK could not resume a session the server does not know about.
+  stateMismatch,
+
+  /// The signalling channel closed without a more specific reason.
+  signalClose,
+
+  /// The reason is unknown.
+  unknown,
+}
+
 /// A room that opens at once, stays up, and makes no sound.
 ///
 /// This is what the broadcast flow runs on when there is no LiveKit: joining
@@ -88,7 +126,11 @@ final class SilentRoomTransport implements RoomTransport {
   final _states = StreamController<RoomConnectionState>.broadcast();
 
   RoomConnectionState _state = RoomConnectionState.disconnected;
+  RoomDisconnectReason? _lastReason;
   bool _isMicrophoneEnabled = false;
+
+  @override
+  RoomDisconnectReason? get lastDisconnectReason => _lastReason;
 
   @override
   Stream<RoomConnectionState> get connectionState => _states.stream;
@@ -116,6 +158,7 @@ final class SilentRoomTransport implements RoomTransport {
   @override
   Future<void> disconnect() async {
     if (!isConnected) return;
+    _lastReason = RoomDisconnectReason.clientInitiated;
     _isMicrophoneEnabled = false;
     _emit(RoomConnectionState.disconnected);
   }

@@ -155,7 +155,7 @@ enum Environment {
 /// value, because a URL can carry a token in its query string.
 @immutable
 final class ConfigurationFailure {
-  const ConfigurationFailure(this.field, [this.reason = 'is invalid']);
+  const new(this.field, [this.reason = 'is invalid']);
 
   final String field;
   final String reason;

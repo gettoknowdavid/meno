@@ -16,6 +16,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 ///
 /// Keys come from [StorageKeys]. Anything secret belongs in `SecureStorage`
 /// instead — preferences are stored in the clear.
+///
+/// # Account-scoped keys have three owners
+///
+/// One device can hold several accounts, so anything belonging to an account is
+/// keyed with that account's id. Those keys are written and read only by the
+/// services that know whose data they hold — `SettingsLocalService`,
+/// `ProfileCacheService` and `LiveSessionStore` — each of which takes the owner
+/// in its constructor so a caller cannot name another account. This class stays
+/// an unopinionated key/value store on purpose: the isolation lives where the
+/// account is known (audit M05).
 final class LocalStorage extends ChangeNotifier implements Disposable {
   /// Creates storage over [_preferences].
   new(this._preferences);

@@ -5,6 +5,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/secure_storage.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/auth/services/account_connection_owner.dart';
 
 /// Where the accounts signed in on this device live.
 ///
@@ -34,7 +35,7 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 /// Ids cross this class's public API as [Id] value objects. They are only
 /// flattened to strings at the storage boundary (vault keys and the active
 /// user id key), and parsed back with [Id.fromString] on the way out.
-final class SessionStore implements Disposable {
+final class SessionStore implements Disposable, ConnectionCredentials {
   new(this._storage);
 
   final SecureStorage _storage;
@@ -88,6 +89,7 @@ final class SessionStore implements Disposable {
   /// account's tokens until it settles, even if the app has switched to
   /// another one since. Reading by the captured id — never by "the active
   /// account" — is what makes that possible.
+  @override
   Future<UserCredential?> readCredential(Id userId) async {
     if (!userId.isValid) return null;
     return (await _readVault())[userId.getOrCrash];

@@ -50,6 +50,9 @@ final class _FakeRoom implements RoomTransport {
   Stream<RoomConnectionState> get connectionState => _states.stream;
 
   @override
+  RoomDisconnectReason? get lastDisconnectReason => null;
+
+  @override
   bool get isConnected => false;
 
   @override
