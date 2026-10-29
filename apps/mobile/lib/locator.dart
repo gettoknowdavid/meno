@@ -1,4 +1,3 @@
-import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
@@ -58,6 +57,7 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   di.registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage());
   di.registerLazySingleton<SecureStorage>(
     () => SecureStorage(di<FlutterSecureStorage>()),
+    // onCreated: (storage) async => await storage.deleteAll(),
   );
   di.registerSingletonAsync<Database>(Database.create);
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
@@ -153,32 +153,29 @@ void _registerAuth() {
   // profile and settings caches, and the record of a live session, are all read
   // and written through the device's store, and they are created eagerly when
   // this scope is pushed.
-  di.registerSingletonWithDependencies<AccountTransitionOwner>(
-    () {
-      final owner = AccountTransitionOwner(
-        activeRecord: di<AuthManager>().activeRecord,
-        logger: di<MenoLogger>(),
-        register: registerAccountScope,
-        // The live owner is fenced before the account scope is popped: new
-        // entries refused, the in-flight one drained and the session closed.
-        // Resolved lazily, since the manager exists only while an account is
-        // scoped.
-        beginLiveExit: () async {
-          if (!di.isRegistered<ActiveBroadcastManager>()) return;
-          await di<ActiveBroadcastManager>().closeForAccountExit();
-        },
-        // The owner writes the credential itself, right after the scope's
-        // registrations exist — no other writer decides when an account is
-        // active. The vault files the record before it is made active, so a
-        // crash in between leaves an account that can be switched back to.
-        saveCredential: (record) async {
-          await di<SessionService>().adoptCandidate(record);
-          await di<SessionService>().activate(record.accountId);
-        },
-      );
-      unawaited(owner.init());
-      return owner;
-    },
+  di.registerSingletonAsync<AccountTransitionOwner>(
+    () async => AccountTransitionOwner(
+      activeRecord: di<AuthManager>().activeRecord,
+      logger: di<MenoLogger>(),
+      register: registerAccountScope,
+      // The live owner is fenced before the account scope is popped: new
+      // entries refused, the in-flight one drained and the session closed.
+      // Resolved lazily, since the manager exists only while an account is
+      // scoped.
+      beginLiveExit: () async {
+        if (!di.isRegistered<ActiveBroadcastManager>()) return;
+        await di<ActiveBroadcastManager>().closeForAccountExit();
+      },
+      // The owner writes the credential itself, right after the scope's
+      // registrations exist — no other writer decides when an account is
+      // active. The vault files the record before it is made active, so a
+      // crash in between leaves an account that can be switched back to.
+      saveCredential: (record) async {
+        await di<SessionService>().adoptCandidate(record);
+        await di<SessionService>().activate(record.accountId);
+      },
+    ),
+    onCreated: (owner) async => await owner.init(),
     dependsOn: [AuthManager, LocalStorage],
     dispose: (owner) => owner.onDispose(),
   );

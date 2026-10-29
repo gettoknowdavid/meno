@@ -364,7 +364,7 @@ final class AuthManager implements Disposable {
     // does, and the chrome reads the profile for anything richer (Step 24).
     final credential = record.toUserCredential(user: response.user.toDomain);
     _adopt(credential);
-    _formMode.value = LoginFormMode.prefillSelectedIdentity;
+    // _formMode.value = LoginFormMode.prefillSelectedIdentity;
     return credential;
   }
 

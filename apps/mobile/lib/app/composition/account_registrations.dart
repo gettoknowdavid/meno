@@ -128,9 +128,9 @@ Future<void> registerAccountScope(
     () => ProfileCacheService(context.accountId, di<LocalStorage>()),
   );
 
-  // Subject-only profile entries from older builds belong to no particular
-  // viewer; they are deleted rather than read (audit H14, assumption A13).
-  unawaited(di<ProfileCacheService>().purgeLegacyEntries());
+  // // Subject-only profile entries from older builds belong to no particular
+  // // viewer; they are deleted rather than read (audit H14, assumption A13).
+  // unawaited(di<ProfileCacheService>().purgeLegacyEntries());
 
   scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);
   scope.registerSingletonAsync<MyProfileManager>(

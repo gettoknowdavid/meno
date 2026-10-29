@@ -66,7 +66,7 @@ final class MyProfileManager implements Disposable {
   /// begins only after the account is ready, from the account subtree's first
   /// widget (Step 18/19).
   Future<MyProfileManager> init() async {
-    _adopt(_context.accountId);
+    await _adopt(_context.accountId);
     return this;
   }
 
@@ -103,6 +103,8 @@ final class MyProfileManager implements Disposable {
   /// flight for the same account is left to finish rather than doubled, which
   /// is what makes opening the screen while it is still on its way free.
   Future<void> _load() async {
+    di<MenoLogger>().w('Loading the profile...');
+
     final userId = _context.accountId;
     if (_disposed || userId.isEmpty) return;
     if (_loadingUserId == userId) return;
@@ -142,8 +144,9 @@ final class MyProfileManager implements Disposable {
   }
 
   /// Puts this account's cached profile in place.
-  void _adopt(Id userId) {
+  Future<void> _adopt(Id userId) async {
     di<MenoLogger>().w('Adopting profile for $userId');
+
     final something = _cache.myProfile() ?? .empty;
     di<MenoLogger>().w('Adopted profile from cache: $something');
 
@@ -151,6 +154,13 @@ final class MyProfileManager implements Disposable {
       _profile.value = .empty;
       return;
     }
+
+    final profile = _cache.myProfile() ?? .empty;
+    if (profile.isEmpty) {
+      await _load();
+      return;
+    }
+
     _profile.value = _cache.myProfile() ?? .empty;
     di<MenoLogger>().w('Adopted profile: ${_profile.value}');
   }

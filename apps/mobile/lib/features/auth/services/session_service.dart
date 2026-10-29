@@ -113,7 +113,7 @@ final class SessionService implements Disposable, ConnectionCredentials {
       final guard = _guard();
       if (guard != null) return guard;
       if (!record.accountId.isValid) {
-        return const MutationRejected(MutationRejection.invalidEnvelope);
+        return const MutationRejected(.invalidEnvelope);
       }
 
       final current = _envelope!;
