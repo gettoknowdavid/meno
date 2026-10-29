@@ -6,10 +6,12 @@ import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '_support/fake_path_provider.dart';
 import '_support/pump_until_found.dart';
 
 void main() {
   setUp(() async {
+    installFakePathProvider();
     SharedPreferences.setMockInitialValues({});
     // Secure storage starts empty and in memory, so the startup gate can
     // restore a session without a platform channel.

@@ -18,7 +18,8 @@ void main() {
 
   group('draft isolation', () {
     late Store store;
-    late BroadcastLocalService service;
+    late BroadcastLocalService serviceA;
+    late BroadcastLocalService serviceB;
 
     setUp(() {
       store = Store(
@@ -27,8 +28,17 @@ void main() {
             '${Store.inMemoryPrefix}'
             'fence-${DateTime.now().microsecondsSinceEpoch}',
       );
-      service = BroadcastLocalService(
-        Database.fromStore(store),
+      // One store, two accounts: the owner is part of the service, so isolation
+      // is a property of the object rather than of every call.
+      final database = Database.fromStore(store);
+      serviceA = BroadcastLocalService(
+        Id.fromString(_ownerA),
+        database,
+        logger: MockMenoLogger(),
+      );
+      serviceB = BroadcastLocalService(
+        Id.fromString(_ownerB),
+        database,
         logger: MockMenoLogger(),
       );
     });
@@ -36,37 +46,47 @@ void main() {
     tearDown(() => store.close());
 
     test('a foreign draft read is rejected, not reported as missing', () async {
-      final ownerA = Id.fromString(_ownerA);
       final draft = BroadcastDraft(
         id: Id.unique(),
-        ownerId: ownerA,
+        ownerId: Id.fromString(_ownerA),
         title: 'A',
       );
-      await service.saveDraft(draft, ownerId: ownerA);
+      await serviceA.saveDraft(draft);
 
       expect(
-        () => service.draft(draftId: draft.id, ownerId: Id.fromString(_ownerB)),
+        () => serviceB.draft(draft.id),
         throwsA(isA<OwnerViolationException>()),
       );
     });
 
     test('a foreign upsert is rejected without re-owning the row', () async {
-      final ownerA = Id.fromString(_ownerA);
-      final ownerB = Id.fromString(_ownerB);
       final draft = BroadcastDraft(
         id: Id.unique(),
-        ownerId: ownerA,
+        ownerId: Id.fromString(_ownerA),
         title: 'A',
       );
-      await service.saveDraft(draft, ownerId: ownerA);
+      await serviceA.saveDraft(draft);
 
       await expectLater(
-        service.saveDraft(draft.copyWith(ownerId: ownerB), ownerId: ownerB),
+        serviceB.saveDraft(draft.copyWith(ownerId: Id.fromString(_ownerB))),
         throwsA(isA<OwnerViolationException>()),
       );
 
       // The row still belongs to A, with A's content.
-      expect(service.draft(draftId: draft.id, ownerId: ownerA)?.title, 'A');
+      expect(serviceA.draft(draft.id)?.title, 'A');
+      expect(serviceA.drafts(), hasLength(1));
+      expect(serviceB.drafts(), isEmpty);
+    });
+
+    test('a service cannot be built without an owner', () {
+      expect(
+        () => BroadcastLocalService(
+          Id.empty,
+          Database.fromStore(store),
+          logger: MockMenoLogger(),
+        ),
+        throwsA(isA<OwnerViolationException>()),
+      );
     });
   });
 
@@ -80,7 +100,7 @@ void main() {
         final viewerB = Id.fromString(_ownerB);
         final subject = Id.fromString(_subject);
 
-        final cacheA = ProfileCacheService(storage, viewerId: viewerA);
+        final cacheA = ProfileCacheService(viewerA, storage);
         await cacheA.saveProfile(
           Profile(
             id: subject,
@@ -93,7 +113,7 @@ void main() {
         expect(storage.containsKey('profile.v2/$_ownerA/$_subject'), isTrue);
 
         // B sees a miss, not A's `isFollowing`.
-        final cacheB = ProfileCacheService(storage, viewerId: viewerB);
+        final cacheB = ProfileCacheService(viewerB, storage);
         expect(cacheB.profile(subject), isNull);
 
         // The subject-only key the old build wrote is never read.
@@ -105,7 +125,7 @@ void main() {
 
         // No viewer part is not a cache at all.
         expect(
-          () => ProfileCacheService(storage, viewerId: Id.empty),
+          () => ProfileCacheService(Id.empty, storage),
           throwsA(isA<OwnerViolationException>()),
         );
       },

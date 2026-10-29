@@ -7,7 +7,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/session_interceptor.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
+import 'package:meno_mobile/features/auth/services/session_service.dart';
 import 'package:mocktail/mocktail.dart';
 
 import '../../_support/fake_clock.dart';
@@ -22,33 +22,23 @@ class _MockPlatform extends Mock implements FlutterSecureStorage;
 const _baseUrl = 'https://api.test';
 
 /// A credential for [id], with its expiry pinned so the fake clock can move it.
-UserCredential _account({
+CredentialRecord _account({
   required String id,
   required DateTime expiresAt,
   String accessToken = 'access',
   String? refreshToken = 'refresh',
-}) {
-  final base = AuthResponseDto.fromJson({
-    'access_token': accessToken,
-    'refresh_token': refreshToken ?? 'refresh-$accessToken',
-    'expires_in': 3600,
-    'user': {
-      'id': id,
-      'full_name': 'Someone',
-      'email': 'someone@example.com',
-      'verified': true,
-    },
-  }).toDomain;
-
-  return UserCredential(
-    user: base.user,
-    session: Session(
-      accessToken: accessToken,
-      refreshToken: refreshToken == null ? null : 'refresh-$accessToken',
-      expiresAt: expiresAt,
-    ),
-  );
-}
+}) => CredentialRecord(
+  accountId: Id.fromString(id),
+  schemaVersion: CredentialRecord.schemaVersionNumber,
+  epoch: 'epoch-$id',
+  revision: 1,
+  accessToken: accessToken,
+  refreshToken: refreshToken,
+  accessExpiresAt: expiresAt,
+  receivedAt: DateTime.utc(2026),
+  isVerified: true,
+  renewalState: RenewalState.idle,
+);
 
 /// The bearer header a request carried, read case-insensitively so the map's
 /// own casing never decides the answer.
@@ -66,7 +56,7 @@ void main() {
 
   late _MockPlatform platform;
   late Map<String, String> disk;
-  late SessionStore store;
+  late SessionService store;
   late StubApi api;
   late FakeClock clock;
   late Config config;
@@ -95,14 +85,15 @@ void main() {
     });
   }
 
-  setUp(() {
+  setUp(() async {
     disk = {};
     platform = _MockPlatform();
     stubStorage();
 
     clock = FakeClock(DateTime.utc(2026));
-    store = SessionStore(SecureStorage(platform));
+    store = SessionService(SecureStorage(platform));
     addTearDown(store.onDispose);
+    await store.initialize();
 
     config = const Config(
       env: Environment.dev,
@@ -132,6 +123,12 @@ void main() {
     addTearDown(() => client.onDispose());
   });
 
+  /// Files [record] as the active account, as a sign-in would.
+  Future<void> signIn(CredentialRecord record) async {
+    await store.adoptCandidate(record);
+    await store.activate(record.accountId);
+  }
+
   Future<T> expectFailure<T extends MenoException>(
     Future<Object?> request,
   ) async {
@@ -144,7 +141,7 @@ void main() {
   }
 
   test('a request captured as A is cancelled, not replayed as B', () async {
-    await store.saveActive(
+    await signIn(
       _account(
         id: _jim,
         expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
@@ -163,7 +160,7 @@ void main() {
     await reachedApi.future;
 
     // The user switches accounts while the request is in the air.
-    await store.saveActive(
+    await signIn(
       _account(
         id: _pam,
         expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
@@ -189,8 +186,8 @@ void main() {
   test(
     'an account request to a foreign origin is refused before sending',
     () async {
-      await store.saveActive(
-        _account(
+      await signIn(
+      _account(
           id: _jim,
           expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
         ),
@@ -207,7 +204,7 @@ void main() {
   );
 
   test('an anonymous request carries no Authorization header', () async {
-    await store.saveActive(
+    await signIn(
       _account(
         id: _jim,
         expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
@@ -228,8 +225,8 @@ void main() {
   test(
     'an expired, unrenewable session is refused, never sent anonymously',
     () async {
-      await store.saveActive(
-        _account(
+      await signIn(
+      _account(
           id: _jim,
           refreshToken: null,
           expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
@@ -245,7 +242,7 @@ void main() {
   );
 
   test('a redirect is not followed and forwards nothing', () async {
-    await store.saveActive(
+    await signIn(
       _account(
         id: _jim,
         expiresAt: clock.nowUtc().add(const Duration(hours: 1)),
@@ -270,7 +267,7 @@ void main() {
   });
 
   test('a bearer request sends exactly the captured token, once', () async {
-    await store.saveActive(
+    await signIn(
       _account(
         id: _jim,
         expiresAt: clock.nowUtc().add(const Duration(hours: 1)),

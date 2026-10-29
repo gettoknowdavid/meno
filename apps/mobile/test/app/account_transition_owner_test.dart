@@ -13,19 +13,19 @@ const _b = '018f2b1e-0000-7000-8000-000000000002';
 
 class _MockLogger extends Mock implements MenoLogger;
 
-UserCredential _account(String id, {String token = 'access-token'}) {
-  return AuthResponseDto.fromJson({
-    'access_token': token,
-    'refresh_token': 'refresh-token',
-    'expires_in': 3600,
-    'user': {
-      'id': id,
-      'full_name': 'Account $id',
-      'email': '$id@example.com',
-      'verified': true,
-    },
-  }).toDomain;
-}
+CredentialRecord _account(String id, {String token = 'access-token'}) =>
+    CredentialRecord(
+      accountId: Id.fromString(id),
+      schemaVersion: CredentialRecord.schemaVersionNumber,
+      epoch: 'epoch-$id',
+      revision: 1,
+      accessToken: token,
+      refreshToken: 'refresh-token',
+      accessExpiresAt: DateTime.utc(2030),
+      receivedAt: DateTime.utc(2026),
+      isVerified: true,
+      renewalState: RenewalState.idle,
+    );
 
 final class _ScopedService {
   const new(this.userId);
@@ -36,13 +36,13 @@ final class _ScopedService {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late ValueNotifier<UserCredential> credential;
+  late ValueNotifier<CredentialRecord?> credential;
   late AccountTransitionOwner owner;
 
   setUp(() async {
     await di.reset();
     di.pushNewScope(scopeName: Scope.root);
-    credential = ValueNotifier(UserCredential.empty);
+    credential = ValueNotifier(null);
   });
 
   tearDown(() async {
@@ -54,12 +54,14 @@ void main() {
     final order = <String>[];
     final firstHeld = Completer<void>();
     owner = AccountTransitionOwner(
-      activeCredential: credential,
+      activeRecord: credential,
       logger: _MockLogger(),
       register: (scope, account, context) async {
-        order.add(account.userId.getOrCrash);
-        if (account.userId.getOrCrash == _a) await firstHeld.future;
-        scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
+        order.add(account.accountId.getOrCrash);
+        if (account.accountId.getOrCrash == _a) await firstHeld.future;
+        scope.registerSingleton<_ScopedService>(
+          _ScopedService(account.accountId),
+        );
       },
     );
     await owner.init();
@@ -82,7 +84,7 @@ void main() {
 
   test('a registration failure leaves no scope and blocks', () async {
     owner = AccountTransitionOwner(
-      activeCredential: credential,
+      activeRecord: credential,
       logger: _MockLogger(),
       register: (_, _, _) => throw const NetworkException(),
     );
@@ -101,11 +103,13 @@ void main() {
   test('a slow adoption superseded by a newer intent is cancelled', () async {
     var registrations = 0;
     owner = AccountTransitionOwner(
-      activeCredential: credential,
+      activeRecord: credential,
       logger: _MockLogger(),
       register: (scope, account, context) {
         registrations++;
-        scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
+        scope.registerSingleton<_ScopedService>(
+          _ScopedService(account.accountId),
+        );
       },
     );
     await owner.init();
@@ -124,10 +128,12 @@ void main() {
 
   test('re-entering the same account gets a new generation', () async {
     owner = AccountTransitionOwner(
-      activeCredential: credential,
+      activeRecord: credential,
       logger: _MockLogger(),
       register: (scope, account, context) {
-        scope.registerSingleton<_ScopedService>(_ScopedService(account.userId));
+        scope.registerSingleton<_ScopedService>(
+          _ScopedService(account.accountId),
+        );
       },
     );
     await owner.init();
@@ -137,7 +143,7 @@ void main() {
     await owner.ready;
     final first = owner.snapshot.value.context!;
 
-    credential.value = UserCredential.empty;
+    credential.value = null;
     await owner.ready;
     credential.value = _account(_a);
     await owner.ready;

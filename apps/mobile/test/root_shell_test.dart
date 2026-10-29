@@ -4,13 +4,14 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '_support/fake_path_provider.dart';
 import '_support/pump_until_found.dart';
+import '_support/session_vault.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -19,19 +20,11 @@ const _config = Config(
   menoLiveKitUrl: 'https://dev.livekit',
 );
 
-/// The account the sign-in flow would have left in the store: signed in, with
+/// The account the sign-in flow would have left in the vault: signed in, with
 /// the address already confirmed.
-final UserCredential _account = AuthResponseDto.fromJson({
-  'access_token': 'access-token',
-  'refresh_token': 'refresh-token',
-  'expires_in': 3600,
-  'user': {
-    'id': '1',
-    'full_name': 'Ada Lovelace',
-    'email': 'ada@example.com',
-    'verified': true,
-  },
-}).toDomain;
+const String _accountId = '018f2b1e-0000-7000-8000-000000000001';
+
+final CredentialRecord _account = testRecord(accountId: _accountId);
 
 /// Boots the app signed in and past onboarding, so the router lands inside the
 /// root shell.
@@ -45,7 +38,14 @@ Future<void> _bootIntoShell(WidgetTester tester) async {
 
   // Nothing else can reach the shell: the guard sends an unfinished intro to
   // the carousel and anybody signed out to the sign-in screen.
-  await di<SessionStore>().saveActive(_account);
+  await seedVault(
+    _account,
+    remembered: testGreeting(
+      accountId: _accountId,
+      displayName: 'Ada Lovelace',
+      email: 'ada@example.com',
+    ),
+  );
 
   await tester.pumpWidget(const MenoApp());
   await tester.pumpAndSettle();
@@ -60,6 +60,7 @@ void _useWindow(WidgetTester tester, Size size) {
 
 void main() {
   setUp(() async {
+    installFakePathProvider();
     // Onboarding already completed: the guard sends a signed-in user into the
     // shell instead of back to the intro.
     SharedPreferences.setMockInitialValues({

@@ -1,16 +1,13 @@
-import 'dart:async';
-
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:material_ui/material_ui.dart';
 import 'package:go_router/go_router.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/_shared/services/local_storage.dart';
 import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/broadcast/pages/live_session_init_page.dart';
-import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -190,9 +187,9 @@ void main() {
     });
 
     testWidgets('failed shows the typed message and a retry', (tester) async {
-      manager.snapshot.value = LiveSnapshot(
+      manager.snapshot.value = const LiveSnapshot(
         phase: LivePhase.failed,
-        failure: const LiveFailure(message: 'gone', retryable: true),
+        failure: LiveFailure(message: 'gone', retryable: true),
       );
 
       await pumpInit(tester);

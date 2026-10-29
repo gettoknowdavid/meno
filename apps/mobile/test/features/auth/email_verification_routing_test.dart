@@ -4,9 +4,11 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
+import '../../_support/fake_path_provider.dart';
+import '../../_support/session_vault.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -15,25 +17,28 @@ const _config = Config(
   menoLiveKitUrl: 'https://dev.livekit',
 );
 
+const String _accountId = '018f2b1e-0000-7000-8000-000000000000';
+
 /// The account a registration leaves behind: signed in, address unconfirmed.
-UserCredential _account({required bool verified}) => AuthResponseDto.fromJson({
-  'access_token': 'access-token',
-  'refresh_token': 'refresh-token',
-  'expires_in': 3600,
-  'user': {
-    'id': '018f2b1e-0000-7000-8000-000000000000',
-    'full_name': 'Jim Halpert',
-    'email': 'jim@example.com',
-    'verified': verified,
-  },
-}).toDomain;
+CredentialRecord _account({required bool verified}) => testRecord(
+  accountId: _accountId,
+  verified: verified,
+  epoch: verified ? 'epoch-verified' : 'epoch-unverified',
+);
 
 /// Boots the app as an install that finished the intro, signed in as [account].
-Future<void> bootWith(WidgetTester tester, UserCredential account) async {
+Future<void> bootWith(WidgetTester tester, CredentialRecord account) async {
   configureDependencies(_config);
   await di.allReady();
 
-  await di<SessionStore>().saveActive(account);
+  await seedVault(
+    account,
+    remembered: testGreeting(
+      accountId: _accountId,
+      displayName: 'Jim Halpert',
+      email: 'jim@example.com',
+    ),
+  );
 
   await tester.pumpWidget(const MenoApp());
   // Bounded pumps, not `pumpAndSettle`: the verification screen's code field
@@ -45,6 +50,7 @@ Future<void> bootWith(WidgetTester tester, UserCredential account) async {
 
 void main() {
   setUp(() async {
+    installFakePathProvider();
     SharedPreferences.setMockInitialValues({
       StorageKeys.onboardingCompleted: true,
     });
@@ -57,11 +63,13 @@ void main() {
     configureDependencies(_config);
     await di.allReady();
 
-    await di<SessionStore>().saveActive(_account(verified: false));
-    final restored = await di<SessionStore>().readActiveCredential();
+    await seedVault(_account(verified: false));
+    final restored = vault.usableCredential(
+      vault.readSnapshot().activeAccountId!,
+    );
 
     expect(restored, isNotNull);
-    expect(restored!.user.verified, isFalse);
+    expect(restored!.isVerified, isFalse);
   });
 
   testWidgets('an unverified account lands on the verification screen', (

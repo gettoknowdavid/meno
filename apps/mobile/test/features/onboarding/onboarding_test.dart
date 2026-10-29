@@ -7,6 +7,7 @@ import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart
 import 'package:meno_mobile/locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
 
 const _config = Config(
@@ -17,7 +18,10 @@ const _config = Config(
 );
 
 void main() {
-  setUp(di.reset);
+  setUp(() {
+    installFakePathProvider();
+    return di.reset();
+  });
   tearDown(di.reset);
 
   testWidgets('a fresh install opens the intro carousel', (tester) async {

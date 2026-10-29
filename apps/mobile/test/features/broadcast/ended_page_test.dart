@@ -47,7 +47,6 @@ Broadcast _retained() => Broadcast(
   id: Id.fromString(_broadcastId),
   title: SingleLineString('Morning show'),
   state: .ended,
-  status: .inactive,
   endTime: DateTime.utc(2026, 10, 28, 8, 12),
   durationSeconds: 720,
   totalParticipants: 4,

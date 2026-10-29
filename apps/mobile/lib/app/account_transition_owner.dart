@@ -195,6 +195,23 @@ final class AccountTransitionOwner implements Disposable {
       return const TransitionCancelled();
     }
 
+    // Already in scope for this account: the vault publishes synchronously,
+    // so a restore can arrive right after the change event that already
+    // prepared it.
+    // Pushing a second scope would leave two of everything for one account.
+    final current = snapshot.value.context;
+    if (_hasScope && _current?.accountId == accountId && current != null) {
+      _current = credential;
+      _publish(
+        AccountSnapshot(
+          phase: AccountPhase.ready,
+          context: current,
+          isEmailVerified: credential.isVerified,
+        ),
+      );
+      return TransitionReady(current);
+    }
+
     final context = AccountContext(
       accountId: accountId,
       generation: ++_generation,

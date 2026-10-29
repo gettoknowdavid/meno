@@ -31,8 +31,8 @@ void main() {
 
     store = Store(
       getObjectBoxModel(),
-      directory:
-          '${Store.inMemoryPrefix}editor-${DateTime.now().microsecondsSinceEpoch}',
+      directory: '${Store.inMemoryPrefix}'
+          'editor-${DateTime.now().microsecondsSinceEpoch}',
     );
 
     live = ActiveBroadcastManager(
@@ -55,6 +55,7 @@ void main() {
     );
     di.registerSingleton<BroadcastLocalService>(
       BroadcastLocalService(
+        Id.fromString(_account),
         Database.fromStore(store),
         logger: di<MenoLogger>(),
       ),

@@ -11,9 +11,8 @@ import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/auth/services/auth_http_service.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
+import 'package:meno_mobile/features/auth/services/session_service.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -68,7 +67,7 @@ final class _FakeRoom implements RoomTransport {
   Future<void> setMicrophoneEnabled(bool enabled) async {}
 
   @override
-  FutureOr<dynamic> onDispose() async => _states.close();
+  FutureOr<dynamic> onDispose() => _states.close();
 }
 
 final class _FakeRoster implements LiveRoster {
@@ -108,19 +107,18 @@ final class _HoldingGateway implements LiveGateway {
   Future<void> leave(Id broadcastId) async {}
 }
 
-UserCredential _account(String id) {
-  return AuthResponseDto.fromJson({
-    'access_token': 'access',
-    'refresh_token': 'refresh',
-    'expires_in': 3600,
-    'user': {
-      'id': id,
-      'full_name': 'Account $id',
-      'email': '$id@example.com',
-      'verified': true,
-    },
-  }).toDomain;
-}
+CredentialRecord _account(String id) => CredentialRecord(
+  accountId: Id.fromString(id),
+  schemaVersion: CredentialRecord.schemaVersionNumber,
+  epoch: 'epoch-$id',
+  revision: 1,
+  accessToken: 'access',
+  refreshToken: 'refresh',
+  accessExpiresAt: DateTime.utc(2030),
+  receivedAt: DateTime.utc(2026),
+  isVerified: true,
+  renewalState: RenewalState.idle,
+);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -250,36 +248,40 @@ void main() {
             disk.remove(invocation.namedArguments[#key]);
           });
 
-      final store = SessionStore(SecureStorage(platform));
+      final store = SessionService(SecureStorage(platform));
       addTearDown(store.onDispose);
+      await store.initialize();
       final auth = await AuthManager(
         http: AuthHttpService(stubClient(api)),
         store: store,
+        clock: const SystemClock(),
         logger: MockMenoLogger(),
       ).init();
       addTearDown(auth.onDispose);
 
       final transition = await AccountTransitionOwner(
-        activeCredential: auth.activeCredential,
+        activeRecord: auth.activeRecord,
         logger: MockMenoLogger(),
         beginLiveExit: () async => throw const RequestTimeoutException(),
       ).init();
       addTearDown(transition.onDispose);
 
-      await store.saveActive(_account(_jim));
-      await pumpUntil(() => di.isRegistered<UserCredential>());
+      await store.adoptCandidate(_account(_jim));
+      await store.activate(Id.fromString(_jim));
+      await pumpUntil(() => di.isRegistered<CredentialRecord>());
 
-      await store.saveActive(_account(_pam));
+      await store.adoptCandidate(_account(_pam));
+      await store.activate(Id.fromString(_pam));
       await pumpUntil(
-        () => auth.activeCredential.value.userId == Id.fromString(_pam),
+        () => auth.activeRecord.value?.accountId == Id.fromString(_pam),
       );
       await transition.ready;
 
       // The new account is not scoped: the transition is blocked until the
       // live tier can be closed, and the old account keeps what it owns.
       expect(di.currentScopeName, Scope.authenticated);
-      expect(di<UserCredential>().userId, Id.fromString(_jim));
-      expect(di<UserCredential>().userId, isNot(Id.fromString(_pam)));
+      expect(di<CredentialRecord>().accountId, Id.fromString(_jim));
+      expect(di<CredentialRecord>().accountId, isNot(Id.fromString(_pam)));
     });
   });
 }

@@ -1,6 +1,5 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
-import 'package:meno_mobile/_shared/model/entities.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 
@@ -58,11 +57,11 @@ final class _RecordingAdapter implements ConnectionAdapter {
 final class _RotatingCredentials implements ConnectionCredentials {
   new(this.credential);
 
-  UserCredential? credential;
+  CredentialRecord? credential;
   int reads = 0;
 
   @override
-  Future<UserCredential?> readCredential(Id userId) async {
+  CredentialRecord? usableCredential(Id accountId) {
     reads += 1;
     return credential;
   }
@@ -121,14 +120,18 @@ final class _SilentLogger implements MenoLogger {
   void event(String name, Map<String, Object> context) {}
 }
 
-UserCredential _credential(String token, {DateTime? expiresAt}) =>
-    UserCredential(
-      session: Session(accessToken: token, expiresAt: expiresAt),
-      user: User(
-        id: Id.empty,
-        fullName: FullName('Test'),
-        email: Email('t@e.st'),
-      ),
+CredentialRecord _credential(String token, {DateTime? expiresAt}) =>
+    CredentialRecord(
+      accountId: Id.fromString('11111111-1111-4111-8111-111111111111'),
+      schemaVersion: CredentialRecord.schemaVersionNumber,
+      epoch: 'epoch-a',
+      revision: 1,
+      accessToken: token,
+      refreshToken: 'refresh-a',
+      accessExpiresAt: expiresAt ?? DateTime.utc(2030),
+      receivedAt: DateTime.utc(2026),
+      isVerified: true,
+      renewalState: RenewalState.idle,
     );
 
 void main() {

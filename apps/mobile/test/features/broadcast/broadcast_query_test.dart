@@ -27,9 +27,18 @@ Map<String, dynamic> _item(String id, {required String state}) => {
   'status': state == 'live' ? 'active' : 'inactive',
   'createdAt': '2026-01-01T00:00:00Z',
   'totalParticipants': 0,
-  'creatorId': 'creator-1',
+  'creatorId': _creator,
   'creatorName': 'Ada',
 };
+
+/// Three ids the API could actually send: the model refuses anything that is
+/// not a UUID, and a refused row is silently skipped, which reads as an empty
+/// page.
+const _liveOne = '018f2b1e-0000-7000-8000-000000000021';
+const _liveTwo = '018f2b1e-0000-7000-8000-000000000022';
+const _endedOne = '018f2b1e-0000-7000-8000-000000000023';
+const _draftOne = '018f2b1e-0000-7000-8000-000000000024';
+const _creator = '018f2b1e-0000-7000-8000-000000000025';
 
 /// One page carrying [items].
 Future<ResponseBody> Function() _page(List<Map<String, dynamic>> items) =>
@@ -226,9 +235,9 @@ void main() {
     test('keeps only what has ended in a recently-live list', () async {
       final api = StubApi([
         _page([
-          _item('live-1', state: 'live'),
-          _item('ended-1', state: 'ended'),
-          _item('draft-1', state: 'draft'),
+          _item(_liveOne, state: 'live'),
+          _item(_endedOne, state: 'ended'),
+          _item(_draftOne, state: 'draft'),
         ]),
       ]);
       final source = BroadcastFeedDataSource(
@@ -241,12 +250,12 @@ void main() {
 
       // `status=inactive` is the closest the wire gets to "has ended" and it
       // carries drafts and live rows that are still shutting down with it.
-      expect(source.items.map((item) => item.id), ['ended-1']);
+      expect(source.items.map((item) => item.id.getOrCrash), [_endedOne]);
     });
 
     test('keeps everything the endpoint sent in a live list', () async {
       final api = StubApi([
-        _page([_item('live-1', state: 'live'), _item('live-2', state: 'live')]),
+        _page([_item(_liveOne, state: 'live'), _item(_liveTwo, state: 'live')]),
       ]);
       final source = BroadcastFeedDataSource(
         http: BroadcastHttpService(stubClient(api)),
@@ -256,7 +265,10 @@ void main() {
 
       await source.updateDataCommand.runAsync();
 
-      expect(source.items.map((item) => item.id), ['live-1', 'live-2']);
+      expect(source.items.map((item) => item.id.getOrCrash), [
+        _liveOne,
+        _liveTwo,
+      ]);
     });
 
     test('switching section re-reads from the first page', () async {

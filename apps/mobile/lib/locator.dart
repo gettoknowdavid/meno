@@ -61,10 +61,13 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   );
   di.registerSingletonAsync<Database>(Database.create);
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
-  di.registerSingletonWithDependencies<LocalStorage>(
-    () => LocalStorage(di<SharedPreferences>()),
+  // Async rather than `registerSingletonWithDependencies`: get_it completes the
+  // ready future of a dependency-based registration twice when another
+  // dependency-based one waits on it, which throws `Future already completed`
+  // through `allReady`. Awaiting the preferences here keeps a single chain.
+  di.registerSingletonAsync<LocalStorage>(
+    () async => LocalStorage(await di.getAsync<SharedPreferences>()),
     dispose: (storage) => storage.onDispose(),
-    dependsOn: [SharedPreferences],
   );
   if (httpClient != null) {
     di.registerSingleton<HttpClient>(

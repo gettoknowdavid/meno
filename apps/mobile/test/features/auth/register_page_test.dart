@@ -9,6 +9,7 @@ import 'package:meno_mobile/locator.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
 
 const _config = Config(
@@ -22,6 +23,7 @@ const _termsLabel = 'By continuing you agree to our ';
 
 void main() {
   setUp(() async {
+    installFakePathProvider();
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     await di.reset();

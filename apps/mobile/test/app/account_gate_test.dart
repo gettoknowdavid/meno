@@ -8,24 +8,14 @@ import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:mocktail/mocktail.dart';
 
+import '../_support/session_vault.dart';
+
 const _a = '018f2b1e-0000-7000-8000-000000000001';
 const _b = '018f2b1e-0000-7000-8000-000000000002';
 
 class _MockLogger extends Mock implements MenoLogger;
 
-UserCredential _account(String id) {
-  return AuthResponseDto.fromJson({
-    'access_token': 'access-token',
-    'refresh_token': 'refresh-token',
-    'expires_in': 3600,
-    'user': {
-      'id': id,
-      'full_name': 'Account $id',
-      'email': '$id@example.com',
-      'verified': true,
-    },
-  }).toDomain;
-}
+CredentialRecord _account(String id) => testRecord(accountId: id);
 
 final class _Tracked {
   new(this.events);
@@ -76,7 +66,7 @@ Future<void> _settle(WidgetTester tester, AccountTransitionOwner owner) async {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  late ValueNotifier<UserCredential> credential;
+  late ValueNotifier<CredentialRecord?> credential;
   late AccountTransitionOwner owner;
   late List<String> events;
 
@@ -84,9 +74,9 @@ void main() {
     await di.reset();
     di.pushNewScope(scopeName: Scope.root);
     events = [];
-    credential = ValueNotifier(UserCredential.empty);
+    credential = ValueNotifier(null);
     owner = AccountTransitionOwner(
-      activeCredential: credential,
+      activeRecord: credential,
       logger: _MockLogger(),
       register: (scope, account, context) {
         scope.registerSingleton<_Tracked>(

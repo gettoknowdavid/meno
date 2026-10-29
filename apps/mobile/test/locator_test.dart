@@ -8,7 +8,6 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/manager/user_manager.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/services/onboarding_service.dart';
@@ -18,22 +17,26 @@ import 'package:meno_mobile/locator.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '_support/fake_path_provider.dart';
 import '_support/pump_until_found.dart';
+import '_support/session_vault.dart';
 
 class MockMenoLogger extends Mock implements MenoLogger;
 
-/// The account the sign-in flow would have left in the store.
-final UserCredential _account = AuthResponseDto.fromJson({
-  'access_token': 'access-token',
-  'refresh_token': 'refresh-token',
-  'expires_in': 3600,
-  'user': {
-    'id': '1',
-    'full_name': 'Ada Lovelace',
-    'email': 'ada@example.com',
-    'verified': true,
-  },
-}).toDomain;
+/// The account the sign-in flow would have left in the vault.
+const String _accountId = '018f2b1e-0000-7000-8000-000000000001';
+
+final CredentialRecord _account = testRecord(accountId: _accountId);
+
+/// Files [_account] as the signed-in account, greeting included.
+Future<void> signIn() => seedVault(
+  _account,
+  remembered: testGreeting(
+    accountId: _accountId,
+    displayName: 'Ada Lovelace',
+    email: 'ada@example.com',
+  ),
+);
 
 const _config = Config(
   env: Environment.dev,
@@ -48,6 +51,7 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   setUp(() async {
+    installFakePathProvider();
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
@@ -103,13 +107,13 @@ void main() {
       // The account's own choice, as the device cached it last time. Signing in
       // reads it, so the app is painted in it before any screen asks.
       await di<LocalStorage>().setString(
-        StorageKeys.forUser(StorageKeys.settings, '1'),
+        'account.v2/$_accountId/settings',
         value: jsonEncode(
           const UserSettings(display: UserDisplay.dark).toDto.toJson(),
         ),
       );
 
-      await di<SessionStore>().saveActive(_account);
+      await signIn();
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
       await pumpUntil(() => theme.themeMode.value == ThemeMode.dark);
 
@@ -122,13 +126,13 @@ void main() {
       await di.allReady();
 
       await di<LocalStorage>().setString(
-        StorageKeys.forUser(StorageKeys.settings, '1'),
+        'account.v2/$_accountId/settings',
         value: jsonEncode(
           const UserSettings(display: UserDisplay.dark).toDto.toJson(),
         ),
       );
 
-      await di<SessionStore>().saveActive(_account);
+      await signIn();
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
       final theme = di<ThemeManager>();
@@ -138,7 +142,7 @@ void main() {
       // The account's own settings go with the account, but the theme is the
       // device's: repainting the sign-in screen back to the system theme would
       // be a change nobody asked for.
-      await di<SessionStore>().clearActive();
+      await vault.deactivate();
       await pumpUntil(() => di.currentScopeName == Scope.root);
 
       expect(theme.themeMode.value, ThemeMode.dark);
@@ -148,11 +152,11 @@ void main() {
       configureDependencies(_config);
       await di.allReady();
 
-      await di<SessionStore>().saveActive(_account);
+      await signIn();
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
       final theme = di<ThemeManager>();
-      expect(di<UserManager>().currentUserId.value, '1');
+      expect(di<UserManager>().currentUserId.value, Id.fromString(_accountId));
       expect(theme.themeMode.value, ThemeMode.system);
 
       // The repaint does not wait for the write: the switch feels instant.
@@ -177,7 +181,7 @@ void main() {
       expect(di.isRegistered<ActiveBroadcastManager>(), isFalse);
       expect(di.isRegistered<BroadcastEditorManager>(), isFalse);
 
-      await di<SessionStore>().saveActive(_account);
+      await signIn();
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
       // Registered and already holding the account's own state, so a screen
@@ -189,8 +193,13 @@ void main() {
       // Widget-owned since Step 34: the editor exists only while its page does.
       expect(di.isRegistered<BroadcastEditorManager>(), isFalse);
 
-      await di<SessionStore>().clearActive();
-      await pumpUntil(() => di.currentScopeName == Scope.root);
+      await vault.deactivate();
+      // The scope's name changes before its registrations are torn down, so the
+      // wait is on the things the assertions are about.
+      await pumpUntil(
+        () => !di.isRegistered<MyProfileManager>(),
+        step: const Duration(milliseconds: 10),
+      );
 
       expect(di.isRegistered<MyProfileManager>(), isFalse);
       expect(di.isRegistered<SettingsManager>(), isFalse);
@@ -204,14 +213,17 @@ void main() {
       await di.allReady();
       expect(di.currentScopeName, Scope.root);
 
-      await di<SessionStore>().saveActive(_account);
+      await signIn();
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
-      expect(di<UserCredential>().userId, '1');
+      expect(di<CredentialRecord>().accountId, Id.fromString(_accountId));
       expect(di.isRegistered<ActiveBroadcastManager>(), isTrue);
 
-      await di<SessionStore>().clearActive();
-      await pumpUntil(() => di.currentScopeName == Scope.root);
+      await vault.deactivate();
+      await pumpUntil(
+        () => !di.isRegistered<ActiveBroadcastManager>(),
+        step: const Duration(milliseconds: 10),
+      );
 
       expect(di.isRegistered<ActiveBroadcastManager>(), isFalse);
     });

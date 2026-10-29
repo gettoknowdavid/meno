@@ -17,10 +17,10 @@ void main() {
   setUpAll(() async {
     final loader = FontLoader('SFProDisplay')
       ..addFont(
-        rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Medium.ttf'),
+        rootBundle.load('packages/meno_ui/assets/fonts/SFProDisplay_Medium.ttf'),
       )
       ..addFont(
-        rootBundle.load('packages/ui/assets/fonts/SFProDisplay_Bold.ttf'),
+        rootBundle.load('packages/meno_ui/assets/fonts/SFProDisplay_Bold.ttf'),
       );
     await loader.load();
   });

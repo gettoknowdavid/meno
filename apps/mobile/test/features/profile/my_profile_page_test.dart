@@ -6,12 +6,13 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
-import 'package:meno_mobile/features/auth/services/session_store.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/locator.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
+import '../../_support/session_vault.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -20,26 +21,21 @@ const _config = Config(
   menoLiveKitUrl: 'https://dev.livekit',
 );
 
-/// The account the sign-in flow would have left in the store: signed in, with
+/// The account the sign-in flow would have left in the vault: signed in, with
 /// the address already confirmed.
-final UserCredential _account = AuthResponseDto.fromJson({
-  'access_token': 'access-token',
-  'refresh_token': 'refresh-token',
-  'expires_in': 3600,
-  'user': {
-    'id': '1',
-    'full_name': 'Ada Lovelace',
-    'email': 'ada@example.com',
-    'verified': true,
-  },
-}).toDomain;
+const String _accountId = '018f2b1e-0000-7000-8000-000000000001';
+
+final CredentialRecord _account = testRecord(accountId: _accountId);
+
+/// Where this account's own cache entry lives: viewer and subject are the same.
+const String _profileKey = 'profile.v2/$_accountId/$_accountId';
 
 /// The record `GET /users/me` would have answered with, as the cache stores it.
 ///
 /// The counters are deliberately not zeros: a screen that reads them wrongly
 /// still shows a number, and this is what tells the labels apart.
 final String _cachedProfile = jsonEncode({
-  'id': '1',
+  'id': _accountId,
   'full_name': 'Ada Lovelace',
   'email': 'ada@example.com',
   'email_verified': true,
@@ -51,6 +47,7 @@ final String _cachedProfile = jsonEncode({
 
 void main() {
   setUp(() async {
+    installFakePathProvider();
     await di.reset();
     FlutterSecureStorage.setMockInitialValues({});
   });
@@ -65,7 +62,14 @@ void main() {
     configureGlobalExceptionHandler();
 
     await di.allReady();
-    await di<SessionStore>().saveActive(_account);
+    await seedVault(
+      _account,
+      remembered: testGreeting(
+        accountId: _accountId,
+        displayName: 'Ada Lovelace',
+        email: 'ada@example.com',
+      ),
+    );
 
     await tester.pumpWidget(const MenoApp());
     await tester.pumpAndSettle();
@@ -96,7 +100,7 @@ void main() {
 
     SharedPreferences.setMockInitialValues({
       StorageKeys.onboardingCompleted: true,
-      StorageKeys.forUser(StorageKeys.profile, '1'): _cachedProfile,
+      _profileKey: _cachedProfile,
     });
     await boot(tester);
     await openProfile(tester);

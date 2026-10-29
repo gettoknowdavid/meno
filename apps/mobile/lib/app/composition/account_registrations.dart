@@ -77,14 +77,16 @@ Future<void> registerAccountScope(
     () => BroadcastHttpService(di<HttpClient>()),
   );
 
-  scope.registerSingletonWithDependencies<BroadcastLocalService>(
-    () => BroadcastLocalService(
-      context.accountId,
-      di<Database>(),
-      logger: di<MenoLogger>(),
-    ),
-    dependsOn: [Database],
+  // Created here rather than through `dependsOn`: an account is only ever
+  // scoped after the root container is ready, so the store it needs exists, and
+  // a dependency-based registration that waits across scopes makes get_it
+  // complete its ready future twice (`Future already completed`).
+  final local = BroadcastLocalService(
+    context.accountId,
+    di<Database>(),
+    logger: di<MenoLogger>(),
   );
+  scope.registerSingleton<BroadcastLocalService>(local);
 
   // A database written before the unique logical keys existed can hold two rows
   // for one draft or favourite. Clearing that up is part of becoming
@@ -92,7 +94,7 @@ Future<void> registerAccountScope(
   // that cannot be scanned is retried on the next launch rather than failing
   // sign-in.
   unawaited(
-    di<BroadcastLocalService>().dedupe().catchError((Object error) {
+    local.dedupe().catchError((Object error) {
       di<MenoLogger>().w(
         'Could not clean up duplicate local rows',
         tag: MenoLogTag.lifecycle.label,
