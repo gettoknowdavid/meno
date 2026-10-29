@@ -133,17 +133,15 @@ Future<void> registerAccountScope(
   unawaited(di<ProfileCacheService>().purgeLegacyEntries());
 
   scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);
-  // Awaiting the local half is what makes `ready` mean something: when the
-  // owner publishes ready, this account's cached record and switches are
-  // already in place. The remote reads behind them are started, not awaited.
-  final profile = MyProfileManager(
-    context: context,
-    http: di<ProfileHttpService>(),
-    cache: di<ProfileCacheService>(),
-    logger: di<MenoLogger>(),
+  scope.registerSingletonAsync<MyProfileManager>(
+    () async => MyProfileManager(
+      context: context,
+      http: di<ProfileHttpService>(),
+      cache: di<ProfileCacheService>(),
+      logger: di<MenoLogger>(),
+    ),
+    onCreated: (manager) async => await manager.init(),
   );
-  await profile.init();
-  scope.registerSingleton<MyProfileManager>(profile);
 
   // The account's switches, and the cache behind them — also per account, since
   // one device holds several. The theme itself stays in the root scope, because

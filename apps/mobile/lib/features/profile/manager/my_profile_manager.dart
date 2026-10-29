@@ -143,10 +143,15 @@ final class MyProfileManager implements Disposable {
 
   /// Puts this account's cached profile in place.
   void _adopt(Id userId) {
+    di<MenoLogger>().w('Adopting profile for $userId');
+    final something = _cache.myProfile() ?? .empty;
+    di<MenoLogger>().w('Adopted profile from cache: $something');
+
     if (userId.isEmpty) {
       _profile.value = .empty;
       return;
     }
     _profile.value = _cache.myProfile() ?? .empty;
+    di<MenoLogger>().w('Adopted profile: ${_profile.value}');
   }
 }

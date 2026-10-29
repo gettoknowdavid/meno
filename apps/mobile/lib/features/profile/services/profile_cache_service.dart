@@ -50,8 +50,9 @@ final class ProfileCacheService {
   final Id _ownerId;
 
   /// This account's own cached profile, or null when nothing usable is stored.
-  MyProfile? myProfile() =>
-      _read(_ownProfileKey, (json) => MeDto.fromJson(json).toDomain);
+  MyProfile? myProfile() {
+    return _read(_ownProfileKey, (json) => MeDto.fromJson(json).toDomain);
+  }
 
   /// Stores [profile] as this account's own.
   ///
