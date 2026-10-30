@@ -1,0 +1,37 @@
+$kind: http-request
+name: List Broadcasts
+method: GET
+url: '{{base_url}}/broadcasts'
+order: 1000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+queryParams:
+  - key: creatorId
+    value: ''
+    description: 'Filter by creator UUID (optional)'
+    disabled: true
+  - key: status
+    value: active
+    description: 'Filter by status: active | inactive'
+    disabled: true
+  - key: order
+    value: desc
+    description: 'Sort direction: asc | desc (default: desc = newest first)'
+    disabled: true
+  - key: limit
+    value: '20'
+    description: 'Page size, 1–100 (default 20)'
+    disabled: true
+  - key: cursor
+    value: ''
+    description: 'Opaque cursor from a previous page''s nextCursor field'
+    disabled: true
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has data array", () => pm.expect(json.data).to.be.an('object'));
+      pm.test("Has items array", () => pm.expect(json.data.items).to.be.an('array'));

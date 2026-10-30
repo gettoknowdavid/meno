@@ -1,0 +1,13 @@
+$kind: http-request
+name: Add Note to Folder
+method: PUT
+url: '{{base_url}}/notes/{{note_id}}/folders/{{folder_id}}'
+order: 8000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));

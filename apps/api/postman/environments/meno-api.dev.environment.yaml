@@ -2,6 +2,8 @@ name: Meno API - Dev
 values:
   - key: base_url
     value: 'http://localhost:3000'
+  - key: base_url_ws
+    value: 'ws://localhost:3000'
   - key: ENV
     value: dev
   - key: PORT

@@ -1,0 +1,34 @@
+$kind: http-request
+name: Get Chat Messages
+method: GET
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/chat/messages'
+order: 1000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+queryParams:
+  - key: limit
+    value: '50'
+    description: 'Page size, 1–100 (default 20)'
+    disabled: true
+  - key: cursor
+    value: ''
+    description: 'Opaque cursor from a previous page''s nextCursor field'
+    disabled: true
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has items array", () => pm.expect(json.data.items).to.be.an('array'));
+
+      if (json.data.items.length > 0) {
+        const msg = json.data.items[0];
+        pm.test("Message has id", () => pm.expect(msg.id).to.be.a('string'));
+        pm.test("Message has broadcastId", () => pm.expect(msg.broadcastId).to.be.a('string'));
+        pm.test("Message has content", () => pm.expect(msg.content).to.be.a('string'));
+        pm.test("Message has sender", () => pm.expect(msg.sender).to.be.an('object'));
+        pm.test("createdAt is RFC 3339 string", () => pm.expect(msg.createdAt).to.be.a('string'));
+        pm.test("isEdited is boolean", () => pm.expect(msg.isEdited).to.be.a('boolean'));
+      }

@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
+import 'package:flutter_quill/flutter_quill.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
@@ -93,6 +94,7 @@ class MenoApp extends WatchingWidget {
       darkTheme: MTheme.dark,
       themeMode: themeMode,
       routerConfig: di<GoRouter>(),
+      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
       builder: (context, child) => ResponsiveBreakpoints.builder(
         breakpoints: menoBreakpoints,
         child: AccountGate(child: child ?? const SizedBox.shrink()),

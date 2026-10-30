@@ -1,0 +1,15 @@
+$kind: collection
+name: Subscribers
+description: |-
+  Follow / unfollow users and browse follower / following lists.
+
+  Terminology:
+    - **subscribers** — people who follow a given user (their followers)
+    - **subscriptions** — people a given user follows (who they follow)
+
+  The `/me` variants always refer to the authenticated caller. The `/{id}` variants
+  are public — any authenticated user can browse another user's lists.
+
+  Write endpoints (follow / unfollow) are idempotent at the database level:
+  following someone you already follow is a no-op (not an error), and unfollowing
+  someone you don't follow is also a success.

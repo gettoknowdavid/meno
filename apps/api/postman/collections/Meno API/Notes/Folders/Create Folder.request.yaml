@@ -1,0 +1,32 @@
+$kind: http-request
+name: Create Folder
+method: POST
+url: '{{base_url}}/folders'
+order: 2000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "id": "{{$randomUUID}}",
+      "title": "My Folder"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 201", () => pm.response.to.have.status(201));
+      pm.test("Has folder id", () => pm.expect(json.data.id).to.be.a('string'));
+      pm.test("Has version", () => pm.expect(json.data.version).to.be.a('number'));
+
+      if (json.data && json.data.id) {
+        pm.environment.set('folder_id', json.data.id);
+        pm.environment.set('folder_version', json.data.version);
+        pm.collectionVariables.set('folder_id', json.data.id);
+        console.log('[Create Folder] folder_id =', json.data.id);
+      }

@@ -4,6 +4,10 @@ values:
     value: 'https://api.meno.app'
     enabled: true
     type: default
+  - key: base_url_ws
+    value: 'wss://api.meno.app'
+    enabled: true
+    type: default
   - key: ENV
     value: prod
     enabled: true

@@ -1,0 +1,22 @@
+$kind: http-request
+name: End Broadcast
+method: POST
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/end'
+order: 6000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: '{}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has broadcastId", () => pm.expect(json.data.broadcastId).to.be.a('string'));
+      pm.test("Has endedAt timestamp", () => pm.expect(json.data.endedAt).to.be.a('string'));
+      pm.test("Has durationSecs", () => pm.expect(json.data.durationSecs).to.be.a('number'));

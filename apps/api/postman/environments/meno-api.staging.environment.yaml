@@ -4,6 +4,10 @@ values:
     value: 'https://api-staging.meno.app'
     enabled: true
     type: default
+  - key: base_url_ws
+    value: 'wss://api-staging.meno.app'
+    enabled: true
+    type: default
   - key: ENV
     value: staging
     enabled: true

@@ -1,0 +1,11 @@
+$kind: collection
+name: Chat
+description: |-
+  Chat history for a live broadcast room.
+
+  Reading history requires the caller to be a participant in the room (403 NOT_PARTICIPANT
+  otherwise). Writing — sending, editing, deleting messages and reactions — happens over
+  the WebSocket connection, not via HTTP. See the WebSocket folder for those frames.
+
+  Pagination uses an opaque `cursor` / `limit` query pair. Results are newest-first by
+  default; pass `order=asc` to read chronologically.

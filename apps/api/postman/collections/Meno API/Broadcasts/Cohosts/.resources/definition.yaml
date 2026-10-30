@@ -1,0 +1,5 @@
+$kind: collection
+name: Cohosts
+description: |-
+  Manage cohosts for a broadcast. A broadcast may have at most 3 cohosts.
+  All endpoints require the caller to be the broadcast creator.

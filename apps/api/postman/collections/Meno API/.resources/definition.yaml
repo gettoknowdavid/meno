@@ -1,8 +1,65 @@
 $kind: collection
-description: Meno HTTP API — authentication, session management, and real-time features.
+description: |-
+  Meno API — authentication, broadcasts, chat, notes, subscribers, and real-time WebSocket.
+
+  ## Authentication
+
+  Most endpoints require a Bearer token. After running **Auth / Login** or
+  **Auth / Register**, the post-response script stores `access_token` and
+  `refresh_token` in both the active environment and collection variables automatically.
+  All protected requests reference `{{access_token}}`.
+
+  ## Environments
+
+  Three environments are provided: **Dev**, **Staging**, and **Prod**. Each sets
+  `base_url` (HTTP) and `base_url_ws` (WebSocket). Select the right one before sending.
+
+  ## Response envelope
+
+  Every response follows the §4.2 shape:
+  ```json
+  {
+    "status": "success" | "error",
+    "message": "Human-readable summary",
+    "data": { ... } | null,
+    "code": "SNAKE_CASE_CODE"
+  }
+  ```
+
+  ## Pagination
+
+  Paginated lists accept `?cursor=<opaque>&limit=<1-100>` query parameters and return:
+  ```json
+  { "items": [...], "nextCursor": "<opaque>" | null, "hasMore": true | false }
+  ```
+
+  ## Dates
+
+  All timestamps are RFC 3339 strings (e.g. `2026-11-01T18:00:00Z`).
+
+  ## Modules
+
+  | Folder | Base path | Notes |
+  |---|---|---|
+  | Auth | `/auth` | Register, login, OAuth, sessions, password reset |
+  | Profile | `/users` | Profile read/update, avatar upload, search |
+  | Settings | `/settings` | Notification prefs, push token, display theme |
+  | Broadcasts | `/broadcasts` | Create, schedule, go live, cohosts, participants |
+  | Chat | `/broadcasts/{id}/chat` | Read chat history (write via WebSocket) |
+  | Notes | `/notes`, `/folders` | Offline-first notes with sync |
+  | Subscribers | `/subscribers` | Follow / unfollow, follower / following lists |
+  | WebSocket | `/ws` | Real-time events — see folder description for full event catalogue |
+  | Health | `/health` | Liveness and readiness probes |
 variables:
-  base_url: "{{base_url}}"
-  access_token: ""
-  refresh_token: ""
-  user_id: ""
-  user_email: ""
+  base_url: '{{base_url}}'
+  base_url_ws: '{{base_url_ws}}'
+  access_token: ''
+  refresh_token: ''
+  user_id: ''
+  user_email: ''
+  broadcast_id: ''
+  cohost_id: ''
+  note_id: ''
+  note_version: '0'
+  folder_id: ''
+  folder_version: '0'

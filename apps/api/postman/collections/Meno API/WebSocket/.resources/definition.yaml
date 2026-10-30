@@ -1,4 +1,109 @@
 $kind: collection
 name: WebSocket
-description: 'Real-time WebSocket connection.'
 order: 5000
+description: |-
+  Real-time WebSocket connection for presence, chat, and broadcast lifecycle events.
+
+  ## Connection
+
+  Connect to `GET /ws?token=<access_token>`. The server enforces:
+  1. Non-empty, valid, non-revoked JWT with a verified email address.
+  2. A reconnect-rate limit (fail-closed — a Redis outage does not open the gate).
+  3. A per-user connection cap; exceeding it returns 429 before the socket opens.
+
+  Use `{{base_url_ws}}` (e.g. `ws://localhost:3000`) — the `ws://` / `wss://` scheme
+  variant of `{{base_url}}`.
+
+  ## Frame format (both directions)
+
+  Every frame is a JSON text message:
+  ```json
+  { "event": "<eventName>", "data": { ... } }
+  ```
+  Event names are camelCase strings. Unknown client events are answered with a
+  `broadcastError` frame carrying code `UNSUPPORTED`.
+
+  ## Server → Client events
+
+  ### Connection / heartbeat
+  | Event | Data | Notes |
+  |---|---|---|
+  | `heartbeat` | `{}` | Server ping every ~30 s; echo it back to keep the socket alive |
+
+  ### Broadcast lifecycle
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `newBroadcast` | `id`, `title`, `creatorId`, … | A broadcast went live |
+  | `endedBroadcast` | `broadcastId`, `endedReason`, `endedAt`, `durationSecs` | A live broadcast ended |
+  | `scheduledBroadcast` | `broadcastId`, `startTime` | Start time changed |
+  | `broadcastDeleted` | `broadcastId` | Broadcast was deleted |
+  | `broadcastError` | `broadcastId?`, `code`, `message`, `recoverable` | Room-scoped or connection-scoped error |
+
+  ### Host presence
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `hostDisconnected` | `broadcastId`, `gracePeriodSecs` | Host dropped; grace period started |
+  | `hostReconnected` | `broadcastId` | Host returned within grace period |
+
+  ### Participants
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `participantJoined` | `broadcastId`, `user` | Someone joined the room |
+  | `participantLeft` | `broadcastId`, `userId` | Someone left |
+  | `participantKicked` | `broadcastId`, `userId` | Host removed a participant |
+  | `numberOfLiveParticipants` | `broadcastId`, `count` | Updated live count |
+
+  ### Cohosts
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `cohostInvitation` | `broadcastId`, `invitedBy` | You were invited as cohost |
+  | `cohostAccepted` | `broadcastId`, `userId` | A cohost accepted |
+  | `cohostDeclined` | `broadcastId`, `userId` | A cohost declined |
+  | `cohostDemotion` | `broadcastId`, `userId` | Cohost returned to participant |
+  | `newCohost` | `broadcastId`, `user` | New cohost added |
+  | `removedCohost` | `broadcastId`, `userId` | Cohost removed |
+
+  ### Recording
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `recordingReady` | `broadcastId`, `recordingUrl` | Recording is ready to play |
+  | `recordingPublished` | `broadcastId`, `recordingUrl` | Recording published |
+
+  ### Direct-to-user
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `notification` | `userId`, `title`, `body` | Push-style notification |
+  | `homeInvalidated` | `userId` | Home-screen cache is stale — refetch feed |
+
+  ### Chat (server → client)
+  | Event | Data fields | Notes |
+  |---|---|---|
+  | `newMessage` | `id`, `broadcastId`, `content`, `sender`, `createdAt`, `isEdited` | New chat message |
+  | `editedMessage` | `id`, `broadcastId`, `content`, `sender`, `createdAt`, `updatedAt`, `isEdited` | Message was edited |
+  | `deletedMessage` | `id`, `broadcastId` | Message was deleted |
+  | `newReaction` | `id`, `broadcastId`, `senderId`, `messageId`, `emoji`, `createdAt` | Reaction added/removed |
+
+  ## Client → Server events
+
+  ### Heartbeat
+  | Event | Body | Notes |
+  |---|---|---|
+  | `heartbeat` | `{}` | Echo the server's ping to keep the connection alive |
+
+  ### Chat (client → server)
+  | Event | Required fields | Notes |
+  |---|---|---|
+  | `sendMessage` | `broadcastId`, `content` (1–2000 chars) | Send a chat message |
+  | `editMessage` | `broadcastId`, `messageId`, `content` | Edit your own message |
+  | `deleteMessage` | `broadcastId`, `messageId` | Delete your own message |
+  | `sendReaction` | `broadcastId`, `messageId`, `emoji` | React to a message |
+
+  ## Error codes (`broadcastError.data.code`)
+
+  | Code | Meaning |
+  |---|---|
+  | `UNSUPPORTED` | Client sent an event the server does not implement |
+  | `NOT_PARTICIPANT` | Caller is not in the room |
+  | `BROADCAST_NOT_FOUND` | Room does not exist |
+  | `RATE_LIMITED` | Too many frames; back off |
+  | `VALIDATION_ERROR` | Frame body failed validation |

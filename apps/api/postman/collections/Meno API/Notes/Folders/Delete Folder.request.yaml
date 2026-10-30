@@ -1,0 +1,22 @@
+$kind: http-request
+name: Delete Folder
+method: DELETE
+url: '{{base_url}}/folders/{{folder_id}}'
+order: 4000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "baseVersion": {{folder_version}},
+      "disposition": "unfiled"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));

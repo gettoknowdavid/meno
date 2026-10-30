@@ -1,0 +1,26 @@
+$kind: http-request
+name: Update Broadcast
+method: PATCH
+url: '{{base_url}}/broadcasts/{{broadcast_id}}'
+order: 4000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "Updated Broadcast Title",
+      "description": "Updated description"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Title updated", () => {
+        const json = pm.response.json();
+        pm.expect(json.data.title).to.equal("Updated Broadcast Title");
+      });

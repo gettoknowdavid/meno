@@ -1,0 +1,14 @@
+$kind: collection
+name: Notes
+description: |-
+  Personal notes and folders — create, read, update, delete, and sync.
+
+  Notes support offline-first workflows: the client chooses the note `id` (a UUID) so
+  an offline-created note keeps its identity when it syncs. Optimistic concurrency is
+  enforced via `baseVersion` — every mutating request must supply the version the client
+  last saw; a mismatch returns 409 VERSION_CONFLICT.
+
+  The sync endpoints (`GET /notes/sync` + `POST /notes/sync`) let a client pull a delta
+  since a given timestamp and push a batch of local mutations in one round trip.
+
+  All endpoints require authentication.

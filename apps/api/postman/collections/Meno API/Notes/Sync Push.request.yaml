@@ -1,0 +1,34 @@
+$kind: http-request
+name: Sync Push
+method: POST
+url: '{{base_url}}/notes/sync'
+order: 7000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "mutations": [
+        {
+          "kind": "create",
+          "id": "{{$randomUUID}}",
+          "title": "Offline Note",
+          "content": "Created while offline.",
+          "pinned": false,
+          "folderId": null,
+          "clientVersion": 0
+        }
+      ]
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has results array", () => pm.expect(json.data.results).to.be.an('array'));
+      console.log('[Sync Push] applied mutations:', json.data.results.length);

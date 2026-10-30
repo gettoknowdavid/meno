@@ -1,0 +1,29 @@
+$kind: http-request
+name: Add Cohost
+method: POST
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/cohosts'
+order: 1000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "cohost": "{{user_id}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has cohost user", () => pm.expect(json.data.user).to.be.an('object'));
+      pm.test("Has cohostCount", () => pm.expect(json.data.cohostCount).to.be.a('number'));
+
+      if (json.data && json.data.user) {
+        pm.environment.set('cohost_id', json.data.user.id);
+        console.log('[Add Cohost] cohost_id =', json.data.user.id);
+      }

@@ -1,0 +1,8 @@
+$kind: collection
+name: Broadcasts
+description: |-
+  Broadcast lifecycle — create, schedule, go live, manage cohosts, and end broadcasts.
+
+  All endpoints require a valid `Authorization: Bearer {{access_token}}` header (applied
+  via the collection-level auth). Dates on the wire are RFC 3339 strings (e.g.
+  `2026-11-01T18:00:00Z`). Paginated lists use an opaque `cursor` / `limit` query pair.
