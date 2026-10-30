@@ -80,7 +80,9 @@ class MyProfilePage extends WatchingWidget {
               _ProfileAppBar(
                 title: title,
                 profile: profile,
-                isSkeleton: !hasProfile,
+                // The record paints from the cache when there is one; until a
+                // real name arrives the header is bones rather than zeros.
+                isSkeleton: !profile.fullName.isValid,
                 innerBoxIsScrolled: innerBoxIsScrolled,
               ),
             ],

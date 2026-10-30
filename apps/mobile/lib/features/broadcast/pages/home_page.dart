@@ -65,6 +65,14 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
       (manager) => manager.profile,
     );
 
+    final isLoading = watchValue<MyProfileManager, bool>(
+      (manager) => manager.isLoading,
+    );
+
+    // An account with nothing on disk yet greets with a bone rather than with
+    // "Hello," trailing off: the name is on its way.
+    final isGreetingPending = isLoading && profile.fullName.orEmpty.isEmpty;
+
     const unreadCount = 0;
 
     // final unreadCount = watchValue<NotificationsManager, int>(
@@ -89,10 +97,13 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                   mainAxisSize: .min,
                   children: [
                     MText('Hello,', style: textTheme.captionRegular),
-                    MText(
-                      profile.fullName.orEmpty,
-                      style: textTheme.subheadingMedium,
-                    ),
+                    if (isGreetingPending)
+                      const MShimmer(height: 14, width: 96)
+                    else
+                      MText(
+                        profile.fullName.orEmpty,
+                        style: textTheme.subheadingMedium,
+                      ),
                   ],
                 ),
               ),

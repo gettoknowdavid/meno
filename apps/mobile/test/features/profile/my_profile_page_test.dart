@@ -126,25 +126,24 @@ void main() {
     await unmountTree(tester);
   });
 
-  testWidgets('a profile that cannot be read offers a retry', (tester) async {
+  testWidgets('a profile that cannot be read still paints the screen', (
+    tester,
+  ) async {
     useWindow(tester, size: const Size(700, 900));
 
     // Nothing on disk and nothing from the API: the binding refuses every
-    // request, so this is the "first open, no signal" case.
+    // request. The account's own record is not an error page — the screen
+    // paints from its placeholder and the failed read behind it is logged
+    // (Step 26).
     SharedPreferences.setMockInitialValues({
       StorageKeys.onboardingCompleted: true,
     });
     await boot(tester);
     await openProfile(tester);
 
-    expect(
-      find.text(
-        "We couldn't load your profile. "
-        'Please check your connection, then try again.',
-      ),
-      findsOneWidget,
-    );
-    expect(find.text('Retry'), findsOneWidget);
+    expect(find.byType(MyProfilePage), findsOneWidget);
+    expect(find.text('Retry'), findsNothing);
+    expect(find.text('Recent broadcasts'), findsOneWidget);
 
     await unmountTree(tester);
   });

@@ -59,14 +59,16 @@ final class MyProfileManager implements Disposable {
   /// Reads the signed-in account's record and saves it for next time.
   late final Command<void, void> fetch;
 
-  /// Installs the cached record for this account.
+  /// Installs the cached record for this account, or a placeholder for it.
   ///
   /// The local half is synchronous, so the registrar can await it before the
   /// owner publishes `ready`; no remote read starts here — the first refresh
   /// begins only after the account is ready, from the account subtree's first
-  /// widget (Step 18/19).
+  /// widget (Step 18/19). Starting one here would send a request before the
+  /// owner has stored this account's credential, which is the one moment a
+  /// request cannot carry a token.
   Future<MyProfileManager> init() async {
-    await _adopt(_context.accountId);
+    _adopt(_context.accountId);
     return this;
   }
 
@@ -90,6 +92,7 @@ final class MyProfileManager implements Disposable {
 
   @override
   FutureOr<dynamic> onDispose() {
+    if (_disposed) return null;
     _disposed = true;
     fetch.dispose();
     _profile.dispose();
@@ -103,8 +106,6 @@ final class MyProfileManager implements Disposable {
   /// flight for the same account is left to finish rather than doubled, which
   /// is what makes opening the screen while it is still on its way free.
   Future<void> _load() async {
-    di<MenoLogger>().w('Loading the profile...');
-
     final userId = _context.accountId;
     if (_disposed || userId.isEmpty) return;
     if (_loadingUserId == userId) return;
@@ -117,6 +118,16 @@ final class MyProfileManager implements Disposable {
       // The manager can be torn down while the request is in flight. The
       // answer then belongs to a moment that has passed, so it is dropped.
       if (_disposed) return;
+
+      // The scope answers for one account: a record naming another was not
+      // asked for and must not be shown — or cached — under this one.
+      if (remote.id != userId) {
+        _logger.w(
+          'The profile read answered for another account',
+          tag: MenoLogTag.lifecycle.label,
+        );
+        return;
+      }
 
       _profile.value = remote;
       await _cache.saveMyProfile(remote);
@@ -144,24 +155,20 @@ final class MyProfileManager implements Disposable {
   }
 
   /// Puts this account's cached profile in place.
-  Future<void> _adopt(Id userId) async {
-    di<MenoLogger>().w('Adopting profile for $userId');
-
-    final something = _cache.myProfile() ?? .empty;
-    di<MenoLogger>().w('Adopted profile from cache: $something');
-
+  ///
+  /// A miss installs a placeholder that carries the account id rather than
+  /// leaving [MyProfile.empty]: the screen is this account's own record, so it
+  /// shows up for the account that is signed in and fills in when the read
+  /// behind it lands, instead of offering a retry for data nobody has asked
+  /// for yet.
+  void _adopt(Id userId) {
     if (userId.isEmpty) {
       _profile.value = .empty;
       return;
     }
 
-    final profile = _cache.myProfile() ?? .empty;
-    if (profile.isEmpty) {
-      await _load();
-      return;
-    }
-
-    _profile.value = _cache.myProfile() ?? .empty;
-    di<MenoLogger>().w('Adopted profile: ${_profile.value}');
+    _profile.value =
+        _cache.myProfile() ??
+        MyProfile(id: userId, fullName: .empty, email: .empty);
   }
 }

@@ -1,7 +1,10 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/profile/manager/my_profile_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Shows the app only while the account lifecycle says it is usable.
@@ -27,7 +30,7 @@ class AccountGate extends WatchingWidget {
     return switch (snapshot.phase) {
       .signedOut => child,
       .preparing || .quiescing => const NeutralTransitionPage(),
-      .ready => KeyedSubtree(
+      .ready => _AccountScopeHost(
         key: ValueKey(
           'account-${snapshot.context?.accountId.getOrCrash}-'
           '${snapshot.context?.generation}',
@@ -40,6 +43,33 @@ class AccountGate extends WatchingWidget {
       ),
     };
   }
+}
+
+/// The ready account's subtree, and the one place its background reads start.
+///
+/// Mounted only by the ready branch and keyed by account and generation, so
+/// its work runs once per activation — after `ready`, which is what lets the
+/// request carry the credential the owner stored just before publishing it
+/// (Step 26). A read that fails here is logged by the manager: nobody asked
+/// for it, so it raises nothing.
+class _AccountScopeHost extends StatefulWidget {
+  const new({required this.child, super.key});
+
+  final Widget child;
+
+  @override
+  State<_AccountScopeHost> createState() => _AccountScopeHostState();
+}
+
+class _AccountScopeHostState extends State<_AccountScopeHost> {
+  @override
+  void initState() {
+    super.initState();
+    unawaited(di<MyProfileManager>().refresh());
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }
 
 /// The page shown while an account is being prepared or taken down.

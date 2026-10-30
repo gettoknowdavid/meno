@@ -362,9 +362,11 @@ final class AuthManager implements Disposable {
     // The sign-in response knows the whole account, so the in-session
     // projection carries it; after a restart the vault's thinner restored one
     // does, and the chrome reads the profile for anything richer (Step 24).
+    // The form mode is not touched here: a session now existing is not a
+    // remembered identity being chosen, and the way off the sign-in screen is
+    // the ready snapshot's job (Step 18/21), not this method's.
     final credential = record.toUserCredential(user: response.user.toDomain);
     _adopt(credential);
-    // _formMode.value = LoginFormMode.prefillSelectedIdentity;
     return credential;
   }
 
@@ -452,9 +454,6 @@ final class AuthManager implements Disposable {
           UserCredential.empty,
     );
     _lastKnown.value = _greeting(envelope);
-    if (record != null) {
-      _formMode.value = LoginFormMode.prefillSelectedIdentity;
-    }
   }
 
   /// Every account on this device, in the presentation shape.
