@@ -101,9 +101,6 @@ class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
     final textTheme = MTextTheme.of(context);
 
     return PopScope(
-      // A dirty form swallows the pop — the system back gesture and the app
-      // bar's Cancel both land in the callback below, which is where the
-      // question is asked. A clean form pops straight through.
       canPop: !hasUnsavedChanges,
       onPopInvokedWithResult: (didPop, result) {
         if (didPop) {
@@ -118,13 +115,6 @@ class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
             title: 'Go Live Now',
             implyLeading: false,
             titleTextStyle: textTheme.heading3Bold,
-            // Drafts sit left of the close: the same "what else can this
-            // screen do" cluster, ordered from the reversible action to the one
-            // that leaves. The drafts action is a word, not a glyph — a folded
-            // page is not a universally understood "saved broadcasts", and a
-            // label costs a few dp that the title still has room for. It is
-            // absent at zero rather than empty, so the header carries no
-            // permanently blank slot.
             actions: [
               if (drafts.isNotEmpty) ...[
                 _DraftsAction(count: drafts.length),
