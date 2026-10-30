@@ -94,6 +94,7 @@ List<RouteBase> get _bottomNavShell => [
 List<RouteBase> get _broadcastRoutes => [
   GoRoute(
     path: MRoutes.broadcasts,
+    name: MRoutes.broadcasts,
     builder: (_, state) =>
         BroadcastsPage(queryParameters: state.uri.queryParameters),
     routes: [
@@ -403,6 +404,32 @@ GoRouter createRouter({
       ..._bottomNavShell,
     ],
   );
+}
+
+/// The `name:` of every route the app declares, in declaration order.
+///
+/// Public so a test can assert that each named navigation has a route behind it
+/// without building the router — which needs a ready account, an onboarding
+/// service and a router guard to say anything at all. The route table is the
+/// authority; this reads it rather than restating it.
+Iterable<String> declaredRouteNames() sync* {
+  for (final route in [
+    ..._publicRoutes,
+    ..._standaloneRoutes,
+    ..._broadcastRoutes,
+    ..._liveSessionRoutes,
+    ..._settingsRoutes,
+    ..._bottomNavShell,
+  ]) {
+    yield* _declaredNamesIn(route);
+  }
+}
+
+Iterable<String> _declaredNamesIn(RouteBase route) sync* {
+  if (route is GoRoute && route.name != null) yield route.name!;
+  for (final child in route.routes) {
+    yield* _declaredNamesIn(child);
+  }
 }
 
 /// The id [state]'s parameter [name] carries, or null when it is not a UUID.

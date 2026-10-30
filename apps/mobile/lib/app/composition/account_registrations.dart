@@ -30,9 +30,10 @@ Future<void> registerAccountScope(
 ) async {
   // The container disposes all of this: dropping the scope asks everything
   // registered in it that implements `Disposable` to tear down, and the
-  // managers below all do. The explicit `dispose` on the lazy registrations is
-  // what get_it would otherwise fall back to — an instance it creates itself is
-  // only disposed through `Disposable` when there is one.
+  // managers and services below all do. No registration here passes a
+  // `dispose:` function — get_it calls `onDispose()` on a `Disposable` itself,
+  // and providing one as well is an assertion failure when the instance is
+  // given eagerly and silently ignored when it is built lazily.
   //
   // The socket belongs to the account: its handshake is authenticated with the
   // access token this credential carries, so it is created when an account
@@ -60,7 +61,6 @@ Future<void> registerAccountScope(
       logger: di<MenoLogger>(),
       clock: di<Clock>(),
     ),
-    dispose: (client) => client.onDispose(),
   );
 
   scope.registerLazySingleton<BroadcastSocketService>(
@@ -68,7 +68,6 @@ Future<void> registerAccountScope(
       client: di<SocketClient>(),
       logger: di<MenoLogger>(),
     ),
-    dispose: (service) => service.onDispose(),
   );
 
   // Nothing of its own: every call carries the session already. It is here
@@ -111,7 +110,6 @@ Future<void> registerAccountScope(
       local: di<BroadcastLocalService>(),
       logger: di<MenoLogger>(),
     ),
-    dispose: (manager) => manager.onDispose(),
   );
 
   // The account's own record, read as soon as it becomes active and cached per
@@ -170,7 +168,9 @@ Future<void> registerAccountScope(
     logger: di<MenoLogger>(),
   );
   await settings.init();
-  scope.registerSingleton<SettingsManager>(settings);
+  scope.registerSingleton<SettingsManager>(
+    settings,
+  );
 
   // Delivery starts here and nowhere else: the adapters' handlers are attached
   // before the socket is asked to connect, and everything is stopped before the
@@ -184,7 +184,9 @@ Future<void> registerAccountScope(
     logger: di<MenoLogger>(),
     clock: di<Clock>(),
   );
-  scope.registerSingleton<AccountConnectionOwner>(connection);
+  scope.registerSingleton<AccountConnectionOwner>(
+    connection,
+  );
   connection.initialize();
   unawaited(connection.start(verified: credential.isVerified));
 
@@ -203,8 +205,6 @@ Future<void> registerAccountScope(
       gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
       store: di<LiveSessionStore>(),
       logger: di<MenoLogger>(),
-      // A host-end or a forced end arrives on the socket: the manager ends the
-      // room once from here rather than waiting for the room to be taken away.
       endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
       createSession: ({required session, required exitOnServer}) {
         final participants = ParticipantsManager(

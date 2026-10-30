@@ -1,4 +1,3 @@
-
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -37,6 +36,13 @@ final GetIt di = .instance;
 ///
 /// Called once from `main()`, before `runApp`: every registration here is
 /// either synchronous or an async one the app's startup gate waits for.
+///
+/// Nothing here passes a `dispose:` callback. Everything with something to tear
+/// down implements `Disposable`, and get_it calls `onDispose()` itself when the
+/// scope goes away. Passing a function as well is an assertion failure when the
+/// instance is given eagerly, and is silently ignored on a lazy or async one
+/// (get_it checks `instance is Disposable` first), so registration is one
+/// statement per service and the teardown lives in the service.
 void configureDependencies(Config config, {HttpClient? httpClient}) {
   di.pushNewScope(scopeName: Scope.root);
 
@@ -67,13 +73,9 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   // through `allReady`. Awaiting the preferences here keeps a single chain.
   di.registerSingletonAsync<LocalStorage>(
     () async => LocalStorage(await di.getAsync<SharedPreferences>()),
-    dispose: (storage) => storage.onDispose(),
   );
   if (httpClient != null) {
-    di.registerSingleton<HttpClient>(
-      httpClient,
-      dispose: (client) => client.onDispose(),
-    );
+    di.registerSingleton<HttpClient>(httpClient);
   } else {
     di.registerLazySingleton<HttpClient>(
       () => HttpClient(
@@ -88,7 +90,6 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
           ),
         ],
       ),
-      dispose: (client) => client.onDispose(),
     );
   }
   di.registerLazySingleton<MediaService>(MediaService.new);
@@ -106,7 +107,6 @@ void _registerPlatformServices() {
   );
   di.registerLazySingleton<PushNotificationsService>(
     () => PushNotificationsService(.instance, di<MenoLogger>()),
-    dispose: (service) => service.onDispose(),
   );
   di.registerLazySingleton<LocalNotificationsService>(
     () => LocalNotificationsService(di<MenoLogger>()),
@@ -119,14 +119,12 @@ void _registerOnboarding() {
   );
   di.registerLazySingleton<OnboardingManager>(
     () => OnboardingManager(di<OnboardingService>()),
-    dispose: (manager) => manager.onDispose(),
   );
 }
 
 void _registerAuth() {
   di.registerLazySingleton<SessionService>(
     () => SessionService(di<SecureStorage>()),
-    dispose: (store) => store.onDispose(),
   );
   di.registerLazySingleton<AuthHttpService>(
     () => AuthHttpService(di<HttpClient>()),
@@ -137,8 +135,6 @@ void _registerAuth() {
       store: di<SessionService>(),
       clock: di<Clock>(),
       logger: di<MenoLogger>(),
-      // The owner's single attempt counter — AuthManager keeps none of its own.
-      // Resolved through `di` at call time: the two are wired to each other.
       beginAttempt: () => di<AccountTransitionOwner>().beginAttempt(),
       adoptCandidate: (credential, {required ticket}) =>
           di<AccountTransitionOwner>().adoptCandidate(
@@ -146,7 +142,6 @@ void _registerAuth() {
             ticket: ticket,
           ),
     ).init(),
-    dispose: (manager) => manager.onDispose(),
   );
   di.registerLazySingleton<UserManager>(() => UserManager(di<AuthManager>()));
   // `dependsOn: [LocalStorage]` is what the account's own services rest on: the
@@ -158,18 +153,10 @@ void _registerAuth() {
       activeRecord: di<AuthManager>().activeRecord,
       logger: di<MenoLogger>(),
       register: registerAccountScope,
-      // The live owner is fenced before the account scope is popped: new
-      // entries refused, the in-flight one drained and the session closed.
-      // Resolved lazily, since the manager exists only while an account is
-      // scoped.
       beginLiveExit: () async {
         if (!di.isRegistered<ActiveBroadcastManager>()) return;
         await di<ActiveBroadcastManager>().closeForAccountExit();
       },
-      // The owner writes the credential itself, right after the scope's
-      // registrations exist — no other writer decides when an account is
-      // active. The vault files the record before it is made active, so a
-      // crash in between leaves an account that can be switched back to.
       saveCredential: (record) async {
         await di<SessionService>().adoptCandidate(record);
         await di<SessionService>().activate(record.accountId);
@@ -177,7 +164,6 @@ void _registerAuth() {
     ),
     onCreated: (owner) async => await owner.init(),
     dependsOn: [AuthManager, LocalStorage],
-    dispose: (owner) => owner.onDispose(),
   );
 }
 

@@ -49,10 +49,8 @@ class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
       userId: active.accountId,
       logger: di<MenoLogger>(),
     );
-    di.registerSingleton<BroadcastEditorManager>(
-      _manager,
-      dispose: (manager) => manager.onDispose(),
-    );
+
+    di.registerSingleton<BroadcastEditorManager>(_manager);
   }
 
   @override
