@@ -119,8 +119,12 @@ class FeedWidget<TItem> extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     // The first page is fetched once, as a side effect of being built: a
-    // rebuild driven by a watched notifier must not re-request it.
-    callOnce((_) => feedSource.updateDataCommand.run());
+    // rebuild driven by a watched notifier must not re-request it. `refresh`
+    // rather than the command's `run`, so a request that is already in flight
+    // is remembered instead of dropped. Its failure is drawn below and
+    // announced by the handler after this, so the error is already read;
+    // ignoring it keeps an unawaited request from becoming an unhandled one.
+    callOnce((_) => feedSource.refresh().ignore());
 
     // Failures are announced where they happen as well as drawn as a state, so
     // a paging failure on a list that already has items is still visible.
@@ -135,6 +139,9 @@ class FeedWidget<TItem> extends WatchingWidget {
 
     final itemCount = watch(feedSource.itemCount).value;
     final isFetching = watch(feedSource.isFetching).value;
+    // Watched, not read: a page failure is drawn in the footer, and a failure
+    // that does not rebuild the list would never be shown at all.
+    final pageError = watch(feedSource.pageError).value;
 
     // Nothing has been asked for yet, so the skeletons are what "loading" means
     // here — as opposed to a refresh of a list that is already on screen.
@@ -144,11 +151,22 @@ class FeedWidget<TItem> extends WatchingWidget {
     if (error != null && itemCount == 0) {
       return MErrorState(
         message: errorMessage(error.error),
-        onRetry: feedSource.updateDataCommand.runAsync,
+        onRetry: () => feedSource.refresh().ignore(),
       );
     }
 
-    if (itemCount == 0 && feedSource.updateWasCalled) return emptyWidget;
+    if (itemCount == 0 && feedSource.updateWasCalled) {
+      // A feed whose filter rejected every page it read is not empty — it has
+      // more, and asking for it is the user's move rather than a scroll that
+      // can never happen on an empty list.
+      if (feedSource.hasMoreFiltered) {
+        return _LoadMorePrompt(
+          isLoading: isFetching,
+          onLoadMore: feedSource.requestNextPageCommand.runAsync,
+        );
+      }
+      return emptyWidget;
+    }
 
     final effectiveItemCount = isInitialLoading ? skeletonItemCount : itemCount;
 
@@ -172,6 +190,7 @@ class FeedWidget<TItem> extends WatchingWidget {
         itemCount: effectiveItemCount,
         isInitialLoading: isInitialLoading,
         isFetching: isFetching,
+        pageError: pageError,
         padding: padding,
         shrinkWrap: shrinkWrap,
         physics: physics,
@@ -184,6 +203,7 @@ class FeedWidget<TItem> extends WatchingWidget {
         itemBuilder: itemBuilder,
         itemCount: effectiveItemCount,
         isFetching: isFetching,
+        pageError: pageError,
         crossAxisCount: gridCrossAxisCount,
         childAspectRatio: gridChildAspectRatio,
         mainAxisSpacing: gridMainAxisSpacing,
@@ -202,6 +222,7 @@ class FeedWidget<TItem> extends WatchingWidget {
         itemBuilder: itemBuilder,
         itemCount: effectiveItemCount,
         isFetching: isFetching,
+        pageError: pageError,
         crossAxisCount: gridCrossAxisCount,
         childAspectRatio: gridChildAspectRatio,
         mainAxisSpacing: gridMainAxisSpacing,
@@ -271,6 +292,7 @@ class _VerticalList<TItem> extends StatelessWidget {
     required this.itemBuilder,
     required this.itemCount,
     required this.isFetching,
+    required this.pageError,
     required this.isInitialLoading,
     required this.skeletonItem,
     this.padding,
@@ -284,6 +306,7 @@ class _VerticalList<TItem> extends StatelessWidget {
   final Widget Function(BuildContext, TItem) itemBuilder;
   final int itemCount;
   final bool isFetching;
+  final FeedPageError? pageError;
   final EdgeInsetsGeometry? padding;
   final bool shrinkWrap;
   final ScrollPhysics? physics;
@@ -295,7 +318,7 @@ class _VerticalList<TItem> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: feedSource.updateDataCommand.runAsync,
+      onRefresh: feedSource.refresh,
       child: CustomScrollView(
         shrinkWrap: shrinkWrap,
         physics: physics,
@@ -316,9 +339,11 @@ class _VerticalList<TItem> extends StatelessWidget {
           ),
           if (!isInitialLoading)
             SliverToBoxAdapter(
-              child: MPagedLoadingIndicator(
+              child: _FeedFooter(
                 isLoading: isFetching,
                 hasMore: feedSource.hasNextPage,
+                pageError: pageError,
+                onRetry: feedSource.retryPage,
               ),
             ),
         ],
@@ -334,6 +359,7 @@ class _GridList<TItem> extends StatelessWidget {
     required this.itemBuilder,
     required this.itemCount,
     required this.isFetching,
+    required this.pageError,
     required this.crossAxisCount,
     required this.childAspectRatio,
     required this.mainAxisSpacing,
@@ -352,6 +378,7 @@ class _GridList<TItem> extends StatelessWidget {
   final Widget Function(BuildContext, TItem) itemBuilder;
   final int itemCount;
   final bool isFetching;
+  final FeedPageError? pageError;
   final int crossAxisCount;
   final double childAspectRatio;
   final double mainAxisSpacing;
@@ -368,7 +395,7 @@ class _GridList<TItem> extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: feedSource.updateDataCommand.runAsync,
+      onRefresh: feedSource.refresh,
       child: CustomScrollView(
         controller: controller,
         scrollDirection: scrollDirection,
@@ -394,12 +421,111 @@ class _GridList<TItem> extends StatelessWidget {
           ),
           if (!isInitialLoading)
             SliverToBoxAdapter(
-              child: MPagedLoadingIndicator(
+              child: _FeedFooter(
                 isLoading: isFetching,
                 hasMore: feedSource.hasNextPage,
+                pageError: pageError,
+                onRetry: feedSource.retryPage,
               ),
             ),
         ],
+      ),
+    );
+  }
+}
+
+/// The row under a list: a failed page with its own retry, the progress row, or
+/// the end of the list.
+///
+/// A page failure is not a refresh failure. The list is still on screen and
+/// still correct; what failed is reading the next page, so the answer belongs
+/// under the items with one retry — not as a full-screen error that would throw
+/// away what the user is reading (audit M08).
+class _FeedFooter extends StatelessWidget {
+  const new({
+    required this.isLoading,
+    required this.hasMore,
+    required this.pageError,
+    required this.onRetry,
+  });
+
+  final bool isLoading;
+  final bool hasMore;
+  final FeedPageError? pageError;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    final error = pageError;
+    if (error != null) {
+      final colors = MColorScheme.of(context);
+      final textTheme = MTextTheme.of(context);
+
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: Insets.lg,
+          vertical: Insets.lg,
+        ),
+        child: Column(
+          children: [
+            MText(
+              error.message,
+              style: textTheme.captionRegular,
+              color: colors.onBackgroundVariant,
+              textAlign: TextAlign.center,
+            ),
+            Spaces.verticalSmall,
+            // Only a failure that could pass on a second attempt offers the
+            // button: retrying a refusal would look like a broken control.
+            if (error.isRetryable)
+              MTextButton(label: 'Retry', onPressed: onRetry)
+            else
+              const SizedBox.shrink(),
+          ],
+        ),
+      );
+    }
+
+    return MPagedLoadingIndicator(isLoading: isLoading, hasMore: hasMore);
+  }
+}
+
+/// What an empty list shows when its filter rejected every page it read.
+///
+/// The scroll-triggered prefetch cannot fire on a list with no items, so the
+/// only way to reach the rows behind those pages is to ask — this is that ask.
+/// It says "load more" rather than "empty", because the two are different
+/// facts and hiding the difference is what stranded the older rows (audit H12).
+class _LoadMorePrompt extends StatelessWidget {
+  const new({required this.isLoading, required this.onLoadMore});
+
+  final bool isLoading;
+  final VoidCallback onLoadMore;
+
+  @override
+  Widget build(BuildContext context) {
+    final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
+
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(Insets.lg),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            MText(
+              'Nothing matched on this page, but there is more to read.',
+              style: textTheme.bodyRegular,
+              color: colors.onBackgroundVariant,
+              textAlign: TextAlign.center,
+            ),
+            Spaces.verticalSmall,
+            MTextButton(
+              label: 'Load more',
+              onPressed: isLoading ? null : onLoadMore,
+            ),
+          ],
+        ),
       ),
     );
   }

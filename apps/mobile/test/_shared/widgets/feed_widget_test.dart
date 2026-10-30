@@ -9,48 +9,59 @@ import 'package:meno_ui/meno_ui.dart';
 
 import '../../_support/pump_until_found.dart';
 
-/// A feed whose answers the test decides.
+/// A feed whose pages the test decides.
 ///
 /// [gate] holds the first page open so the initial loading state can be looked
-/// at; [failure] makes that page fail; [pageSize] decides how much it answers
-/// with, and every call is counted so "exactly once" can be asserted.
+/// at; [failure] makes that page fail; [pageFailure] makes the *next* page
+/// fail; [pageCount] says how many pages the endpoint has, and every read is
+/// counted so "exactly once" can be asserted.
 final class _TestFeedSource extends PagedFeedDataSource<String> {
-  new({this.pageSize = 2});
+  new({this.pageSize = 2, this.pageCount = 1, super.fetchMoreEnabled = true});
 
   final int pageSize;
+  final int pageCount;
 
   int updateCalls = 0;
   int pageRequests = 0;
   Exception? failure;
+  Exception? pageFailure;
   Completer<void>? gate;
 
   @override
   bool itemsAreEqual(String a, String b) => a == b;
 
   @override
-  Future<void> updateFeedData() async {
-    updateCalls++;
-
+  Future<FeedPage<String>> fetchPage(String? cursor) async {
     final pending = gate;
     if (pending != null) await pending.future;
 
-    final thrown = failure;
-    if (thrown != null) throw thrown;
+    if (cursor == null) {
+      updateCalls++;
 
-    items
-      ..clear()
-      ..addAll([for (var i = 0; i < pageSize; i++) 'live-$i']);
-  }
+      final thrown = failure;
+      if (thrown != null) throw thrown;
 
-  @override
-  Future<void> requestNextPage() async {
+      return FeedPage(
+        items: [for (var i = 0; i < pageSize; i++) 'live-$i'],
+        nextCursor: pageCount > 1 ? 'p1' : null,
+      );
+    }
+
     pageRequests++;
-    items.addAll([for (var i = 0; i < pageSize; i++) 'more-$i']);
 
-    // A real source records where the page ended. Without that the feed keeps
-    // asking for the same page on every build, which is what the guard against
-    // a request already in flight cannot stop, because nothing ever advances.
-    updatePaginationState(currentPage: 2, totalPages: 2);
+    final thrown = pageFailure;
+    if (thrown != null) {
+      pageFailure = null;
+      throw thrown;
+    }
+
+    // `p<n>` is the page after the nth: a cursor from the server, opaque to the
+    // feed, which is the whole point of the contract.
+    final page = int.parse(cursor.substring(1));
+    return FeedPage(
+      items: [for (var i = 0; i < pageSize; i++) 'more-$page-$i'],
+      nextCursor: page < pageCount - 1 ? 'p${page + 1}' : null,
+    );
   }
 }
 
@@ -66,6 +77,19 @@ const _skeletonKey = Key('feed-skeleton');
 Future<void> _finish(WidgetTester tester) async {
   await tester.pump(const Duration(milliseconds: 20));
   await unmountTree(tester);
+}
+
+/// Fails the next page read and lets it reach the footer.
+///
+/// The command is not awaited: it starts with a zero-delay timer of its own,
+/// which only advances while the test pumps, so awaiting it here would wait on
+/// a clock that is not moving.
+Future<void> _failNextPage(WidgetTester tester, _TestFeedSource source) async {
+  source.pageFailure = const NetworkException();
+  unawaited(source.requestNextPageCommand.runAsync());
+  await tester.pump();
+  await tester.pump(const Duration(milliseconds: 20));
+  await tester.pump();
 }
 
 Widget _harness(
@@ -176,16 +200,15 @@ void main() {
   testWidgets('scrolling to the end of a page asks for the next one', (
     tester,
   ) async {
-    final source = _TestFeedSource()
-      ..updatePaginationState(currentPage: 1, totalPages: 2);
+    final source = _TestFeedSource(pageCount: 2);
     addTearDown(source.onDispose);
 
     await tester.pumpWidget(_harness(source));
-    await pumpUntilFound(tester, find.text('more-0'));
+    await pumpUntilFound(tester, find.text('more-1-0'));
 
     // Reading an item near the end is what triggers paging.
     expect(source.pageRequests, greaterThan(0));
-    expect(find.text('more-1'), findsOneWidget);
+    expect(find.text('more-1-1'), findsOneWidget);
 
     await _finish(tester);
   });
@@ -217,5 +240,101 @@ void main() {
     expect(find.text('live-1'), findsOneWidget);
 
     await _finish(tester);
+  });
+
+  group('a failed page (Step 62)', () {
+    testWidgets('draws a footer with its own retry', (tester) async {
+      final source = _TestFeedSource(pageCount: 2, fetchMoreEnabled: false);
+      addTearDown(source.onDispose);
+
+      await tester.pumpWidget(_harness(source));
+      await pumpUntilFound(tester, find.text('live-0'));
+
+      await _failNextPage(tester, source);
+
+      // The list is still on screen — a page failure is not a refresh failure.
+      expect(find.text('live-0'), findsOneWidget);
+      expect(find.byType(MErrorState), findsNothing);
+      expect(find.text(errorMessage(const NetworkException())), findsOneWidget);
+      expect(find.text('Retry'), findsOneWidget);
+
+      await _finish(tester);
+    });
+
+    testWidgets('does not re-trigger on its own', (tester) async {
+      final source = _TestFeedSource(pageCount: 2, fetchMoreEnabled: false);
+      addTearDown(source.onDispose);
+
+      await tester.pumpWidget(_harness(source));
+      await pumpUntilFound(tester, find.text('live-0'));
+
+      await _failNextPage(tester, source);
+
+      final attempts = source.pageRequests;
+
+      // Scrolling the list, and rebuilding it, must not ask again: only the
+      // retry button re-enables paging.
+      await tester.drag(find.text('live-0'), const Offset(0, -400));
+      await tester.pump();
+      await tester.pumpWidget(_harness(source));
+      await tester.pump();
+
+      expect(source.pageRequests, attempts);
+
+      await _finish(tester);
+    });
+
+    testWidgets('retry clears the footer and reads the page', (tester) async {
+      final source = _TestFeedSource(pageCount: 2);
+      addTearDown(source.onDispose);
+
+      await tester.pumpWidget(_harness(source));
+      await pumpUntilFound(tester, find.text('live-0'));
+
+      await _failNextPage(tester, source);
+      expect(find.text('Retry'), findsOneWidget);
+
+      await tester.tap(find.text('Retry'));
+      await pumpUntilFound(tester, find.text('more-1-0'));
+
+      expect(find.text('Retry'), findsNothing);
+      expect(find.text(errorMessage(const NetworkException())), findsNothing);
+
+      await _finish(tester);
+    });
+
+    testWidgets('a refresh failure stays on its own surface', (tester) async {
+      final source = _TestFeedSource(pageCount: 2, fetchMoreEnabled: false);
+      addTearDown(source.onDispose);
+
+      await tester.pumpWidget(_harness(source));
+      await pumpUntilFound(tester, find.text('live-0'));
+
+      // A page fails, then a refresh fails too. The two are different facts —
+      // "this page could not be read" and "the list could not be re-read" — so
+      // each keeps its own channel rather than overwriting the other.
+      await _failNextPage(tester, source);
+
+      // The failure is claimed here because the widget would otherwise see it
+      // as an unhandled one; what the test reads is the command's own channel.
+      source.failure = TimeoutException('slow');
+      unawaited(source.refresh().catchError((Object _) {}));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump();
+
+      expect(source.commandErrors.value, isNotNull);
+      expect(
+        source.pageError.value?.message,
+        errorMessage(const NetworkException()),
+        reason: 'the page failure is not replaced by the refresh one',
+      );
+      // The list itself is untouched: a failed refresh does not throw away what
+      // the user is reading.
+      expect(find.text('live-0'), findsOneWidget);
+      expect(find.byType(MErrorState), findsNothing);
+
+      await unmountTree(tester);
+    });
   });
 }

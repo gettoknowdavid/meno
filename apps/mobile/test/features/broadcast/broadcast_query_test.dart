@@ -1,7 +1,6 @@
 import 'package:dio/dio.dart' show ResponseBody;
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 
 import '../../_support/pump_until_found.dart';
