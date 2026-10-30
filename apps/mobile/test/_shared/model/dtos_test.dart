@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/_model.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 
@@ -40,9 +41,9 @@ void main() {
     expect(credential.session.timeUntilExpiry, isNotNull);
 
     final user = credential.user;
-    expect(user.id, '018f2b1e-0000-7000-8000-000000000000');
-    expect(user.fullName, 'Ada Lovelace');
-    expect(user.email, 'ada@example.com');
+    expect(user.id.getOrCrash, '018f2b1e-0000-7000-8000-000000000000');
+    expect(user.fullName.orEmpty, 'Ada Lovelace');
+    expect(user.email.orEmpty, 'ada@example.com');
     expect(user.verified, isTrue);
     // expect(user.avatarUrl, 'https://cdn.example.com/avatars/ada.png');
     expect(user.providers, [AuthProvider.password, AuthProvider.google]);
@@ -65,6 +66,43 @@ void main() {
     expect(restored.user.providers, credential.user.providers);
     expect(restored.session.accessToken, credential.session.accessToken);
     expect(restored.session.refreshToken, credential.session.refreshToken);
+  });
+
+  test('server-valid values are stored, never re-validated on the way in', () {
+    // The API's own minimums, not the form's idea of a plausible value: a
+    // name of two characters is server-valid (validators.rs), so mapping it
+    // must not throw. Sign-in likewise checks only that a password is present,
+    // so a stored one is never re-scored against the registration rules.
+    final short = Map<String, dynamic>.of(payload);
+    short['user'] = Map<String, dynamic>.of(
+      short['user']! as Map<String, dynamic>,
+    )..['full_name'] = 'Al';
+
+    final record = AuthResponseDto.fromJson(short)
+        .toCredentialRecord(const SystemClock());
+
+    expect(record.accountId.getOrCrash, '018f2b1e-0000-7000-8000-000000000000');
+    expect(
+      UserDto.fromJson(short['user']! as Map<String, dynamic>)
+          .toDomain
+          .fullName
+          .orEmpty,
+      'Al',
+    );
+    expect(Password.login('abcdefgh').isValid, isTrue);
+  });
+
+  test('serialisation degrades an unusable id instead of throwing', () {
+    // A write must never discover invalidity: an id that cannot be used becomes
+    // an empty string rather than a crash inside the encoder.
+    final user = User(
+      id: Id.empty,
+      fullName: FullName.fromWire('Al'),
+      email: Email.fromWire('ada@example.com'),
+    );
+
+    expect(user.toDto.id, '');
+    expect(user.toDto.fullName, 'Al');
   });
 
   test('a payload missing the display name is reported, not guessed', () {

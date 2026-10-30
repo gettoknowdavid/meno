@@ -1,0 +1,277 @@
+{
+  "$comment": "One shared accepted/rejected policy for auth-field validation (audit H25). Both apps/mobile/test/_core/value_objects/validation_parity_test.dart and apps/api/tests/auth_validators.rs read this file, so a change to either language's rules has to be made in both or one of the suites fails. Every case is a value both sides accept or reject: the email and full-name limits come from apps/api/src/modules/auth/validators.rs, and the password rules are the five the registration form shows as chips (8+ characters, A, a, %, 123) — the API validates that same set.",
+  "accepted": [
+    {
+      "kind": "email",
+      "value": "ada@example.com",
+      "why": "an ordinary address"
+    },
+    {
+      "kind": "email",
+      "value": "a+b_c@example.co.uk",
+      "why": "plus and underscore in the local part"
+    },
+    {
+      "kind": "email",
+      "value": "first.last@sub.example.com",
+      "why": "dots inside the local part and a subdomain"
+    },
+    {
+      "kind": "email",
+      "value": "ada@ex-ample.com",
+      "why": "a hyphen inside a domain label"
+    },
+    {
+      "kind": "email",
+      "value": "\"fred bloggs\"@example.com",
+      "why": "an RFC quoted local part with a space"
+    },
+    {
+      "kind": "email",
+      "value": "ADA@EXAMPLE.COM",
+      "why": "addresses are case-preserving, not case-rejecting"
+    },
+    {
+      "kind": "email",
+      "value": "a@b.co",
+      "why": "a two-character TLD"
+    },
+    {
+      "kind": "email",
+      "value": "  ada@example.com  ",
+      "why": "surrounding whitespace is trimmed"
+    },
+    {
+      "kind": "email",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+      "why": "a 64-character local part, the maximum"
+    },
+    {
+      "kind": "email",
+      "value": "aaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "why": "a 254-character address, the maximum"
+    },
+    {
+      "kind": "password",
+      "value": "Abcdefg1!",
+      "why": "all five rules, the shortest conforming password"
+    },
+    {
+      "kind": "password",
+      "value": "A1!abcdef",
+      "why": "the symbol and digit before the letters"
+    },
+    {
+      "kind": "password",
+      "value": "Correct horse9!",
+      "why": "a long password with spaces"
+    },
+    {
+      "kind": "password",
+      "value": "Abcdefg1!😀",
+      "why": "nine scalars plus one outside the BMP, which the client counts as two code units"
+    },
+    {
+      "kind": "password",
+      "value": "Pässwörd1!",
+      "why": "non-ASCII letters alongside the five required classes"
+    },
+    {
+      "kind": "password",
+      "value": "A1!a%(==).?~",
+      "why": "symbols the rule does not require are still allowed"
+    },
+    {
+      "kind": "password",
+      "value": "A1!aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "why": "128 Unicode scalars, the maximum"
+    },
+    {
+      "kind": "full_name",
+      "value": "Ada Lovelace",
+      "why": "an ordinary name"
+    },
+    {
+      "kind": "full_name",
+      "value": "Al",
+      "why": "two Unicode scalars, the minimum"
+    },
+    {
+      "kind": "full_name",
+      "value": "😀😀",
+      "why": "two scalars outside the BMP"
+    },
+    {
+      "kind": "full_name",
+      "value": "O'Brien-Smith",
+      "why": "punctuation the server does not police"
+    },
+    {
+      "kind": "full_name",
+      "value": "  Ada Lovelace  ",
+      "why": "surrounding whitespace is trimmed"
+    },
+    {
+      "kind": "full_name",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "why": "100 Unicode scalars, the maximum"
+    }
+  ],
+  "rejected": [
+    {
+      "kind": "email",
+      "value": "ada",
+      "why": "no '@'"
+    },
+    {
+      "kind": "email",
+      "value": "ada@@example.com",
+      "why": "two '@'"
+    },
+    {
+      "kind": "email",
+      "value": ".ada@example.com",
+      "why": "a local part starting with a dot"
+    },
+    {
+      "kind": "email",
+      "value": "ada.@example.com",
+      "why": "a local part ending with a dot"
+    },
+    {
+      "kind": "email",
+      "value": "ada..lovelace@example.com",
+      "why": "a doubled dot in the local part"
+    },
+    {
+      "kind": "email",
+      "value": "ada lovelace@example.com",
+      "why": "an unquoted space in the local part"
+    },
+    {
+      "kind": "email",
+      "value": "@example.com",
+      "why": "an empty local part"
+    },
+    {
+      "kind": "email",
+      "value": "ada@example",
+      "why": "a domain without a dot"
+    },
+    {
+      "kind": "email",
+      "value": "ada@.com",
+      "why": "an empty domain label"
+    },
+    {
+      "kind": "email",
+      "value": "ada@example..com",
+      "why": "a doubled dot in the domain"
+    },
+    {
+      "kind": "email",
+      "value": "ada@-example.com",
+      "why": "a label starting with a hyphen"
+    },
+    {
+      "kind": "email",
+      "value": "ada@example-.com",
+      "why": "a label ending with a hyphen"
+    },
+    {
+      "kind": "email",
+      "value": "ada@example.com.",
+      "why": "a trailing dot in the domain"
+    },
+    {
+      "kind": "email",
+      "value": "ada@exämple.com",
+      "why": "a non-ASCII domain is not punycoded"
+    },
+    {
+      "kind": "email",
+      "value": "   ",
+      "why": "whitespace only"
+    },
+    {
+      "kind": "email",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa@example.com",
+      "why": "a 65-character local part"
+    },
+    {
+      "kind": "email",
+      "value": "aaaaaaaaaaaaaaaaaaaa@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc.ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd.eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "why": "a 255-character address"
+    },
+    {
+      "kind": "email",
+      "value": "ada@bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb.com",
+      "why": "a 64-character domain label"
+    },
+    {
+      "kind": "password",
+      "value": "",
+      "why": "empty"
+    },
+    {
+      "kind": "password",
+      "value": "Abc1!fg",
+      "why": "seven scalars, one short"
+    },
+    {
+      "kind": "password",
+      "value": "abcdefg1!",
+      "why": "no uppercase letter"
+    },
+    {
+      "kind": "password",
+      "value": "ABCDEFG1!",
+      "why": "no lowercase letter"
+    },
+    {
+      "kind": "password",
+      "value": "Abcdefgh!",
+      "why": "no number"
+    },
+    {
+      "kind": "password",
+      "value": "Abcdefgh1",
+      "why": "no symbol"
+    },
+    {
+      "kind": "password",
+      "value": "12345678!",
+      "why": "no letters at all"
+    },
+    {
+      "kind": "full_name",
+      "value": "",
+      "why": "empty"
+    },
+    {
+      "kind": "full_name",
+      "value": "A",
+      "why": "one scalar, one short"
+    },
+    {
+      "kind": "full_name",
+      "value": "   ",
+      "why": "whitespace only"
+    },
+    {
+      "kind": "full_name",
+      "value": "Ada\u0001Lovelace",
+      "why": "a control character"
+    },
+    {
+      "kind": "full_name",
+      "value": "Ada\nLovelace",
+      "why": "a newline is a control character"
+    },
+    {
+      "kind": "full_name",
+      "value": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "why": "101 scalars, one over the maximum"
+    }
+  ]
+}

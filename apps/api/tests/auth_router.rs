@@ -613,7 +613,7 @@ async fn a_reset_request_does_not_revoke_but_a_completed_reset_does() {
     let reset = serde_json::json!({
         "email": "ada@example.com",
         "code": "000000",
-        "new_password": "A completely new password",
+        "new_password": "A completely new password1!",
     })
     .to_string();
     let (status, body) = send(
@@ -636,7 +636,7 @@ async fn a_reset_request_does_not_revoke_but_a_completed_reset_does() {
     let reset = serde_json::json!({
         "email": "ada@example.com",
         "code": code,
-        "new_password": "A completely new password",
+        "new_password": "A completely new password1!",
     })
     .to_string();
     let (status, body) = send(router(h.state), json_post("/auth/reset-password", reset)).await;

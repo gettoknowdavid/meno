@@ -206,18 +206,28 @@ fn bad_domain(domain: &str) -> bool {
     })
 }
 
+/// The symbols a password may use to satisfy its symbol rule.
+///
+/// The same set the registration form's symbol chip means
+/// (`apps/mobile/lib/_core/value_objects/password.dart`), so a value the form calls
+/// complete is accepted here and vice versa.
+const PASSWORD_SYMBOLS: &str = "@$!%*?&_";
+
 /// Check a password, returning one message per unmet rule.
 ///
 /// # The rule set
 ///
-/// Length 8-128, at least one lowercase and one uppercase letter.
+/// Length 8-128, at least one lowercase letter, one uppercase letter, one digit and
+/// one symbol from [`PASSWORD_SYMBOLS`].
 ///
-/// This is deliberately *not* changed from the previous revision's policy — tightening it
-/// would silently reject passwords that were valid at registration, and the plan says
-/// nothing about composition rules. It is worth revisiting on its own terms: NIST
-/// SP 800-63B advises length and a breached-password check *instead of* composition
-/// rules, and this function currently does the weaker half of the pair. What it does
-/// keep is the maximum, which is a cost bound rather than a policy (§9.4).
+/// The five rules are the ones the mobile registration form shows as chips, which is
+/// the policy the product owns: this function is aligned *to* the client rather than the
+/// client being relaxed to match an older, shorter rule set (audit H25 is about the two
+/// disagreeing, in either direction). `fixtures/auth-validation.json` is the shared
+/// statement of that agreement, so changing a rule here without changing it in
+/// `password.dart` fails both test suites.
+///
+/// The maximum is a cost bound rather than a policy (§9.4).
 #[must_use]
 pub fn password_problems(password: &str) -> Vec<&'static str> {
     let mut problems = Vec::new();
@@ -235,6 +245,12 @@ pub fn password_problems(password: &str) -> Vec<&'static str> {
     }
     if !password.chars().any(char::is_uppercase) {
         problems.push("A password must contain at least one uppercase letter");
+    }
+    if !password.chars().any(|c| c.is_ascii_digit()) {
+        problems.push("A password must contain at least one number");
+    }
+    if !password.chars().any(|c| PASSWORD_SYMBOLS.contains(c)) {
+        problems.push("A password must contain at least one symbol");
     }
 
     problems
@@ -434,16 +450,38 @@ mod tests {
 
     #[test]
     fn a_conforming_password_has_no_problems() {
-        assert!(password_problems("Correct Horse9").is_empty());
+        assert!(password_problems("Correct Horse9!").is_empty());
     }
 
     #[test]
     fn a_short_password_reports_only_its_length() {
-        // "Abc1" fails both length and nothing else; reporting a composition problem it
+        // "Abc1!" fails on length and nothing else; reporting a composition problem it
         // does not have would be noise.
         assert_eq!(
-            password_problems("Abc1"),
+            password_problems("Abc1!"),
             vec!["A password must be at least 8 characters"]
+        );
+    }
+
+    #[test]
+    fn a_password_without_a_digit_or_symbol_reports_both() {
+        // The two rules the form has always shown and this function used to omit: a
+        // letters-only password is refused, and each missing rule is named separately so
+        // the form can light up the right chip.
+        assert_eq!(
+            password_problems("Abcdefgh"),
+            vec![
+                "A password must contain at least one number",
+                "A password must contain at least one symbol",
+            ]
+        );
+        assert_eq!(
+            password_problems("Abcdefgh1"),
+            vec!["A password must contain at least one symbol"]
+        );
+        assert_eq!(
+            password_problems("Abcdefgh!"),
+            vec!["A password must contain at least one number"]
         );
     }
 
@@ -453,21 +491,25 @@ mod tests {
         // four-emoji password through as "8 characters".
         let four_emoji: String = std::iter::repeat_n('🦀', 4).collect();
         assert_eq!(four_emoji.chars().count(), 4);
-        // Emoji have no case, so all three rules fire — and the length message is the
-        // one byte-length would have got wrong, which is the point of the assertion.
+        // Emoji have no case and are neither digits nor symbols, so every composition
+        // rule fires — and the length message is the one byte-length would have got
+        // wrong, which is the point of the assertion.
         assert_eq!(
             password_problems(&four_emoji),
             vec![
                 "A password must be at least 8 characters",
                 "A password must contain at least one lowercase letter",
                 "A password must contain at least one uppercase letter",
+                "A password must contain at least one number",
+                "A password must contain at least one symbol",
             ]
         );
 
-        // Four emoji *plus* case: the length message goes away once the character count
-        // is 8, which is what "characters rather than bytes" means in practice.
-        let eight = format!("Aa{four_emoji}{four_emoji}");
-        assert_eq!(eight.chars().count(), 10);
+        // One emoji *plus* the four composition rules: the length message goes away once
+        // the character count is 8, which is what "characters rather than bytes" means in
+        // practice.
+        let eight = format!("Aa1!{four_emoji}");
+        assert_eq!(eight.chars().count(), 8);
         assert!(
             password_problems(&eight).is_empty(),
             "a valid password has no problems"
@@ -477,7 +519,8 @@ mod tests {
     #[test]
     fn a_long_password_is_refused_on_the_cost_bound_alone() {
         // No composition problem here — it is purely the Argon2 allocation bound (§9.4).
-        let long = "Aa".repeat(MAX_PASSWORD_LEN);
+        let long = format!("Aa1!{}", "a".repeat(MAX_PASSWORD_LEN));
+        assert!(long.chars().count() > MAX_PASSWORD_LEN);
         assert_eq!(
             password_problems(&long),
             vec!["A password may be at most 128 characters"]
@@ -506,7 +549,7 @@ mod tests {
     #[test]
     fn a_password_of_only_uppercase_letters_reports_only_that() {
         assert_eq!(
-            password_problems("ALLUPPERCASE"),
+            password_problems("ALLUPPERCASE1!"),
             vec!["A password must contain at least one lowercase letter"]
         );
     }

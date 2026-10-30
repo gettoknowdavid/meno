@@ -47,7 +47,10 @@ mod notes;
 mod profile;
 mod settings;
 mod subscribers;
-mod ws;
+
+/// Public so `tests/ws_protocol.rs` can assert the handshake's pre-upgrade gate
+/// without standing up Postgres and Redis (Step 78).
+pub mod ws;
 
 use std::sync::Arc;
 

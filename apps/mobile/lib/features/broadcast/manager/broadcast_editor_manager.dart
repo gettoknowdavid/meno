@@ -7,6 +7,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
+import 'package:uuid/uuid.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
 ///
@@ -44,6 +45,12 @@ final class BroadcastEditorManager implements Disposable {
         }
 
         final created = await _http.create(
+          // The draft's own key: a retry of this creation is the same logical
+          // operation, so the API replays what it already did instead of making
+          // a second broadcast (audit H20).
+          idempotencyKey: draft.idempotencyKey.isEmpty
+              ? (_createKey ??= _uuid.v4())
+              : draft.idempotencyKey,
           title: draft.title,
           description: (draft.description?.isEmpty ?? false)
               ? null
@@ -74,7 +81,12 @@ final class BroadcastEditorManager implements Disposable {
         _isRunning.value = true;
         BroadcastSession created;
         try {
-          created = (await _http.goLive(broadcastId)).toDomain(_userId);
+          created = (await _http.goLive(
+            broadcastId,
+            // One key for every retry of this start: going on air is the
+            // logical operation, not the press.
+            idempotencyKey: _liveKey ??= _uuid.v4(),
+          )).toDomain(_userId);
         } finally {
           _isRunning.value = false;
         }
@@ -106,6 +118,7 @@ final class BroadcastEditorManager implements Disposable {
       record.value = false;
       session.value = null;
       _draftId = null;
+      _createKey = null;
       _resetCreationState();
     });
 
@@ -125,6 +138,8 @@ final class BroadcastEditorManager implements Disposable {
 
       _createdBroadcastId = draft.createdBroadcastId;
       step.value = draft.creationStep;
+      _createKey = draft.idempotencyKey.isEmpty ? null : draft.idempotencyKey;
+      _liveKey = null;
 
       // What of this picture the API already has, if any: resuming a creation
       // must not upload it a second time, but a new pick still must.
@@ -157,8 +172,24 @@ final class BroadcastEditorManager implements Disposable {
   final Id _userId;
   final MenoLogger _logger;
 
+  /// Creates the keys the API recognises a replayed mutation by.
+  final Uuid _uuid = const Uuid();
+
   /// The draft being edited, or null while the form is new.
   Id? _draftId;
+
+  /// The key this draft's creation is sent with, before it is written down.
+  ///
+  /// Kept here as well as on the draft because the first save is what stores
+  /// it: generating a new one at send time would make a retry a second create.
+  String? _createKey;
+
+  /// The key this attempt at going on air is sent with.
+  ///
+  /// Per editor session rather than per draft: nothing is created by going
+  /// live, so a restart is a genuinely new operation, while pressing Start
+  /// again after a lost response is the same one.
+  String? _liveKey;
 
   /// The broadcast that was created by this draft, if any.
   Id? _createdBroadcastId;
@@ -280,6 +311,7 @@ final class BroadcastEditorManager implements Disposable {
       imageId: _uploadedImageId,
       createdBroadcastId: _createdBroadcastId,
       creationStep: step.value,
+      idempotencyKey: _createKey ??= _uuid.v4(),
       lastModified: DateTime.now(),
     );
 
@@ -354,6 +386,9 @@ final class BroadcastEditorManager implements Disposable {
   void _resetCreationState() {
     _uploadedImageId = null;
     _uploadedImagePath = null;
+    // The next creation is a different broadcast, so it must not be able to
+    // replay this one's stored outcome.
+    _liveKey = null;
 
     if (step.value.index >= BroadcastCreationStep.created.index) {
       _createdBroadcastId = null;

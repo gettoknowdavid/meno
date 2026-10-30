@@ -57,7 +57,7 @@ extension UserX on User {
   /// degrades to an empty string rather than crashing the write, so
   /// invalidity is never *discovered* here.
   UserDto get toDto => UserDto(
-    id: id.getOrCrash,
+    id: id.orEmpty,
     fullName: fullName.getOrElse((_) => ''),
     email: email.getOrElse((_) => ''),
     bio: bio?.getOrNull,

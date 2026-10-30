@@ -28,6 +28,7 @@ class BroadcastDraftRow {
     this.imageId,
     this.createdBroadcastId,
     this.creationStepValue = 0,
+    this.idempotencyKey = '',
     DateTime? lastModified,
   }) : uniqueKey = logicalKey(ownerId, draftId),
        lastModified = lastModified ?? DateTime.now();
@@ -70,6 +71,10 @@ class BroadcastDraftRow {
 
   @Property(type: PropertyType.int)
   int creationStepValue;
+
+  /// The key this draft's `POST /broadcasts` is sent with, so an interrupted
+  /// creation survives a restart as one logical operation rather than two.
+  String idempotencyKey;
 
   @Property(type: PropertyType.date)
   DateTime lastModified;
@@ -129,6 +134,7 @@ extension BroadcastDraftRowX on BroadcastDraftRow {
         ? core.Id.fromString(createdBroadcastId!)
         : null,
     creationStep: _step(creationStepValue),
+    idempotencyKey: idempotencyKey,
     lastModified: lastModified,
   );
 
@@ -173,6 +179,7 @@ extension BroadcastDraftX on BroadcastDraft {
     imageId: imageId,
     createdBroadcastId: createdBroadcastId?.getOrNull,
     creationStepValue: creationStep.index,
+    idempotencyKey: idempotencyKey,
     lastModified: lastModified,
   );
 }

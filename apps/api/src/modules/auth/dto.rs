@@ -446,7 +446,7 @@ mod tests {
             RegisterRequest {
                 full_name: "Ada Lovelace".to_owned(),
                 email: "ada@example.com".to_owned(),
-                password: "Correct Horse9".to_owned(),
+                password: "Correct Horse9!".to_owned(),
             }
             .validate()
             .is_ok()
@@ -646,7 +646,7 @@ mod tests {
             ResetPasswordRequest {
                 email: "ada@example.com".to_owned(),
                 code: "1234567".to_owned(),
-                new_password: "Correct Horse9".to_owned(),
+                new_password: "Correct Horse9!".to_owned(),
             }
             .validate()
             .is_err()

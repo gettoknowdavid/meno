@@ -269,6 +269,15 @@ abstract class BroadcastDraft with _$BroadcastDraft {
     String? imageId,
     Id? createdBroadcastId,
     @Default(BroadcastCreationStep.none) BroadcastCreationStep creationStep,
+
+    /// The `Idempotency-Key` this draft's creation is sent with.
+    ///
+    /// Chosen once, when the draft is first written, and stored with it: a
+    /// creation interrupted by a lost response is retried as the *same*
+    /// logical operation, so the API replays its stored outcome instead of
+    /// creating a second broadcast (audit H20). Empty on a draft that has never
+    /// been saved.
+    @Default('') String idempotencyKey,
     DateTime? lastModified,
   }) = _BroadcastDraft;
 

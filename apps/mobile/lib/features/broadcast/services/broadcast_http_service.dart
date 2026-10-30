@@ -70,8 +70,14 @@ final class BroadcastHttpService {
   }
 
   /// `POST /broadcasts` — creates a draft, a scheduled broadcast or a live one.
+  ///
+  /// [idempotencyKey] belongs to the *draft*, not to the call: it is the same
+  /// on every attempt at creating the row this draft describes, including the
+  /// one the user makes after an ambiguous timeout. A replay is answered from
+  /// the API's stored outcome instead of creating a second broadcast.
   Future<Broadcast> create({
     required String title,
+    required String idempotencyKey,
     String? description,
     String? imageId,
     String? imageUrl,
@@ -94,6 +100,7 @@ final class BroadcastHttpService {
         if (cohosts != null && cohosts.isNotEmpty) 'cohosts': cohosts,
       },
       cancelToken: cancelToken,
+      idempotencyKey: idempotencyKey,
       fromJson: (data) => BroadcastDto.fromJson(_map(data)).toDomain,
     );
   }
@@ -169,28 +176,40 @@ final class BroadcastHttpService {
   Future<BroadcastSessionDto> goLive(
     Id broadcastId, {
     CancelToken? cancelToken,
+    String? idempotencyKey,
   }) {
     return _client.post(
       '/broadcasts/${broadcastId.getOrCrash}/live',
       cancelToken: cancelToken,
+      idempotencyKey: idempotencyKey,
       fromJson: (data) => BroadcastSessionDto.fromJson(_map(data)),
     );
   }
 
   /// `POST /broadcasts/{id}/end` — takes the broadcast off air.
-  Future<EndedBroadcast> end(Id broadcastId, {CancelToken? cancelToken}) {
+  Future<EndedBroadcast> end(
+    Id broadcastId, {
+    CancelToken? cancelToken,
+    String? idempotencyKey,
+  }) {
     return _client.post(
       '/broadcasts/${broadcastId.getOrCrash}/end',
       cancelToken: cancelToken,
+      idempotencyKey: idempotencyKey,
       fromJson: (data) => EndBroadcastDto.fromJson(_map(data)).toDomain,
     );
   }
 
   /// `POST /broadcasts/{id}/join` — subscribes, answering with the token.
-  Future<BroadcastSessionDto> join(Id broadcastId, {CancelToken? cancelToken}) {
+  Future<BroadcastSessionDto> join(
+    Id broadcastId, {
+    CancelToken? cancelToken,
+    String? idempotencyKey,
+  }) {
     return _client.post(
       '/broadcasts/${broadcastId.getOrCrash}/join',
       cancelToken: cancelToken,
+      idempotencyKey: idempotencyKey,
       fromJson: (data) => BroadcastSessionDto.fromJson(_map(data)),
     );
   }

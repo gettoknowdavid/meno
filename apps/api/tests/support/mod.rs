@@ -57,7 +57,7 @@ use meno_api::modules::auth::token::{TokenConfig, TokenService};
 ///
 /// Satisfies the composition policy, so a registration test reaches the auth flow
 /// rather than stopping at `RegisterRequest::validate`.
-pub const PASSWORD: &str = "Correct horse battery staple";
+pub const PASSWORD: &str = "Correct horse9!";
 
 /// Everything a test needs, with the doubles left concrete so it can read them.
 pub struct Harness {

@@ -9,6 +9,7 @@ import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_http_service.dart';
 import 'package:meno_mobile/features/broadcast/services/live_session_store.dart';
 import 'package:meno_mobile/features/broadcast/session/active_broadcast_session.dart';
+import 'package:uuid/uuid.dart';
 
 /// How a live entry reaches the room.
 enum LiveEnterMode {
@@ -90,9 +91,23 @@ abstract interface class LiveGateway {
 /// The real gateway: the broadcast endpoints, with the account's identity
 /// attached by the manager rather than looked up here.
 final class BroadcastLiveGateway implements LiveGateway {
-  const new(this._http);
+  new(this._http);
 
   final BroadcastHttpService _http;
+  final Uuid _uuid = const Uuid();
+
+  /// One key per broadcast being entered or ended, so a retry of a call whose
+  /// answer was lost replays the API's stored outcome — a lost join response
+  /// would otherwise come back as a conflict (audit H20).
+  ///
+  /// Dropped when the room is left or ended: entering again afterwards is a
+  /// different logical operation.
+  final Map<String, String> _operationKeys = {};
+
+  String _operationKey(Id broadcastId) =>
+      _operationKeys.putIfAbsent(broadcastId.getOrCrash, _uuid.v4);
+
+  void _forget(Id broadcastId) => _operationKeys.remove(broadcastId.getOrCrash);
 
   @override
   Future<BroadcastSession> enter(
@@ -100,19 +115,37 @@ final class BroadcastLiveGateway implements LiveGateway {
     AccountContext context,
   ) async {
     final dto = switch (request.mode) {
-      LiveEnterMode.host => await _http.goLive(request.broadcastId),
-      LiveEnterMode.listen => await _http.join(request.broadcastId),
+      // The key is only safe where a replayed body is still true. `resume`
+      // answers with a freshly signed room token, so replaying an old body
+      // would hand back a credential expiring in minutes — the same reason
+      // `routes::broadcasts` leaves the token endpoint uncached.
+      LiveEnterMode.host => await _http.goLive(
+        request.broadcastId,
+        idempotencyKey: _operationKey(request.broadcastId),
+      ),
+      LiveEnterMode.listen => await _http.join(
+        request.broadcastId,
+        idempotencyKey: _operationKey(request.broadcastId),
+      ),
       LiveEnterMode.resume => await _http.resume(request.broadcastId),
     };
     return dto.toDomain(context.accountId);
   }
 
   @override
-  Future<EndedBroadcast> end(Id broadcastId) => _http.end(broadcastId);
+  Future<EndedBroadcast> end(Id broadcastId) async {
+    final ended = await _http.end(
+      broadcastId,
+      idempotencyKey: _operationKey(broadcastId),
+    );
+    _forget(broadcastId);
+    return ended;
+  }
 
   @override
   Future<void> leave(Id broadcastId) async {
     await _http.leave(broadcastId);
+    _forget(broadcastId);
   }
 }
 

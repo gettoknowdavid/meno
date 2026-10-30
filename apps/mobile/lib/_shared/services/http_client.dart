@@ -6,7 +6,6 @@ import 'package:dio/dio.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/meno_response.dart';
-import 'package:uuid/uuid.dart';
 
 /// Decodes a value out of a response envelope's `data`.
 typedef FromJson<T> = T Function(dynamic data);
@@ -66,6 +65,16 @@ final class HttpClient implements Disposable {
   }
 
   /// The header the API expects on a mutation that may be replayed.
+  ///
+  /// Supplied by the caller as `idempotencyKey` and forwarded unchanged: one
+  /// value per *logical* operation, reused by every attempt that operation
+  /// makes. The value must be a UUID; anything else is refused with
+  /// `INVALID_IDEMPOTENCY_KEY`.
+  ///
+  /// The API replays a stored outcome for 24 hours (`IDEMPOTENCY_TTL` in
+  /// `apps/api/src/middleware/idempotency.rs`), so this is finite
+  /// deduplication — enough to cover a retry, not a guarantee that a request
+  /// can never run twice.
   static const String idempotencyHeader = 'Idempotency-Key';
 
   /// The header the API sends with a retry hint on a 503.
@@ -86,7 +95,6 @@ final class HttpClient implements Disposable {
   final Duration retryBackoff;
 
   final Random _random = Random();
-  final Uuid _uuid = const Uuid();
 
   /// Runs a `GET` and decodes the envelope's `data` with [fromJson].
   Future<T> get<T>(
@@ -170,6 +178,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -180,6 +189,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.post<dynamic>(
@@ -200,6 +210,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -210,6 +221,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.put<dynamic>(
@@ -230,6 +242,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -240,6 +253,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.patch<dynamic>(
@@ -260,6 +274,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -270,6 +285,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.delete<dynamic>(
@@ -289,6 +305,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -299,6 +316,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.post<dynamic>(
@@ -318,6 +336,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -328,6 +347,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.put<dynamic>(
@@ -347,6 +367,7 @@ final class HttpClient implements Disposable {
     Object? data,
     Map<String, dynamic>? queryParameters,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool retry = false,
@@ -357,6 +378,7 @@ final class HttpClient implements Disposable {
       retry: retry,
       cancelToken: cancelToken,
       headers: headers,
+      idempotencyKey: idempotencyKey,
       jsonBody: data != null,
       authMode: authMode,
       send: (options) => _dio.delete<dynamic>(
@@ -476,6 +498,7 @@ final class HttpClient implements Disposable {
     required FromJson<T> parse,
     bool retry = false,
     Map<String, dynamic>? headers,
+    String? idempotencyKey,
     CancelToken? cancelToken,
     AuthMode authMode = AuthMode.account,
     bool jsonBody = false,
@@ -490,11 +513,13 @@ final class HttpClient implements Disposable {
       },
     );
 
-    // A mutation that may be replayed needs a key the API can recognise, and
-    // that key has to be the same on every attempt: that is what makes the
-    // replay the same request rather than a second one.
-    if (retry && _isMutation(method)) {
-      options.headers?[idempotencyHeader] ??= _uuid.v4();
+    // A key the caller supplied is forwarded as-is. One is never invented here:
+    // a key generated inside the transport would be new on every call, so a
+    // manual retry after an ambiguous failure would still duplicate the work
+    // (audit H20). Where the logical operation begins is the only place that
+    // knows which attempts belong together.
+    if (idempotencyKey != null) {
+      options.headers?[idempotencyHeader] = idempotencyKey;
     }
 
     var attempt = 1;
@@ -740,13 +765,6 @@ final class HttpClient implements Disposable {
     final seconds = header == null ? null : int.tryParse(header);
     return seconds == null ? null : Duration(seconds: seconds);
   }
-
-  /// Whether [method] changes something on the server.
-  bool _isMutation(String method) =>
-      method == 'POST' ||
-      method == 'PUT' ||
-      method == 'PATCH' ||
-      method == 'DELETE';
 
   void _logFailure(
     String method,

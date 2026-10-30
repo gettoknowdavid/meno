@@ -5,7 +5,7 @@
   "entities": [
     {
       "id": "1:6971376935178366471",
-      "lastPropertyId": "13:4670104760691460116",
+      "lastPropertyId": "14:4621658050109501137",
       "name": "BroadcastDraftRow",
       "properties": [
         {
@@ -79,6 +79,11 @@
           "indexId": "5:4794032612217736887",
           "type": 9,
           "flags": 34848
+        },
+        {
+          "id": "14:4621658050109501137",
+          "name": "idempotencyKey",
+          "type": 9
         }
       ],
       "relations": []

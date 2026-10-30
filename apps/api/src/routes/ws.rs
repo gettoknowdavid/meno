@@ -90,7 +90,7 @@ const MAX_RECONNECTS_PER_WINDOW: u64 = 10;
 /// One message for "missing", "empty" and "whitespace-only" so the response is not an
 /// oracle for which check failed (§4.8's stable codes, same reasoning as the bearer
 /// parser in `middleware::auth`).
-fn token_required() -> MenoError {
+pub fn token_required() -> MenoError {
     MenoError::Unauthorized {
         code: ErrorCode::Unauthorized,
         message: "an access token is required: connect with ?token=<access token>".to_owned(),
@@ -107,7 +107,7 @@ fn token_required() -> MenoError {
 ///
 /// [`MenoError::Unauthorized`] with [`ErrorCode::Unauthorized`]; the reason is
 /// identical for every way the token can be absent.
-fn required_token(query: Result<Query<WsQuery>, QueryRejection>) -> Result<String, MenoError> {
+pub fn required_token(query: Result<Query<WsQuery>, QueryRejection>) -> Result<String, MenoError> {
     let Query(query) = query.map_err(|_| token_required())?;
 
     if query.token.trim().is_empty() {
