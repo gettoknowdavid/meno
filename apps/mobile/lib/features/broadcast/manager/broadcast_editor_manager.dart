@@ -80,12 +80,13 @@ final class BroadcastEditorManager implements Disposable {
 
         _isRunning.value = true;
         BroadcastSession created;
+        final idempotencyKey = _liveKey ??= _uuid.v4();
         try {
           created = (await _http.goLive(
             broadcastId,
             // One key for every retry of this start: going on air is the
             // logical operation, not the press.
-            idempotencyKey: _liveKey ??= _uuid.v4(),
+            idempotencyKey: idempotencyKey,
           )).toDomain(_userId);
         } finally {
           _isRunning.value = false;
@@ -95,7 +96,11 @@ final class BroadcastEditorManager implements Disposable {
         // one. A failed entry publishes its own failure and leaves the form on
         // screen, which is why nothing is recorded as started here.
         final entry = await _active.enter(
-          LiveEnterRequest(broadcastId: broadcastId, mode: LiveEnterMode.host),
+          LiveEnterRequest(
+            broadcastId: broadcastId,
+            mode: .host,
+            idempotencyKey: idempotencyKey,
+          ),
         );
         if (!entry.isEntered) return;
 
@@ -106,6 +111,45 @@ final class BroadcastEditorManager implements Disposable {
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.start',
     );
+
+    //     startBroadcast = .createAsyncNoParamNoResult(
+    //       () async {
+    //         final broadcastId = _createdBroadcastId;
+    //         if (broadcastId == null) return;
+    //         if (step.value.index >= BroadcastCreationStep.started.index) return;
+    //
+    //         _isRunning.value = true;
+    //         try {
+    //           // Going live is also entering the room: the manager owns the only
+    //           // session, so this is the one place a newly started broadcast becomes
+    //           // one. A failed entry publishes its own failure and leaves the form on
+    //           // screen, which is why nothing is recorded as started here.
+    //           //
+    //           // The gateway does the `POST /broadcasts/{id}/live` HTTP call as part of
+    //           // `enter()` with `LiveEnterMode.host` — doing it here too would be a
+    //           // second go-live on an already-live broadcast and return 409 ALREADY_LIVE.
+    //           final entry = await _active.enter(
+    //             LiveEnterRequest(
+    //               broadcastId: broadcastId,
+    //               mode: LiveEnterMode.host,
+    //               idempotencyKey: _liveKey ??= _uuid.v4(),
+    //             ),
+    //           );
+    //           if (!entry.isEntered) return;
+    //
+    //           final activeSession = _active.session;
+    //           if (activeSession == null) return;
+    //
+    //           session.value = activeSession.details;
+    //           step.value = .started;
+    //           await _persistCreationState(broadcastId, step.value);
+    //         } finally {
+    //           _isRunning.value = false;
+    //         }
+    //       },
+    //       errorFilterFn: menoExceptionFilter,
+    //       debugName: 'broadcast.editor.start',
+    //     );
 
     resetForm = .createSyncNoParamNoResult(() {
       hasUnsavedChanges.value = false;

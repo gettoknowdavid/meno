@@ -26,10 +26,15 @@ enum LiveEnterMode {
 /// One request to enter a live room.
 @immutable
 final class LiveEnterRequest {
-  const new({required this.broadcastId, required this.mode});
+  const new({
+    required this.broadcastId,
+    required this.mode,
+    this.idempotencyKey,
+  });
 
   final Id broadcastId;
   final LiveEnterMode mode;
+  final String? idempotencyKey;
 
   /// Whether this entry is a recovered session rather than a fresh one.
   bool get isRecovery => mode == LiveEnterMode.resume;
@@ -121,11 +126,13 @@ final class BroadcastLiveGateway implements LiveGateway {
       // `routes::broadcasts` leaves the token endpoint uncached.
       LiveEnterMode.host => await _http.goLive(
         request.broadcastId,
-        idempotencyKey: _operationKey(request.broadcastId),
+        idempotencyKey: request.idempotencyKey
+            ?? _operationKey(request.broadcastId),
       ),
       LiveEnterMode.listen => await _http.join(
         request.broadcastId,
-        idempotencyKey: _operationKey(request.broadcastId),
+        idempotencyKey: request.idempotencyKey
+            ?? _operationKey(request.broadcastId),
       ),
       LiveEnterMode.resume => await _http.resume(request.broadcastId),
     };
