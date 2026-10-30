@@ -91,6 +91,21 @@ pub fn already_live() -> MenoError {
     }
 }
 
+/// The broadcast has already ended, so it cannot be put on air again.
+///
+/// A broadcast is one event, not a reusable shell: its `end_time` is what every ended
+/// surface sorts and renders by, and re-opening it would leave a row that is live to the
+/// catalogue and dead to `end`/`resume` at the same time. The honest answer is a new
+/// broadcast, which is why this is a refusal rather than a reset.
+#[must_use]
+pub fn broadcast_already_ended() -> MenoError {
+    MenoError::Conflict {
+        code: ErrorCode::BroadcastAlreadyEnded,
+        message: "This broadcast has already ended. Create a new one to go live again."
+            .to_owned(),
+    }
+}
+
 /// The caller already has a broadcast on air, so they may not create another or put a
 /// second one live.
 ///

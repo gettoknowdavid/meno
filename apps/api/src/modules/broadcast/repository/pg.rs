@@ -280,9 +280,16 @@ impl BroadcastRepo for PgBroadcastRepo {
         // The `status = 'inactive'` predicate is the guard: a second go-live matches no
         // row and comes back `None`, which the service reports as `already_live`
         // instead of overwriting the first `published_at`.
+        //
+        // `end_time IS NULL AND end_reason IS NULL` is the second half of that guard, and
+        // it is not decoration: a broadcast that has ended is not startable again. Without
+        // it, re-opening an ended row wrote `status = 'active'` while leaving its ending
+        // fields in place — a row that the catalogue listed as live, `end` refused as not
+        // live, `resume` refused, and `find_live_by_creator` treated as an occupied slot.
         let row = sqlx::query_as::<_, Broadcast>(statement(
             "UPDATE broadcasts SET status = 'active', published_at = $2, updated_at = now() \
              WHERE id = $1 AND status = 'inactive' AND deleted_at IS NULL \
+               AND end_time IS NULL AND end_reason IS NULL \
              RETURNING {BROADCAST_COLUMNS}",
         ))
         .bind(id)
@@ -302,9 +309,14 @@ impl BroadcastRepo for PgBroadcastRepo {
     }
 
     async fn find_live_by_creator(&self, creator_id: Uuid) -> Result<Option<Broadcast>, MenoError> {
+        // `end_time IS NULL` mirrors `Broadcast::is_live()`. Filtering on `status` alone
+        // would let a row that is `active` and already ended occupy this creator's one
+        // on-air slot, which refuses every later creation with `ALREADY_LIVE_ELSEWHERE`
+        // for a broadcast nobody can end.
         sqlx::query_as::<_, Broadcast>(statement(
             "SELECT {BROADCAST_COLUMNS} FROM broadcasts \
-             WHERE creator_id = $1 AND status = 'active' AND deleted_at IS NULL \
+             WHERE creator_id = $1 AND status = 'active' AND end_time IS NULL \
+               AND deleted_at IS NULL \
              LIMIT 1",
         ))
         .bind(creator_id)
@@ -316,7 +328,7 @@ impl BroadcastRepo for PgBroadcastRepo {
     async fn list_live(&self) -> Result<Vec<LiveBroadcast>, MenoError> {
         sqlx::query_as::<_, LiveBroadcast>(
             "SELECT id, creator_id, abandoned_since FROM broadcasts \
-             WHERE status = 'active' AND deleted_at IS NULL",
+             WHERE status = 'active' AND end_time IS NULL AND deleted_at IS NULL",
         )
         .fetch_all(&self.pool)
         .await

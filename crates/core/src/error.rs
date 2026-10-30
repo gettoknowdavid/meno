@@ -80,6 +80,8 @@ pub enum ErrorCode {
     AlreadyLive,
     /// The creator already has a different broadcast on air.
     AlreadyLiveElsewhere,
+    /// The broadcast has already ended, so it cannot be started again.
+    BroadcastAlreadyEnded,
     /// The caller is already in the room.
     AlreadyJoined,
     /// The host tried to leave their own broadcast.
@@ -131,6 +133,7 @@ impl ErrorCode {
             Self::NotLive => "NOT_LIVE",
             Self::AlreadyLive => "ALREADY_LIVE",
             Self::AlreadyLiveElsewhere => "ALREADY_LIVE_ELSEWHERE",
+            Self::BroadcastAlreadyEnded => "BROADCAST_ALREADY_ENDED",
             Self::AlreadyJoined => "ALREADY_JOINED",
             Self::HostCannotLeave => "HOST_CANNOT_LEAVE",
             Self::CohostLimitReached => "COHOST_LIMIT_REACHED",
@@ -609,6 +612,7 @@ mod tests {
             ErrorCode::NotLive,
             ErrorCode::AlreadyLive,
             ErrorCode::AlreadyLiveElsewhere,
+            ErrorCode::BroadcastAlreadyEnded,
             ErrorCode::AlreadyJoined,
             ErrorCode::HostCannotLeave,
             ErrorCode::CohostLimitReached,

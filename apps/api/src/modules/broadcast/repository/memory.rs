@@ -275,6 +275,14 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             return Ok(None);
         }
 
+        // A broadcast that has ended is not startable again — the same terminal rejection
+        // `pg.rs` puts in the `UPDATE … WHERE`. Without it the double would let a test
+        // re-open an ended row that production refuses, which is how the two adapters
+        // come to disagree about a rule.
+        if existing.end_time.is_some() || existing.end_reason.is_some() {
+            return Ok(None);
+        }
+
         // The partial unique index from migration 0017, mirrored: one account has at
         // most one broadcast on air, so the second one is refused here exactly as
         // Postgres refuses it.

@@ -47,9 +47,10 @@ use meno_api::modules::broadcast::events::{BroadcastEvents, recording::Recording
 use meno_api::modules::broadcast::media::RecordingMedia;
 use meno_api::modules::broadcast::model::BroadcastState as ModelBroadcastState;
 use meno_api::modules::broadcast::model::{EndReason, ParticipantRole, UserSummary};
-use meno_api::modules::broadcast::repository::InMemoryBroadcastRepo;
+use meno_api::modules::broadcast::repository::{BroadcastRepo, InMemoryBroadcastRepo};
 use meno_api::modules::broadcast::service::{self, BroadcastService};
 use meno_api::modules::broadcast::storage::BroadcastStorage;
+use meno_core::Error as MenoError;
 use meno_core::to_body;
 
 /// A fixture identity, reduced to what a broadcast service needs.
@@ -1323,4 +1324,165 @@ async fn deleting_and_editing_a_broadcast_invalidate_the_home_screens() {
         .await
         .expect("delete");
     assert_eq!(events.home_invalidations(), 2);
+}
+
+#[tokio::test]
+async fn an_ended_broadcast_cannot_be_started_again() {
+    // The bug this records: a client retried a start against a broadcast that had already
+    // ended, `mark_live` re-opened the row, and the result was live to the catalogue and
+    // dead to `end` and `resume` — while holding the creator's one on-air slot.
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let error = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("a broadcast is one event");
+
+    assert_eq!(
+        error.code(),
+        meno_core::ErrorCode::BroadcastAlreadyEnded,
+        "a terminal row is its own refusal, not a generic conflict"
+    );
+
+    let row = repo
+        .find_by_id(created.id)
+        .await
+        .expect("read")
+        .expect("the row survives");
+    assert!(!row.is_live(), "the refusal must not have written anything");
+    assert!(row.end_time.is_some());
+    assert_eq!(
+        media
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("create_room:"))
+            .count(),
+        1,
+        "a refused start must not open a second room"
+    );
+
+    // And the slot is free: the replacement is a new broadcast, which is the honest path.
+    svc.create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("a new broadcast is allowed");
+}
+
+#[tokio::test]
+async fn a_token_failure_leaves_no_live_row() {
+    // The order the service keeps: room, then token, then the commit. Minting after
+    // `mark_live` left a live broadcast that nobody had a token for, and the retry then
+    // read `already_live` for a room no client had entered.
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo)
+            as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
+        media: Arc::new(MintFails)
+            as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
+    });
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("the token could not be signed");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::UpstreamUnavailable);
+
+    let row = repo.find_by_id(created.id).await.expect("read").expect("row");
+    assert!(
+        !row.is_live(),
+        "a start that could not hand out a token is not a start"
+    );
+    assert_eq!(
+        row.state(),
+        meno_api::modules::broadcast::model::BroadcastState::Draft
+    );
+}
+
+#[tokio::test]
+async fn ending_twice_answers_with_the_same_summary() {
+    // End is idempotent: a client whose response was lost — or whose body failed to
+    // parse — has to be able to say it twice and get the same answer.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let first = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+    let second = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("the second end is not an error");
+
+    assert_eq!(second.broadcast_id, first.broadcast_id);
+    assert_eq!(
+        second.ended_at, first.ended_at,
+        "a retry reports the moment it did end, not the moment it was asked again"
+    );
+    assert_eq!(second.duration_secs, first.duration_secs);
+    assert_eq!(second.ended_reason, first.ended_reason);
+}
+
+/// A media server that opens rooms but cannot sign a token.
+///
+/// No `RecordingMedia` mode covers this: the failure has to happen at the *one* step
+/// between the room and the commit, which is exactly the ordering this asserts.
+#[derive(Debug)]
+struct MintFails;
+
+#[async_trait::async_trait]
+impl meno_api::modules::broadcast::media::BroadcastMedia for MintFails {
+    async fn mint_join_token(
+        &self,
+        _user: &UserSummary,
+        _broadcast_id: Uuid,
+        _role: ParticipantRole,
+    ) -> Result<String, MenoError> {
+        Err(meno_api::modules::broadcast::error::media_unavailable())
+    }
+
+    async fn create_room(&self, _broadcast_id: Uuid) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn remove_participant(
+        &self,
+        _broadcast_id: Uuid,
+        _participant_id: Uuid,
+    ) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn end_room(&self, _broadcast_id: Uuid) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn room_participants(&self, _broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        Ok(Vec::new())
+    }
 }

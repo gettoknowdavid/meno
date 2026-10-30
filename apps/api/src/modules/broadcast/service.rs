@@ -34,8 +34,8 @@ use super::error;
 use super::events::{BroadcastEvents, ParticipantChange, ParticipantFrame};
 use super::media::BroadcastMedia;
 use super::model::{
-    Broadcast, BroadcastPatch, EndReason, JoinOutcome, JoinRequest, LeaveOutcome, NewBroadcast,
-    ParticipantRole, UserSummary, now,
+    Broadcast, BroadcastPatch, BroadcastStatus, EndReason, JoinOutcome, JoinRequest, LeaveOutcome,
+    NewBroadcast, ParticipantRole, UserSummary, now,
 };
 use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
 use super::storage::BroadcastStorage;
@@ -439,6 +439,13 @@ impl BroadcastService {
     ) -> Result<BroadcastSessionResponse, MenoError> {
         let existing = self.require(id).await?;
         require_creator(&existing, actor)?;
+
+        // A broadcast is one event. Re-opening an ended row wrote `active` over it while
+        // its `end_time` stayed, which made it live to the catalogue and dead to `end`,
+        // `resume` and the reaper — and it held this creator's one on-air slot forever.
+        if existing.end_time.is_some() || existing.status == BroadcastStatus::Ended {
+            return Err(error::broadcast_already_ended());
+        }
         if existing.is_live() {
             return Err(error::already_live());
         }
@@ -455,10 +462,25 @@ impl BroadcastService {
         // looks live to every client and is not.
         self.media.create_room(id).await?;
 
-        self.repo
-            .mark_live(id, now())
-            .await?
-            .ok_or_else(error::already_live)?;
+        // The token before the commit. Minting it after `mark_live` left the row live
+        // behind every signing failure, and the retry then read `already_live` for a
+        // broadcast no client had ever entered.
+        let token = self
+            .media
+            .mint_join_token(actor, id, ParticipantRole::Host)
+            .await?;
+
+        if self.repo.mark_live(id, now()).await?.is_none() {
+            // Something won the race: a second go-live, an end between the read and the
+            // write, or a terminal row. Re-read so the answer says which it was instead
+            // of blaming "already live" for every case.
+            let current = self.require(id).await?;
+            return Err(if current.end_time.is_some() {
+                error::broadcast_already_ended()
+            } else {
+                error::already_live()
+            });
+        }
 
         // The host's participant row is written by the same join path a listener uses,
         // so "who is in this room" has one answer rather than two.
@@ -470,10 +492,6 @@ impl BroadcastService {
             })
             .await?;
 
-        let token = self
-            .media
-            .mint_join_token(actor, id, ParticipantRole::Host)
-            .await?;
         let row = self.require(id).await?;
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
@@ -512,6 +530,19 @@ impl BroadcastService {
     ) -> Result<EndBroadcastResponse, MenoError> {
         let existing = self.require(id).await?;
         require_creator(&existing, actor)?;
+
+        // Already over: End is idempotent, so a client whose response was lost — or whose
+        // body failed to parse — can say it twice and be told the same thing. The old
+        // 409 here is what made a successfully ended broadcast look unended to a caller
+        // that retried, and what made a stuck `active` + `end_time` row impossible to
+        // close at all.
+        if existing.end_time.is_some() || existing.status == BroadcastStatus::Ended {
+            return Ok(ended_summary(
+                &existing,
+                existing.end_time.unwrap_or_else(now),
+            ));
+        }
+
         if !existing.is_live() {
             return Err(error::not_live());
         }
@@ -570,21 +601,7 @@ impl BroadcastService {
         // And the ended broadcast leaves the home sections it was drawn in.
         self.notify_home().await;
 
-        let duration_secs = row.published_at.map_or(0, |started| {
-            ended_at.unix_timestamp() - started.unix_timestamp()
-        });
-
-        Ok(EndBroadcastResponse {
-            broadcast_id: row.id,
-            broadcast_title: row.title.clone(),
-            broadcast_image_url: row.image_url.clone(),
-            creator_id: row.creator_id,
-            ended_reason: row.end_reason.unwrap_or(EndReason::Normal),
-            ended_at,
-            duration_secs,
-            total_participants: row.total_participants,
-            recording_enabled: row.recording_enabled,
-        })
+        Ok(ended_summary(&row, ended_at))
     }
 
     /// `POST /broadcasts/{id}/resume` — re-enter a live broadcast this account is
@@ -1160,6 +1177,29 @@ fn require_creator(broadcast: &Broadcast, actor: &UserSummary) -> Result<(), Men
         Ok(())
     } else {
         Err(error::not_creator())
+    }
+}
+
+/// The summary `end` answers with, for a broadcast that is over.
+///
+/// Shared by the flow that ends it and the idempotent path that finds it already ended,
+/// so a retried End and the original answer cannot describe the same broadcast
+/// differently — the duration is derived here, once, from the row.
+fn ended_summary(row: &Broadcast, ended_at: time::OffsetDateTime) -> EndBroadcastResponse {
+    let duration_secs = row
+        .published_at
+        .map_or(0, |started| ended_at.unix_timestamp() - started.unix_timestamp());
+
+    EndBroadcastResponse {
+        broadcast_id: row.id,
+        broadcast_title: row.title.clone(),
+        broadcast_image_url: row.image_url.clone(),
+        creator_id: row.creator_id,
+        ended_reason: row.end_reason.unwrap_or(EndReason::Normal),
+        ended_at,
+        duration_secs,
+        total_participants: row.total_participants,
+        recording_enabled: row.recording_enabled,
     }
 }
 
