@@ -145,19 +145,24 @@ abstract class HomeInvalidatedDto with _$HomeInvalidatedDto {
 }
 
 /// `EndBroadcastResponse` in `apps/api/src/modules/broadcast/dto.rs`.
+///
+/// These are exactly the fields the API sends (audit H05, Step 52's fixture).
+/// There is **no** `creatorName` in the payload: requiring one made every
+/// successful end fail to parse, because the server had already ended the
+/// broadcast while the client reported an error. Display enrichment belongs to
+/// the local profile source, never to this wire type (audit M12).
 @freezed
 abstract class EndBroadcastDto with _$EndBroadcastDto {
   const factory({
     required String broadcastId,
     required String broadcastTitle,
     required String creatorId,
-    required String creatorName,
     required String endedReason,
     required int durationSecs,
     required int totalParticipants,
     required bool recordingEnabled,
+    @JsonKey(fromJson: parseRfc3339) required DateTime endedAt,
     String? broadcastImageUrl,
-    DateTime? endedAt,
   }) = _EndBroadcastDto;
 
   factory fromJson(Map<String, dynamic> json) =>
@@ -325,7 +330,9 @@ extension EndBroadcastDtoX on EndBroadcastDto {
     broadcastId: Id.fromWire(broadcastId),
     title: SingleLineString(broadcastTitle),
     creatorId: _wireId(creatorId),
-    creatorName: SingleLineString(creatorName),
+    // Left empty on purpose: the name is not on the wire, and a second copy of
+    // the creator's identity would compete with the profile presentation the
+    // rest of the app reads (audit H05, M12).
     endedAt: endedAt,
     image: ImageInput.fromUrl(broadcastImageUrl),
     reason: EndReason.fromWire(endedReason),

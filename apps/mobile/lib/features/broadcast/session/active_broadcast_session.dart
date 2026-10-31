@@ -84,8 +84,16 @@ final class ParticipantsRoster implements LiveRoster {
 
   final ParticipantsManager _participants;
 
+  /// Runs the roster's wiring.
+  ///
+  /// [ParticipantsManager.initialize] is a **synchronous** command: it attaches
+  /// the socket subscriptions and pipes them into the async fetch. `runAsync`
+  /// asserts on commands like that, and the assertion escaped `start()` as a
+  /// failed entry — the room was joined, then closed, and the editor stayed on
+  /// screen. `run()` is the call a sync command takes; the fetch it pipes into
+  /// reports its own failures, so nothing is swallowed by not awaiting it.
   @override
-  Future<void> attach() => _participants.initialize.runAsync();
+  Future<void> attach() async => _participants.initialize.run();
 
   @override
   Future<void> detach() async {

@@ -527,15 +527,16 @@ class StartBroadcastButton extends WatchingWidget {
             label: buttonLabel,
             loading: isLoading,
             disabled: isLoading || !canSubmit,
-            // The draft is written before it is sent, so a creation the API
-            // never answers is still on the device when the screen is reopened.
+            // Pressing start creates the broadcast; it does not save a draft.
+            // The draft exists for work the user asked to keep, or for a start
+            // that did not finish — the manager writes it in exactly those two
+            // cases, so a broadcast that goes live leaves no copy behind.
             onPressed: () async {
               // The room is entered speaking: a host whose microphone was
               // refused would go live silent, so it is asked for before the
               // broadcast exists at all.
               if (!await PermissionPrompts.broadcast(context)) return;
-              final draft = await manager.saveDraft();
-              manager.createBroadcast.run(draft);
+              manager.createBroadcast.run(manager.buildDraft());
             },
           ),
         ],

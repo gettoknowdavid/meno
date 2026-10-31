@@ -68,6 +68,15 @@ class LiveSessionBanner extends WatchingWidget {
     if (snapshot.broadcast?.id != broadcastId || !snapshot.isInRoom) return;
 
     await manager.leaveOrEnd.runAsync();
+
+    // Ending shows the summary wherever it was pressed from. Inside a room the
+    // live shell does this; the banner is drawn on Home, where no shell is
+    // mounted, so the host who just ended it would otherwise watch the banner
+    // disappear. Leaving is not ending, and goes nowhere.
+    if (!exitsByEnding) return;
+    final endedId = manager.snapshot.value.endedSummary?.id;
+    if (!context.mounted || endedId == null || !endedId.isValid) return;
+    context.go(MRoutes.endedBroadcastRoute(endedId));
   }
 
   static String _badgeLabel(LivePhase phase) => switch (phase) {

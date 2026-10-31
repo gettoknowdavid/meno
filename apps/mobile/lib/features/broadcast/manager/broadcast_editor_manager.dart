@@ -35,38 +35,45 @@ final class BroadcastEditorManager implements Disposable {
 
     createBroadcast = .createAsyncNoResult<BroadcastDraft>(
       (draft) async {
-        if (_createdBroadcastId != null &&
-            step.value.index >= BroadcastCreationStep.created.index) {
-          // The row exists but its cover may not: an earlier press can have
-          // stopped between the two, and going live now would leave the picture
-          // the user picked on this device alone.
+        try {
+          if (_createdBroadcastId != null &&
+              step.value.index >= BroadcastCreationStep.created.index) {
+            // The row exists but its cover may not: an earlier press can have
+            // stopped between the two, and going live now would leave the
+            // picture the user picked on this device alone.
+            await _uploadArtwork();
+            return;
+          }
+
+          final created = await _http.create(
+            // The draft's own key: a retry of this creation is the same logical
+            // operation, so the API replays what it already did instead of
+            // making a second broadcast (audit H20).
+            idempotencyKey: draft.idempotencyKey.isEmpty
+                ? (_createKey ??= _uuid.v4())
+                : draft.idempotencyKey,
+            title: draft.title,
+            description: (draft.description?.isEmpty ?? false)
+                ? null
+                : draft.description,
+            imageId: draft.imageId,
+            cohosts: [for (final id in draft.cohosts) id.getOrCrash],
+            recordingEnabled: draft.record,
+          );
+          _createdBroadcastId = created.id;
+          step.value = .created;
+          await _persistCreationState(created.id, step.value);
+
+          // Before the chain goes on to `startBroadcast`: the cover is stored
+          // under the broadcast's id, and the API refuses to change the cover
+          // of a row that is already on air.
           await _uploadArtwork();
-          return;
+        } on Object {
+          // A creation that did not finish is the one time a draft is kept
+          // without being asked for.
+          await _keepFailedStart();
+          rethrow;
         }
-
-        final created = await _http.create(
-          // The draft's own key: a retry of this creation is the same logical
-          // operation, so the API replays what it already did instead of making
-          // a second broadcast (audit H20).
-          idempotencyKey: draft.idempotencyKey.isEmpty
-              ? (_createKey ??= _uuid.v4())
-              : draft.idempotencyKey,
-          title: draft.title,
-          description: (draft.description?.isEmpty ?? false)
-              ? null
-              : draft.description,
-          imageId: draft.imageId,
-          cohosts: [for (final id in draft.cohosts) id.getOrCrash],
-          recordingEnabled: draft.record,
-        );
-        _createdBroadcastId = created.id;
-        step.value = .created;
-        await _persistCreationState(created.id, step.value);
-
-        // Before the chain goes on to `startBroadcast`: the cover is stored
-        // under the broadcast's id, and the API refuses to change the cover of
-        // a row that is already on air.
-        await _uploadArtwork();
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.create',
@@ -76,80 +83,56 @@ final class BroadcastEditorManager implements Disposable {
       () async {
         final broadcastId = _createdBroadcastId;
         if (broadcastId == null) return;
-        if (step.value.index >= BroadcastCreationStep.started.index) return;
+
+        // Already in the room: a second press is not a second start.
+        if (session.value != null) return;
 
         _isRunning.value = true;
-        BroadcastSession created;
-        final idempotencyKey = _liveKey ??= _uuid.v4();
         try {
-          created = (await _http.goLive(
-            broadcastId,
-            // One key for every retry of this start: going on air is the
-            // logical operation, not the press.
-            idempotencyKey: idempotencyKey,
-          )).toDomain(_userId);
+          // Where the chain resumes from. `.started` is the *server's* commit,
+          // recorded as soon as the API answers — so an entry that fails, or a
+          // process that dies, leaves a form that knows the broadcast exists.
+          final committed =
+              step.value.index >= BroadcastCreationStep.started.index
+              ? null
+              : await _goLive(broadcastId);
+
+          if (step.value.index < BroadcastCreationStep.started.index) {
+            step.value = .started;
+            await _persistCreationState(broadcastId, step.value);
+          }
+
+          // One API call for one go-live: the session obtained above is
+          // attached rather than fetched a second time. When there is none to
+          // attach, the broadcast already committed and `resume` re-mints the
+          // token — `goLive` refuses a broadcast that is on air.
+          final entry = await _active.enter(
+            LiveEnterRequest(
+              broadcastId: broadcastId,
+              mode: committed == null ? .resume : .host,
+              session: committed,
+            ),
+          );
+          if (!entry.isEntered) {
+            // On air but not in the room: a start that did not finish, which is
+            // the other case a draft is kept for. The step is `started`, so the
+            // retry asks only for the entry.
+            await _keepFailedStart();
+            return;
+          }
+
+          session.value = committed ?? _active.session?.details;
+          await _forgetStartedDraft();
+        } on Object {
+          await _keepFailedStart();
+          rethrow;
         } finally {
           _isRunning.value = false;
         }
-        // Going live is also entering the room: the manager owns the only
-        // session, so this is the one place a newly started broadcast becomes
-        // one. A failed entry publishes its own failure and leaves the form on
-        // screen, which is why nothing is recorded as started here.
-        final entry = await _active.enter(
-          LiveEnterRequest(
-            broadcastId: broadcastId,
-            mode: .host,
-            idempotencyKey: idempotencyKey,
-          ),
-        );
-        if (!entry.isEntered) return;
-
-        session.value = created;
-        step.value = .started;
-        await _persistCreationState(broadcastId, step.value);
       },
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.editor.start',
     );
-
-    //     startBroadcast = .createAsyncNoParamNoResult(
-    //       () async {
-    //         final broadcastId = _createdBroadcastId;
-    //         if (broadcastId == null) return;
-    //         if (step.value.index >= BroadcastCreationStep.started.index) return;
-    //
-    //         _isRunning.value = true;
-    //         try {
-    //           // Going live is also entering the room: the manager owns the only
-    //           // session, so this is the one place a newly started broadcast becomes
-    //           // one. A failed entry publishes its own failure and leaves the form on
-    //           // screen, which is why nothing is recorded as started here.
-    //           //
-    //           // The gateway does the `POST /broadcasts/{id}/live` HTTP call as part of
-    //           // `enter()` with `LiveEnterMode.host` — doing it here too would be a
-    //           // second go-live on an already-live broadcast and return 409 ALREADY_LIVE.
-    //           final entry = await _active.enter(
-    //             LiveEnterRequest(
-    //               broadcastId: broadcastId,
-    //               mode: LiveEnterMode.host,
-    //               idempotencyKey: _liveKey ??= _uuid.v4(),
-    //             ),
-    //           );
-    //           if (!entry.isEntered) return;
-    //
-    //           final activeSession = _active.session;
-    //           if (activeSession == null) return;
-    //
-    //           session.value = activeSession.details;
-    //           step.value = .started;
-    //           await _persistCreationState(broadcastId, step.value);
-    //         } finally {
-    //           _isRunning.value = false;
-    //         }
-    //       },
-    //       errorFilterFn: menoExceptionFilter,
-    //       debugName: 'broadcast.editor.start',
-    //     );
 
     resetForm = .createSyncNoParamNoResult(() {
       hasUnsavedChanges.value = false;
@@ -342,29 +325,56 @@ final class BroadcastEditorManager implements Disposable {
   /// Forgets draftId`` and re-reads the list.
   late final Command<Id, void> deleteDraft;
 
-  /// The form as a draft, writing it to the device first.
+  /// The form as a draft, in memory only.
+  ///
+  /// Starting a broadcast is not a reason to write a draft: the creation the
+  /// user asked for is the API's, and a device copy of it afterwards is work
+  /// they never asked to keep. Only two things write one — the exit prompt's
+  /// "save", and a creation that did not finish ([_keepFailedStart]) — and the
+  /// id is minted here so both of those can share the object the press built.
+  BroadcastDraft buildDraft() => BroadcastDraft(
+    id: _draftId ?? Id.unique(),
+    ownerId: _userId,
+    title: title.value,
+    description: description.value,
+    record: record.value,
+    cohosts: cohosts.toList(),
+    imagePath: imagePath.value,
+    imageId: _uploadedImageId,
+    createdBroadcastId: _createdBroadcastId,
+    creationStep: step.value,
+    idempotencyKey: _createKey ??= _uuid.v4(),
+    lastModified: DateTime.now(),
+  );
+
+  /// The form as a draft, written to the device.
+  ///
+  /// Called by the exit prompt when the user asks to keep the work, and by a
+  /// failed creation so its retry can resume instead of start again.
   Future<BroadcastDraft> saveDraft() async {
-    final draft = BroadcastDraft(
-      id: _draftId ??= Id.unique(),
-      ownerId: _userId,
-      title: title.value,
-      description: description.value,
-      record: record.value,
-      cohosts: cohosts.toList(),
-      imagePath: imagePath.value,
-      imageId: _uploadedImageId,
-      createdBroadcastId: _createdBroadcastId,
-      creationStep: step.value,
-      idempotencyKey: _createKey ??= _uuid.v4(),
-      lastModified: DateTime.now(),
-    );
+    final draft = buildDraft();
 
     if (draft.isEmpty) return draft;
 
+    _draftId = draft.id;
     await _local.saveDraft(draft);
     hasUnsavedChanges.value = false;
     _loadDrafts();
     return draft;
+  }
+
+  /// Keeps the work when a start could not finish.
+  ///
+  /// The one automatic draft. A creation that stopped half-way is the case the
+  /// draft exists for: `createdBroadcastId` and `creationStep` are what make
+  /// the retry pick up at the phase that failed. A failure saving it must not
+  /// replace the failure the user is about to be shown, so this is quiet.
+  Future<void> _keepFailedStart() async {
+    try {
+      await saveDraft();
+    } on Object catch (error) {
+      _logger.w('could not keep the draft after a failed start', error: error);
+    }
   }
 
   /// Whether the form holds something the device has not been given.
@@ -433,11 +443,52 @@ final class BroadcastEditorManager implements Disposable {
     // The next creation is a different broadcast, so it must not be able to
     // replay this one's stored outcome.
     _liveKey = null;
+    // Unconditionally: a form that has moved on must not be able to point the
+    // next creation at the row it just finished. `step` alone was not enough —
+    // a start whose entry failed leaves the id behind with the step still
+    // unset, and that is exactly the state that restarts an ended broadcast.
+    _createdBroadcastId = null;
+    step.value = BroadcastCreationStep.none;
+  }
 
-    if (step.value.index >= BroadcastCreationStep.created.index) {
-      _createdBroadcastId = null;
-      step.value = BroadcastCreationStep.none;
+  /// Goes on air, treating "already live" as the commit it is.
+  ///
+  /// A lost response, a second press and a client that never saw the first
+  /// answer all arrive here as `ALREADY_LIVE` — and the broadcast *is* on air,
+  /// so the only step left is the entry. Returning `null` says "nothing new to
+  /// attach", which the caller turns into a resume instead of an error the
+  /// user cannot act on.
+  Future<BroadcastSession?> _goLive(Id broadcastId) async {
+    // One key for every retry of this start: going on air is the logical
+    // operation, not the press.
+    final idempotencyKey = _liveKey ??= _uuid.v4();
+
+    try {
+      return (await _http.goLive(
+        broadcastId,
+        idempotencyKey: idempotencyKey,
+      )).toDomain(_userId);
+    } on MenoException catch (error) {
+      if (error.code == MenoErrorCode.alreadyLive) return null;
+      rethrow;
     }
+  }
+
+  /// Forgets the draft a started broadcast came from.
+  ///
+  /// A draft that outlives its broadcast is a button that restarts an ended
+  /// one: its `createdBroadcastId` names a terminal row, so every later press
+  /// is refused and the user is held on a form they already finished. The
+  /// broadcast itself lives on in the catalogue and the ended page; the
+  /// draft's job is done.
+  Future<void> _forgetStartedDraft() async {
+    final draftId = _draftId;
+    // Cleared first, so nothing written after this point re-creates the row.
+    _draftId = null;
+    if (draftId == null) return;
+
+    await _local.deleteDraft(draftId);
+    _loadDrafts();
   }
 
   /// Sends the picked picture to the API, once.
@@ -449,6 +500,12 @@ final class BroadcastEditorManager implements Disposable {
   /// failure here stops the chain before the broadcast is on air, so pressing
   /// Start again retries it rather than going on air without a cover.
   Future<void> _uploadArtwork() async {
+    // Past the commit the row is on air, and the API refuses a cover change on
+    // a broadcast that is live. A resumed draft whose picture never reached the
+    // server keeps the one it has rather than failing the chain it is meant to
+    // finish.
+    if (step.value.index >= BroadcastCreationStep.started.index) return;
+
     final broadcastId = _createdBroadcastId;
     final file = imagePath.value?.getFile;
     if (broadcastId == null || file == null) return;

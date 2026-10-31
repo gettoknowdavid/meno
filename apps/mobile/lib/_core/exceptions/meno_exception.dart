@@ -55,6 +55,15 @@ final class MenoErrorCode {
   static const String alreadyExists = 'ALREADY_EXISTS';
   static const String versionConflict = 'VERSION_CONFLICT';
 
+  // 409 — broadcast state. Branched on by the editor and the live owner, so the
+  // spellings mirror `ErrorCode` in `crates/core/src/error.rs` exactly.
+  static const String notLive = 'NOT_LIVE';
+  static const String alreadyLive = 'ALREADY_LIVE';
+  static const String alreadyLiveElsewhere = 'ALREADY_LIVE_ELSEWHERE';
+  static const String broadcastAlreadyEnded = 'BROADCAST_ALREADY_ENDED';
+  static const String alreadyJoined = 'ALREADY_JOINED';
+  static const String hostCannotLeave = 'HOST_CANNOT_LEAVE';
+
   // 422 — field-level detail arrives in `data`.
   static const String validationFailed = 'VALIDATION_FAILED';
 

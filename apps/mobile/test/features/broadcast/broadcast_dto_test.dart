@@ -126,13 +126,14 @@ void main() {
   });
 
   group('EndBroadcastDto', () {
-    test('parses the endedBroadcast camelCase payload', () {
+    // The payload is the API's, exactly: no `creatorName` is sent, and the
+    // screen falls back rather than the parse failing (audit H05).
+    test('parses the endedBroadcast payload the API actually sends', () {
       final ended = EndBroadcastDto.fromJson({
         'broadcastId': _broadcastId,
         'broadcastTitle': 'Ada\u2019s show',
         'broadcastImageUrl': null,
         'creatorId': _creatorId,
-        'creatorName': 'Ada Lovelace',
         'endedReason': 'normal',
         'endedAt': '2026-10-01T10:30:00Z',
         'durationSecs': 1500,
@@ -141,7 +142,11 @@ void main() {
       }).toDomain;
 
       expect(ended.broadcastId.getOrCrash, _broadcastId);
-      expect(ended.creatorName.getOrCrash, 'Ada Lovelace');
+      expect(
+        ended.creatorName,
+        SingleLineString.empty,
+        reason: 'the name is enriched locally, never taken off this payload',
+      );
       expect(ended.reason, EndReason.normal);
       expect(ended.duration, const Duration(seconds: 1500));
       expect(ended.totalParticipants, 42);

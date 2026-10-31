@@ -259,18 +259,25 @@ final class BroadcastHttpService {
   /// `DELETE /broadcasts/{id}/cohosts/{cohostId}`.
   ///
   /// [removeFromRoom] also drops them from the LiveKit room; without it they
-  /// keep listening and only lose the ability to publish.
-  Future<CohostDto> removeCohost(
+  /// keep listening and only lose the ability to publish. It travels in the
+  /// **JSON body**, which is where the API reads `removeFromRoom` — the query
+  /// parameter this used to send was silently ignored, so "keep listening"
+  /// evicted the person anyway (audit H05). It is required for the same
+  /// reason: the safe branch is chosen by the caller, never by a default
+  /// nobody meant.
+  ///
+  /// Nothing is parsed: the endpoint answers with no data, and expecting a
+  /// body turned a successful removal into a decode failure.
+  Future<void> removeCohost(
     Id broadcastId,
     Id cohostId, {
-    bool removeFromRoom = true,
+    required bool removeFromRoom,
     CancelToken? cancelToken,
   }) {
-    return _client.delete(
+    return _client.deleteUnit(
       '/broadcasts/${broadcastId.getOrCrash}/cohosts/${cohostId.getOrCrash}',
-      queryParameters: {'remove_from_room': removeFromRoom},
+      data: {'removeFromRoom': removeFromRoom},
       cancelToken: cancelToken,
-      fromJson: (data) => CohostDto.fromJson(_map(data)),
     );
   }
 

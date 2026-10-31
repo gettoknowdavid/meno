@@ -1,7 +1,6 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/services/permission_prompts.dart';
-import 'package:meno_mobile/app/layouts/authenticated_shell.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -34,8 +33,9 @@ const List<MDestination> _tabs = [
 ///
 /// Presentation only. Taps are reported to the router through
 /// [StatefulNavigationShell.goBranch], so branch state, deep links and the
-/// redirect guard stay owned by go_router. The tab content is wrapped in
-/// [AuthenticatedShell], which is where the live banner lives.
+/// redirect guard stay owned by go_router. The tab content is the router's
+/// shell, unwrapped: the live banner belongs to Home, per the design, not to
+/// chrome shared by every tab.
 ///
 /// Example (from the router's `StatefulShellRoute`):
 /// ```dart
@@ -54,8 +54,6 @@ class RootShell extends StatelessWidget {
     final index = navigationShell.currentIndex;
     final useSideNavRail = ResponsiveBreakpoints.of(context).largerThan(MOBILE);
 
-    final content = AuthenticatedShell(child: navigationShell);
-
     Widget body = Row(
       children: [
         MSideNavRail(
@@ -63,13 +61,13 @@ class RootShell extends StatelessWidget {
           onDestinationSelected: _onTabSelected,
           destinations: _tabs,
         ),
-        Expanded(child: content),
+        Expanded(child: navigationShell),
       ],
     );
     Widget? bottomNavigationBar;
 
     if (!useSideNavRail) {
-      body = content;
+      body = navigationShell;
       bottomNavigationBar = MBottomNavigationBar(
         currentIndex: index,
         onTap: _onTabSelected,

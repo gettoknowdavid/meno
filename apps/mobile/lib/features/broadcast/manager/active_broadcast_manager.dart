@@ -30,11 +30,20 @@ final class LiveEnterRequest {
     required this.broadcastId,
     required this.mode,
     this.idempotencyKey,
+    this.session,
   });
 
   final Id broadcastId;
   final LiveEnterMode mode;
   final String? idempotencyKey;
+
+  /// A session the caller already obtained, when the entry needs no API call.
+  ///
+  /// The editor goes live once and then hands the room over to the manager.
+  /// Asking the API for a second go-live from inside `enter` was a guaranteed
+  /// `ALREADY_LIVE`: the broadcast was committed by the first call, so the
+  /// second one hit the "already on air" guard and no room was opened.
+  final BroadcastSession? session;
 
   /// Whether this entry is a recovered session rather than a fresh one.
   bool get isRecovery => mode == LiveEnterMode.resume;
@@ -398,7 +407,10 @@ final class ActiveBroadcastManager implements Disposable {
     }
 
     try {
-      final details = await _gateway.enter(request, _context);
+      // An attached session is one the caller already paid for: the broadcast
+      // is committed and the token is in hand, so the entry is purely local.
+      final details =
+          request.session ?? await _gateway.enter(request, _context);
       if (generation != _operationGeneration || _exiting) {
         return const EnterResult.rejected();
       }
