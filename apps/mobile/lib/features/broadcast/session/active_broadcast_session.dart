@@ -6,6 +6,8 @@ import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/broadcast/manager/broadcast_timer_manager.dart';
 import 'package:meno_mobile/features/broadcast/manager/participants_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
+import 'package:meno_mobile/features/chat/manager/chat_list_manager.dart';
+import 'package:meno_mobile/features/chat/manager/chat_manager.dart';
 
 /// Why a session is closing.
 ///
@@ -126,6 +128,8 @@ final class ActiveBroadcastSession {
     required Clock clock,
     required MenoLogger logger,
     this.participants,
+    this.chat,
+    this.chatList,
     this._exitOnServer,
     Duration? initialElapsed,
   }) : _session = session,
@@ -155,6 +159,14 @@ final class ActiveBroadcastSession {
   /// the listening tab does not have to resolve a manager that no longer
   /// exists (audit H04).
   final ParticipantsManager? participants;
+
+  /// The room's composer: the draft text, the edit in progress and the frame
+  /// each action sends. Owned here for the same reason the roster is.
+  final ChatManager? chat;
+
+  /// The room's chat history and the frames that change it. Owned here too —
+  /// the chat is per room, and a container lookup would outlive it.
+  final ChatListManager? chatList;
 
   /// The on-air clock, owned for as long as this session is.
   late final BroadcastTimerManager timer;
@@ -203,6 +215,11 @@ final class ActiveBroadcastSession {
 
     await _room.connect(_session.token, canPublish: _session.canPublish);
     await _roster.attach();
+
+    // Subscribes to the room's chat frames and reads the history once. Run
+    // rather than awaited through `runAsync`, because it is a synchronous
+    // command that pipes into the async read itself.
+    chatList?.initialize.run();
   }
 
   /// Mutes or unmutes the local microphone.
@@ -247,6 +264,7 @@ final class ActiveBroadcastSession {
       _roomStateSubscription = null;
 
       await _quietly(_roster.detach, 'detaching the roster');
+      await _quietly(_detachChat, 'detaching the chat');
       await _quietly(() async {
         await _room.onDispose();
       }, 'disposing the room');
@@ -271,6 +289,16 @@ final class ActiveBroadcastSession {
       case RoomConnectionState.connecting:
         timer.pause();
     }
+  }
+
+  /// Releases the room's chat managers, in the order they were built.
+  ///
+  /// The list goes first: it owns the subscribes and the feed, and the composer
+  /// only sends frames, so nothing outlives the handler that would receive the
+  /// answer.
+  Future<void> _detachChat() async {
+    await chatList?.onDispose();
+    await chat?.onDispose();
   }
 
   /// Runs one teardown step, logging a failure instead of letting it skip the

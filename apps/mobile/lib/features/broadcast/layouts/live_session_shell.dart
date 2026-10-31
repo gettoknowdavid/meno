@@ -82,6 +82,13 @@ class LiveSessionShellState extends State<LiveSessionShell>
       (manager) => manager.snapshot,
     );
 
+    // The unread dot is the chat's own news, so it is read from the room's
+    // chat manager rather than inferred here. A fallback notifier is watched
+    // when the room has no chat yet, so the number of watches does not change
+    // between builds — watch_it keys its subscriptions by call order.
+    final chatList = di<ActiveBroadcastManager>().session?.chatList;
+    final hasUnread = watch(chatList?.hasUnread ?? _noUnread).value;
+
     if (snapshot.phase == LivePhase.idle || snapshot.phase == LivePhase.ended) {
       final endedId = snapshot.endedSummary?.id;
       callOnceAfterThisBuild((_) {
@@ -100,7 +107,7 @@ class LiveSessionShellState extends State<LiveSessionShell>
       child: Scaffold(
         appBar: _AppBar(
           controller: controller,
-          showChatDot: false,
+          showChatDot: hasUnread && controller.index != _chatTabIndex,
           onTabChanged: onTabTap,
         ),
         body: MTabBarView(
@@ -113,8 +120,20 @@ class LiveSessionShellState extends State<LiveSessionShell>
   }
 
   void _handleTabChanged() {
+    _syncChatVisibility();
     if (controller.index == widget.navigationShell.currentIndex) return;
     widget.navigationShell.goBranch(controller.index);
+  }
+
+  /// Tells the chat whether it is the screen being looked at.
+  ///
+  /// Called from the tab controller rather than from the chat tab itself:
+  /// the chat is built before it is shown, and what decides whether a message
+  /// is unread news is which tab is in front, not which widget exists.
+  void _syncChatVisibility() {
+    di<ActiveBroadcastManager>().session?.chatList?.setVisible(
+      controller.index == _chatTabIndex,
+    );
   }
 
   void onTabTap(int tappedIndex) {
@@ -127,6 +146,12 @@ class LiveSessionShellState extends State<LiveSessionShell>
     }
   }
 }
+
+/// Where the chat sits in the room's tab bar.
+const int _chatTabIndex = 1;
+
+/// The notifier watched while the room has no chat to report on.
+final ValueNotifier<bool> _noUnread = ValueNotifier<bool>(false);
 
 /// The room's tab bar, in the design system's normal (underline) style.
 ///

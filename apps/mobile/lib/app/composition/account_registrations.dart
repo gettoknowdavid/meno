@@ -5,6 +5,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/chat/chat.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 
@@ -74,6 +75,21 @@ Future<void> registerAccountScope(
   // because nothing that uses it is reachable without an account.
   scope.registerLazySingleton<BroadcastHttpService>(
     () => BroadcastHttpService(di<HttpClient>()),
+  );
+
+  // The chat's two ends. Both belong to the account for the same reason the
+  // broadcast adapter does: the handshake is authenticated as this account, and
+  // the history is that account's view of a room. Which room is the room
+  // managers' business, not these services'.
+  scope.registerLazySingleton<ChatHttpService>(
+    () => ChatHttpService(di<HttpClient>()),
+  );
+
+  scope.registerLazySingleton<ChatSocketService>(
+    () => ChatSocketService(
+      client: di<SocketClient>(),
+      logger: di<MenoLogger>(),
+    ),
   );
 
   // Created here rather than through `dependsOn`: an account is only ever
@@ -179,7 +195,7 @@ Future<void> registerAccountScope(
   final connection = AccountConnectionOwner(
     context: context,
     socket: di<SocketClient>(),
-    adapters: [di<BroadcastSocketService>()],
+    adapters: [di<BroadcastSocketService>(), di<ChatSocketService>()],
     credentials: di<SessionService>(),
     logger: di<MenoLogger>(),
     clock: di<Clock>(),
@@ -212,11 +228,30 @@ Future<void> registerAccountScope(
           socket: di<BroadcastSocketService>(),
           broadcastId: session.broadcast.id,
         );
+        // The room's chat, built with the session and closed with it. Both
+        // managers take the room's ids rather than the session, so neither can
+        // outlive the identity it writes into a frame.
+        final chat = ChatManager(
+          socket: di<ChatSocketService>(),
+          broadcastId: session.broadcast.id,
+          userId: session.userId,
+          logger: di<MenoLogger>(),
+        );
+        final chatList = ChatListManager(
+          http: di<ChatHttpService>(),
+          socket: di<ChatSocketService>(),
+          broadcastId: session.broadcast.id,
+          userId: session.userId,
+          logger: di<MenoLogger>(),
+        );
+
         return ActiveBroadcastSession(
           session: session,
           room: _createRoomTransport(session.broadcast.id, session.userId),
           roster: ParticipantsRoster(participants),
           participants: participants,
+          chat: chat,
+          chatList: chatList,
           clock: di<Clock>(),
           logger: di<MenoLogger>(),
           exitOnServer: exitOnServer,

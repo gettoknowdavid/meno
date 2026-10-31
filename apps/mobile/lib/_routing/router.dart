@@ -11,6 +11,7 @@ import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/layouts/live_session_shell.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
+import 'package:meno_mobile/features/chat/widgets/live_chat_tab.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -202,7 +203,7 @@ List<RouteBase> get _liveSessionRoutes => [
         routes: [
           GoRoute(
             path: MRoutes.liveChat,
-            builder: (_, _) => const StubPage('Chats'),
+            builder: (_, _) => const LiveChatTab(),
           ),
         ],
       ),

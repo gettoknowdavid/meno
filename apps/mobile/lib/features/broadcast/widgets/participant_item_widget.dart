@@ -134,7 +134,7 @@ class _HostTag extends WatchingWidget {
       (manager) => manager.currentUserId,
     );
     final isYou = participantId == currentUserId;
-    return isYou ? const MTag(title: 'You') : const MTag(title: 'Host');
+    return isYou ? const _Tag(title: 'You') : const _Tag(title: 'Host');
   }
 }
 
@@ -149,6 +149,18 @@ class _CoHostTag extends WatchingWidget {
       (manager) => manager.currentUserId,
     );
     final isYou = participantId == currentUserId;
-    return isYou ? const MTag(title: 'You') : const MTag(title: 'Co-Host');
+    return isYou ? const _Tag(title: 'You') : const _Tag(title: 'Co-Host');
+  }
+}
+
+class _Tag extends StatelessWidget {
+  const _Tag({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = MTextTheme.of(context);
+    return MText(title, style: textTheme.nanoRegular.copyWith(height: 1));
   }
 }
