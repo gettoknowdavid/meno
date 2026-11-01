@@ -110,6 +110,38 @@ void main() {
         'limit': 20,
       });
     });
+
+    test('sends a keyword as q, and a blank one as nothing', () {
+      // The bug this records: `updateKeywords` was a TODO, so both search bars
+      // in the app refreshed a list with the same filters it already had —
+      // typing a title that was plainly on screen found nothing.
+      final searching = const BroadcastQuery.all().updateKeywords('  purpose');
+
+      expect(searching.toQueryParameters()['q'], 'purpose');
+      expect(searching.keywords, 'purpose');
+      expect(searching.hasFilters, isTrue);
+
+      // A cleared bar means "no keyword filter", not a search for "".
+      expect(
+        searching.toQueryParameters(),
+        isNot(contains('cursor')),
+      );
+      for (final blank in [null, '', '   ']) {
+        expect(searching.updateKeywords(blank).toQueryParameters(), {
+          'order': 'desc',
+          'limit': 20,
+        });
+      }
+    });
+
+    test('a new term starts at the first page', () {
+      // The cursor is a position in the old result set; carrying it over asks
+      // the server for the row after a row from a list that no longer exists.
+      final secondPage = const BroadcastQuery.all().withCursor('opaque');
+
+      expect(secondPage.updateKeywords('purpose').cursor, isNull);
+      expect(secondPage.updateKeywords('purpose').isFirstPage, isTrue);
+    });
   });
 
   group('the cursor', () {

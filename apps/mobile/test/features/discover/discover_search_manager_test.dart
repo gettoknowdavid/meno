@@ -4,11 +4,12 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart' show ResponseBody;
+import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/local_storage.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
-import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/stub_api.dart';
@@ -24,25 +25,39 @@ String _id(int n) => switch (n) {
   _ => throw ArgumentError.value(n),
 };
 
-Map<String, dynamic> _account(int n, {String name = 'Ada'}) => {
+/// One row of `GET /broadcasts`, as the API frames it.
+///
+/// `active` with no `end_time` is on air; anything else has to carry an
+/// `end_time` to count as aired, which is the distinction the API's keyword
+/// filter uses to keep drafts out of a search.
+Map<String, dynamic> _broadcast(
+  int n, {
+  String title = 'The Purpose',
+  bool live = true,
+}) => {
   'id': _id(n),
-  'full_name': name,
-  'bio': null,
-  'avatar_url': null,
-  'is_following': false,
-  'followers': 0,
-  'following': 0,
-  'broadcasts': 0,
-  'created_at': null,
+  'title': title,
+  'status': live ? 'active' : 'inactive',
+  'state': live ? 'live' : 'ended',
+  'totalParticipants': 0,
+  'creatorId': _viewer,
+  'creatorName': 'David Michael',
+  'description': null,
+  'timeZone': 'Africa/Lagos',
+  'imageUrl': null,
+  'imageId': null,
+  'createdAt': '2026-10-28T09:15:00Z',
+  'startTime': '2026-10-28T09:15:00Z',
+  'endTime': live ? null : '2026-10-28T10:15:00Z',
 };
 
-/// One page of `GET /users`, as the API frames it.
+/// One page of `GET /broadcasts`, as the API frames it.
 Future<ResponseBody> _page(
-  List<Map<String, dynamic>> accounts, {
+  List<Map<String, dynamic>> broadcasts, {
   String? cursor,
 }) async => envelope(
   data: {
-    'data': accounts,
+    'data': broadcasts,
     'next_cursor': cursor,
     'has_next_page': cursor != null,
   },
@@ -57,10 +72,13 @@ void main() {
 
   setUp(() async {
     SharedPreferences.setMockInitialValues({});
+    // An unclaimed failure has to have somewhere to go; the app installs a
+    // logger in main(), and these tests only need the slot filled.
+    Command.globalExceptionHandler = (_, _) {};
     api = StubApi();
     storage = LocalStorage(await SharedPreferences.getInstance());
     manager = DiscoverSearchManager(
-      http: ProfileHttpService(stubClient(api)),
+      http: BroadcastHttpService(stubClient(api)),
       local: DiscoverLocalService(Id.fromString(_viewer), storage),
     );
   });
@@ -71,48 +89,59 @@ void main() {
 
   group('DiscoverSearchManager', () {
     test('a term too short to ask for is not sent, and clears the list', () async {
-      api.answers.add(() => _page([_account(1)]));
+      api.answers.add(() => _page([_broadcast(1)]));
 
-      await manager.search.runAsync('ada');
+      await manager.search.runAsync('the');
       expect(manager.feed.itemCount.value, 1);
 
-      await manager.search.runAsync('ad');
+      await manager.search.runAsync('th');
 
-      // The API refuses a term under three characters, so nothing was sent and
-      // the previous term's rows are gone rather than left standing.
+      // Too short to be worth a request, so nothing was sent and the previous
+      // term's rows are gone rather than left standing.
       expect(api.requests, hasLength(1));
       expect(manager.feed.itemCount.value, 0);
       expect(manager.hasMore.value, isFalse);
-      expect(manager.recentSearches.value, ['ada']);
+      expect(manager.recentSearches.value, ['the']);
     });
 
-    test('searching asks the profile endpoint and records the term', () async {
-      api.answers.add(() => _page([_account(1), _account(2)], cursor: 'c2'));
+    test('searching asks the broadcast endpoint by keyword and records it', () async {
+      api.answers.add(
+        () => _page(
+          [
+            _broadcast(1),
+            _broadcast(2, title: 'The Purpose, again', live: false),
+          ],
+          cursor: 'c2',
+        ),
+      );
 
-      await manager.search.runAsync('  ada  ');
+      await manager.search.runAsync('  the purpose  ');
 
       final request = api.requests.single;
-      expect(request.path, '/users');
-      expect(request.queryParameters['q'], 'ada');
-      expect(manager.query.value, 'ada');
-      expect(manager.feed.items.map((profile) => profile.id.getOrCrash), [
+      // The bug this records: the search used to read accounts, so a title
+      // plainly in the list was never found. The keyword now goes where the
+      // broadcasts are.
+      expect(request.path, '/broadcasts');
+      expect(request.queryParameters['q'], 'the purpose');
+      expect(manager.query.value, 'the purpose');
+      expect(manager.feed.items.map((broadcast) => broadcast.id.getOrCrash), [
         _id(1),
         _id(2),
       ]);
       expect(manager.hasMore.value, isTrue);
 
-      // Only a search that found somebody is remembered, and the trimmed term
+      // Only a search that found something is remembered, and the trimmed term
       // is what is remembered.
-      expect(manager.recentSearches.value, ['ada']);
+      expect(manager.recentSearches.value, ['the purpose']);
       expect(
         storage.getStringList(
           StorageKeys.forUser(StorageKeys.recentSearches, _viewer),
         ),
-        ['ada'],
+        ['the purpose'],
       );
     });
 
-    test('a search that found nobody is not remembered', () async {
+    test('a search that found nothing is not remembered', () async {
       api.answers.add(() => _page(const []));
 
       await manager.search.runAsync('zzz');
@@ -123,11 +152,12 @@ void main() {
 
     test('fetchMore reads the cursor page and appends it', () async {
       api.answers.addAll([
-        () => _page([_account(1), _account(2)], cursor: 'c2'),
-        () => _page([_account(3)]),
+        () => _page([_broadcast(1), _broadcast(2)], cursor: 'c2'),
+        () => _page([_broadcast(3)]),
       ]);
 
-      await manager.search.runAsync('ada');
+      await manager.search.runAsync('purpose');
+
       await manager.fetchMore.runAsync();
 
       expect(api.requests, hasLength(2));
@@ -136,13 +166,14 @@ void main() {
       expect(manager.hasMore.value, isFalse);
     });
 
-    test('a page that repeats an account does not add it twice', () async {
+    test('a page that repeats a broadcast does not add it twice', () async {
       api.answers.addAll([
-        () => _page([_account(1), _account(2)], cursor: 'c2'),
-        () => _page([_account(2), _account(3)]),
+        () => _page([_broadcast(1), _broadcast(2)], cursor: 'c2'),
+        () => _page([_broadcast(2), _broadcast(3)]),
       ]);
 
-      await manager.search.runAsync('ada');
+      await manager.search.runAsync('purpose');
+
       await manager.fetchMore.runAsync();
 
       expect(manager.feed.itemCount.value, 3);
@@ -150,12 +181,13 @@ void main() {
 
     test('a failed page is reported once and waits for the user', () async {
       api.answers.addAll([
-        () => _page([_account(1)], cursor: 'c2'),
+        () => _page([_broadcast(1)], cursor: 'c2'),
         () => Future.value(envelope(status: 500)),
-        () => _page([_account(2)]),
+        () => _page([_broadcast(2)]),
       ]);
 
-      await manager.search.runAsync('ada');
+      await manager.search.runAsync('purpose');
+
       await manager.fetchMore.runAsync();
 
       expect(manager.feed.pageError.value, isNotNull);
@@ -174,16 +206,17 @@ void main() {
       'removing and clearing the history updates what the screen reads',
       () async {
         api.answers.addAll([
-          () => _page([_account(1)]),
-          () => _page([_account(2)]),
+          () => _page([_broadcast(1)]),
+          () => _page([_broadcast(2)]),
         ]);
 
-        await manager.search.runAsync('ada');
+        await manager.search.runAsync('purpose');
         await manager.search.runAsync('grace');
-        expect(manager.recentSearches.value, ['grace', 'ada']);
+
+        expect(manager.recentSearches.value, ['grace', 'purpose']);
 
         await manager.removeRecentSearch.runAsync('grace');
-        expect(manager.recentSearches.value, ['ada']);
+        expect(manager.recentSearches.value, ['purpose']);
 
         await manager.clearRecentSearches.runAsync();
         expect(manager.recentSearches.value, isEmpty);
@@ -191,18 +224,18 @@ void main() {
     );
 
     test('the history survives a manager built again for the same account', () async {
-      api.answers.add(() => _page([_account(1)]));
-      await manager.search.runAsync('ada');
+      api.answers.add(() => _page([_broadcast(1)]));
+      await manager.search.runAsync('purpose');
 
       // A second manager over the same account and device reads what the first
       // one stored — that is what "recent" means across a restart.
       final again = DiscoverSearchManager(
-        http: ProfileHttpService(stubClient(StubApi())),
+        http: BroadcastHttpService(stubClient(StubApi())),
         local: DiscoverLocalService(Id.fromString(_viewer), storage),
       );
       addTearDown(again.onDispose);
 
-      expect(again.recentSearches.value, ['ada']);
+      expect(again.recentSearches.value, ['purpose']);
       expect(again.feed.itemCount.value, 0);
     });
 
@@ -215,9 +248,9 @@ void main() {
           return body;
         });
 
-        final searching = manager.search.runAsync('ada');
+        final searching = manager.search.runAsync('purpose');
         await manager.onDispose();
-        gates.first.release(await _page([_account(1)]));
+        gates.first.release(await _page([_broadcast(1)]));
         await searching;
       },
     );
