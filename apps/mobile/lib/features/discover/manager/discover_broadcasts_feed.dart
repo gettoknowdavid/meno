@@ -1,16 +1,18 @@
 import 'package:meno_mobile/_shared/manager/feed_data_source.dart';
-import 'package:meno_mobile/features/profile/model/_model.dart';
-import 'package:meno_mobile/features/profile/services/_services.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 
-/// The accounts one keyword search found, read a page at a time.
+/// The broadcasts one keyword search found, read a page at a time.
 ///
 /// # What it reads
 ///
-/// `GET /users?q=` — the API's only keyword search. There is no broadcast
-/// search: `GET /broadcasts` filters by creator, status and order, and has no
-/// term at all, so a search screen that claimed to find broadcasts would be
-/// showing rows that did not match what was typed (audit, Discover). Live and
-/// recently-live browsing stays on the broadcast feeds.
+/// `GET /broadcasts?q=` — the endpoint's keyword filter, matched against the
+/// title and description text its search index covers. The same endpoint draws
+/// the browsing tabs, so a result card and a tab card are the same row on the
+/// wire and open the same way.
+///
+/// A search is a public read: the API leaves drafts and broadcasts that have
+/// never been on air out of a keyword list, so this feed does not have to know
+/// which rows are somebody's unannounced work.
 ///
 /// # Why a feed rather than a page list
 ///
@@ -20,7 +22,7 @@ import 'package:meno_mobile/features/profile/services/_services.dart';
 /// the one already in flight, and never reads past a page that failed. A
 /// search that re-implemented any of that would get one of them wrong — the
 /// old screen kept a page number, which this endpoint does not have.
-final class DiscoverProfilesFeed extends PagedFeedDataSource<Profile> {
+final class DiscoverBroadcastsFeed extends PagedFeedDataSource<Broadcast> {
   /// Creates a feed over [_http], reading [_keywords].
   ///
   /// The term is part of the feed so that a page read in flight and the term it
@@ -31,7 +33,7 @@ final class DiscoverProfilesFeed extends PagedFeedDataSource<Profile> {
     super.fetchMoreEnabled = true,
   });
 
-  final ProfileHttpService _http;
+  final BroadcastHttpService _http;
 
   String _keywords;
 
@@ -39,14 +41,18 @@ final class DiscoverProfilesFeed extends PagedFeedDataSource<Profile> {
   String get keywords => _keywords;
 
   @override
-  bool itemsAreEqual(Profile a, Profile b) => a.id == b.id;
+  bool itemsAreEqual(Broadcast a, Broadcast b) => a.id == b.id;
 
   @override
-  Future<FeedPage<Profile>> fetchPage(String? cursor) async {
-    final page = await _http.search(_keywords, cursor: cursor);
+  Future<FeedPage<Broadcast>> fetchPage(String? cursor) async {
+    // No status and no section: a search is not one tab of the catalogue but a
+    // term over all of it, and the API decides which rows are public.
+    final page = await _http.list(
+      BroadcastQuery(keywords: _keywords).withCursor(cursor),
+    );
 
     return FeedPage(
-      items: page.items,
+      items: [for (final summary in page.items) summary.toBroadcast()],
       // A cursor the server did not pair with another page would make the list
       // ask once more for nothing.
       nextCursor: page.hasNextPage ? page.nextCursor : null,

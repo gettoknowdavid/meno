@@ -1,12 +1,12 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
-import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Discover's search screen: recent terms before anything is typed, the found
-/// accounts after.
+/// broadcasts after.
 ///
 /// The manager behind it is the account's, taken from the locator rather than
 /// built here: it lives as long as the account does, so leaving this screen and
@@ -192,18 +192,29 @@ class _SearchResults extends WatchingWidget {
               crossAxisCount: 2,
               mainAxisSpacing: 24,
               crossAxisSpacing: 24,
-              childAspectRatio: 159.50 / 192,
+              childAspectRatio: 159.50 / 176,
             ),
             itemCount: count,
             itemBuilder: (context, i) {
               // Reading through the feed is what asks for the next page once
               // the grid is within three of its end.
-              final profile = manager.feed.getItemAtIndex(i);
-              return ProfileCard(
-                profile: profile,
-                onTap: () =>
-                    context.push(MRoutes.userProfileRoute(profile.id)),
-              );
+              final broadcast = manager.feed.getItemAtIndex(i);
+
+              // A result is drawn the way the tab that would have shown it
+              // draws it: on air now is a room to join, anything else opens its
+              // page.
+              return broadcast.isLive
+                  ? BroadcastCard.nLive(
+                      broadcast,
+                      key: ValueKey(broadcast.id),
+                      onTap: () => PreStreamModal.show(context, broadcast.id),
+                    )
+                  : BroadcastCard.rLive(
+                      broadcast,
+                      key: ValueKey(broadcast.id),
+                      onTap: () =>
+                          context.push(MRoutes.broadcastRoute(broadcast.id)),
+                    );
             },
           ),
         ),

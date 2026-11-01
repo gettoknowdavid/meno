@@ -4,19 +4,20 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
-import 'package:meno_mobile/features/discover/manager/discover_profiles_feed.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/discover/manager/discover_broadcasts_feed.dart';
 import 'package:meno_mobile/features/discover/services/_services.dart';
-import 'package:meno_mobile/features/profile/profile.dart';
 
-/// The account search behind Discover: what was typed, what it found, and what
-/// was searched for before.
+/// The broadcast search behind Discover: what was typed, what it found, and
+/// what was searched for before.
 ///
 /// # What it searches
 ///
-/// Accounts, through `GET /users?q=` — the API's only keyword search. There is
-/// no broadcast search (audit, Discover): `GET /broadcasts` filters by creator,
-/// status and order, so the browsing tabs stay on the broadcast feeds and this
-/// manager never claims a broadcast matched a term it could not send.
+/// Broadcasts, through `GET /broadcasts?q=` — matched against the title and
+/// description text the API indexes, so typing a title that is on screen in the
+/// browsing tabs finds that broadcast. Drafts and broadcasts that have never
+/// been on air are not offered by the API in a keyword list, whatever this
+/// account may own.
 ///
 /// # Why it lives in the account scope
 ///
@@ -29,13 +30,13 @@ import 'package:meno_mobile/features/profile/profile.dart';
 ///
 /// # Paging
 ///
-/// Reading more is the feed's [DiscoverProfilesFeed.requestNextPageCommand],
+/// Reading more is the feed's [DiscoverBroadcastsFeed.requestNextPageCommand],
 /// exposed rather than wrapped: a second command around it would have its own
 /// `isRunning`, and the list would have to watch two.
 final class DiscoverSearchManager implements Disposable {
   /// Creates the manager over its search service and this account's history.
-  new({required ProfileHttpService http, required this._local}) {
-    _feed = DiscoverProfilesFeed(http: http, keywords: '');
+  new({required BroadcastHttpService http, required this._local}) {
+    _feed = DiscoverBroadcastsFeed(http: http, keywords: '');
 
     search = .createAsyncNoResult<String>(
       _search,
@@ -90,7 +91,14 @@ final class DiscoverSearchManager implements Disposable {
 
   final DiscoverLocalService _local;
 
-  late final DiscoverProfilesFeed _feed;
+  late final DiscoverBroadcastsFeed _feed;
+
+  /// The shortest term worth asking the API for.
+  ///
+  /// A keyword list needs something to match, and a two-letter term matches
+  /// most of a catalogue. The API itself accepts any non-blank `q`; the floor
+  /// is the client's, so a half-typed word is not an error on screen.
+  static const int minSearchLength = 3;
 
   /// The term as the screen holds it — the search bar's text and what the body
   /// decides to draw is read from this, not from the last submitted term.
@@ -119,7 +127,7 @@ final class DiscoverSearchManager implements Disposable {
   bool _disposed = false;
 
   /// The feed drawing the results — its item count, items and page failure.
-  PagedFeedDataSource<Profile> get feed => _feed;
+  PagedFeedDataSource<Broadcast> get feed => _feed;
 
   /// Whether the first page of a term is on its way.
   ValueListenable<bool> get isSearching => search.isRunning;
@@ -153,15 +161,14 @@ final class DiscoverSearchManager implements Disposable {
 
   /// Searches [term], or empties the results when it is too short to ask for.
   ///
-  /// The API refuses a term under three characters, so sending one would turn a
-  /// half-typed word into an error on screen. The list is cleared instead, and
-  /// the screen says it found nothing — which is the truth about a term that
-  /// searched for nothing.
+  /// A term under [minSearchLength] matches too much to be worth a round trip,
+  /// so none is sent. The list is cleared instead, and the screen says it found
+  /// nothing — which is the truth about a term that searched for nothing.
   Future<void> _search(String term) async {
     final keywords = term.trim();
     query.value = keywords;
 
-    if (keywords.length < ProfileHttpService.minSearchLength) {
+    if (keywords.length < minSearchLength) {
       _feed.clear();
       hasMore.value = false;
       return;
@@ -172,8 +179,8 @@ final class DiscoverSearchManager implements Disposable {
 
     _adoptPagingState();
 
-    // Only a search that found somebody is worth remembering: a history full of
-    // terms that matched nothing is a list of dead ends.
+    // Only a search that found something is worth remembering: a history full
+    // of terms that matched nothing is a list of dead ends.
     if (_feed.items.isEmpty) return;
     await _local.addRecentSearch(keywords);
     if (_disposed) return;

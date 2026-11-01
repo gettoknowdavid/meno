@@ -148,7 +148,7 @@ Future<void> registerAccountScope(
 
   scope.registerLazySingleton<DiscoverSearchManager>(
     () => DiscoverSearchManager(
-      http: di<ProfileHttpService>(),
+      http: di<BroadcastHttpService>(),
       local: di<DiscoverLocalService>(),
     ),
   );

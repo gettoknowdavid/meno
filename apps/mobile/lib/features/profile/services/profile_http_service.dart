@@ -1,6 +1,6 @@
 import 'dart:io' show File;
 
-import 'package:dio/dio.dart' show CancelToken, FormData, MultipartFile;
+import 'package:dio/dio.dart' show FormData, MultipartFile;
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
@@ -28,42 +28,6 @@ final class ProfileHttpService {
           ProfileDto.fromJson(data as Map<String, dynamic>).toDomain,
     );
   }
-
-  /// `GET /users?q=&cursor=&limit=` — one page of the account search.
-  ///
-  /// The API's only keyword search: it matches a name and a bio through
-  /// `users.search_vector`, newest account first, and refuses a term shorter
-  /// than three characters (422, naming `q`). It is keyset-paginated like every
-  /// other list, so [cursor] is the previous page's own and no page number is
-  /// involved — a relevance score, and therefore a stable rank, is not what
-  /// this endpoint returns.
-  ///
-  /// Each row is shaped like a public profile (`ProfileSearchResult` in
-  /// `apps/api/src/modules/profile/dto.rs`), so it decodes through the same DTO
-  /// and the screens draw one entity either way.
-  Future<CursorPage<Profile>> search(
-    String keywords, {
-    String? cursor,
-    int limit = defaultSearchLimit,
-    CancelToken? cancelToken,
-  }) {
-    return _client.get(
-      '/users',
-      queryParameters: {'q': keywords, 'cursor': ?cursor, 'limit': limit},
-      cancelToken: cancelToken,
-      fromJson: (data) => CursorPage.fromJson(
-        data,
-        (item) => ProfileDto.fromJson(item).toDomain,
-        logger: _client.logger,
-      ),
-    );
-  }
-
-  /// What the search asks for when a caller does not say: the API's default.
-  static const int defaultSearchLimit = 20;
-
-  /// The shortest term the search accepts, as the API validates it.
-  static const int minSearchLength = 3;
 
   /// `POST /subscribers/{id}` — follows [userId].
   ///

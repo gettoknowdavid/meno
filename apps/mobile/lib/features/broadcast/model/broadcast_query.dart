@@ -65,27 +65,28 @@ enum BroadcastsType {
 ///
 /// A filter that only *narrows* the rows stays compatible with a keyset cursor
 /// and can be added without redesigning any of this — that is the shape of the
-/// two gaps noted below.
+/// one gap still noted below.
 ///
 /// # Sections
 ///
 /// The sections the UI draws are `all`, `nowLive`, `recentlyLive`, `forYou` and
 /// `subscriptions`; `section` maps a [BroadcastsType] to its query so a tab bar
-/// can be built from the enum. Two of them are not fully backed by the API yet,
-/// and say so on their factories rather than pretending:
+/// can be built from the enum. One of them is not fully backed by the API yet,
+/// and says so on its factory rather than pretending:
 ///
 /// * `forYou` sends `status=active` and takes every live broadcast, because the
 ///   endpoint has no "who I follow" filter. Through
 ///   [BroadcastsType.subscriptions] the same gap appears a second time.
-/// * there is no keyword filter at all, so the search bars in the design have
-///   nothing to send yet. `GET /profiles` shows what adding one looks like: a
-///   `q` matched against a search vector, sitting alongside the same cursor —
-///   narrowing, so cursor-safe.
+///
+/// Keywords are the narrowing filter that *was* missing ([keywords], sent as
+/// `q`); it is matched against the broadcasts' indexed title and description
+/// text, so the search bars in the design have something to send.
 class BroadcastQuery with Equatable {
   const new({
     this.type,
     this.status,
     this.creatorId,
+    this.keywords,
     this.order = BroadcastOrder.newest,
     this.cursor,
     this.limit = defaultLimit,
@@ -96,6 +97,7 @@ class BroadcastQuery with Equatable {
     : type = null,
       status = null,
       creatorId = null,
+      keywords = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -108,6 +110,7 @@ class BroadcastQuery with Equatable {
     : type = BroadcastsType.nowLive,
       status = BroadcastStatus.active,
       creatorId = null,
+      keywords = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -131,6 +134,7 @@ class BroadcastQuery with Equatable {
   const new recentlyLive({this.limit = defaultLimit, this.creatorId})
     : type = BroadcastsType.recentlyLive,
       status = BroadcastStatus.inactive,
+      keywords = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -143,6 +147,7 @@ class BroadcastQuery with Equatable {
   const new forYou({this.limit = defaultLimit, this.creatorId})
     : type = BroadcastsType.forYou,
       status = BroadcastStatus.active,
+      keywords = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -157,6 +162,7 @@ class BroadcastQuery with Equatable {
     : type = BroadcastsType.subscriptions,
       status = BroadcastStatus.active,
       creatorId = null,
+      keywords = null,
       order = BroadcastOrder.newest,
       cursor = null;
 
@@ -164,6 +170,7 @@ class BroadcastQuery with Equatable {
   const new byCreator(
     this.creatorId, {
     this.status,
+    this.keywords,
     this.order = BroadcastOrder.newest,
     this.limit = defaultLimit,
   }) : type = null,
@@ -194,6 +201,7 @@ class BroadcastQuery with Equatable {
       type: type,
       status: _statusFromWire(parameters['status'] as String?),
       creatorId: parameters['creatorId'] as String?,
+      keywords: parameters['q'] as String?,
       order: BroadcastOrder.values.firstWhere(
         (order) => order.wire == parameters['order'],
         orElse: () => BroadcastOrder.newest,
@@ -218,6 +226,17 @@ class BroadcastQuery with Equatable {
   /// Only this creator's broadcasts.
   final String? creatorId;
 
+  /// Only broadcasts whose title or description match this term.
+  ///
+  /// Sent as `q` and matched by the API against the same text
+  /// `idx_broadcasts_search` indexes. It narrows the rows and leaves the keyset
+  /// cursor alone, so a search pages exactly like every other list.
+  ///
+  /// The API treats a keyword list as a public read: drafts and broadcasts that
+  /// have never been on air are never in the results, whichever `status` this
+  /// query carries.
+  final String? keywords;
+
   /// Which way the `created_at` keyset walks.
   final BroadcastOrder order;
 
@@ -231,7 +250,8 @@ class BroadcastQuery with Equatable {
   ///
   /// The type and the direction shape a list rather than filter it, so neither
   /// counts: a `forYou` feed with nothing else set is still "everything".
-  bool get hasFilters => status != null || creatorId != null;
+  bool get hasFilters =>
+      status != null || creatorId != null || keywords != null;
 
   /// Whether this is the first page.
   bool get isFirstPage => cursor == null;
@@ -249,29 +269,40 @@ class BroadcastQuery with Equatable {
     BroadcastsType? type,
     BroadcastStatus? status,
     String? creatorId,
+    String? keywords,
     BroadcastOrder? order,
     String? cursor,
     int? limit,
     bool replaceCursor = false,
+    bool replaceKeywords = false,
   }) => BroadcastQuery(
     type: type ?? this.type,
     status: status ?? this.status,
     creatorId: creatorId ?? this.creatorId,
+    keywords: replaceKeywords ? keywords : (keywords ?? this.keywords),
     order: order ?? this.order,
     cursor: replaceCursor ? cursor : (cursor ?? this.cursor),
     limit: limit ?? this.limit,
   );
 
-  /// Update search keywords and reset to first page
+  /// The same filters, narrowed to [newKeywords] and back at the first page.
+  ///
+  /// The cursor is dropped because it is a position in the *old* result set:
+  /// asking for the row after it while the filter has changed reads from the
+  /// wrong list. A blank term means "no keyword filter" rather than a search
+  /// for the empty string, which is what the list does when the bar is cleared.
   BroadcastQuery updateKeywords(String? newKeywords) {
-    // TODO(gettoknowdavid): implement sentinel for the copyWith method to
-    // handle the case where the properties are replaced with null
-    //
-    // TODO(gettoknowdavid): implement keywords. Seems like it is not event
-    // implemented on the backend
-    return copyWith(
-      // keywords: newKeywords,
-      // cursor: null,
+    final trimmed = newKeywords?.trim();
+    // Built rather than copied: `copyWith` cannot tell an argument that was
+    // left out from one that is null, and "the first page" is exactly a null
+    // cursor. Spelled out, the reset is visible instead of implied.
+    return BroadcastQuery(
+      type: type,
+      status: status,
+      creatorId: creatorId,
+      keywords: (trimmed == null || trimmed.isEmpty) ? null : trimmed,
+      order: order,
+      limit: limit,
     );
   }
 
@@ -280,6 +311,7 @@ class BroadcastQuery with Equatable {
   Map<String, dynamic> toQueryParameters() => {
     'creatorId': ?creatorId,
     'status': ?status?.wire,
+    'q': ?keywords,
     'order': order.wire,
     'cursor': ?cursor,
     'limit': limit,
@@ -294,6 +326,7 @@ class BroadcastQuery with Equatable {
     'type': ?type?.wire,
     'status': ?status?.wire,
     'creatorId': ?creatorId,
+    'q': ?keywords,
     'order': order.wire,
   };
 
@@ -306,5 +339,13 @@ class BroadcastQuery with Equatable {
   }
 
   @override
-  List<Object?> get props => [type, status, creatorId, order, cursor, limit];
+  List<Object?> get props => [
+    type,
+    status,
+    creatorId,
+    keywords,
+    order,
+    cursor,
+    limit,
+  ];
 }
