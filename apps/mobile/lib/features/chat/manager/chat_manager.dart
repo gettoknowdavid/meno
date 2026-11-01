@@ -8,13 +8,14 @@ import 'package:meno_mobile/features/chat/services/chat_socket_service.dart';
 
 /// What the room's composer holds and what it does with it.
 final class ChatManager implements Disposable {
+  /// Creates the composer for one room, wired to its socket.
   new({
     required this._socket,
     required this._broadcastId,
     required this._userId,
     required this._logger,
   }) {
-    sendMessage = Command.createAsyncNoParamNoResult(
+    sendMessage = .createAsyncNoParamNoResult(
       () async {
         final body = content.value.getOrCrash;
         _socket.sendMessage(broadcastId: _broadcastId, content: body);
@@ -22,19 +23,28 @@ final class ChatManager implements Disposable {
       },
       errorFilterFn: menoExceptionFilter,
       restriction: content.map((value) => !value.isValid),
+      debugName: 'chat.sendMessage',
     );
 
-    startEditing = Command.createSyncNoResult<Message>((message) {
-      messageToEdit.value = message;
-      content.value = message.content;
-    }, errorFilterFn: menoExceptionFilter);
+    startEditing = .createSyncNoResult<Message>(
+      (message) {
+        messageToEdit.value = message;
+        content.value = message.content;
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'chat.startEditing',
+    );
 
-    stopEditing = Command.createSyncNoParamNoResult(() {
-      messageToEdit.value = null;
-      content.value = MultiLineString.empty;
-    }, errorFilterFn: menoExceptionFilter);
+    stopEditing = .createSyncNoParamNoResult(
+      () {
+        messageToEdit.value = null;
+        content.value = MultiLineString.empty;
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'chat.stopEditing',
+    );
 
-    editMessage = Command.createAsyncNoParamNoResult(
+    editMessage = .createAsyncNoParamNoResult(
       () async {
         final message = messageToEdit.value;
         if (message == null || !message.isEditable) return;
@@ -54,12 +64,17 @@ final class ChatManager implements Disposable {
         content,
         (message, body) => message == null || !body.isValid,
       ),
+      debugName: 'chat.editMessage',
     );
 
-    deleteMessage = Command.createAsyncNoResult<Message>((message) async {
-      if (!message.isDeletable) return;
-      _socket.deleteMessage(broadcastId: _broadcastId, messageId: message.id);
-    }, errorFilterFn: menoExceptionFilter);
+    deleteMessage = .createAsyncNoResult<Message>(
+      (message) async {
+        if (!message.isDeletable) return;
+        _socket.deleteMessage(broadcastId: _broadcastId, messageId: message.id);
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'chat.deleteMessage',
+    );
   }
 
   final ChatSocketChannel _socket;

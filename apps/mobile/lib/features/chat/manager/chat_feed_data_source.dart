@@ -25,8 +25,7 @@ import 'package:meno_mobile/features/chat/services/chat_http_service.dart';
 /// could see changing needs its own signal (the same reason the live snapshot
 /// is a single value rather than scattered booleans).
 final class ChatFeedDataSource extends PagedFeedDataSource<Message> {
-  new({required this._http, required this._broadcastId})
-   ;
+  new({required this._http, required this._broadcastId});
 
   final ChatMessagePageReader _http;
   final Id _broadcastId;

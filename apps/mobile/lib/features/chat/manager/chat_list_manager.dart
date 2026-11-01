@@ -26,6 +26,7 @@ import 'package:meno_mobile/features/chat/services/chat_socket_service.dart';
 /// the shell tells it which one is in front — once on every tab change, not
 /// once per frame.
 final class ChatListManager implements Disposable {
+  /// Creates the room's list over its page reader and the room's frames.
   new({
     required ChatMessagePageReader http,
     required this._socket,
@@ -37,9 +38,10 @@ final class ChatListManager implements Disposable {
     // Subscriptions first, then the read they are piped into: a page read
     // before the handlers exist would miss every message that lands between the
     // response and the first listener.
-    initialize = Command.createSyncNoParamNoResult(
+    initialize = .createSyncNoParamNoResult(
       _subscribe,
       errorFilterFn: menoExceptionFilter,
+      debugName: 'chatList.initialize',
     )..pipeToCommand(feed.updateDataCommand);
   }
 
@@ -54,18 +56,17 @@ final class ChatListManager implements Disposable {
   /// Whether a message arrived while the chat was not on screen.
   final hasUnread = ValueNotifier<bool>(false);
 
-  StreamSubscription<Message>? _onNewMessage;
-  StreamSubscription<Message>? _onEditedMessage;
-  StreamSubscription<DeletedMessageSignal>? _onDeletedMessage;
-  StreamSubscription<void>? _onReconnected;
-
-  bool _isInitialized = false;
+  late final Command<void, void> initialize;
 
   /// Whether the chat is the screen in front of the person right now.
   bool _isVisible = false;
 
-  /// Subscribes to the room's frames and loads the history once.
-  late final Command<void, void> initialize;
+  bool _isInitialized = false;
+
+  StreamSubscription<Message>? _onNewMessage;
+  StreamSubscription<Message>? _onEditedMessage;
+  StreamSubscription<DeletedMessageSignal>? _onDeletedMessage;
+  StreamSubscription<void>? _onReconnected;
 
   /// Whether anything has been asked for yet — what a widget reads to tell
   /// "loading" from "empty".
