@@ -205,6 +205,7 @@ impl BroadcastService {
             .list(BroadcastFilter {
                 creator_id: query.creator_id,
                 status: query.status,
+                q: query.keywords().map(str::to_owned),
                 limit_plus_one: query.limit_plus_one(),
                 cursor,
                 order: query.effective_order(),

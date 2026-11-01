@@ -399,6 +399,23 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             .filter(|b| b.deleted_at.is_none())
             .filter(|b| filter.creator_id.is_none_or(|id| b.creator_id == id))
             .filter(|b| filter.status.is_none_or(|status| b.status == status))
+            // Postgres matches a search with `plainto_tsquery` over the indexed
+            // title/description text and keeps only what has been on air. The double
+            // matches on the same two fields as a case-insensitive substring: stemming
+            // and ranking are properties of the real database, and a double that claimed
+            // to reproduce them would be asserting on itself.
+            .filter(|b| match filter.q.as_deref() {
+                Some(term) => {
+                    let needle = term.to_lowercase();
+                    let in_title = b.title.to_lowercase().contains(&needle);
+                    let in_description = b
+                        .description
+                        .as_deref()
+                        .is_some_and(|description| description.to_lowercase().contains(&needle));
+                    (in_title || in_description) && (b.is_live() || b.end_time.is_some())
+                }
+                None => true,
+            })
             .cloned()
             .collect();
 

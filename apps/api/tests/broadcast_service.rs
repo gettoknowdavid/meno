@@ -348,6 +348,51 @@ async fn listing_a_second_page_does_not_repeat_rows() {
 // ── update / delete (creator-only) ────────────────────────────────────────
 
 #[tokio::test]
+async fn searching_finds_a_broadcast_by_title_and_never_a_draft() {
+    // Discover's search box sends `?q=`; before this filter existed it had nothing to
+    // send, so typing a title that was plainly in the list found nothing. The draft is
+    // the other half: a search is a public read, and `GET /broadcasts` without a filter
+    // carries every draft of every creator.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    // Same title, never on air, and not Ada's: it must not surface in a search.
+    let mut draft_request = second_request();
+    draft_request.title = "Ada's show, still a draft".to_owned();
+    let draft = svc
+        .create(draft_request, user(2, "Grace Hopper"))
+        .await
+        .expect("create draft");
+
+    let search = |q: &str| dto::BroadcastQuery {
+        q: Some(q.to_owned()),
+        ..Default::default()
+    };
+
+    let found = svc.list(&search("ada's show")).await.expect("search");
+    assert_eq!(found.data.len(), 1, "one on-air match: {found:?}");
+    assert_eq!(found.data[0].id, live.id);
+
+    let drafts = svc.list(&search("still a draft")).await.expect("search");
+    assert!(
+        drafts.data.is_empty(),
+        "a draft reached a search: {drafts:?}"
+    );
+    assert_ne!(draft.id, live.id);
+
+    // A blank term narrows nothing: it is the list, not a search for the empty string.
+    let all = svc.list(&search("   ")).await.expect("blank search");
+    assert_eq!(all.data.len(), 2, "blank q must not filter: {all:?}");
+}
+
+#[tokio::test]
 async fn updating_as_the_creator_succeeds() {
     let (svc, repo, _) = service();
     seed(&repo);

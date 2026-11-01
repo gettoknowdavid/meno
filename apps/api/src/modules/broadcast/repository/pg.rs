@@ -386,6 +386,20 @@ impl BroadcastRepo for PgBroadcastRepo {
         if let Some(status) = filter.status {
             qb.push(" AND status = ").push_bind(status.as_str());
         }
+        if let Some(keywords) = filter.q.as_deref() {
+            // The expression `idx_broadcasts_search` indexes, spelled the same way,
+            // so this narrows an index scan rather than scanning every broadcast.
+            qb.push(
+                " AND to_tsvector('english', title || ' ' || coalesce(description, '')) \
+                 @@ plainto_tsquery('english', ",
+            )
+            .push_bind(keywords.to_owned())
+            .push(")");
+
+            // A search is a public read: a draft, or one that has never been on
+            // air, is not a result somebody else may find.
+            qb.push(" AND is_draft = false AND (status = 'active' OR end_time IS NOT NULL)");
+        }
 
         push_cursor_condition(
             &mut qb,

@@ -212,6 +212,16 @@ pub struct BroadcastQuery {
     pub creator_id: Option<Uuid>,
     /// Only broadcasts in this status.
     pub status: Option<BroadcastStatus>,
+    /// Only broadcasts whose title or description match this term.
+    ///
+    /// Matched with `plainto_tsquery` against the same expression
+    /// `idx_broadcasts_search` indexes, so a search is an index scan rather than
+    /// a filter over every row. It is a *narrowing* filter, which is what makes
+    /// it safe beside a keyset cursor: the cursor still walks `(created_at, id)`.
+    ///
+    /// A search is a public read, so drafts and broadcasts that have never been
+    /// on air are never in the results — see `BroadcastRepo::list`.
+    pub q: Option<String>,
     /// Sort direction. Defaults to newest first.
     pub order: Option<meno_core::Order>,
     /// The embedded `?cursor=` / `?limit=`.
@@ -242,6 +252,15 @@ impl BroadcastQuery {
     #[must_use]
     pub fn effective_order(&self) -> meno_core::Order {
         self.order.unwrap_or_default()
+    }
+
+    /// The keyword filter, trimmed; a blank `?q=` narrows nothing.
+    #[must_use]
+    pub fn keywords(&self) -> Option<&str> {
+        self.q
+            .as_deref()
+            .map(str::trim)
+            .filter(|term| !term.is_empty())
     }
 }
 

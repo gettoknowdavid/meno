@@ -223,6 +223,12 @@ pub struct BroadcastFilter {
     pub creator_id: Option<Uuid>,
     /// Only broadcasts in this status.
     pub status: Option<BroadcastStatus>,
+    /// Only broadcasts whose title or description match this term.
+    ///
+    /// When set, the list is a public search: drafts and broadcasts that have not
+    /// been on air are excluded, because a row nobody has heard yet is not one a
+    /// stranger should find by typing at it.
+    pub q: Option<String>,
     /// The page size, plus the one probe row.
     pub limit_plus_one: i64,
     /// The exclusive keyset boundary from the previous page.
