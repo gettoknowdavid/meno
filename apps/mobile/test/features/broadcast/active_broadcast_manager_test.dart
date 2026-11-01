@@ -92,6 +92,7 @@ final class _FakeGateway implements LiveGateway {
   Completer<BroadcastSession>? holdNextEnter;
   bool failEnd = false;
   bool failEnter = false;
+  MenoException? enterError;
 
   @override
   Future<BroadcastSession> enter(
@@ -99,6 +100,8 @@ final class _FakeGateway implements LiveGateway {
     AccountContext context,
   ) async {
     enterCalls++;
+    final error = enterError;
+    if (error != null) throw error;
     if (failEnter) throw StateError('the API is unreachable');
     final held = holdNextEnter;
     if (held != null) {
@@ -217,6 +220,11 @@ void main() {
     expect(gateway.enterCalls, 1, reason: 'recovery found a session already');
     expect(manager.snapshot.value.phase, LivePhase.live);
     expect(manager.hasSession, isTrue);
+    expect(
+      manager.recovery.value,
+      isNull,
+      reason: 'nobody has to be taken anywhere: they are already here',
+    );
   });
 
   test('a failed REST end still ends locally, with a summary', () async {
@@ -239,6 +247,38 @@ void main() {
 
     expect(gateway.enterCalls, 1);
     expect(manager.snapshot.value.phase, LivePhase.live);
+    // Published only once the room is actually live: the app navigates on it.
+    expect(manager.recovery.value?.getOrNull, _broadcastId);
+  });
+
+  test('a recovery the server refuses is not asked for again', () async {
+    await store.save(_details());
+    gateway.enterError = const ForbiddenException(
+      message: 'you are no longer part of this broadcast',
+    );
+
+    await manager.recover();
+
+    expect(manager.snapshot.value.phase, LivePhase.failed);
+    expect(manager.recovery.value, isNull);
+    // The broadcast ended while the app was away, or the account left it: the
+    // record is the only reason a launch would ask again.
+    expect(store.read(), isNull);
+  });
+
+  test('a recovery that failed for a passing reason keeps its record',
+      () async {
+    await store.save(_details());
+    gateway.enterError = const NetworkException(
+      message: 'the connection dropped',
+    );
+
+    await manager.recover();
+
+    expect(manager.snapshot.value.phase, LivePhase.failed);
+    expect(manager.recovery.value, isNull);
+    // Still worth trying on the next launch.
+    expect(store.read()?.broadcastId.getOrNull, _broadcastId);
   });
 
   test('a session whose start throws is closed, not leaked', () async {

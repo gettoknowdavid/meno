@@ -2,8 +2,10 @@ import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/profile/manager/my_profile_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -52,6 +54,13 @@ class AccountGate extends WatchingWidget {
 /// request carry the credential the owner stored just before publishing it
 /// (Step 26). A read that fails here is logged by the manager: nobody asked
 /// for it, so it raises nothing.
+///
+/// It is also where a recovered room is handed back. `ActiveBroadcastManager`
+/// re-enters the broadcast the last process was in — as host or as listener —
+/// but re-entering is not the same as being there: without a destination the
+/// app would come back from a crash to Home, with a live session nobody can
+/// see. So the one signal that recovery published becomes one navigation, and
+/// the transition page decides what that phase calls for.
 class _AccountScopeHost extends StatefulWidget {
   const new({required this.child, super.key});
 
@@ -62,14 +71,51 @@ class _AccountScopeHost extends StatefulWidget {
 }
 
 class _AccountScopeHostState extends State<_AccountScopeHost> {
+  /// Whether the recovered room has already been opened.
+  ///
+  /// One activation, one hand-off: a rebuild must not push the room again, and
+  /// a person who left it is not pulled back into it.
+  bool _openedRecoveredRoom = false;
+
+  late final ActiveBroadcastManager _live;
+
   @override
   void initState() {
     super.initState();
     unawaited(di<MyProfileManager>().refresh());
+
+    _live = di<ActiveBroadcastManager>();
+    _live.recovery.addListener(_onRecovered);
+
+    // Recovery may have finished before this widget was built — the account
+    // becomes ready first — so the signal is read once here as well.
+    _onRecovered();
   }
 
   @override
   Widget build(BuildContext context) => widget.child;
+
+  /// Takes the account back into the room a restart left it in.
+  void _onRecovered() {
+    if (_openedRecoveredRoom || _live.recovery.value == null) return;
+    _openedRecoveredRoom = true;
+
+    // After the frame: recovery can complete while the navigator is still being
+    // built, and a push before then has nothing to push onto.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !di.isRegistered<GoRouter>()) return;
+      // The transition page is the destination: going there again would stack a
+      // second copy of the room's entry over the one being shown.
+      if (di<GoRouter>().state.uri.path == MRoutes.liveSessionInit) return;
+      unawaited(di<GoRouter>().push<void>(MRoutes.liveSessionInit));
+    });
+  }
+
+  @override
+  void dispose() {
+    _live.recovery.removeListener(_onRecovered);
+    super.dispose();
+  }
 }
 
 /// The page shown while an account is being prepared or taken down.

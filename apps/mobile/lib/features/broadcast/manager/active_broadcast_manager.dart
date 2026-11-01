@@ -237,6 +237,15 @@ final class ActiveBroadcastManager implements Disposable {
   /// The one authoritative view of the live broadcast.
   final snapshot = ValueNotifier<LiveSnapshot>(LiveSnapshot.idle());
 
+  /// The broadcast a restart put this account back into, once.
+  ///
+  /// Recovery is the one entry nobody asked for from a screen: the process that
+  /// was in the room is gone, so whoever was in it has to be taken back to it
+  /// rather than left on whatever screen the app opened on. A person who joined
+  /// from a page is already on their way there, so a fresh entry publishes
+  /// nothing here.
+  final recovery = ValueNotifier<Id?>(null);
+
   ActiveBroadcastSession? _session;
 
   /// The request the last entry was made with, kept so a failed entry can be
@@ -436,6 +445,11 @@ final class ActiveBroadcastManager implements Disposable {
       }
 
       _publishLive(session);
+
+      // Told after the room is live: a signal that arrived before there was a
+      // room to return to would send its listener to a page with no session.
+      if (request.isRecovery) recovery.value = details.broadcast.id;
+
       await _quietly(
         () => _store.save(details),
         'recording the recovery record',
@@ -459,6 +473,19 @@ final class ActiveBroadcastManager implements Disposable {
       final failure = _isRetryable(error)
           ? LiveFailure(message: message, retryable: true, cause: error)
           : LiveFailure.terminal(message);
+
+      // A recovery the server refused outright is not going to be allowed on
+      // the next launch either: the broadcast ended while the app was away, or
+      // this account is no longer part of it. Forgetting the record is what
+      // stops every start from asking the same question again. A failure that
+      // could work later keeps its record, so the next launch tries again.
+      if (request.isRecovery && !failure.retryable) {
+        await _quietly(
+          _store.clear,
+          'clearing a recovery record that cannot be used',
+        );
+      }
+
       snapshot.value = LiveSnapshot(phase: .failed, failure: failure);
       return EnterResult.failed(request.broadcastId, failure);
     }
@@ -700,5 +727,6 @@ final class ActiveBroadcastManager implements Disposable {
     join.dispose();
     leaveOrEnd.dispose();
     snapshot.dispose();
+    recovery.dispose();
   }
 }
