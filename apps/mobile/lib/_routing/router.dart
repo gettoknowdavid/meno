@@ -12,6 +12,7 @@ import 'package:meno_mobile/features/broadcast/layouts/live_session_shell.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/chat/widgets/live_chat_tab.dart';
+import 'package:meno_mobile/features/discover/discover.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -26,6 +27,13 @@ const String _notFound = 'Not found';
 /// anything outside the widget tree — the global failure reporter — reaches
 /// toasts through it rather than through a page's context.
 final rootNavigatorKey = GlobalKey<NavigatorState>(debugLabel: 'root');
+
+/// The navigator the Discover tabs hang under.
+///
+/// The bottom bar's branch for Discover holds a shell of its own — three tabs,
+/// one per list — and a nested shell has to name the navigator it is displayed
+/// in rather than being placed on the root (go_router's `parentNavigatorKey`).
+final discoverBranchKey = GlobalKey<NavigatorState>(debugLabel: 'discover');
 final liveBroadcastKey = GlobalKey<NavigatorState>(debugLabel: 'liveBroadcast');
 final liveChatKey = GlobalKey<NavigatorState>(debugLabel: 'liveChat');
 final liveBibleKey = GlobalKey<NavigatorState>(debugLabel: 'liveBible');
@@ -43,30 +51,43 @@ List<RouteBase> get _bottomNavShell => [
         ],
       ),
       StatefulShellBranch(
+        navigatorKey: discoverBranchKey,
+        initialLocation: MRoutes.discoverAllTab,
         routes: [
           GoRoute(
             path: MRoutes.discover,
-            builder: (_, _) => const StubPage('Discover'),
-            routes: [
-              GoRoute(
-                path: 'all',
-                builder: (_, _) => const StubPage('All Broadcasts'),
+            // Discover has no screen of its own: it is its first tab. A link to
+            // the bare path is a link to "all", not a fourth page.
+            redirect: (_, _) => MRoutes.discoverAllTab,
+          ),
+          StatefulShellRoute(
+            parentNavigatorKey: discoverBranchKey,
+            builder: (_, _, navigationShell) => navigationShell,
+            navigatorContainerBuilder: DiscoverShell.builder,
+            branches: [
+              StatefulShellBranch(
+                routes: [
+                  GoRoute(
+                    path: MRoutes.discoverAllTab,
+                    builder: (_, _) => const AllBroadcastsWidget(),
+                  ),
+                ],
               ),
-              GoRoute(
-                path: 'now-live',
-                builder: (_, _) => const StubPage('Discover Now Live'),
+              StatefulShellBranch(
+                routes: [
+                  GoRoute(
+                    path: MRoutes.discoverNowLiveTab,
+                    builder: (_, _) => const NowLiveBroadcastsWidget(),
+                  ),
+                ],
               ),
-              GoRoute(
-                path: 'recently-live',
-                builder: (_, _) => const StubPage('Discover Recently Live'),
-              ),
-              GoRoute(
-                path: 'accounts',
-                builder: (_, _) => const StubPage('Suggested Accounts'),
-              ),
-              GoRoute(
-                path: 'search',
-                builder: (_, _) => const StubPage('Discover Search'),
+              StatefulShellBranch(
+                routes: [
+                  GoRoute(
+                    path: MRoutes.discoverRecentlyLiveTab,
+                    builder: (_, _) => const RecentlyLiveBroadcastsWidget(),
+                  ),
+                ],
               ),
             ],
           ),
@@ -327,6 +348,17 @@ List<RouteBase> get _settingsRoutes => [
 ];
 
 List<RouteBase> get _standaloneRoutes => [
+  GoRoute(
+    path: MRoutes.discoverSearch,
+    builder: (_, _) => const DiscoverSearchPage(),
+  ),
+  // The suggested-accounts tab is not built yet: there is no endpoint that
+  // suggests anybody, and profiles are found by searching. The address still
+  // lands somewhere real rather than on a "not found" page.
+  GoRoute(
+    path: MRoutes.discoverSuggestedAccountsTab,
+    redirect: (_, _) => MRoutes.discoverAllTab,
+  ),
   GoRoute(
     path: MRoutes.notifications,
     builder: (_, _) => const StubPage('Notifications'),

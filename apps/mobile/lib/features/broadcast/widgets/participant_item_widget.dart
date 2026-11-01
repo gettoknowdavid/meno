@@ -154,7 +154,7 @@ class _CoHostTag extends WatchingWidget {
 }
 
 class _Tag extends StatelessWidget {
-  const _Tag({required this.title});
+  const new({required this.title});
 
   final String title;
 

@@ -56,6 +56,12 @@ final class StorageKeys {
   /// A profile that has been opened, kept so returning to it is instant.
   static const String publicProfile = 'profile.public';
 
+  /// The terms this account searched Discover for, most recent first.
+  ///
+  /// Scoped to the account through [forUser]: one device holds several
+  /// accounts, and what somebody looked for is theirs, not the device's.
+  static const String recentSearches = 'discover.recent_searches';
+
   /// The live broadcast this account was in when the app stopped.
   ///
   /// Scoped to the account it belongs to through [forUser]: a session is

@@ -6,6 +6,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/chat/chat.dart';
+import 'package:meno_mobile/features/discover/discover.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 
@@ -134,6 +135,22 @@ Future<void> registerAccountScope(
   // its lifetime is its holders', and the account's at the outside.
   scope.registerLazySingleton<ProfileHttpService>(
     () => ProfileHttpService(di<HttpClient>()),
+  );
+
+  // Discover's search. Both are this account's: the recent terms are stored
+  // under the account's id, and the search is resolved against whoever asks.
+  // Lazy, because nothing about signing in needs them — the first Visit to
+  // Discover builds them, and the account's exit disposes them with it (audit
+  // M05).
+  scope.registerLazySingleton<DiscoverLocalService>(
+    () => DiscoverLocalService(context.accountId, di<LocalStorage>()),
+  );
+
+  scope.registerLazySingleton<DiscoverSearchManager>(
+    () => DiscoverSearchManager(
+      http: di<ProfileHttpService>(),
+      local: di<DiscoverLocalService>(),
+    ),
   );
 
   scope.registerLazySingleton<ProfileCacheService>(
