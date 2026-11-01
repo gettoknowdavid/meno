@@ -209,11 +209,17 @@ Future<void> registerAccountScope(
   // before the socket is asked to connect, and everything is stopped before the
   // scope takes the socket away. Registered after the socket, so it is disposed
   // before it.
+  //
+  // The session's own changes are the owner's other input: a refresh that
+  // replaces an expired access token is what lets a socket that gave up begin
+  // again, and a socket's handshake authenticates with whatever the vault holds
+  // at the moment it connects.
   final connection = AccountConnectionOwner(
     context: context,
     socket: di<SocketClient>(),
     adapters: [di<BroadcastSocketService>(), di<ChatSocketService>()],
     credentials: di<SessionService>(),
+    credentialChanges: di<SessionService>().changes,
     logger: di<MenoLogger>(),
     clock: di<Clock>(),
   );

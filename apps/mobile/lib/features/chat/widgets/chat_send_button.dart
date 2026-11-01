@@ -42,11 +42,18 @@ class ChatSendButton extends WatchingWidget {
           onPressed: () {
             FocusScope.of(context).unfocus();
             isEditing ? manager.editMessage.run() : manager.sendMessage.run();
-            scrollController.animateTo(
-              0,
-              duration: const Duration(milliseconds: 300),
-              curve: Curves.easeInOut,
-            );
+            // The list this scrolls can be gone by the time the button is
+            // tapped: a room whose chat tab is not the visible one, or a
+            // composer drawn before the list has been laid out. Jumping to the
+            // newest message is a courtesy; guessing at a missing attachment is
+            // an assertion in the middle of sending a message.
+            if (scrollController.hasClients) {
+              scrollController.animateTo(
+                0,
+                duration: const Duration(milliseconds: 300),
+                curve: Curves.easeInOut,
+              );
+            }
           },
         ),
       ],

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show ChangeNotifier;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
@@ -225,5 +226,38 @@ void main() {
     expect(socket.stops, 1);
     expect(adapter.detaches, 1);
     expect(owner.isStopping, isTrue);
+  });
+
+  test('a committed credential asks for delivery again', () async {
+    final changes = ChangeNotifier();
+    addTearDown(changes.dispose);
+    final changedSocket = _RecordingSocket(calls);
+    final changedOwner = AccountConnectionOwner(
+      context: context,
+      socket: changedSocket,
+      adapters: [adapter],
+      credentials: credentials,
+      credentialChanges: changes,
+      logger: _SilentLogger(),
+      clock: clock,
+    );
+    addTearDown(changedOwner.onDispose);
+
+    await changedOwner.start(verified: true);
+    expect(changedSocket.starts, 1);
+
+    // A refresh commits a new access token; the handshake on the next attempt
+    // reads it from the vault. Whether that attempt connects or is ignored as a
+    // duplicate is the socket's decision, so the owner asks every time.
+    changes.notifyListeners();
+    await Future<void>.delayed(Duration.zero);
+    expect(changedSocket.starts, 2);
+
+    // Leaving the account is not a reason to connect: a change that arrives
+    // after the stop is dropped.
+    await changedOwner.stop();
+    changes.notifyListeners();
+    await Future<void>.delayed(Duration.zero);
+    expect(changedSocket.starts, 2);
   });
 }

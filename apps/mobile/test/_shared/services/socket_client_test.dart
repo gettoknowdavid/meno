@@ -286,6 +286,33 @@ void main() {
       );
     });
 
+    test('a chain that ended can be started again', () async {
+      server.closeOnOpen = 1008;
+      client = _client(server.uri);
+
+      await client!.start();
+      await _waitFor(
+        () => client!.phase.value == ConnectionPhase.closed,
+        reason: 'the terminal close',
+      );
+      expect(server.connectionCount, 1);
+
+      // The refusal was a fact about that attempt, not about the client: with
+      // the reason gone, asking again has to connect rather than be swallowed.
+      server.closeOnOpen = null;
+      await client!.start();
+
+      await _waitFor(
+        () => client!.phase.value == ConnectionPhase.open,
+        reason: 'the second attempt',
+      );
+      await _waitFor(
+        () => server.connectionCount == 2,
+        reason: 'the second upgrade',
+      );
+      expect(server.connectionCount, 2);
+    });
+
     test('stop closes the socket and makes it non-retrying', () async {
       client = _client(server.uri);
       await client!.start();

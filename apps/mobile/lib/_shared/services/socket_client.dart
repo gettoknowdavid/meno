@@ -165,9 +165,17 @@ final class SocketClient implements Disposable, SocketEndpoint {
   ///
   /// Idempotent for the current iteration: a second call while a connection is
   /// being established, open or waiting to retry does nothing.
+  ///
+  /// A chain that has *ended* is not that iteration. Once [phase] is `closed`
+  /// — the handshake was refused, a terminal close code arrived, the retry
+  /// budget was spent, or there was no token to present — asking again is a new
+  /// attempt rather than a duplicate one. Without that, one bad minute (a
+  /// network that was down, a token that had expired with nothing yet to
+  /// replace it) would leave realtime dead for the life of the account, with
+  /// every send answered by [SocketNotConnectedException].
   @override
   Future<void> start() async {
-    if (_active) return;
+    if (_active && phase.value != .closed) return;
     _active = true;
     _attempt = 0;
     await _connect();

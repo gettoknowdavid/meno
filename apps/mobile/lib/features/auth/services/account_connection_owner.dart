@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show Listenable;
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/socket_client.dart';
@@ -32,6 +33,7 @@ final class AccountConnectionOwner implements Disposable {
     required this._credentials,
     required this._logger,
     required this._clock,
+    this._credentialChanges,
   });
 
   final AccountContext _context;
@@ -40,6 +42,17 @@ final class AccountConnectionOwner implements Disposable {
   final ConnectionCredentials _credentials;
   final MenoLogger _logger;
   final Clock _clock;
+
+  /// The session's own notifier, when the account has one.
+  ///
+  /// It is what a refreshed token announces; see [_onCredentialsChanged].
+  final Listenable? _credentialChanges;
+
+  /// Was the last [start] for a verified account.
+  ///
+  /// Kept so a restart after a credential change asks for delivery under the
+  /// same rule the account signed in with, rather than assuming it was allowed.
+  bool _verified = false;
 
   /// Whether [stop] has begun. Once true it never goes back: a late [start]
   /// publishes nothing.
@@ -79,6 +92,8 @@ final class AccountConnectionOwner implements Disposable {
     if (_stopping || _installed) return;
     _installed = true;
 
+    _credentialChanges?.addListener(_onCredentialsChanged);
+
     for (final adapter in _adapters) {
       try {
         adapter.install();
@@ -98,6 +113,7 @@ final class AccountConnectionOwner implements Disposable {
   /// A refused start is not a sign-out: the HTTP session stays valid and the
   /// screens keep working, so the failure is logged rather than thrown.
   Future<void> start({required bool verified}) async {
+    _verified = verified;
     if (_stopping) return;
 
     initialize();
@@ -130,6 +146,21 @@ final class AccountConnectionOwner implements Disposable {
   /// and be certain no frame arrives afterwards.
   Future<void> stop() => _stopResult ??= _stop();
 
+  /// Starts delivery again after the connection's own chain has ended.
+  ///
+  /// A committed credential — a refresh that replaced an expired token, or a
+  /// token that only now arrived — is the one moment the device knows a
+  /// handshake can succeed where it just failed. The socket ignores a start
+  /// while it is connecting, open or waiting to retry, and begins a new attempt
+  /// when its chain has given up (audit H06).
+  ///
+  /// A change that arrives during [stop] is not a reason to connect: the
+  /// account is leaving, and [_stopping] never goes back.
+  void _onCredentialsChanged() {
+    if (_stopping) return;
+    unawaited(start(verified: _verified));
+  }
+
   Future<void> _stop() async {
     _stopping = true;
 
@@ -151,6 +182,7 @@ final class AccountConnectionOwner implements Disposable {
 
   @override
   FutureOr<dynamic> onDispose() async {
+    _credentialChanges?.removeListener(_onCredentialsChanged);
     await stop();
     _adapters.clear();
   }
