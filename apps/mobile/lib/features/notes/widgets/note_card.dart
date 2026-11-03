@@ -78,13 +78,15 @@ class NoteCard extends StatelessWidget {
                         ),
                         Spaces.verticalSmall,
                       ],
-                      MText(
-                        content,
-                        style: textTheme.captionRegular,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                      const SizedBox(height: 14),
+                      if (content != null) ...[
+                        MText(
+                          content,
+                          style: textTheme.captionRegular,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                        const SizedBox(height: 14),
+                      ],
                       Wrap(
                         spacing: Insets.sm,
                         children: [
@@ -137,13 +139,18 @@ class NoteCard extends StatelessWidget {
   }
 }
 
-String _getContent(MultiLineString content) {
-  String value;
+String? _getContent(MultiLineString content) {
+  String? value;
   try {
-    final json = content.getOrCrash;
-    value = Document.fromJson(jsonDecode(json) as List<dynamic>).toPlainText();
+    final json = content.getOrNull;
+    if (json == null) {
+      value = null;
+    } else {
+      value = Document.fromJson(jsonDecode(json) as List<dynamic>)
+          .toPlainText();
+    }
   } on Object {
-    value = BoneMock.longParagraph;
+    value = null;
   }
   return value;
 }
