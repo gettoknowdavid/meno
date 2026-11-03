@@ -1,5 +1,4 @@
 // 
-// ignore_for_file: inference_failure_on_function_invocation
 
 import 'package:meno_mobile/_core/_core.dart' as core;
 import 'package:meno_mobile/_shared/services/database.dart';

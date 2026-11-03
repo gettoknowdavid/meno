@@ -63,7 +63,6 @@ class _HeaderWidget extends StatelessWidget {
       handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
       sliver: DynamicSliverAppBar(
         key: const Key('NotesFolderAppBar'),
-        toolbarHeight: kToolbarHeight,
         backgroundColor: colors.background,
         surfaceTintColor: Colors.transparent,
         forceElevated: innerBoxIsScrolled,

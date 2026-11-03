@@ -1,5 +1,5 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_it/flutter_it.dart';
+import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/broadcast/widgets/participants_grid.dart';
 import 'package:meno_ui/meno_ui.dart';
