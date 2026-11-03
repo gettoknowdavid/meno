@@ -15,10 +15,10 @@
 //!
 //! # What has landed
 //!
-//! [`auth`], [`broadcast`], [`profile`], [`settings`], [`chat`], [`notes`] and
-//! [`subscribers`]. The rest of §2's tree — `notifications` — is declared as it is written
-//! rather than stubbed, because a `pub mod` with an empty body is a module that compiles
-//! and does nothing.
+//! [`auth`], [`broadcast`], [`profile`], [`settings`], [`chat`], [`notes`],
+//! [`subscribers`] and [`notifications`] — which is §2's module tree complete. Each is
+//! declared as it was written rather than stubbed, because a `pub mod` with an empty body
+//! is a module that compiles and does nothing.
 //!
 //! [`broadcast`] landed second and shows the pattern at its clearest: a module that
 //! needs an external dependency it may not have (LiveKit, §4.6) takes that as a
@@ -71,6 +71,7 @@ pub mod auth;
 pub mod broadcast;
 pub mod chat;
 pub mod notes;
+pub mod notifications;
 pub mod profile;
 pub mod settings;
 pub mod subscribers;

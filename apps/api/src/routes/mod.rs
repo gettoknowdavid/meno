@@ -44,6 +44,7 @@ mod health;
 mod layers;
 mod metrics;
 mod notes;
+mod notifications;
 mod profile;
 mod settings;
 mod subscribers;
@@ -67,6 +68,7 @@ pub use broadcasts::BROADCAST_PATHS;
 pub use chat::CHAT_PATHS;
 pub use health::HEALTH_PATHS;
 pub use notes::NOTES_PATHS;
+pub use notifications::NOTIFICATIONS_PATHS;
 pub use profile::PROFILE_PATHS;
 pub use settings::SETTINGS_PATHS;
 pub use subscribers::SUBSCRIBERS_PATHS;
@@ -92,6 +94,7 @@ pub fn build_routes(state: MenoState) -> Router {
     let redis_for_broadcasts = Arc::clone(&redis);
     let redis_for_chat = Arc::clone(&redis);
     let redis_for_notes = Arc::clone(&redis);
+    let redis_for_notifications = Arc::clone(&redis);
     let redis_for_profile = Arc::clone(&redis);
     let redis_for_settings = Arc::clone(&redis);
     let redis_for_subscribers = Arc::clone(&redis);
@@ -147,6 +150,12 @@ pub fn build_routes(state: MenoState) -> Router {
             notes::routes(state.auth_guard.clone(), redis_for_notes)
                 .with_state(state.notes.clone()),
         )
+        // Notifications is merged for the same reason notes is: its paths are written
+        // `/notifications/...` in full inside its own table.
+        .merge(
+            notifications::routes(state.auth_guard.clone(), redis_for_notifications)
+                .with_state(state.notifications.clone()),
+        )
         .nest(
             "/users",
             // Relative paths inside, the nest carries the prefix — the auth pattern,
@@ -199,6 +208,7 @@ mod tests {
             .chain(CHAT_PATHS)
             .chain(HEALTH_PATHS)
             .chain(NOTES_PATHS)
+            .chain(NOTIFICATIONS_PATHS)
             .chain(PROFILE_PATHS)
             .chain(SUBSCRIBERS_PATHS)
             .chain(SETTINGS_PATHS)
@@ -242,9 +252,9 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            45,
+            50,
             "fourteen auth endpoints, eleven broadcast ones, one chat, six notes/folders, \
-             five subscribers, four profile, two settings and two probes"
+             five notifications, five subscribers, four profile, two settings and two probes"
         );
     }
 
@@ -262,6 +272,7 @@ mod tests {
             (CHAT_PATHS, "/"),
             (HEALTH_PATHS, "/health"),
             (NOTES_PATHS, "/"),
+            (NOTIFICATIONS_PATHS, "/"),
             (PROFILE_PATHS, "/users"),
             (SUBSCRIBERS_PATHS, "/"),
             (SETTINGS_PATHS, "/settings"),

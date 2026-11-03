@@ -61,6 +61,7 @@ use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::state::BroadcastState;
 use crate::modules::chat::state::ChatState;
 use crate::modules::notes::state::NotesState;
+use crate::modules::notifications::state::NotificationsState;
 use crate::modules::profile::state::ProfileState;
 use crate::modules::settings::state::SettingsState;
 use crate::modules::subscribers::state::SubscribersState;
@@ -116,6 +117,13 @@ pub struct MenoState {
     /// what subscribers needs. Built from [`SubscribersState::new`], so this file never
     /// names `PgSubscribersRepo`.
     pub subscribers: SubscribersState,
+    /// Notifications: the inbox, its templates, and the fan-out that fills it (§2's
+    /// tree).
+    ///
+    /// A projection of a repository, an unread counter and two delivery adapters —
+    /// chosen in `notifications::state::Wiring`, so `PUSH_ENABLED=false` is a no-op
+    /// sender rather than a compile failure (§4.6).
+    pub notifications: NotificationsState,
     /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
     ///
     /// Built here rather than in `routes.rs` because it is fallible — a blank
@@ -224,6 +232,14 @@ impl axum::extract::FromRef<MenoState> for SubscribersState {
     }
 }
 
+/// The same projection for notifications — the eighth, merged at the root like the
+/// broadcast table because its paths are written in full.
+impl axum::extract::FromRef<MenoState> for NotificationsState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.notifications.clone()
+    }
+}
+
 impl std::fmt::Debug for MenoState {
     /// Names the fields and nothing else.
     ///
@@ -244,6 +260,7 @@ impl std::fmt::Debug for MenoState {
             .field("chat", &self.chat)
             .field("notes", &self.notes)
             .field("subscribers", &self.subscribers)
+            .field("notifications", &self.notifications)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
             .field("metrics", &self.metrics)
@@ -378,7 +395,7 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
     // Chat: one pool and the bridge.
     let chat = ChatState::new(crate::modules::chat::state::Wiring {
         pool: parts.db.clone(),
-        bridge,
+        bridge: Arc::clone(&bridge),
     });
 
     // Notes and folders (§2's tree): one pool, no external service.
@@ -391,6 +408,16 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
     // service, because the module that would own one has not landed.
     let subscribers = SubscribersState::new(crate::modules::subscribers::state::Wiring {
         pool: parts.db.clone(),
+    });
+
+    // Notifications (§2's tree): a pool, Redis for the badge, the bridge for the
+    // in-app event, and the push sender `bootstrap` already chose. Nothing here reads
+    // a secret or dials anything, so the construction cannot fail.
+    let notifications = NotificationsState::new(crate::modules::notifications::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+        push: Arc::clone(&parts.push),
+        bridge,
     });
 
     Ok(MenoState {
@@ -415,6 +442,9 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         notes,
         // Subscribers (§2's tree). One pool.
         subscribers,
+        // Notifications (§2's tree). The inbox, its counter, and its two delivery
+        // adapters.
+        notifications,
         auth_guard,
         push: parts.push,
         storage: parts.storage,
