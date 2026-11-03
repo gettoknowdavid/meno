@@ -32,7 +32,7 @@ dependencies:
   intl: ^0.20.3
   livekit_client: ^2.13.0
   logger: ^2.8.0
-  material_ui: ^1.6.0
+  material_ui: ^1.9.0
   meno_ui:
     path: ../../packages/ui
   objectbox: ^6.0.0-preview.4

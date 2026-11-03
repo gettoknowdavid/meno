@@ -15,7 +15,7 @@ dependencies:
   flutter_gen: ^5.13.0+1
   flutter_svg: ^2.3.0
   intl: ^0.20.3
-  material_ui: ^1.6.0
+  material_ui: ^1.9.0
   pinput: ^7.0.0
   skeletonizer: ^3.0.0
   timeago: ^3.7.1
