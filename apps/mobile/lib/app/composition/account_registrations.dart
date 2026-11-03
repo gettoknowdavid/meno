@@ -7,6 +7,7 @@ import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/chat/chat.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
+import 'package:meno_mobile/features/notes/notes.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 
@@ -150,6 +151,69 @@ Future<void> registerAccountScope(
     () => DiscoverSearchManager(
       http: di<BroadcastHttpService>(),
       local: di<DiscoverLocalService>(),
+    ),
+  );
+
+  // The account's notes and folders. Both lists are server-held and read once
+  // per account; a folder's count comes from the notes this manager holds
+  // rather than from a second request per folder. Lazy, like Discover: nothing
+  // about signing in needs them, and the first visit to the notes tab builds
+  // them.
+  scope.registerLazySingleton<NotesHttpService>(
+    () => NotesHttpService(di<HttpClient>()),
+  );
+
+  // The device's own copy, owned by the account it belongs to — the same
+  // reasoning as the broadcast store: one store, one set of rows per account,
+  // and no box handed out.
+  scope.registerLazySingleton<NotesLocalService>(
+    () => NotesLocalService(
+      context.accountId,
+      di<Database>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // The queue between the two. Everything the screens write goes here, and it
+  // is drained when a list is opened, which is what makes a note typed offline
+  // arrive later instead of being lost.
+  scope.registerLazySingleton<NotesSyncService>(
+    () => NotesSyncService(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  scope.registerLazySingleton<FoldersManager>(
+    () => FoldersManager(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  scope.registerLazySingleton<NotesManager>(
+    () => NotesManager(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      folders: di<FoldersManager>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // Deleting, pinning and filing. It owns no state of its own: it writes
+  // through the store so every list showing the row is updated at once, and
+  // hands the row to the queue above.
+  scope.registerLazySingleton<NoteActionsManager>(
+    () => NoteActionsManager(
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      notes: di<NotesManager>(),
+      folders: di<FoldersManager>(),
+      logger: di<MenoLogger>(),
     ),
   );
 

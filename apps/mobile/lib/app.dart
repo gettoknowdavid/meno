@@ -94,7 +94,10 @@ class MenoApp extends WatchingWidget {
       darkTheme: MTheme.dark,
       themeMode: themeMode,
       routerConfig: di<GoRouter>(),
-      localizationsDelegates: const [FlutterQuillLocalizations.delegate],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
       builder: (context, child) => ResponsiveBreakpoints.builder(
         breakpoints: menoBreakpoints,
         child: AccountGate(child: child ?? const SizedBox.shrink()),
@@ -170,6 +173,10 @@ class _AppFrame extends StatelessWidget {
     theme: MTheme.light,
     darkTheme: MTheme.dark,
     themeMode: themeMode,
+    localizationsDelegates: const [
+      GlobalMaterialLocalizations.delegate,
+      FlutterQuillLocalizations.delegate,
+    ],
     home: child,
   );
 }
@@ -190,6 +197,10 @@ class ConfigurationErrorApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        FlutterQuillLocalizations.delegate,
+      ],
       home: Scaffold(
         body: Center(
           child: Padding(

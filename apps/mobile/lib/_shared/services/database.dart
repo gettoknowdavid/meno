@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_rows.dart';
+import 'package:meno_mobile/features/notes/model/note_rows.dart';
 import 'package:meno_mobile/objectbox.g.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -21,6 +22,8 @@ final class Database implements Disposable {
   new _(this._store) {
     _draftBox = _store.box<BroadcastDraftRow>();
     _favouriteBroadcastBox = _store.box<FavouriteBroadcastRow>();
+    _noteBox = _store.box<NoteRow>();
+    _noteFolderBox = _store.box<NoteFolderRow>();
   }
 
   /// Opens a database over an already-open [store].
@@ -35,6 +38,8 @@ final class Database implements Disposable {
 
   late final Box<BroadcastDraftRow> _draftBox;
   late final Box<FavouriteBroadcastRow> _favouriteBroadcastBox;
+  late final Box<NoteRow> _noteBox;
+  late final Box<NoteFolderRow> _noteFolderBox;
 
   /// Opens the store in the app's documents directory, under `meno`.
   static Future<Database> create() async {
@@ -54,6 +59,12 @@ final class Database implements Disposable {
   /// The broadcasts accounts keep for later.
   Box<FavouriteBroadcastRow> get favouriteBroadcastBox =>
       _favouriteBroadcastBox;
+
+  /// The account's notes, as the device holds them.
+  Box<NoteRow> get noteBox => _noteBox;
+
+  /// The account's folders.
+  Box<NoteFolderRow> get noteFolderBox => _noteFolderBox;
 
   /// Runs a synchronous write transaction.
   T runWriteTx<T>(T Function() fn) => _store.runInTransaction(.write, fn);

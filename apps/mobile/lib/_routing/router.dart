@@ -13,6 +13,7 @@ import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/chat/widgets/live_chat_tab.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
+import 'package:meno_mobile/features/notes/notes.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -97,8 +98,30 @@ List<RouteBase> get _bottomNavShell => [
         routes: [
           GoRoute(
             path: MRoutes.notes,
-            builder: (_, _) => const StubPage('Notes'),
+            builder: (_, _) => const MyNotesPage(),
+            // routes: [
+            //   GoRoute(
+            //     path: ':noteId',
+            //     builder: (_, state) => NoteEditorPage(
+            //       noteIdStr: state.pathParameters['noteId'],
+            //     ),
+            //   ),
+            // ],
           ),
+          // GoRoute(
+          //   path: MRoutes.folders,
+          //   // Folders are the second tab of the notes screen, not a destination
+          //   // of their own: a link to the list is a link to where it is drawn.
+          //   redirect: (_, _) => MRoutes.notes,
+          //   routes: [
+          //     GoRoute(
+          //       path: ':folderId',
+          //       builder: (_, state) => FolderPage(
+          //         folderIdStr: state.pathParameters['folderId'] ?? '',
+          //       ),
+          //     ),
+          //   ],
+          // ),
         ],
       ),
       StatefulShellBranch(
@@ -242,11 +265,12 @@ List<RouteBase> get _liveSessionRoutes => [
         routes: [
           GoRoute(
             path: MRoutes.liveNotes,
-            builder: (_, _) => const StubPage('Notes'),
+            builder: (_, _) => const LiveNotesTab(),
             routes: [
               GoRoute(
                 path: ':noteId',
-                builder: (_, _) => const StubPage('Notes Details'),
+                builder: (_, state) =>
+                    NoteEditorPage(noteIdStr: state.pathParameters['noteId']),
               ),
             ],
           ),
@@ -256,7 +280,9 @@ List<RouteBase> get _liveSessionRoutes => [
             routes: [
               GoRoute(
                 path: ':folderId',
-                builder: (_, _) => const StubPage('Folder Details'),
+                builder: (_, state) => FolderPage(
+                  folderIdStr: state.pathParameters['folderId'] ?? '',
+                ),
               ),
             ],
           ),
@@ -396,6 +422,21 @@ List<RouteBase> get _standaloneRoutes => [
   GoRoute(
     path: MRoutes.liveSessionInit,
     builder: (_, _) => const LiveSessionInitPage(),
+  ),
+  GoRoute(
+    path: '/notes/:noteId',
+    builder: (_, state) {
+      final raw = state.pathParameters['noteId'];
+      final noteIdStr = (raw == null || raw == 'new') ? null : raw;
+      return NoteEditorPage(noteIdStr: noteIdStr);
+    },
+  ),
+  GoRoute(
+    path: '/folders/:folderId',
+    builder: (_, state) {
+      final folderIdStr = state.pathParameters['folderId'] ?? '';
+      return FolderPage(folderIdStr: folderIdStr);
+    },
   ),
 ];
 

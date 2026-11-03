@@ -142,10 +142,174 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "3:6881536816200829258",
+      "lastPropertyId": "12:3658496102137564554",
+      "name": "NoteFolderRow",
+      "properties": [
+        {
+          "id": "1:2977007317309511317",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5904912841848411960",
+          "name": "folderId",
+          "indexId": "7:3358724060430196304",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:5550194200547949326",
+          "name": "ownerId",
+          "indexId": "8:8740767295057175020",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:2335468136638785827",
+          "name": "uniqueKey",
+          "indexId": "9:8863857641422467988",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "5:5110802212274441697",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "6:8154987947357893649",
+          "name": "pinned",
+          "type": 1
+        },
+        {
+          "id": "7:1530487936243901344",
+          "name": "version",
+          "type": 6
+        },
+        {
+          "id": "8:6207024618970743964",
+          "name": "createdAtMillis",
+          "type": 6
+        },
+        {
+          "id": "9:1359221482969716970",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "10:1388231009851202496",
+          "name": "deleted",
+          "type": 1
+        },
+        {
+          "id": "11:3716846629620996305",
+          "name": "pending",
+          "type": 1
+        },
+        {
+          "id": "12:3658496102137564554",
+          "name": "lastModifiedMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "4:3057471866715198153",
+      "lastPropertyId": "14:8771513053808371234",
+      "name": "NoteRow",
+      "properties": [
+        {
+          "id": "1:7534353370575172104",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5765652650434909076",
+          "name": "noteId",
+          "indexId": "10:368065072019656375",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:4258898162226043821",
+          "name": "ownerId",
+          "indexId": "11:5972834443117450749",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:4674143768433369446",
+          "name": "uniqueKey",
+          "indexId": "12:7699941769894555515",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "5:250537066783295803",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "6:736667252677677176",
+          "name": "content",
+          "type": 9
+        },
+        {
+          "id": "7:4735580209107445625",
+          "name": "pinned",
+          "type": 1
+        },
+        {
+          "id": "8:7692186413394370535",
+          "name": "folderId",
+          "indexId": "13:5058063908629476322",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "9:2841469238393725476",
+          "name": "version",
+          "type": 6
+        },
+        {
+          "id": "10:2450307364368753931",
+          "name": "createdAtMillis",
+          "type": 6
+        },
+        {
+          "id": "11:1737938905545890038",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "12:8399716492109573497",
+          "name": "deleted",
+          "type": 1
+        },
+        {
+          "id": "13:5965813809756459378",
+          "name": "pending",
+          "indexId": "14:5084076122021576091",
+          "type": 1,
+          "flags": 8
+        },
+        {
+          "id": "14:8771513053808371234",
+          "name": "lastModifiedMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "2:9055719608144194889",
-  "lastIndexId": "6:6641961697593249166",
+  "lastEntityId": "4:3057471866715198153",
+  "lastIndexId": "14:5084076122021576091",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
