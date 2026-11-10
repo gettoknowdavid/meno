@@ -88,6 +88,7 @@ pub mod events;
 pub mod handlers;
 pub mod media;
 pub mod model;
+pub mod notices;
 pub mod reaper;
 pub mod repository;
 pub mod rooms;

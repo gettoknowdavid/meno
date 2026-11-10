@@ -23,7 +23,7 @@ use std::sync::{Mutex, MutexGuard};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{FollowFilter, SubscribersRepo};
+use super::{FollowFilter, SubscriberProfile, SubscribersRepo};
 use crate::modules::subscribers::dto::{FollowDirection, SubscriberDto};
 use meno_core::Error as MenoError;
 
@@ -32,6 +32,7 @@ use meno_core::Error as MenoError;
 struct User {
     full_name: String,
     bio: Option<String>,
+    avatar_id: Option<String>,
     avatar_url: Option<String>,
 }
 
@@ -81,6 +82,7 @@ impl InMemorySubscribersRepo {
             User {
                 full_name: full_name.to_owned(),
                 bio: bio.map(str::to_owned),
+                avatar_id: None,
                 avatar_url: avatar_url.map(str::to_owned),
             },
         );
@@ -177,6 +179,27 @@ impl SubscribersRepo for InMemorySubscribersRepo {
 
     async fn user_exists(&self, user_id: Uuid) -> Result<bool, MenoError> {
         Ok(self.lock().users.contains_key(&user_id))
+    }
+
+    async fn find_profile(&self, user_id: Uuid) -> Result<Option<SubscriberProfile>, MenoError> {
+        let state = self.lock();
+        Ok(state.users.get(&user_id).map(|user| SubscriberProfile {
+            id: user_id,
+            full_name: user.full_name.clone(),
+            bio: user.bio.clone(),
+            avatar_id: user.avatar_id.clone(),
+            avatar_url: user.avatar_url.clone(),
+        }))
+    }
+
+    async fn subscriber_ids(&self, target_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        let state = self.lock();
+        Ok(state
+            .follows
+            .iter()
+            .filter(|follow| follow.target_id == target_id)
+            .map(|follow| follow.follower_id)
+            .collect())
     }
 
     async fn find_follows(&self, filter: &FollowFilter) -> Result<Vec<SubscriberDto>, MenoError> {

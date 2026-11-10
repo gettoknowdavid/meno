@@ -217,11 +217,27 @@ impl NotificationsService {
 
         // The unread counters, one per recipient. Detached after the first chunk: a
         // 10k-subscriber fan-out must not turn into 10k round trips inside a request.
+        // The unread counters and the in-app frames, one recipient at a time,
+        // detached after the first chunk: a 10k-subscriber fan-out must not turn
+        // into 10k round trips inside a request. The frame is gated on the same
+        // preference the single-recipient path reads, so a user who muted in-app
+        // notifications still gets the inbox row and no socket frame.
         let counter = Arc::clone(&self.counter);
+        let notifier = Arc::clone(&self.notifier);
+        let repo = Arc::clone(&self.repo);
         let recipients = owner_ids.to_vec();
+        let app_title = title.clone();
+        let app_body = body.clone();
         tokio::spawn(async move {
             for owner_id in recipients {
                 counter.increment(owner_id).await;
+                if repo
+                    .app_notifications_enabled(owner_id)
+                    .await
+                    .unwrap_or(false)
+                {
+                    notifier.notify(owner_id, &app_title, &app_body).await;
+                }
             }
         });
 

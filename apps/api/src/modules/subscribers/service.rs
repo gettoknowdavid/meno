@@ -31,19 +31,50 @@ use uuid::Uuid;
 
 use super::dto::{FollowDirection, SubscriberDto};
 use super::error;
+use super::notices::SubscriberNotices;
 use super::repository::{FollowFilter, SubscribersRepo};
 
 /// The subscribers rules.
 #[derive(Clone)]
 pub struct SubscribersService {
     repo: Arc<dyn SubscribersRepo>,
+    /// Where a new follow is announced, when this deployment has an inbox.
+    notices: Option<Arc<dyn SubscriberNotices>>,
 }
 
 impl SubscribersService {
     /// Build the service over its repository.
     #[must_use]
     pub fn new(repo: Arc<dyn SubscribersRepo>) -> Self {
-        Self { repo }
+        Self {
+            repo,
+            notices: None,
+        }
+    }
+
+    /// The same service, announcing new follows.
+    #[must_use]
+    pub fn with_notices(
+        repo: Arc<dyn SubscribersRepo>,
+        notices: Arc<dyn SubscriberNotices>,
+    ) -> Self {
+        Self {
+            repo,
+            notices: Some(notices),
+        }
+    }
+
+    /// Every account following `target_id`.
+    ///
+    /// The broadcast module reads this to fan a go-live notice out over the creator's
+    /// follow graph; it is a service method rather than a repository call at that site
+    /// because the graph's ownership is here.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::Internal`] when the follow graph cannot be read.
+    pub async fn subscriber_ids(&self, target_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        self.repo.subscriber_ids(target_id).await
     }
 
     /// Follow `target_id`.
@@ -61,10 +92,27 @@ impl SubscribersService {
             return Err(error::cannot_subscribe_to_self());
         }
 
-        if !self.repo.create(follower_id, target_id).await?
-            && !self.repo.user_exists(target_id).await?
-        {
+        let created = self.repo.create(follower_id, target_id).await?;
+        if !created && !self.repo.user_exists(target_id).await? {
             return Err(error::user_not_found());
+        }
+
+        // A repeated tap is one row and one announcement: `created` is false when the
+        // follow already existed, and a second "started following you" for the same
+        // pair is noise the recipient cannot act on.
+        if created && let Some(notices) = &self.notices {
+            match self.repo.find_profile(follower_id).await {
+                Ok(Some(actor)) => notices.subscribed(&actor, target_id).await,
+                Ok(None) => tracing::warn!(
+                    follower = %follower_id,
+                    "a follow was recorded by an account with no live profile"
+                ),
+                Err(failure) => tracing::warn!(
+                    %failure,
+                    follower = %follower_id,
+                    "could not read the follower for their notification"
+                ),
+            }
         }
         Ok(())
     }

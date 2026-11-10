@@ -592,6 +592,39 @@ async fn a_fan_out_to_nobody_is_a_no_op_even_for_an_unknown_type() {
 }
 
 #[tokio::test]
+async fn a_fan_out_frames_only_the_recipients_who_kept_in_app_on() {
+    // The detached fan-out has two jobs — count and deliver — and the preference gate
+    // has to apply to the second without skipping the first: a muted recipient still
+    // gets the inbox row and the badge.
+    let h = harness();
+    // `seed_settings` is (push, in-app): keep push on and mute only the socket frame,
+    // so the inbox row and the badge still prove the fan-out ran for this recipient.
+    h.repo.seed_settings(other_recipient(), true, false);
+
+    h.service
+        .notify_many(
+            &[recipient(), other_recipient()],
+            codes::LIVE_BROADCAST_STARTED,
+            Some(&ada()),
+            Some(broadcast_id()),
+            Some("Morning Notes"),
+        )
+        .await
+        .expect("the template exists");
+
+    eventually(|| h.notifier.count() == 1, "the one opted-in frame").await;
+    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+
+    assert_eq!(h.notifier.count(), 1, "the muted recipient got no frame");
+    assert_eq!(
+        h.counter.value(other_recipient()),
+        Some(1),
+        "the muted recipient's badge still moves"
+    );
+    assert_eq!(h.repo.stored_notification_count(), 2);
+}
+
+#[tokio::test]
 async fn a_fan_out_with_a_missing_template_writes_nothing() {
     let h = harness();
 

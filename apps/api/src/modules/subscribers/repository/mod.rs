@@ -63,6 +63,21 @@ impl FollowDirection {
     }
 }
 
+/// A live account, projected to what a `{actor}` placeholder needs.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SubscriberProfile {
+    /// Account id.
+    pub id: Uuid,
+    /// Display name.
+    pub full_name: String,
+    /// Biography, when the account has one.
+    pub bio: Option<String>,
+    /// Avatar storage key.
+    pub avatar_id: Option<String>,
+    /// Resolved avatar URL.
+    pub avatar_url: Option<String>,
+}
+
 /// The subscribers module's storage.
 #[async_trait]
 pub trait SubscribersRepo: Send + Sync + std::fmt::Debug {
@@ -90,6 +105,16 @@ pub trait SubscribersRepo: Send + Sync + std::fmt::Debug {
     /// Soft-deleted rows are not live: a bearer token minted before a deletion must not
     /// keep following on behalf of a deleted account.
     async fn user_exists(&self, user_id: Uuid) -> Result<bool, MenoError>;
+
+    /// A live account, for the follower a `user_subscribed` notification names.
+    async fn find_profile(&self, user_id: Uuid) -> Result<Option<SubscriberProfile>, MenoError>;
+
+    /// Every account following `target_id`.
+    ///
+    /// The audience for a creator's go-live notice. Deliberately unbounded: a broadcast
+    /// announcement goes to the whole follow graph, and a page would silently drop
+    /// subscribers past the first page.
+    async fn subscriber_ids(&self, target_id: Uuid) -> Result<Vec<Uuid>, MenoError>;
 
     /// One page of a user's followers or followees.
     ///

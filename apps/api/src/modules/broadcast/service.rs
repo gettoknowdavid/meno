@@ -37,9 +37,11 @@ use super::model::{
     Broadcast, BroadcastPatch, BroadcastStatus, EndReason, JoinOutcome, JoinRequest, LeaveOutcome,
     NewBroadcast, ParticipantRole, UserSummary, now,
 };
+use super::notices::BroadcastNotices;
 use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
 use super::rooms::BroadcastRooms;
 use super::storage::BroadcastStorage;
+use crate::infrastructure::ws::model::GracePeriodConfig;
 use crate::modules::broadcast::dto::{
     AddCohostRequest, BroadcastListItem, BroadcastQuery, BroadcastResponse,
     BroadcastSessionResponse, CohostResponse, CreateBroadcastRequest, EndBroadcastResponse,
@@ -72,6 +74,12 @@ pub struct ServiceDeps {
     /// every constructor that has no socket layer: history still reads, it just does not
     /// arrive live (§4.6).
     pub rooms: Arc<dyn BroadcastRooms>,
+    /// Where the notification rows a lifecycle owes are produced.
+    ///
+    /// [`super::notices::SilentNotices`] in a deployment with no inbox, and in every
+    /// service test that is not about notifications: going live still works, the
+    /// followers simply have nothing to read.
+    pub notices: Arc<dyn BroadcastNotices>,
 }
 
 impl std::fmt::Debug for ServiceDeps {
@@ -84,6 +92,7 @@ impl std::fmt::Debug for ServiceDeps {
             .field("storage", &self.storage)
             .field("events", &"<dyn BroadcastEvents>")
             .field("rooms", &"<dyn BroadcastRooms>")
+            .field("notices", &"<dyn BroadcastNotices>")
             .finish_non_exhaustive()
     }
 }
@@ -96,6 +105,7 @@ pub struct BroadcastService {
     storage: BroadcastStorage,
     events: Arc<dyn BroadcastEvents>,
     rooms: Arc<dyn BroadcastRooms>,
+    notices: Arc<dyn BroadcastNotices>,
 }
 
 impl std::fmt::Debug for BroadcastService {
@@ -106,6 +116,7 @@ impl std::fmt::Debug for BroadcastService {
             .field("storage", &self.storage)
             .field("events", &"<dyn BroadcastEvents>")
             .field("rooms", &"<dyn BroadcastRooms>")
+            .field("notices", &"<dyn BroadcastNotices>")
             .finish_non_exhaustive()
     }
 }
@@ -120,6 +131,7 @@ impl BroadcastService {
             storage: deps.storage,
             events: deps.events,
             rooms: deps.rooms,
+            notices: deps.notices,
         }
     }
 
@@ -430,6 +442,10 @@ impl BroadcastService {
 
         self.repo.soft_delete(id).await?;
 
+        // Any open page for it is now a page for nothing: a client that followed a
+        // shared link has no other way to learn the broadcast is gone.
+        self.events.broadcast_deleted(id).await;
+
         // The deleted broadcast disappears from every home section it was in.
         self.notify_home().await;
 
@@ -526,6 +542,11 @@ impl BroadcastService {
         self.events
             .broadcast_created(&response.broadcast, &[actor.id])
             .await;
+
+        // The inbox half of the same fact: a follower who was not watching the home
+        // screen still hears that the creator is live. Best-effort by contract, so a
+        // notification outage cannot fail a broadcast that is already on air.
+        self.notices.started(&response.broadcast).await;
         // Everybody else's "now live" section changed, and only this global nudge can
         // tell them: the follow graph this module would fan a `newBroadcast` out over
         // does not exist here.
@@ -622,6 +643,10 @@ impl BroadcastService {
         self.events
             .ended(row.id, EndReason::Normal, &recipients)
             .await;
+
+        // The inbox row the same recipients are owed. `recipients` was computed before
+        // the roster closed, which is what makes it the audience rather than a guess.
+        self.notices.ended(row.id, &row.title, &recipients).await;
 
         // And the ended broadcast leaves the home sections it was drawn in.
         self.notify_home().await;
@@ -916,11 +941,26 @@ impl BroadcastService {
             .await?
             .ok_or_else(error::user_not_found)?;
 
-        Ok(cohost_response(
+        let response = cohost_response(
             &added,
             user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url),
             updated.len(),
-        ))
+        );
+
+        // Host, cohosts and the new cohost: each client's strip is right without a
+        // refetch, and the new cohost is the one client that did not ask for anything.
+        let mut recipients = vec![actor.id];
+        for cohost in updated.iter().filter(|cohost| cohost.is_current()) {
+            if !recipients.contains(&cohost.cohost_id) {
+                recipients.push(cohost.cohost_id);
+            }
+        }
+        self.events.cohost_added(id, &response, &recipients).await;
+        self.notices
+            .cohost_added(id, &row.title, actor, request.cohost)
+            .await;
+
+        Ok(response)
     }
 
     /// `DELETE /broadcasts/{id}/cohosts/{cohostId}` — remove one, as the creator.
@@ -967,6 +1007,20 @@ impl BroadcastService {
         {
             tracing::warn!(%failure, broadcast_id = %id, cohost_id = %cohost_id, "evicting a removed cohost failed");
         }
+
+        // Announced after the roster write, so a client that reacts by refetching sees
+        // the demoted role rather than the old one. The removed account is included:
+        // its client is the one that must stop drawing host controls.
+        let mut recipients = vec![actor.id];
+        for cohost in existing.iter().filter(|cohost| cohost.is_current()) {
+            if cohost.cohost_id != cohost_id && !recipients.contains(&cohost.cohost_id) {
+                recipients.push(cohost.cohost_id);
+            }
+        }
+        if !recipients.contains(&cohost_id) {
+            recipients.push(cohost_id);
+        }
+        self.events.cohost_removed(id, cohost_id, &recipients).await;
 
         Ok(())
     }
@@ -1171,6 +1225,112 @@ impl BroadcastService {
                 &recipients,
             )
             .await;
+
+        // The header counter, for clients that ignore roster rows and for a poll answer
+        // that should not have to invent a participant to update it.
+        self.events
+            .participant_count_changed(row.id, count, &recipients)
+            .await;
+    }
+
+    /// The host's last socket closed.
+    ///
+    /// Starts the abandonment clock and tells the room how long it has. The clock is the
+    /// same `abandoned_since` the reaper ends on, so the frame's `gracePeriodInSecs` and
+    /// the sweep cannot disagree about the deadline — the reaper counts from this write.
+    ///
+    /// `disconnect_count` is 1 for this process's first drop. The tiered counter lives in
+    /// Redis on `master`; without a shared counter a second drop inside the window would
+    /// be indistinguishable from the first, so the conservative tier is used and the
+    /// reaper still enforces the same deadline.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure. A missing live broadcast is not an error: most sockets
+    /// belong to people who are not hosting anything.
+    #[tracing::instrument(skip_all, fields(user = %user_id))]
+    pub async fn host_disconnected(&self, user_id: Uuid) -> Result<(), MenoError> {
+        let Some(row) = self.repo.find_live_by_creator(user_id).await? else {
+            return Ok(());
+        };
+
+        let disconnect_count = 1_u64;
+        let grace_secs = GracePeriodConfig::default().grace_seconds(disconnect_count);
+        self.repo.set_abandoned_since(row.id, Some(now())).await?;
+
+        let recipients = self.room_recipients(&row).await;
+        self.events
+            .host_disconnected(row.id, grace_secs, disconnect_count, &recipients)
+            .await;
+        Ok(())
+    }
+
+    /// The host's socket is back.
+    ///
+    /// Clears the abandonment clock and tells the room to keep watching. A reconnect
+    /// with no clock set is silent: announcing "still here" every time somebody opens a
+    /// tab would be a frame per connection for a fact nobody needed.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure.
+    #[tracing::instrument(skip_all, fields(user = %user_id))]
+    pub async fn host_reconnected(&self, user_id: Uuid) -> Result<(), MenoError> {
+        let Some(row) = self.repo.find_live_by_creator(user_id).await? else {
+            return Ok(());
+        };
+
+        let abandoned = self
+            .repo
+            .list_live()
+            .await?
+            .into_iter()
+            .find(|live| live.id == row.id)
+            .and_then(|live| live.abandoned_since);
+        if abandoned.is_none() {
+            return Ok(());
+        }
+
+        self.repo.set_abandoned_since(row.id, None).await?;
+        let recipients = self.room_recipients(&row).await;
+        self.events.host_reconnected(row.id, &recipients).await;
+        Ok(())
+    }
+
+    /// Who is in `row`'s room: its creator, its current cohosts, and everybody the media
+    /// server reports.
+    ///
+    /// The same audience the reaper computes for an end, and degraded the same way: a
+    /// media outage means "the people we know about", not a failed announcement.
+    async fn room_recipients(&self, row: &Broadcast) -> Vec<Uuid> {
+        let mut recipients = vec![row.creator_id];
+
+        for id in self
+            .repo
+            .list_cohosts(row.id)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|cohost| cohost.is_current())
+            .map(|cohost| cohost.cohost_id)
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        for id in self
+            .media
+            .room_participants(row.id)
+            .await
+            .unwrap_or_default()
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        recipients
     }
 
     /// Nudge every connected client that its home screen is stale.

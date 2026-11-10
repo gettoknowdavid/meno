@@ -214,10 +214,25 @@ impl WsPayload {
         )
     }
 
+    /// A cohost was added to the broadcast.
+    #[must_use]
+    pub fn new_cohost(cohost: impl Serialize) -> Self {
+        Self::new(WsEvent::NewCohost, cohost)
+    }
+
     /// A cohost was removed from the broadcast.
     #[must_use]
     pub fn removed_cohost(cohost: impl Serialize) -> Self {
         Self::new(WsEvent::RemovedCohost, cohost)
+    }
+
+    /// A broadcast was deleted, so an open page for it is gone.
+    #[must_use]
+    pub fn broadcast_deleted(broadcast_id: Uuid) -> Self {
+        Self::new(
+            WsEvent::BroadcastDeleted,
+            serde_json::json!({ "broadcastId": broadcast_id }),
+        )
     }
 
     /// The recording is playable.

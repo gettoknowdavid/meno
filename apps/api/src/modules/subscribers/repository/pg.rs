@@ -42,7 +42,7 @@ use async_trait::async_trait;
 use sqlx::{PgPool, Postgres, QueryBuilder};
 use uuid::Uuid;
 
-use super::{FollowFilter, SubscribersRepo};
+use super::{FollowFilter, SubscriberProfile, SubscribersRepo};
 use crate::infrastructure::query::{ColumnName, push_cursor_condition, push_order_and_limit};
 use crate::modules::subscribers::dto::{FollowDirection, SubscriberDto};
 use crate::modules::subscribers::error;
@@ -71,6 +71,15 @@ const REMOVE_FOLLOW: &str = "\
 /// Whether a live account carries this id.
 const USER_EXISTS: &str =
     "SELECT EXISTS (SELECT 1 FROM users WHERE id = $1 AND deleted_at IS NULL)";
+
+/// A live account, projected the way a notification actor needs it.
+const PROFILE: &str = "\
+     SELECT id, full_name, bio, avatar_id, avatar_url \
+     FROM users WHERE id = $1 AND deleted_at IS NULL";
+
+/// Every follower of `$1` — the audience for a go-live announcement.
+const SUBSCRIBER_IDS: &str =
+    "SELECT subscriber_id FROM user_subscribers WHERE subscription_id = $1";
 
 /// Postgres-backed storage for the subscribers module.
 #[derive(Debug, Clone)]
@@ -169,6 +178,35 @@ fn page_query(filter: &FollowFilter) -> QueryBuilder<Postgres> {
 
 #[async_trait]
 impl SubscribersRepo for PgSubscribersRepo {
+    async fn find_profile(&self, user_id: Uuid) -> Result<Option<SubscriberProfile>, MenoError> {
+        let row =
+            sqlx::query_as::<_, (Uuid, String, Option<String>, Option<String>, Option<String>)>(
+                PROFILE,
+            )
+            .bind(user_id)
+            .fetch_optional(&self.pool)
+            .await
+            .map_err(|failure| database("find_profile", failure))?;
+
+        Ok(row.map(
+            |(id, full_name, bio, avatar_id, avatar_url)| SubscriberProfile {
+                id,
+                full_name,
+                bio,
+                avatar_id,
+                avatar_url,
+            },
+        ))
+    }
+
+    async fn subscriber_ids(&self, target_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        sqlx::query_scalar::<_, Uuid>(SUBSCRIBER_IDS)
+            .bind(target_id)
+            .fetch_all(&self.pool)
+            .await
+            .map_err(|failure| database("subscriber_ids", failure))
+    }
+
     async fn create(&self, follower_id: Uuid, target_id: Uuid) -> Result<bool, MenoError> {
         let result = sqlx::query(CREATE_FOLLOW)
             .bind(follower_id)

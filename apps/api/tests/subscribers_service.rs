@@ -427,3 +427,55 @@ async fn a_page_never_carries_more_than_the_requested_size() {
     assert_eq!(result.data.len(), 2, "the probe row is not returned");
     assert!(result.has_next_page);
 }
+
+// ── the follow announcement ──────────────────────────────────────────────
+
+#[tokio::test]
+async fn a_new_follow_announces_once_and_a_repeat_follow_does_not() {
+    use std::sync::Mutex;
+
+    use meno_api::modules::subscribers::notices::SubscriberNotices;
+    use meno_api::modules::subscribers::repository::SubscriberProfile;
+
+    #[derive(Default)]
+    struct Recording {
+        seen: Mutex<Vec<(Uuid, Uuid)>>,
+    }
+
+    #[async_trait::async_trait]
+    impl SubscriberNotices for Recording {
+        async fn subscribed(&self, actor: &SubscriberProfile, target_id: Uuid) {
+            self.seen
+                .lock()
+                .expect("the recording double is not poisoned")
+                .push((actor.id, target_id));
+        }
+    }
+
+    let repo = Arc::new(InMemorySubscribersRepo::new());
+    repo.seed_user(ada(), "Ada Lovelace", None, None);
+    repo.seed_user(grace(), "Grace Hopper", None, None);
+    let recording = Arc::new(Recording::default());
+    let service = SubscribersService::with_notices(
+        Arc::clone(&repo) as Arc<dyn SubscribersRepo>,
+        Arc::clone(&recording) as Arc<dyn SubscriberNotices>,
+    );
+
+    service
+        .subscribe(ada(), grace())
+        .await
+        .expect("the first follow is recorded");
+    service
+        .subscribe(ada(), grace())
+        .await
+        .expect("the repeat is a success, not a conflict");
+
+    assert_eq!(
+        *recording
+            .seen
+            .lock()
+            .expect("the recording double is not poisoned"),
+        vec![(ada(), grace())],
+        "a repeat follow is not a second 'started following you'"
+    );
+}

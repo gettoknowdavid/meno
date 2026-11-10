@@ -40,7 +40,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::dto::BroadcastResponse;
+use super::dto::{BroadcastResponse, CohostResponse};
 use super::model::{EndReason, ParticipantRole};
 use crate::infrastructure::ws::dto::WsPayload;
 use crate::infrastructure::ws::pubsub::WsPubSubBridge;
@@ -114,6 +114,44 @@ pub trait BroadcastEvents: Send + Sync + 'static {
     /// renders, so a client can add or remove a row without re-reading the roster.
     async fn participant_changed(&self, change: &ParticipantChange, recipients: &[Uuid]);
 
+    /// Announce a cohost the creator added.
+    ///
+    /// Sent to the host, the current cohosts and the new cohost, so each client's
+    /// cohost strip is right without refetching the broadcast.
+    async fn cohost_added(&self, broadcast_id: Uuid, cohost: &CohostResponse, recipients: &[Uuid]);
+
+    /// Announce a cohost the creator removed.
+    ///
+    /// Includes the removed account: their client is the one that has to stop drawing
+    /// host controls it no longer has.
+    async fn cohost_removed(&self, broadcast_id: Uuid, cohost_id: Uuid, recipients: &[Uuid]);
+
+    /// Announce that a broadcast was deleted.
+    ///
+    /// Sent to every connected client rather than to a computed set: a deleted
+    /// broadcast can be open on a device whose owner never followed its creator, and a
+    /// fan-out for `deleted_at` would cost a query per mutation to deliver one id.
+    async fn broadcast_deleted(&self, broadcast_id: Uuid);
+
+    /// The number of people in the room changed.
+    ///
+    /// Separate from [`Self::participant_changed`] because the header counter is the
+    /// only part a client that ignores roster rows still needs, and because a poll
+    /// answer can update it without inventing a participant.
+    async fn participant_count_changed(&self, broadcast_id: Uuid, count: i64, recipients: &[Uuid]);
+
+    /// The host's last socket dropped; `grace_secs` is the window to come back in.
+    async fn host_disconnected(
+        &self,
+        broadcast_id: Uuid,
+        grace_secs: u64,
+        disconnect_count: u64,
+        recipients: &[Uuid],
+    );
+
+    /// The host came back inside the grace window, so the broadcast continues.
+    async fn host_reconnected(&self, broadcast_id: Uuid, recipients: &[Uuid]);
+
     /// Nudge every connected client that its home screen is stale.
     ///
     /// Fired after any mutation that changes what the home sections draw — a broadcast
@@ -183,6 +221,81 @@ impl BroadcastEvents for PubSubEvents {
         self.bridge.publish_to_users(recipients, payload).await;
     }
 
+    async fn cohost_added(
+        &self,
+        _broadcast_id: Uuid,
+        cohost: &CohostResponse,
+        recipients: &[Uuid],
+    ) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.bridge
+            .publish_to_users(recipients, WsPayload::new_cohost(cohost))
+            .await;
+    }
+
+    async fn cohost_removed(&self, broadcast_id: Uuid, cohost_id: Uuid, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        let payload = WsPayload::removed_cohost(serde_json::json!({
+            "broadcastId": broadcast_id,
+            "userId": cohost_id,
+        }));
+        self.bridge.publish_to_users(recipients, payload).await;
+    }
+
+    async fn broadcast_deleted(&self, broadcast_id: Uuid) {
+        self.bridge
+            .broadcast_all(WsPayload::broadcast_deleted(broadcast_id))
+            .await;
+    }
+
+    async fn participant_count_changed(&self, broadcast_id: Uuid, count: i64, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::number_of_live_participants(broadcast_id, count),
+            )
+            .await;
+    }
+
+    async fn host_disconnected(
+        &self,
+        broadcast_id: Uuid,
+        grace_secs: u64,
+        disconnect_count: u64,
+        recipients: &[Uuid],
+    ) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::host_disconnected(broadcast_id, grace_secs, disconnect_count),
+            )
+            .await;
+    }
+
+    async fn host_reconnected(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.bridge
+            .publish_to_users(recipients, WsPayload::host_reconnected(broadcast_id))
+            .await;
+    }
+
     async fn home_invalidated(&self) {
         self.bridge
             .broadcast_all(WsPayload::home_invalidated())
@@ -202,6 +315,37 @@ pub struct SilentEvents;
 
 #[async_trait]
 impl BroadcastEvents for SilentEvents {
+    async fn cohost_added(
+        &self,
+        _broadcast_id: Uuid,
+        _cohost: &CohostResponse,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn cohost_removed(&self, _broadcast_id: Uuid, _cohost_id: Uuid, _recipients: &[Uuid]) {}
+
+    async fn broadcast_deleted(&self, _broadcast_id: Uuid) {}
+
+    async fn participant_count_changed(
+        &self,
+        _broadcast_id: Uuid,
+        _count: i64,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn host_disconnected(
+        &self,
+        _broadcast_id: Uuid,
+        _grace_secs: u64,
+        _disconnect_count: u64,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn host_reconnected(&self, _broadcast_id: Uuid, _recipients: &[Uuid]) {}
+
     async fn ended(&self, _broadcast_id: Uuid, _reason: EndReason, _recipients: &[Uuid]) {}
 
     async fn broadcast_created(&self, _broadcast: &BroadcastResponse, _recipients: &[Uuid]) {}
@@ -220,7 +364,7 @@ pub mod recording {
     use async_trait::async_trait;
     use uuid::Uuid;
 
-    use super::{BroadcastEvents, BroadcastResponse, ParticipantChange};
+    use super::{BroadcastEvents, BroadcastResponse, CohostResponse, ParticipantChange};
     use crate::modules::broadcast::model::EndReason;
 
     /// One announcement: which broadcast, the reason, and who was told.
@@ -274,6 +418,56 @@ pub mod recording {
         BroadcastCreated(AnnouncedCreated),
         /// A participant joined or left the broadcast.
         ParticipantChanged(AnnouncedParticipantChanged),
+        /// A cohost was added.
+        CohostAdded {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+            /// The cohost frame, as the socket would send it.
+            cohost: serde_json::Value,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
+        /// A cohost was removed.
+        CohostRemoved {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+            /// Who was removed.
+            cohost_id: Uuid,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
+        /// A broadcast was deleted.
+        BroadcastDeleted {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+        },
+        /// The live participant count moved.
+        ParticipantCount {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+            /// The new count.
+            count: i64,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
+        /// The host's socket dropped.
+        HostDisconnected {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+            /// The reconnect window the client was given.
+            grace_secs: u64,
+            /// Which consecutive drop this was.
+            disconnect_count: u64,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
+        /// The host came back.
+        HostReconnected {
+            /// Which broadcast.
+            broadcast_id: Uuid,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
         /// The home was invalidated.
         HomeInvalidated,
     }
@@ -384,6 +578,67 @@ pub mod recording {
                     recipients: recipients.to_vec(),
                 },
             ));
+        }
+
+        async fn cohost_added(
+            &self,
+            broadcast_id: Uuid,
+            cohost: &CohostResponse,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::CohostAdded {
+                broadcast_id,
+                cohost: serde_json::to_value(cohost).unwrap_or_default(),
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_removed(&self, broadcast_id: Uuid, cohost_id: Uuid, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::CohostRemoved {
+                broadcast_id,
+                cohost_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn broadcast_deleted(&self, broadcast_id: Uuid) {
+            self.lock()
+                .push(RecordingEvent::BroadcastDeleted { broadcast_id });
+        }
+
+        async fn participant_count_changed(
+            &self,
+            broadcast_id: Uuid,
+            count: i64,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::ParticipantCount {
+                broadcast_id,
+                count,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn host_disconnected(
+            &self,
+            broadcast_id: Uuid,
+            grace_secs: u64,
+            disconnect_count: u64,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::HostDisconnected {
+                broadcast_id,
+                grace_secs,
+                disconnect_count,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn host_reconnected(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::HostReconnected {
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
         }
 
         async fn home_invalidated(&self) {

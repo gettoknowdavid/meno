@@ -316,6 +316,13 @@ async fn handle_socket(socket: WebSocket, user: AuthUser, state: MenoState) {
     );
     let write_task = start_write_task(Arc::clone(&sink), hub_rx);
 
+    // A host coming back inside the window clears the abandonment clock and tells the
+    // room to keep watching. Registered first, because the room frame is only useful to
+    // a connection this replica can actually deliver to.
+    if let Err(failure) = state.broadcast.service.host_reconnected(user_id).await {
+        tracing::warn!(%failure, user.id = %user_id, "host reconnect could not be announced");
+    }
+
     let ended = run_read_loop(
         &state,
         &mut stream,
@@ -362,6 +369,13 @@ async fn handle_socket(socket: WebSocket, user: AuthUser, state: MenoState) {
                 .ws
                 .leave_room(user_id, broadcast_id, &state.ws_bridge)
                 .await;
+        }
+
+        // The last device is gone, so a broadcast this account hosts has lost its host.
+        // Starting the clock here is what makes the grace period real: the reaper only
+        // ends a broadcast whose `abandoned_since` is set and past the window.
+        if let Err(failure) = state.broadcast.service.host_disconnected(user_id).await {
+            tracing::warn!(%failure, user.id = %user_id, "host disconnect could not be announced");
         }
     }
 

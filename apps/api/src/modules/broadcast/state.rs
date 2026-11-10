@@ -33,6 +33,7 @@ use crate::infrastructure::livekit::LivekitService;
 use super::events::{BroadcastEvents, SilentEvents};
 use super::handlers::Handlers;
 use super::media::{BroadcastMedia, DisabledMedia, LivekitMedia};
+use super::notices::{BroadcastNotices, SilentNotices};
 use super::reaper::BroadcastReaper;
 use super::repository::{BroadcastRepo, PgBroadcastRepo, RepoDeps};
 use super::rooms::{BroadcastRooms, SilentRooms};
@@ -102,6 +103,11 @@ pub struct Wiring {
     /// no realtime passes [`SilentRooms`] and keeps working — the roster and the history
     /// still read, they just do not arrive live.
     pub rooms: Arc<dyn BroadcastRooms>,
+    /// Where the notification rows a lifecycle owes are produced.
+    ///
+    /// [`SilentNotices`] for a deployment with no inbox; the production adapter lives in
+    /// `state.rs` because it is the one file allowed to name the modules on both sides.
+    pub notices: Arc<dyn BroadcastNotices>,
 }
 
 impl BroadcastState {
@@ -129,6 +135,7 @@ impl BroadcastState {
             BroadcastStorage::new(deps.storage),
             deps.events,
             deps.rooms,
+            deps.notices,
         )
     }
 
@@ -159,6 +166,7 @@ impl BroadcastState {
             BroadcastStorage::disabled(),
             events,
             Arc::new(SilentRooms),
+            Arc::new(SilentNotices),
         )
     }
 
@@ -180,6 +188,7 @@ impl BroadcastState {
             storage,
             Arc::new(SilentEvents),
             Arc::new(SilentRooms),
+            Arc::new(SilentNotices),
         )
     }
 
@@ -190,6 +199,7 @@ impl BroadcastState {
         storage: BroadcastStorage,
         events: Arc<dyn BroadcastEvents>,
         rooms: Arc<dyn BroadcastRooms>,
+        notices: Arc<dyn BroadcastNotices>,
     ) -> Self {
         Self {
             service: Arc::new(BroadcastService::new(ServiceDeps {
@@ -198,6 +208,7 @@ impl BroadcastState {
                 storage: storage.clone(),
                 events: Arc::clone(&events),
                 rooms,
+                notices,
             })),
             reaper: BroadcastReaper::new(repo, media, events),
             storage,

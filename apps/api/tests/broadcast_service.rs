@@ -123,6 +123,8 @@ fn service_with_events() -> (
         storage: BroadcastStorage::disabled(),
         events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
         rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
     });
     (svc, repo, media, events)
 }
@@ -147,6 +149,8 @@ fn service_with_rooms() -> (
         storage: BroadcastStorage::disabled(),
         events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
         rooms: Arc::clone(&rooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
     });
     (svc, repo, media, rooms)
 }
@@ -1565,6 +1569,8 @@ async fn a_token_failure_leaves_no_live_row() {
         storage: BroadcastStorage::disabled(),
         events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
         rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
     });
     seed(&repo);
     let created = svc
@@ -1663,4 +1669,157 @@ impl meno_api::modules::broadcast::media::BroadcastMedia for MintFails {
     async fn room_participants(&self, _broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
         Ok(Vec::new())
     }
+}
+
+// ── notification producers and host presence ──────────────────────────────
+
+/// Records the notification rows the lifecycle flows claim to have produced.
+#[derive(Debug, Default)]
+struct RecordingNotices {
+    started: std::sync::Mutex<Vec<Uuid>>,
+    ended: std::sync::Mutex<Vec<(Uuid, String, Vec<Uuid>)>>,
+    cohosts: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+}
+
+#[async_trait::async_trait]
+impl meno_api::modules::broadcast::notices::BroadcastNotices for RecordingNotices {
+    async fn started(&self, broadcast: &meno_api::modules::broadcast::dto::BroadcastResponse) {
+        self.started
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push(broadcast.id);
+    }
+
+    async fn ended(&self, broadcast_id: Uuid, title: &str, recipients: &[Uuid]) {
+        self.ended
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, title.to_owned(), recipients.to_vec()));
+    }
+
+    async fn cohost_added(
+        &self,
+        broadcast_id: Uuid,
+        _title: &str,
+        _actor: &UserSummary,
+        cohost: Uuid,
+    ) {
+        self.cohosts
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, cohost));
+    }
+}
+
+fn service_with_notices() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingEvents>,
+    Arc<RecordingNotices>,
+) {
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let media = Arc::new(RecordingMedia::new());
+    let events = Arc::new(RecordingEvents::new());
+    let notices = Arc::new(RecordingNotices::default());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn BroadcastRepo>,
+        media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::clone(&notices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
+    });
+    (svc, repo, events, notices)
+}
+
+#[tokio::test]
+async fn going_live_and_ending_produce_the_two_inbox_rows() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    assert_eq!(
+        *notices.started.lock().expect("not poisoned"),
+        vec![created.id],
+        "a creator's followers are told once, from the response the creator received"
+    );
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let ended = notices.ended.lock().expect("not poisoned");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].0, created.id);
+    assert_eq!(ended[0].1, "Ada's show");
+    assert!(
+        ended[0].2.contains(&user(1, "Ada Lovelace").id),
+        "the host is in the room that is told"
+    );
+}
+
+#[tokio::test]
+async fn a_host_socket_dropping_starts_the_clock_and_reconnecting_clears_it() {
+    let (svc, repo, events, _notices) = service_with_notices();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    svc.host_disconnected(user(1, "Ada Lovelace").id)
+        .await
+        .expect("the clock starts");
+
+    let live = repo.list_live().await.expect("the live rows");
+    let row = live
+        .iter()
+        .find(|live| live.id == created.id)
+        .expect("the broadcast is still live");
+    assert!(
+        row.abandoned_since.is_some(),
+        "the reaper can only end what has a clock"
+    );
+    assert!(
+        matches!(
+            events.announced().last().expect("an announcement"),
+            meno_api::modules::broadcast::events::recording::RecordingEvent::HostDisconnected {
+                broadcast_id,
+                grace_secs,
+                disconnect_count,
+                ..
+            } if *broadcast_id == created.id && *grace_secs == 120 && *disconnect_count == 1
+        ),
+        "the room is told the window the first tier grants"
+    );
+
+    svc.host_reconnected(user(1, "Ada Lovelace").id)
+        .await
+        .expect("the clock clears");
+
+    let live = repo.list_live().await.expect("the live rows");
+    let row = live
+        .iter()
+        .find(|live| live.id == created.id)
+        .expect("the broadcast is still live");
+    assert!(row.abandoned_since.is_none(), "the deadline was withdrawn");
+    assert!(matches!(
+        events.announced().last().expect("an announcement"),
+        meno_api::modules::broadcast::events::recording::RecordingEvent::HostReconnected {
+            broadcast_id,
+            ..
+        } if *broadcast_id == created.id
+    ));
 }

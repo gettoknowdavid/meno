@@ -360,30 +360,6 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
     // subscriber connection per module would be a connection nobody needs.
     let bridge = Arc::new(ws_bridge.clone());
 
-    // Built before the struct literal, because the literal moves `parts.db` and
-    // `parts.config` and this needs both. Cloning a pool and an `Arc` is free; a
-    // borrow-after-move is not.
-    let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
-        pool: parts.db.clone(),
-        livekit: parts.config.livekit.clone(),
-        // Cover images proxy through the object store (§3.3), exactly as avatars do
-        // below — one handle, two modules.
-        storage: Arc::clone(&parts.storage),
-        // How the reaper tells everybody in a broadcast that it ended: through the
-        // pub/sub bridge, because the host's socket may live on another replica.
-        events: Arc::new(crate::modules::broadcast::events::PubSubEvents::new(
-            Arc::clone(&bridge),
-        )),
-        // Room membership: a join over HTTP subscribes the participant's sockets, and an
-        // ending drops them wherever they live. Local registry first, shared SET through
-        // the bridge — the same pair chat publishes through, so membership and delivery
-        // cannot disagree about which replicas hold the room.
-        rooms: Arc::new(crate::modules::broadcast::rooms::WsRooms::new(
-            ws.clone(),
-            Arc::clone(&bridge),
-        )),
-    });
-
     // Profile and settings, for the same reason and in the same shape: `Wiring`
     // takes raw handles and chooses the adapters (§5.6), so this file never names
     // `PgProfileRepo` or `ProfileRedisCache`. `profile` needs the object store
@@ -411,21 +387,50 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         pool: parts.db.clone(),
     });
 
-    // Subscribers (§2's tree): one join table, one pool. No identity reader — the user
-    // lookup the service needs is a method on its own repository — and no notification
-    // service, because the module that would own one has not landed.
-    let subscribers = SubscribersState::new(crate::modules::subscribers::state::Wiring {
-        pool: parts.db.clone(),
-    });
-
-    // Notifications (§2's tree): a pool, Redis for the badge, the bridge for the
-    // in-app event, and the push sender `bootstrap` already chose. Nothing here reads
-    // a secret or dials anything, so the construction cannot fail.
+    // Notifications first: the follow and broadcast producers below announce through
+    // it, so it has to exist before either module that writes a sentence is wired.
     let notifications = NotificationsState::new(crate::modules::notifications::state::Wiring {
         pool: parts.db.clone(),
         redis: parts.redis.clone(),
         push: Arc::clone(&parts.push),
-        bridge,
+        bridge: Arc::clone(&bridge),
+    });
+
+    // Subscribers: the follow table, plus the announcement a new follow owes. The
+    // adapter is this file's job (§5.6), so the module never names the notification
+    // service.
+    let subscribers = SubscribersState::new(crate::modules::subscribers::state::Wiring {
+        pool: parts.db.clone(),
+        notices: Some(Arc::new(ModuleSubscriberNotices {
+            notifications: Arc::clone(&notifications.service),
+        })),
+    });
+
+    // Broadcasts (§2's tree): the media seam, the lifecycle frames, and the producers
+    // that fill an inbox. Built after both modules it announces through.
+    let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
+        pool: parts.db.clone(),
+        livekit: parts.config.livekit.clone(),
+        // Cover images proxy through the object store (§3.3), exactly as avatars do
+        // below — one handle, two modules.
+        storage: Arc::clone(&parts.storage),
+        // How the reaper tells everybody in a broadcast that it ended: through the
+        // pub/sub bridge, because the host's socket may live on another replica.
+        events: Arc::new(crate::modules::broadcast::events::PubSubEvents::new(
+            Arc::clone(&bridge),
+        )),
+        // Room membership: a join over HTTP subscribes the participant's sockets, and an
+        // ending drops them wherever they live. Local registry first, shared SET through
+        // the bridge — the same pair chat publishes through, so membership and delivery
+        // cannot disagree about which replicas hold the room.
+        rooms: Arc::new(crate::modules::broadcast::rooms::WsRooms::new(
+            ws.clone(),
+            Arc::clone(&bridge),
+        )),
+        notices: Arc::new(ModuleBroadcastNotices {
+            notifications: Arc::clone(&notifications.service),
+            subscribers: Arc::clone(&subscribers.service),
+        }),
     });
 
     Ok(MenoState {
@@ -460,4 +465,153 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         ws,
         ws_bridge,
     })
+}
+
+/// The subscribers module's adapter onto notifications: one port implementation, placed
+/// where naming both modules is allowed (§5.6).
+#[derive(Clone)]
+struct ModuleSubscriberNotices {
+    notifications: Arc<crate::modules::notifications::service::NotificationsService>,
+}
+
+#[async_trait::async_trait]
+impl crate::modules::subscribers::notices::SubscriberNotices for ModuleSubscriberNotices {
+    async fn subscribed(
+        &self,
+        actor: &crate::modules::subscribers::repository::SubscriberProfile,
+        target_id: uuid::Uuid,
+    ) {
+        let actor = crate::modules::notifications::model::ActorSummary {
+            id: actor.id,
+            full_name: actor.full_name.clone(),
+            bio: actor.bio.clone(),
+            avatar_id: actor.avatar_id.clone(),
+            avatar_url: actor.avatar_url.clone(),
+        };
+
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                target_id,
+                crate::modules::notifications::model::codes::USER_SUBSCRIBED,
+                Some(&actor),
+                None,
+                None,
+            )
+            .await
+        {
+            tracing::warn!(%failure, user.id = %target_id, "follow notification not stored");
+        }
+    }
+}
+
+/// The broadcast module's adapter onto notifications and the follow graph.
+#[derive(Clone)]
+struct ModuleBroadcastNotices {
+    notifications: Arc<crate::modules::notifications::service::NotificationsService>,
+    subscribers: Arc<crate::modules::subscribers::service::SubscribersService>,
+}
+
+#[async_trait::async_trait]
+impl crate::modules::broadcast::notices::BroadcastNotices for ModuleBroadcastNotices {
+    async fn started(&self, broadcast: &crate::modules::broadcast::dto::BroadcastResponse) {
+        let recipients = match self.subscribers.subscriber_ids(broadcast.creator.id).await {
+            Ok(recipients) => recipients,
+            Err(failure) => {
+                tracing::warn!(
+                    %failure,
+                    broadcast_id = %broadcast.id,
+                    "could not read the followers to notify"
+                );
+                return;
+            }
+        };
+        if recipients.is_empty() {
+            return;
+        }
+
+        let actor = broadcast_actor(&broadcast.creator);
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                &recipients,
+                crate::modules::notifications::model::codes::LIVE_BROADCAST_STARTED,
+                Some(&actor),
+                Some(broadcast.id),
+                Some(&broadcast.title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast.id,
+                "live broadcast notification not stored"
+            );
+        }
+    }
+
+    async fn ended(&self, broadcast_id: uuid::Uuid, title: &str, recipients: &[uuid::Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                recipients,
+                crate::modules::notifications::model::codes::BROADCAST_ENDED,
+                None,
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                "broadcast-ended notification not stored"
+            );
+        }
+    }
+
+    async fn cohost_added(
+        &self,
+        broadcast_id: uuid::Uuid,
+        title: &str,
+        actor: &crate::modules::broadcast::model::UserSummary,
+        cohost: uuid::Uuid,
+    ) {
+        let actor = broadcast_actor(actor);
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                cohost,
+                crate::modules::notifications::model::codes::ADDED_AS_COHOST,
+                Some(&actor),
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                cohost_id = %cohost,
+                "cohost notification not stored"
+            );
+        }
+    }
+}
+
+/// The notification module's actor projection, from the broadcast module's summary.
+fn broadcast_actor(
+    user: &crate::modules::broadcast::model::UserSummary,
+) -> crate::modules::notifications::model::ActorSummary {
+    crate::modules::notifications::model::ActorSummary {
+        id: user.id,
+        full_name: user.full_name.clone(),
+        bio: None,
+        avatar_id: user.avatar_id.clone(),
+        avatar_url: user.avatar_url.clone(),
+    }
 }

@@ -77,6 +77,7 @@
 pub mod dto;
 pub mod error;
 pub mod handlers;
+pub mod notices;
 pub mod repository;
 pub mod service;
 pub mod state;

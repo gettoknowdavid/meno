@@ -19,6 +19,7 @@
 
 use std::sync::Arc;
 
+use super::notices::SubscriberNotices;
 use super::repository::{PgSubscribersRepo, SubscribersRepo};
 use super::service::SubscribersService;
 
@@ -44,6 +45,11 @@ impl std::fmt::Debug for SubscribersState {
 pub struct Wiring {
     /// The application's pool.
     pub pool: sqlx::PgPool,
+    /// Where a new follow is announced, when this deployment has an inbox.
+    ///
+    /// `None` is a supported deployment: following still works, and the recipient
+    /// simply has no inbox row to read.
+    pub notices: Option<Arc<dyn SubscriberNotices>>,
 }
 
 impl SubscribersState {
@@ -51,7 +57,10 @@ impl SubscribersState {
     #[must_use]
     pub fn new(wiring: Wiring) -> Self {
         let repo: Arc<dyn SubscribersRepo> = Arc::new(PgSubscribersRepo::new(wiring.pool));
-        Self::from_parts(repo)
+        match wiring.notices {
+            Some(notices) => Self::from_parts_with_notices(repo, notices),
+            None => Self::from_parts(repo),
+        }
     }
 
     /// Build the module from its trait object — what `new` funnels into, and what tests
@@ -60,6 +69,18 @@ impl SubscribersState {
     pub fn from_parts(repo: Arc<dyn SubscribersRepo>) -> Self {
         Self {
             service: Arc::new(SubscribersService::new(repo)),
+        }
+    }
+
+    /// Build the module with a follow announcer — what `new` funnels into when
+    /// notifications are wired.
+    #[must_use]
+    pub fn from_parts_with_notices(
+        repo: Arc<dyn SubscribersRepo>,
+        notices: Arc<dyn SubscriberNotices>,
+    ) -> Self {
+        Self {
+            service: Arc::new(SubscribersService::with_notices(repo, notices)),
         }
     }
 }
