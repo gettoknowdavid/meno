@@ -46,6 +46,29 @@ use super::model::{
     User,
 };
 
+/// What one retention pass removed.
+///
+/// Returned rather than only logged so the job can say what it did in one line, and so
+/// a test can assert the pass touched what it claimed to. `Default` is the "nothing to
+/// remove" answer, which is the common case.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct AuthPurge {
+    /// `auth_sessions` rows removed.
+    pub sessions: u64,
+    /// `refresh_tokens` rows removed.
+    pub refresh_tokens: u64,
+    /// `otps` rows removed.
+    pub otps: u64,
+}
+
+impl AuthPurge {
+    /// How many rows in total.
+    #[must_use]
+    pub const fn total(self) -> u64 {
+        self.sessions + self.refresh_tokens + self.otps
+    }
+}
+
 /// Postgres-backed storage for the auth module.
 ///
 /// # Why `async_trait`
@@ -146,6 +169,25 @@ pub trait AuthRepo: Send + Sync + std::fmt::Debug {
 
     /// Every live session for a user, newest first.
     async fn list_sessions(&self, user_id: Uuid) -> Result<Vec<AuthSession>, MenoError>;
+
+    // ── maintenance ───────────────────────────────────────────────────────
+
+    /// Hard-delete rows that can no longer be used.
+    ///
+    /// Two bounds, because the tables age differently: `now` is expiry for
+    /// `refresh_tokens` and `otps`, which carry `expires_at`; `session_cutoff` is the
+    /// age bound for `auth_sessions`, which has no expiry column of its own. A session
+    /// older than the refresh-token lifetime cannot have a live token behind it, so the
+    /// caller passes `now - refresh_ttl`.
+    ///
+    /// Deleting rather than flagging is the point: these rows exist only to be read
+    /// until they expire, and keeping them is the unbounded growth this method exists
+    /// to stop.
+    async fn purge_expired(
+        &self,
+        now: time::OffsetDateTime,
+        session_cutoff: time::OffsetDateTime,
+    ) -> Result<AuthPurge, MenoError>;
 
     // ── refresh tokens ─────────────────────────────────────────────────────
 

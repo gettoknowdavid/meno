@@ -167,28 +167,11 @@ pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
         state.ws_bridge.spawn_subscriber_loop();
     }
 
-    // The abandonment sweep. Not a request path — a broadcast whose host vanished has
-    // nobody to make the request — so it runs as its own task and ends what a restart,
-    // a dead battery or a lost network left behind.
-    //
-    // Started under both roles, unlike the socket subscriber: the sweep is idempotent
-    // (`mark_ended` only matches a row that is still `active`, so two processes sweep
-    // the same broadcast and produce one ending and one announcement), and it must run
-    // wherever broadcasts do. Gated on LiveKit being configured, because a deployment
-    // without it cannot put a broadcast live in the first place, and every sweep would
-    // be a row of failed media calls.
-    if state.config.livekit.is_some() {
-        let reaper = state.broadcast.reaper.clone();
-        tokio::spawn(async move {
-            reaper
-                .run(crate::modules::broadcast::reaper::SWEEP_INTERVAL)
-                .await;
-        });
-        tracing::info!(
-            interval_secs = crate::modules::broadcast::reaper::SWEEP_INTERVAL.as_secs(),
-            "broadcast abandonment sweep started"
-        );
-    }
+    // Background work belongs to the worker now: [`crate::jobs::JobRunner`] owns the
+    // abandonment sweep, auth retention and notes retention, and `worker.rs` starts it
+    // under [`AppRole::Worker`]. Nothing is spawned here, which is the point — the web
+    // process serves requests and holds sockets, and a deploy that runs only it gets no
+    // background sweeps.
 
     Ok(AppContext { config, state })
 }

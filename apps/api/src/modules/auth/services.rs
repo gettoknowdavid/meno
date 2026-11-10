@@ -99,6 +99,26 @@ impl AuthService {
         })
     }
 
+    /// Remove auth rows that can no longer be used.
+    ///
+    /// The module's one maintenance entry point, called from [`crate::jobs`] and never
+    /// from a request. It lives on the service rather than exposing the repository so
+    /// the job layer still cannot name `AuthRepo` — the same rule `state.rs` enforces
+    /// for every other consumer.
+    ///
+    /// # Errors
+    ///
+    /// A storage failure. The caller logs it and tries again on the next tick; there is
+    /// nothing to roll back, because each statement is an independent delete of rows that
+    /// were already unusable.
+    pub async fn purge_expired(
+        &self,
+        now: time::OffsetDateTime,
+        session_cutoff: time::OffsetDateTime,
+    ) -> Result<super::repository::AuthPurge, MenoError> {
+        self.repo.purge_expired(now, session_cutoff).await
+    }
+
     /// `POST /auth/register`.
     ///
     /// # Errors

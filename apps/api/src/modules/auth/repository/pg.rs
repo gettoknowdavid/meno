@@ -442,6 +442,46 @@ impl AuthRepo for PgAuthRepo {
         .map_err(|e| internal("list_sessions", e))
     }
 
+    async fn purge_expired(
+        &self,
+        now: OffsetDateTime,
+        session_cutoff: OffsetDateTime,
+    ) -> Result<super::AuthPurge, MenoError> {
+        // Sessions first: a session row is only useful while its refresh token can be
+        // presented, and the predicate is the same reading `is_live` uses — a row is
+        // dead when it was revoked or when it is older than the token lifetime.
+        let sessions = sqlx::query(
+            "DELETE FROM public.auth_sessions \
+             WHERE created_at < $1 \
+                OR (revoked_at IS NOT NULL AND revoked_at < $1)",
+        )
+        .bind(session_cutoff)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| internal("purge_auth_sessions", e))?
+        .rows_affected();
+
+        let refresh_tokens = sqlx::query("DELETE FROM public.refresh_tokens WHERE expires_at < $1")
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| internal("purge_refresh_tokens", e))?
+            .rows_affected();
+
+        let otps = sqlx::query("DELETE FROM public.otps WHERE expires_at < $1")
+            .bind(now)
+            .execute(&self.pool)
+            .await
+            .map_err(|e| internal("purge_otps", e))?
+            .rows_affected();
+
+        Ok(super::AuthPurge {
+            sessions,
+            refresh_tokens,
+            otps,
+        })
+    }
+
     async fn store_refresh_token(
         &self,
         jti: Uuid,

@@ -38,6 +38,7 @@
 pub mod bootstrap;
 pub mod config;
 pub mod infrastructure;
+pub mod jobs;
 pub mod middleware;
 pub mod modules;
 pub mod routes;

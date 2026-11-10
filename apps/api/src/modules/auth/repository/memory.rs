@@ -399,6 +399,38 @@ impl AuthRepo for InMemoryAuthRepo {
         Ok(live)
     }
 
+    async fn purge_expired(
+        &self,
+        now: OffsetDateTime,
+        session_cutoff: OffsetDateTime,
+    ) -> Result<super::AuthPurge, MenoError> {
+        let mut state = State::locked(self);
+
+        // Keep what is still reachable: a session created inside the lifetime, or one
+        // revoked inside it. The rest is what the Postgres predicate deletes.
+        let sessions_before = state.sessions.len();
+        state.sessions.retain(|_, session| {
+            session.created_at >= session_cutoff
+                || session
+                    .revoked_at
+                    .is_some_and(|revoked| revoked >= session_cutoff)
+        });
+
+        let refresh_before = state.refresh_tokens.len();
+        state
+            .refresh_tokens
+            .retain(|_, (_, _, expires_at)| *expires_at >= now);
+
+        let codes_before = state.codes.len();
+        state.codes.retain(|_, otp| otp.expires_at >= now);
+
+        Ok(super::AuthPurge {
+            sessions: (sessions_before - state.sessions.len()) as u64,
+            refresh_tokens: (refresh_before - state.refresh_tokens.len()) as u64,
+            otps: (codes_before - state.codes.len()) as u64,
+        })
+    }
+
     async fn store_refresh_token(
         &self,
         jti: Uuid,
