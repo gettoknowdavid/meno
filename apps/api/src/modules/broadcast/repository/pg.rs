@@ -62,6 +62,7 @@ use crate::modules::broadcast::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, EndReason, JoinOutcome,
     JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, UserSummary,
 };
+use crate::modules::broadcast::model::{CohostInvitation, InvitationStatus};
 use meno_core::Error as MenoError;
 
 /// Columns selected wherever a `Broadcast` is read.
@@ -333,6 +334,89 @@ impl BroadcastRepo for PgBroadcastRepo {
         .fetch_all(&self.pool)
         .await
         .map_err(|e| database("list_live", e))
+    }
+
+    async fn create_invitation(
+        &self,
+        broadcast_id: Uuid,
+        inviter_id: Uuid,
+        invitee_id: Uuid,
+    ) -> Result<CohostInvitation, MenoError> {
+        sqlx::query_as::<_, CohostInvitation>(
+            "INSERT INTO cohost_invitations (broadcast_id, inviter_id, invitee_id) \
+             VALUES ($1, $2, $3) \
+             ON CONFLICT (broadcast_id, invitee_id) DO UPDATE \
+             SET inviter_id = EXCLUDED.inviter_id, status = 'pending', \
+                 responded_at = NULL, created_at = now() \
+             RETURNING id, broadcast_id, inviter_id, invitee_id, status, created_at, responded_at",
+        )
+        .bind(broadcast_id)
+        .bind(inviter_id)
+        .bind(invitee_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| database("create_invitation", e))
+    }
+
+    async fn find_invitation(&self, id: Uuid) -> Result<Option<CohostInvitation>, MenoError> {
+        sqlx::query_as::<_, CohostInvitation>(
+            "SELECT id, broadcast_id, inviter_id, invitee_id, status, created_at, responded_at \
+             FROM cohost_invitations WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| database("find_invitation", e))
+    }
+
+    async fn respond_invitation(
+        &self,
+        id: Uuid,
+        status: InvitationStatus,
+        at: OffsetDateTime,
+    ) -> Result<Option<CohostInvitation>, MenoError> {
+        sqlx::query_as::<_, CohostInvitation>(
+            "UPDATE cohost_invitations SET status = $2, responded_at = $3 \
+             WHERE id = $1 AND status = 'pending' \
+             RETURNING id, broadcast_id, inviter_id, invitee_id, status, created_at, responded_at",
+        )
+        .bind(id)
+        .bind(status.as_str())
+        .bind(at)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| database("respond_invitation", e))
+    }
+
+    async fn list_due_scheduled(&self, at: OffsetDateTime) -> Result<Vec<Broadcast>, MenoError> {
+        sqlx::query_as::<_, Broadcast>(statement(
+            "SELECT {BROADCAST_COLUMNS} FROM broadcasts \
+             WHERE status = 'inactive' AND end_time IS NULL AND deleted_at IS NULL \
+               AND start_time IS NOT NULL AND start_time <= $1 \
+               AND scheduled_notified_at IS NULL",
+        ))
+        .bind(at)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| database("list_due_scheduled", e))
+    }
+
+    async fn mark_scheduled_notified(
+        &self,
+        id: Uuid,
+        at: OffsetDateTime,
+    ) -> Result<bool, MenoError> {
+        let result = sqlx::query(
+            "UPDATE broadcasts SET scheduled_notified_at = $2 \
+             WHERE id = $1 AND scheduled_notified_at IS NULL AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(at)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| database("mark_scheduled_notified", e))?;
+
+        Ok(result.rows_affected() > 0)
     }
 
     async fn set_abandoned_since(

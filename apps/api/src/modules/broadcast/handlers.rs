@@ -297,22 +297,63 @@ pub async fn leave(
     Ok(MenoResponse::ok("Broadcast left", left))
 }
 
-/// `POST /broadcasts/{id}/cohosts` — add one, as the creator.
+/// `POST /broadcasts/{id}/cohosts` — invite one, as the creator.
+///
+/// The response is the pending invitation, not a cohost: the invitee accepts or
+/// declines on their own endpoint.
 ///
 /// # Errors
 ///
-/// 403 when the caller is not the creator or is adding themselves, 404 for an unknown
+/// 403 when the caller is not the creator or is inviting themselves, 404 for an unknown
 /// user, 409 when they are already a cohost or the limit is reached.
 pub async fn add_cohost(
     State(handlers): State<Handlers>,
     Extension(auth): Extension<AuthUser>,
     Path(id): Path<Uuid>,
     axum::Json(request): axum::Json<AddCohostRequest>,
-) -> Outcome<super::dto::CohostResponse> {
+) -> Outcome<super::dto::CohostInvitationResponse> {
     let actor = summary_of(&auth);
 
-    let cohost = handlers.service.add_cohost(id, request, &actor).await?;
-    Ok(MenoResponse::ok("Cohost added successfully", cohost))
+    let invitation = handlers.service.add_cohost(id, request, &actor).await?;
+    Ok(MenoResponse::ok("Cohost invited successfully", invitation))
+}
+
+/// `POST /broadcasts/{id}/cohosts/{invitationId}/accept` — the invitee accepts.
+///
+/// # Errors
+///
+/// 404 for somebody else's invitation, 409 when it is no longer pending.
+pub async fn accept_cohost(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path((id, invitation_id)): Path<(Uuid, Uuid)>,
+) -> Outcome<super::dto::CohostSessionResponse> {
+    let actor = summary_of(&auth);
+
+    let session = handlers
+        .service
+        .accept_cohost_invitation(id, invitation_id, &actor)
+        .await?;
+    Ok(MenoResponse::ok("Cohost invitation accepted", session))
+}
+
+/// `POST /broadcasts/{id}/cohosts/{invitationId}/decline` — the invitee declines.
+///
+/// # Errors
+///
+/// 404 for somebody else's invitation, 409 when it is no longer pending.
+pub async fn decline_cohost(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path((id, invitation_id)): Path<(Uuid, Uuid)>,
+) -> Outcome<()> {
+    let actor = summary_of(&auth);
+
+    handlers
+        .service
+        .decline_cohost_invitation(id, invitation_id, &actor)
+        .await?;
+    Ok(MenoResponse::no_content("Cohost invitation declined"))
 }
 
 /// `DELETE /broadcasts/{id}/cohosts/{cohostId}` — remove one, as the creator.

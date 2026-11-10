@@ -574,6 +574,75 @@ impl crate::modules::broadcast::notices::BroadcastNotices for ModuleBroadcastNot
         }
     }
 
+    async fn cohost_invited(
+        &self,
+        broadcast_id: uuid::Uuid,
+        title: &str,
+        inviter: &crate::modules::broadcast::model::UserSummary,
+        invitee: uuid::Uuid,
+    ) {
+        let actor = broadcast_actor(inviter);
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                invitee,
+                crate::modules::notifications::model::codes::ADDED_AS_COHOST,
+                Some(&actor),
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                invitee = %invitee,
+                "cohost invitation not stored"
+            );
+        }
+    }
+
+    async fn scheduled(
+        &self,
+        broadcast: &crate::modules::broadcast::dto::BroadcastResponse,
+    ) -> Vec<uuid::Uuid> {
+        let recipients = match self.subscribers.subscriber_ids(broadcast.creator.id).await {
+            Ok(recipients) => recipients,
+            Err(failure) => {
+                tracing::warn!(
+                    %failure,
+                    broadcast_id = %broadcast.id,
+                    "could not read the followers to remind"
+                );
+                return Vec::new();
+            }
+        };
+        if recipients.is_empty() {
+            return Vec::new();
+        }
+
+        let actor = broadcast_actor(&broadcast.creator);
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                &recipients,
+                crate::modules::notifications::model::codes::SCHEDULED_BROADCAST,
+                Some(&actor),
+                Some(broadcast.id),
+                Some(&broadcast.title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast.id,
+                "scheduled broadcast notification not stored"
+            );
+        }
+
+        recipients
+    }
+
     async fn cohost_added(
         &self,
         broadcast_id: uuid::Uuid,

@@ -122,6 +122,57 @@ impl Broadcast {
     }
 }
 
+/// Where a cohost invitation is in its lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, serde::Serialize, serde::Deserialize)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum InvitationStatus {
+    /// Waiting for the invitee.
+    Pending,
+    /// The invitee joined the cohost list.
+    Accepted,
+    /// The invitee refused.
+    Declined,
+    /// The invitation passed its useful life.
+    Expired,
+}
+
+impl InvitationStatus {
+    /// The value stored in the `status` column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Declined => "declined",
+            Self::Expired => "expired",
+        }
+    }
+}
+
+/// A `cohost_invitations` row.
+///
+/// The two-step handshake's state. `broadcast_cohosts` is still the list of people who
+/// may publish; this row is the request that puts somebody on it, so an invitation can
+/// be pending without granting anything.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct CohostInvitation {
+    /// Primary key.
+    pub id: Uuid,
+    /// Which broadcast.
+    pub broadcast_id: Uuid,
+    /// Who sent it — always the creator in this module's flows.
+    pub inviter_id: Uuid,
+    /// Who is being asked.
+    pub invitee_id: Uuid,
+    /// Where it is in its lifecycle.
+    pub status: InvitationStatus,
+    /// When it was issued (or re-issued).
+    pub created_at: OffsetDateTime,
+    /// When the invitee answered.
+    pub responded_at: Option<OffsetDateTime>,
+}
+
 /// The clock, as one call site.
 ///
 /// Every "is this in the past" decision goes through here so a test can reason about

@@ -44,9 +44,8 @@ use super::storage::BroadcastStorage;
 use crate::infrastructure::ws::model::GracePeriodConfig;
 use crate::modules::broadcast::dto::{
     AddCohostRequest, BroadcastListItem, BroadcastQuery, BroadcastResponse,
-    BroadcastSessionResponse, CohostResponse, CreateBroadcastRequest, EndBroadcastResponse,
-    LeaveBroadcastResponse, ParticipantListItem, ParticipantQuery, UpdateBroadcastRequest, Viewer,
-    cohost_response, user_summary,
+    BroadcastSessionResponse, CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse,
+    ParticipantListItem, ParticipantQuery, UpdateBroadcastRequest, Viewer, user_summary,
 };
 use crate::modules::broadcast::model::{BroadcastCohost, BroadcastParticipant};
 
@@ -896,7 +895,12 @@ impl BroadcastService {
         })
     }
 
-    /// `POST /broadcasts/{id}/cohosts` — add one, as the creator.
+    /// `POST /broadcasts/{id}/cohosts` — invite one, as the creator.
+    ///
+    /// §8.6 makes co-hosting a two-step handshake: this writes the invitation and tells
+    /// the invitee, but the cohost list changes only when they accept. The notification
+    /// row is created here, with the invitation, so the invitee's inbox and socket
+    /// arrive together.
     ///
     /// # Errors
     ///
@@ -909,7 +913,7 @@ impl BroadcastService {
         id: Uuid,
         request: AddCohostRequest,
         actor: &UserSummary,
-    ) -> Result<CohostResponse, MenoError> {
+    ) -> Result<super::dto::CohostInvitationResponse, MenoError> {
         let row = self.require(id).await?;
         require_creator(&row, actor)?;
 
@@ -925,42 +929,205 @@ impl BroadcastService {
             return Err(error::cohost_limit_reached(super::dto::MAX_COHOSTS));
         }
 
-        let mut ids: Vec<Uuid> = existing.iter().map(|c| c.cohost_id).collect();
-        ids.push(request.cohost);
-
-        let updated = self.repo.set_cohosts(id, actor.id, &ids).await?;
-        let added = updated
-            .iter()
-            .find(|cohost| cohost.cohost_id == request.cohost)
-            .cloned()
-            .ok_or_else(error::user_not_found)?;
-
         let user = self
             .repo
             .find_user(request.cohost)
             .await?
             .ok_or_else(error::user_not_found)?;
 
-        let response = cohost_response(
-            &added,
-            user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url),
-            updated.len(),
-        );
+        // Re-issuing an outstanding invitation is deliberate: the upsert refreshes it,
+        // and the invitee gets one more frame rather than a silent no-op.
+        let invitation = self
+            .repo
+            .create_invitation(id, actor.id, request.cohost)
+            .await?;
+        let invitee = user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url);
 
-        // Host, cohosts and the new cohost: each client's strip is right without a
-        // refetch, and the new cohost is the one client that did not ask for anything.
-        let mut recipients = vec![actor.id];
-        for cohost in updated.iter().filter(|cohost| cohost.is_current()) {
-            if !recipients.contains(&cohost.cohost_id) {
-                recipients.push(cohost.cohost_id);
-            }
-        }
-        self.events.cohost_added(id, &response, &recipients).await;
+        self.events
+            .cohost_invited(
+                id,
+                invitation.id,
+                &actor.full_name,
+                &row.title,
+                &[request.cohost],
+            )
+            .await;
         self.notices
-            .cohost_added(id, &row.title, actor, request.cohost)
+            .cohost_invited(id, &row.title, actor, request.cohost)
             .await;
 
-        Ok(response)
+        Ok(super::dto::CohostInvitationResponse {
+            id: invitation.id,
+            broadcast_id: id,
+            invitee,
+            status: invitation.status.as_str().to_owned(),
+            created_at: invitation.created_at,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/cohosts/{invitationId}/accept` — the invitee's yes.
+    ///
+    /// Accepting into a live room also mints the cohost's publish token and sends it on
+    /// `newCohost`; a draft has no room yet, so the token is minted on go-live instead.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when the invitation is not this invitee's on this broadcast,
+    /// 409 when it is no longer pending.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, invitation_id = %invitation_id, actor = %actor.id))]
+    pub async fn accept_cohost_invitation(
+        &self,
+        id: Uuid,
+        invitation_id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<super::dto::CohostSessionResponse, MenoError> {
+        let row = self.require(id).await?;
+        let invitation = self
+            .repo
+            .find_invitation(invitation_id)
+            .await?
+            .ok_or_else(error::not_found)?;
+
+        if invitation.broadcast_id != id || invitation.invitee_id != actor.id {
+            return Err(error::not_found());
+        }
+        if invitation.status != super::model::InvitationStatus::Pending {
+            return Err(MenoError::Conflict {
+                code: meno_core::ErrorCode::Conflict,
+                message: "this cohost invitation is no longer pending".to_owned(),
+            });
+        }
+
+        let existing = self.repo.list_cohosts(id).await?;
+        if !existing.iter().any(|c| c.cohost_id == actor.id) {
+            if existing.len() >= super::dto::MAX_COHOSTS {
+                return Err(error::cohost_limit_reached(super::dto::MAX_COHOSTS));
+            }
+            let mut ids: Vec<Uuid> = existing.iter().map(|c| c.cohost_id).collect();
+            ids.push(actor.id);
+            self.repo.set_cohosts(id, row.creator_id, &ids).await?;
+        }
+
+        self.repo
+            .respond_invitation(
+                invitation_id,
+                super::model::InvitationStatus::Accepted,
+                now(),
+            )
+            .await?;
+
+        let token = if row.is_live() {
+            let token = self
+                .media
+                .mint_join_token(actor, id, ParticipantRole::Cohost)
+                .await?;
+            self.repo
+                .join(JoinRequest {
+                    broadcast_id: id,
+                    participant_id: actor.id,
+                    role: ParticipantRole::Cohost,
+                })
+                .await?;
+            // The socket has to be in the room before the token is used to publish to
+            // it, exactly as `join` does for a listener.
+            self.rooms.joined(actor.id, id).await;
+            self.events
+                .cohost_joined(id, actor.id, &actor.full_name, &token, &[actor.id])
+                .await;
+            Some(token)
+        } else {
+            None
+        };
+
+        self.events
+            .cohost_accepted(id, actor.id, &actor.full_name, &[row.creator_id])
+            .await;
+
+        Ok(super::dto::CohostSessionResponse {
+            user: user_summary(
+                actor.id,
+                actor.full_name.clone(),
+                actor.avatar_id.clone(),
+                actor.avatar_url.clone(),
+            ),
+            livekit_token: token,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/cohosts/{invitationId}/decline` — the invitee's no.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when the invitation is not this invitee's, 409 when it is no
+    /// longer pending.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, invitation_id = %invitation_id, actor = %actor.id))]
+    pub async fn decline_cohost_invitation(
+        &self,
+        id: Uuid,
+        invitation_id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<(), MenoError> {
+        let row = self.require(id).await?;
+        let invitation = self
+            .repo
+            .find_invitation(invitation_id)
+            .await?
+            .ok_or_else(error::not_found)?;
+
+        if invitation.broadcast_id != id || invitation.invitee_id != actor.id {
+            return Err(error::not_found());
+        }
+        if invitation.status != super::model::InvitationStatus::Pending {
+            return Err(MenoError::Conflict {
+                code: meno_core::ErrorCode::Conflict,
+                message: "this cohost invitation is no longer pending".to_owned(),
+            });
+        }
+
+        self.repo
+            .respond_invitation(
+                invitation_id,
+                super::model::InvitationStatus::Declined,
+                now(),
+            )
+            .await?;
+        self.events
+            .cohost_declined(id, actor.id, &[row.creator_id])
+            .await;
+
+        Ok(())
+    }
+
+    /// The §8.2 start job: a broadcast whose start time has arrived gets one reminder to
+    /// the creator's subscribers.
+    ///
+    /// It deliberately does **not** go live. The module guide is explicit that the
+    /// creator still presses go-live; the job only makes the scheduled moment visible.
+    /// `scheduled_notified_at` is claimed before anything is sent, so a restart cannot
+    /// repeat the reminder.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure, before or during the sweep.
+    #[tracing::instrument(skip_all)]
+    pub async fn announce_due_scheduled(&self, at: OffsetDateTime) -> Result<usize, MenoError> {
+        let due = self.repo.list_due_scheduled(at).await?;
+        let mut sent = 0;
+
+        for row in due {
+            if !self.repo.mark_scheduled_notified(row.id, at).await? {
+                continue;
+            }
+
+            let response = self.render(row, None, None).await?;
+            let recipients = self.notices.scheduled(&response).await;
+            self.events
+                .scheduled_broadcast(&response, &recipients)
+                .await;
+            sent += 1;
+        }
+
+        Ok(sent)
     }
 
     /// `DELETE /broadcasts/{id}/cohosts/{cohostId}` — remove one, as the creator.
@@ -991,6 +1158,39 @@ impl BroadcastService {
             .filter(|id| *id != cohost_id)
             .collect();
         self.repo.set_cohosts(id, actor.id, &ids).await?;
+
+        // The demoted account is still in the room and still holds a cohost token; tell
+        // it, with a listener token, before (or instead of) evicting it.
+        if row.is_live() && !remove_from_room {
+            match self.repo.find_user(cohost_id).await {
+                Ok(Some(user)) => {
+                    let who =
+                        user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url);
+                    match self
+                        .media
+                        .mint_join_token(&who, id, ParticipantRole::Participant)
+                        .await
+                    {
+                        Ok(token) => {
+                            self.events.cohost_demoted(id, &token, &[cohost_id]).await;
+                        }
+                        Err(failure) => tracing::warn!(
+                            %failure,
+                            broadcast_id = %id,
+                            cohost_id = %cohost_id,
+                            "minting a listener token for a removed cohost failed"
+                        ),
+                    }
+                }
+                Ok(None) => {}
+                Err(failure) => tracing::warn!(
+                    %failure,
+                    broadcast_id = %id,
+                    cohost_id = %cohost_id,
+                    "reading a removed cohost failed"
+                ),
+            }
+        }
 
         // Demoted to a listener in the room, and evicted if the caller asked: a
         // de-cohosted participant who keeps publishing is the failure

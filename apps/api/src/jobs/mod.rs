@@ -26,8 +26,10 @@
 //! recomputes the same answer. That is why this is an interval loop rather than apalis
 //! over a job table: a queue would add a migration, a claim protocol and a retry policy
 //! to solve a problem these jobs do not have. If a job that *must* run once per item
-//! arrives (a scheduled broadcast reminder, a recording finalisation), the queue belongs
-//! here as a second kind of job and these loops stay as they are.
+//! arrives (a recording finalisation), the queue belongs here as a second kind of job
+//! and these loops stay as they are. The scheduled-broadcast reminder is still a loop:
+//! `scheduled_notified_at` makes each row's reminder a one-time claim, so the tick is
+//! idempotent in the same way the sweeps are.
 //!
 //! # Starting from now
 //!
@@ -42,6 +44,7 @@ use tokio::time::{MissedTickBehavior, interval};
 
 use crate::modules::auth::state::AuthState;
 use crate::modules::broadcast::reaper::{BroadcastReaper, SWEEP_INTERVAL};
+use crate::modules::broadcast::service::BroadcastService;
 use crate::modules::notes::state::NotesState;
 use crate::state::MenoState;
 
@@ -63,6 +66,13 @@ pub const NOTES_RETENTION_INTERVAL: Duration = Duration::from_secs(24 * 60 * 60)
 /// support, short enough that a busy account does not accumulate deleted rows forever.
 pub const NOTES_RETENTION_DAYS: i64 = 30;
 
+/// How often a broadcast's scheduled start is checked.
+///
+/// Thirty seconds: the frame says "start time has arrived", so a minute of lateness is
+/// tolerable, but a subscriber who was told 7pm should not be told at 7:05.
+/// `scheduled_notified_at` makes the tick safe to run this often.
+pub const SCHEDULED_NOTICE_INTERVAL: Duration = Duration::from_secs(30);
+
 /// The background jobs, wired and ready.
 ///
 /// Built from [`MenoState`] by the worker binary. Not `Clone`: it is consumed by
@@ -74,6 +84,8 @@ pub struct JobRunner {
     notes: NotesState,
     /// The broadcast sweep, when a media server is configured.
     reaper: Option<BroadcastReaper>,
+    /// Scheduled-start reminders: the service reads due rows and emits the frames.
+    broadcast: BroadcastService,
     /// A session older than the refresh-token lifetime cannot have a live token, so it
     /// is safe to delete. Kept as seconds because that is what
     /// [`time::Duration`] wants and the config exposes.
@@ -88,6 +100,7 @@ impl std::fmt::Debug for JobRunner {
             .field("auth_retention", &AUTH_RETENTION_INTERVAL)
             .field("notes_retention", &NOTES_RETENTION_INTERVAL)
             .field("broadcast_sweep", &self.reaper.is_some())
+            .field("scheduled_notice", &SCHEDULED_NOTICE_INTERVAL)
             .field("session_cutoff_secs", &self.session_cutoff_secs)
             .finish()
     }
@@ -113,6 +126,7 @@ impl JobRunner {
             auth: state.auth,
             notes: state.notes,
             reaper,
+            broadcast: (*state.broadcast.service).clone(),
             session_cutoff_secs,
         }
     }
@@ -127,6 +141,11 @@ impl JobRunner {
 
         jobs.spawn(run_auth_retention(self.auth, self.session_cutoff_secs));
         jobs.spawn(run_notes_retention(self.notes));
+        jobs.spawn(run_scheduled_notices(self.broadcast));
+        tracing::info!(
+            interval_secs = SCHEDULED_NOTICE_INTERVAL.as_secs(),
+            "scheduled broadcast reminders scheduled"
+        );
 
         match self.reaper {
             Some(reaper) => {
@@ -198,6 +217,29 @@ async fn run_notes_retention(notes: NotesState) {
     }
 }
 
+/// Remind subscribers when a broadcast's start time arrives.
+///
+/// The service claims each row's `scheduled_notified_at` before sending, so overlap
+/// between a slow sweep and the next tick cannot notify anybody twice. The job never
+/// makes a broadcast live: §8.2 leaves that to the creator.
+async fn run_scheduled_notices(broadcast: BroadcastService) {
+    let mut ticker = interval(SCHEDULED_NOTICE_INTERVAL);
+    ticker.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        ticker.tick().await;
+
+        match broadcast
+            .announce_due_scheduled(OffsetDateTime::now_utc())
+            .await
+        {
+            Ok(0) => tracing::debug!("no scheduled broadcast is due"),
+            Ok(count) => tracing::info!(count, "scheduled broadcast reminders sent"),
+            Err(error) => tracing::warn!(%error, "scheduled broadcast reminder sweep failed"),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! The schedules, and the reason a job cannot silently stop being scheduled.
@@ -216,6 +258,10 @@ mod tests {
             assert!(NOTES_RETENTION_INTERVAL.as_secs() >= AUTH_RETENTION_INTERVAL.as_secs());
             // The retention window has to outlive a mistake, not a request.
             assert!(NOTES_RETENTION_DAYS >= 7);
+            // A reminder is only useful near its moment; the once-only marker keeps
+            // this frequent tick from becoming a mailshot.
+            assert!(SCHEDULED_NOTICE_INTERVAL.as_secs() >= 10);
+            assert!(SCHEDULED_NOTICE_INTERVAL.as_secs() <= 60);
         }
     }
 }

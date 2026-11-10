@@ -173,6 +173,32 @@ impl UpdateBroadcastRequest {
     }
 }
 
+/// The answer to an invite: a pending handshake, not yet a cohost.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohostInvitationResponse {
+    /// The invitation to accept or decline.
+    pub id: Uuid,
+    /// Which broadcast.
+    pub broadcast_id: Uuid,
+    /// Who was invited.
+    pub invitee: UserSummary,
+    /// `pending`, `accepted`, `declined` or `expired`.
+    pub status: String,
+    /// When the invitation was issued.
+    pub created_at: time::OffsetDateTime,
+}
+
+/// An accepted invitation. The token is present only when the room already exists.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohostSessionResponse {
+    /// The new cohost.
+    pub user: UserSummary,
+    /// The publish token for a live room; minted at go-live for a draft.
+    pub livekit_token: Option<String>,
+}
+
 /// `POST /broadcasts/{id}/cohosts`.
 #[derive(Debug, Deserialize)]
 pub struct AddCohostRequest {

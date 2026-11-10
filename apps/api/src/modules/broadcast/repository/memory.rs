@@ -26,8 +26,9 @@ use uuid::Uuid;
 
 use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter};
 use crate::modules::broadcast::model::{
-    Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus, EndReason,
-    JoinOutcome, JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, UserSummary, now,
+    Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus,
+    CohostInvitation, EndReason, InvitationStatus, JoinOutcome, JoinRequest, LeaveOutcome,
+    NewBroadcast, ParticipantRole, UserSummary, now,
 };
 use meno_core::Error as MenoError;
 
@@ -54,6 +55,10 @@ struct State {
     /// clock, not part of a broadcast's identity — Postgres keeps it separate for the
     /// same reason, and the projection the API returns does not carry it.
     abandoned: Vec<(Uuid, OffsetDateTime)>,
+    /// Cohost invitations, by broadcast and invitee.
+    invitations: Vec<CohostInvitation>,
+    /// Broadcasts whose scheduled reminder has already gone out.
+    scheduled_notified: Vec<Uuid>,
     clock: Option<OffsetDateTime>,
 }
 
@@ -626,6 +631,93 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             .filter(|c| c.broadcast_id == broadcast_id && c.is_current())
             .cloned()
             .collect())
+    }
+
+    async fn create_invitation(
+        &self,
+        broadcast_id: Uuid,
+        inviter_id: Uuid,
+        invitee_id: Uuid,
+    ) -> Result<CohostInvitation, MenoError> {
+        let mut state = self.lock();
+        let at = Self::now(&state);
+
+        if let Some(existing) = state
+            .invitations
+            .iter_mut()
+            .find(|row| row.broadcast_id == broadcast_id && row.invitee_id == invitee_id)
+        {
+            existing.inviter_id = inviter_id;
+            existing.status = InvitationStatus::Pending;
+            existing.created_at = at;
+            existing.responded_at = None;
+            return Ok(existing.clone());
+        }
+
+        let invitation = CohostInvitation {
+            id: Uuid::new_v4(),
+            broadcast_id,
+            inviter_id,
+            invitee_id,
+            status: InvitationStatus::Pending,
+            created_at: at,
+            responded_at: None,
+        };
+        state.invitations.push(invitation.clone());
+        Ok(invitation)
+    }
+
+    async fn find_invitation(&self, id: Uuid) -> Result<Option<CohostInvitation>, MenoError> {
+        Ok(self
+            .lock()
+            .invitations
+            .iter()
+            .find(|row| row.id == id)
+            .cloned())
+    }
+
+    async fn respond_invitation(
+        &self,
+        id: Uuid,
+        status: InvitationStatus,
+        at: OffsetDateTime,
+    ) -> Result<Option<CohostInvitation>, MenoError> {
+        let mut state = self.lock();
+        let Some(row) = state.invitations.iter_mut().find(|row| row.id == id) else {
+            return Ok(None);
+        };
+        row.status = status;
+        row.responded_at = Some(at);
+        Ok(Some(row.clone()))
+    }
+
+    async fn list_due_scheduled(&self, at: OffsetDateTime) -> Result<Vec<Broadcast>, MenoError> {
+        let state = self.lock();
+        Ok(state
+            .broadcasts
+            .iter()
+            .filter(|row| row.status == BroadcastStatus::Inactive)
+            .filter(|row| row.end_time.is_none() && row.deleted_at.is_none())
+            .filter(|row| row.start_time.is_some_and(|start| start <= at))
+            .filter(|row| !state.scheduled_notified.contains(&row.id))
+            .cloned()
+            .collect())
+    }
+
+    async fn mark_scheduled_notified(
+        &self,
+        id: Uuid,
+        _at: OffsetDateTime,
+    ) -> Result<bool, MenoError> {
+        let mut state = self.lock();
+        if state.scheduled_notified.contains(&id) {
+            return Ok(false);
+        }
+        if !state.broadcasts.iter().any(|row| row.id == id) {
+            return Ok(false);
+        }
+        state.scheduled_notified.push(id);
+        Ok(true)
     }
 
     async fn find_user(&self, id: Uuid) -> Result<Option<UserSummary>, MenoError> {

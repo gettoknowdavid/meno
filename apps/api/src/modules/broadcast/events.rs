@@ -152,6 +152,50 @@ pub trait BroadcastEvents: Send + Sync + 'static {
     /// The host came back inside the grace window, so the broadcast continues.
     async fn host_reconnected(&self, broadcast_id: Uuid, recipients: &[Uuid]);
 
+    /// An invitation was issued: only the invitee is told.
+    async fn cohost_invited(
+        &self,
+        broadcast_id: Uuid,
+        invitation_id: Uuid,
+        inviter_name: &str,
+        broadcast_title: &str,
+        recipients: &[Uuid],
+    );
+
+    /// The invitee accepted; the creator is told.
+    async fn cohost_accepted(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        user_name: &str,
+        recipients: &[Uuid],
+    );
+
+    /// The invitee declined; the creator is told.
+    async fn cohost_declined(&self, broadcast_id: Uuid, user_id: Uuid, recipients: &[Uuid]);
+
+    /// The cohost was demoted back to a listener; the new token re-authorises them.
+    async fn cohost_demoted(&self, broadcast_id: Uuid, token: &str, recipients: &[Uuid]);
+
+    /// The invitee accepted into a live room, with the token they publish with.
+    async fn cohost_joined(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        user_name: &str,
+        token: &str,
+        recipients: &[Uuid],
+    );
+
+    /// A scheduled broadcast's start time has arrived.
+    async fn scheduled_broadcast(&self, broadcast: &BroadcastResponse, recipients: &[Uuid]);
+
+    /// The recording egress finished; the creator may publish it.
+    async fn recording_ready(&self, broadcast_id: Uuid, recipients: &[Uuid]);
+
+    /// The recording was published and is now playable.
+    async fn recording_published(&self, broadcast_id: Uuid, recipients: &[Uuid]);
+
     /// Nudge every connected client that its home screen is stale.
     ///
     /// Fired after any mutation that changes what the home sections draw — a broadcast
@@ -296,6 +340,118 @@ impl BroadcastEvents for PubSubEvents {
             .await;
     }
 
+    async fn cohost_invited(
+        &self,
+        broadcast_id: Uuid,
+        invitation_id: Uuid,
+        inviter_name: &str,
+        broadcast_title: &str,
+        recipients: &[Uuid],
+    ) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::cohost_invitation_details(
+                    broadcast_id,
+                    invitation_id,
+                    inviter_name,
+                    broadcast_title,
+                ),
+            )
+            .await;
+    }
+
+    async fn cohost_accepted(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        user_name: &str,
+        recipients: &[Uuid],
+    ) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::cohost_accepted(broadcast_id, user_id, user_name),
+            )
+            .await;
+    }
+
+    async fn cohost_declined(&self, broadcast_id: Uuid, user_id: Uuid, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::cohost_declined(broadcast_id, user_id),
+            )
+            .await;
+    }
+
+    async fn cohost_demoted(&self, broadcast_id: Uuid, token: &str, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::cohost_demotion(broadcast_id, token.to_owned()),
+            )
+            .await;
+    }
+
+    async fn cohost_joined(
+        &self,
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        user_name: &str,
+        token: &str,
+        recipients: &[Uuid],
+    ) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(
+                recipients,
+                WsPayload::new_cohost_session(broadcast_id, user_id, user_name, token),
+            )
+            .await;
+    }
+
+    async fn scheduled_broadcast(&self, broadcast: &BroadcastResponse, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(recipients, WsPayload::scheduled_broadcast(broadcast))
+            .await;
+    }
+
+    async fn recording_ready(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(recipients, WsPayload::recording_ready(broadcast_id))
+            .await;
+    }
+
+    async fn recording_published(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+        self.bridge
+            .publish_to_users(recipients, WsPayload::recording_published(broadcast_id))
+            .await;
+    }
+
     async fn home_invalidated(&self) {
         self.bridge
             .broadcast_all(WsPayload::home_invalidated())
@@ -345,6 +501,45 @@ impl BroadcastEvents for SilentEvents {
     }
 
     async fn host_reconnected(&self, _broadcast_id: Uuid, _recipients: &[Uuid]) {}
+
+    async fn cohost_invited(
+        &self,
+        _broadcast_id: Uuid,
+        _invitation_id: Uuid,
+        _inviter_name: &str,
+        _broadcast_title: &str,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn cohost_accepted(
+        &self,
+        _broadcast_id: Uuid,
+        _user_id: Uuid,
+        _user_name: &str,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn cohost_declined(&self, _broadcast_id: Uuid, _user_id: Uuid, _recipients: &[Uuid]) {}
+
+    async fn cohost_demoted(&self, _broadcast_id: Uuid, _token: &str, _recipients: &[Uuid]) {}
+
+    async fn cohost_joined(
+        &self,
+        _broadcast_id: Uuid,
+        _user_id: Uuid,
+        _user_name: &str,
+        _token: &str,
+        _recipients: &[Uuid],
+    ) {
+    }
+
+    async fn scheduled_broadcast(&self, _broadcast: &BroadcastResponse, _recipients: &[Uuid]) {}
+
+    async fn recording_ready(&self, _broadcast_id: Uuid, _recipients: &[Uuid]) {}
+
+    async fn recording_published(&self, _broadcast_id: Uuid, _recipients: &[Uuid]) {}
 
     async fn ended(&self, _broadcast_id: Uuid, _reason: EndReason, _recipients: &[Uuid]) {}
 
@@ -470,6 +665,15 @@ pub mod recording {
         },
         /// The home was invalidated.
         HomeInvalidated,
+        /// Any other lifecycle frame, recorded by name.
+        Other {
+            /// The wire event name.
+            event: &'static str,
+            /// Which broadcast it concerns.
+            broadcast_id: Uuid,
+            /// The accounts told.
+            recipients: Vec<Uuid>,
+        },
     }
 
     /// Records every announcement, so a test can assert both that one happened and that
@@ -636,6 +840,90 @@ pub mod recording {
 
         async fn host_reconnected(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
             self.lock().push(RecordingEvent::HostReconnected {
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_invited(
+            &self,
+            broadcast_id: Uuid,
+            _invitation_id: Uuid,
+            _inviter_name: &str,
+            _broadcast_title: &str,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::Other {
+                event: "cohostInvitation",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_accepted(
+            &self,
+            broadcast_id: Uuid,
+            _user_id: Uuid,
+            _user_name: &str,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::Other {
+                event: "cohostAccepted",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_declined(&self, broadcast_id: Uuid, _user_id: Uuid, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::Other {
+                event: "cohostDeclined",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_demoted(&self, broadcast_id: Uuid, _token: &str, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::Other {
+                event: "cohostDemotion",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn cohost_joined(
+            &self,
+            broadcast_id: Uuid,
+            _user_id: Uuid,
+            _user_name: &str,
+            _token: &str,
+            recipients: &[Uuid],
+        ) {
+            self.lock().push(RecordingEvent::Other {
+                event: "newCohost",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn scheduled_broadcast(&self, broadcast: &BroadcastResponse, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::Other {
+                event: "scheduledBroadcast",
+                broadcast_id: broadcast.id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn recording_ready(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::Other {
+                event: "recordingReady",
+                broadcast_id,
+                recipients: recipients.to_vec(),
+            });
+        }
+
+        async fn recording_published(&self, broadcast_id: Uuid, recipients: &[Uuid]) {
+            self.lock().push(RecordingEvent::Other {
+                event: "recordingPublished",
                 broadcast_id,
                 recipients: recipients.to_vec(),
             });

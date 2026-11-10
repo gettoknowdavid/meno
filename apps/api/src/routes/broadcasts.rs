@@ -117,7 +117,30 @@ pub fn routes(
         .route("/broadcasts/{id}/live", post(handlers::go_live))
         .route("/broadcasts/{id}/end", post(handlers::end))
         .route("/broadcasts/{id}/leave", post(handlers::leave))
+        // The v2 endpoint table spells this resource `co-hosts`; the earlier
+        // `/cohosts` spelling stays mounted so existing clients do not break.
+        .route("/broadcasts/{id}/co-hosts", post(handlers::add_cohost))
+        .route(
+            "/broadcasts/{id}/co-hosts/{invitationId}/accept",
+            post(handlers::accept_cohost),
+        )
+        .route(
+            "/broadcasts/{id}/co-hosts/{invitationId}/decline",
+            post(handlers::decline_cohost),
+        )
+        .route(
+            "/broadcasts/{id}/co-hosts/{cohostId}",
+            delete(handlers::remove_cohost),
+        )
         .route("/broadcasts/{id}/cohosts", post(handlers::add_cohost))
+        .route(
+            "/broadcasts/{id}/cohosts/{invitationId}/accept",
+            post(handlers::accept_cohost),
+        )
+        .route(
+            "/broadcasts/{id}/cohosts/{invitationId}/decline",
+            post(handlers::decline_cohost),
+        )
         .route(
             "/broadcasts/{id}/cohosts/{cohostId}",
             delete(handlers::remove_cohost),

@@ -214,10 +214,64 @@ impl WsPayload {
         )
     }
 
+    /// The v2 invitation frame: the invitee decides, so the frame carries who asked and
+    /// which broadcast, not a media token they have no right to yet.
+    #[must_use]
+    pub fn cohost_invitation_details(
+        broadcast_id: Uuid,
+        invitation_id: Uuid,
+        inviter_name: &str,
+        broadcast_title: &str,
+    ) -> Self {
+        Self::new(
+            WsEvent::CohostInvitation,
+            serde_json::json!({
+                "broadcastId": broadcast_id,
+                "invitationId": invitation_id,
+                "inviterName": inviter_name,
+                "broadcastTitle": broadcast_title,
+            }),
+        )
+    }
+
+    /// The accepted invitee's cohost session: the token they publish with.
+    #[must_use]
+    pub fn new_cohost_session(
+        broadcast_id: Uuid,
+        user_id: Uuid,
+        user_name: &str,
+        token: &str,
+    ) -> Self {
+        Self::new(
+            WsEvent::NewCohost,
+            serde_json::json!({
+                "broadcastId": broadcast_id,
+                "userId": user_id,
+                "userName": user_name,
+                "livekitToken": token,
+            }),
+        )
+    }
+
     /// A cohost was added to the broadcast.
     #[must_use]
     pub fn new_cohost(cohost: impl Serialize) -> Self {
         Self::new(WsEvent::NewCohost, cohost)
+    }
+
+    /// A scheduled broadcast's start time has arrived.
+    #[must_use]
+    pub fn scheduled_broadcast(broadcast: impl Serialize) -> Self {
+        Self::new(WsEvent::ScheduledBroadcast, broadcast)
+    }
+
+    /// The recording is published and playable.
+    #[must_use]
+    pub fn recording_published(broadcast_id: Uuid) -> Self {
+        Self::new(
+            WsEvent::RecordingPublished,
+            serde_json::json!({ "broadcastId": broadcast_id }),
+        )
     }
 
     /// A cohost was removed from the broadcast.

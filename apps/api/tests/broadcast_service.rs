@@ -560,15 +560,19 @@ async fn updating_as_a_cohost_is_refused() {
         .expect("create");
 
     // Grace is a genuine cohost: she runs the room, but editing it is still Ada's alone.
-    svc.add_cohost(
-        created.id,
-        dto::AddCohostRequest {
-            cohost: user(2, "Grace Hopper").id,
-        },
-        &user(1, "Ada Lovelace"),
-    )
-    .await
-    .expect("add cohost");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite cohost");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept cohost");
 
     let error = svc
         .update(
@@ -1115,10 +1119,18 @@ async fn adding_a_cohost_as_the_creator_succeeds() {
             &user(1, "Ada Lovelace"),
         )
         .await
-        .expect("add");
+        .expect("invite");
 
-    assert_eq!(response.user.id, user(2, "Grace Hopper").id);
-    assert_eq!(response.cohost_count, 1);
+    assert_eq!(response.invitee.id, user(2, "Grace Hopper").id);
+    assert_eq!(response.status, "pending");
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after")
+            .cohosts
+            .is_empty(),
+        "an invitation is not yet a cohost"
+    );
 }
 
 #[tokio::test]
@@ -1129,15 +1141,19 @@ async fn adding_a_cohost_that_is_already_one_is_refused() {
         .create(create_request(), user(1, "Ada Lovelace"))
         .await
         .expect("create");
-    svc.add_cohost(
-        created.id,
-        dto::AddCohostRequest {
-            cohost: user(2, "Grace Hopper").id,
-        },
-        &user(1, "Ada Lovelace"),
-    )
-    .await
-    .expect("add");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
 
     let error = svc
         .add_cohost(
@@ -1161,15 +1177,19 @@ async fn removing_a_cohost_as_the_creator_succeeds() {
         .create(create_request(), user(1, "Ada Lovelace"))
         .await
         .expect("create");
-    svc.add_cohost(
-        created.id,
-        dto::AddCohostRequest {
-            cohost: user(2, "Grace Hopper").id,
-        },
-        &user(1, "Ada Lovelace"),
-    )
-    .await
-    .expect("add");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
 
     svc.remove_cohost(
         created.id,
@@ -1185,6 +1205,152 @@ async fn removing_a_cohost_as_the_creator_succeeds() {
         !got.cohosts
             .iter()
             .any(|c| c.id == user(2, "Grace Hopper").id)
+    );
+}
+
+#[tokio::test]
+async fn an_invitation_becomes_a_cohost_only_when_accepted() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    assert_eq!(invitation.status, "pending");
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after invite")
+            .cohosts
+            .is_empty(),
+        "§8.6: the invitation grants nothing until it is accepted"
+    );
+    assert!(
+        notices
+            .cohosts
+            .lock()
+            .expect("not poisoned")
+            .contains(&(created.id, user(2, "Grace Hopper").id)),
+        "the invitee's inbox row is created with the invitation"
+    );
+
+    let session = svc
+        .accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
+
+    assert_eq!(session.user.id, user(2, "Grace Hopper").id);
+    assert!(
+        session.livekit_token.is_none(),
+        "a draft has no room, so there is nothing to join yet"
+    );
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after accept")
+            .cohosts
+            .iter()
+            .any(|cohost| cohost.id == user(2, "Grace Hopper").id)
+    );
+}
+
+#[tokio::test]
+async fn declining_an_invitation_leaves_the_roster_alone() {
+    let (svc, repo, _events, _notices) = service_with_notices();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    svc.decline_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("decline");
+
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after decline")
+            .cohosts
+            .is_empty()
+    );
+    let again = svc
+        .accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect_err("a declined invitation is final");
+    assert_eq!(again.code(), meno_core::ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn a_due_scheduled_broadcast_is_reminded_once_and_does_not_go_live() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+
+    let now = time::OffsetDateTime::now_utc();
+    repo.set_clock(now);
+    let start = now + time::Duration::hours(1);
+    let created = svc
+        .create(
+            CreateBroadcastRequest {
+                start_time: Some(start),
+                ..create_request()
+            },
+            user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("create");
+
+    assert_eq!(
+        svc.announce_due_scheduled(now).await.expect("before"),
+        0,
+        "a broadcast five minutes early is not due"
+    );
+
+    repo.set_clock(start);
+    assert_eq!(
+        svc.announce_due_scheduled(start).await.expect("due"),
+        1,
+        "the reminder goes out at the start time"
+    );
+    assert_eq!(
+        svc.announce_due_scheduled(start + time::Duration::minutes(1))
+            .await
+            .expect("again"),
+        0,
+        "scheduled_notified_at makes the tick once-only"
+    );
+    assert_eq!(
+        notices.scheduled.lock().expect("not poisoned").as_slice(),
+        [created.id]
+    );
+
+    let after = svc.get(created.id, None).await.expect("after");
+    assert_ne!(
+        after.state,
+        ModelBroadcastState::Live,
+        "§8.2: the job reminds, the creator still presses go-live"
     );
 }
 
@@ -1679,6 +1845,7 @@ struct RecordingNotices {
     started: std::sync::Mutex<Vec<Uuid>>,
     ended: std::sync::Mutex<Vec<(Uuid, String, Vec<Uuid>)>>,
     cohosts: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+    scheduled: std::sync::Mutex<Vec<Uuid>>,
 }
 
 #[async_trait::async_trait]
@@ -1708,6 +1875,30 @@ impl meno_api::modules::broadcast::notices::BroadcastNotices for RecordingNotice
             .lock()
             .expect("the recording double is not poisoned")
             .push((broadcast_id, cohost));
+    }
+
+    async fn cohost_invited(
+        &self,
+        broadcast_id: Uuid,
+        _title: &str,
+        _inviter: &UserSummary,
+        invitee: Uuid,
+    ) {
+        self.cohosts
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, invitee));
+    }
+
+    async fn scheduled(
+        &self,
+        broadcast: &meno_api::modules::broadcast::dto::BroadcastResponse,
+    ) -> Vec<Uuid> {
+        self.scheduled
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push(broadcast.id);
+        vec![user(3, "Alan Turing").id]
     }
 }
 

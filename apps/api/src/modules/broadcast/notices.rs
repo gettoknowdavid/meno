@@ -38,6 +38,19 @@ pub trait BroadcastNotices: Send + Sync + 'static {
         actor: &UserSummary,
         cohost: Uuid,
     );
+
+    /// `invitee` was asked to co-host; the inbox row arrives with the invitation.
+    async fn cohost_invited(
+        &self,
+        broadcast_id: Uuid,
+        title: &str,
+        inviter: &UserSummary,
+        invitee: Uuid,
+    );
+
+    /// The scheduled start arrived: notify the creator's subscribers and answer who was
+    /// told, so the caller can publish the matching socket frame to the same audience.
+    async fn scheduled(&self, broadcast: &BroadcastResponse) -> Vec<Uuid>;
 }
 
 /// A deployment with no notification module.
@@ -57,5 +70,18 @@ impl BroadcastNotices for SilentNotices {
         _actor: &UserSummary,
         _cohost: Uuid,
     ) {
+    }
+
+    async fn cohost_invited(
+        &self,
+        _broadcast_id: Uuid,
+        _title: &str,
+        _inviter: &UserSummary,
+        _invitee: Uuid,
+    ) {
+    }
+
+    async fn scheduled(&self, _broadcast: &BroadcastResponse) -> Vec<Uuid> {
+        Vec::new()
     }
 }

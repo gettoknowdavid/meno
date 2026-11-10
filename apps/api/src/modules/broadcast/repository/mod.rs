@@ -45,8 +45,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::model::{
-    Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus, EndReason,
-    JoinOutcome, JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, UserSummary,
+    Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus,
+    CohostInvitation, EndReason, InvitationStatus, JoinOutcome, JoinRequest, LeaveOutcome,
+    NewBroadcast, ParticipantRole, UserSummary,
 };
 
 /// Postgres-backed storage for the broadcast module.
@@ -182,6 +183,49 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
         invited_by: Uuid,
         cohosts: &[Uuid],
     ) -> Result<Vec<BroadcastCohost>, MenoError>;
+
+    // ── cohost invitations (migration 0008) ───────────────────────────────
+
+    /// Issue, or re-issue, an invitation to co-host.
+    ///
+    /// Upsert on `(broadcast_id, invitee_id)`: inviting somebody who already has a
+    /// declined row makes it pending again rather than failing, because a creator who
+    /// tries again should not have to know the row existed. An accepted row is refused by
+    /// the service before this is called.
+    async fn create_invitation(
+        &self,
+        broadcast_id: Uuid,
+        inviter_id: Uuid,
+        invitee_id: Uuid,
+    ) -> Result<CohostInvitation, MenoError>;
+
+    /// An invitation by id, whatever its status.
+    async fn find_invitation(&self, id: Uuid) -> Result<Option<CohostInvitation>, MenoError>;
+
+    /// Record the invitee's answer; `None` when the row does not exist.
+    async fn respond_invitation(
+        &self,
+        id: Uuid,
+        status: InvitationStatus,
+        at: OffsetDateTime,
+    ) -> Result<Option<CohostInvitation>, MenoError>;
+
+    // ── scheduled reminders (§8.2's start job) ────────────────────────────
+
+    /// Scheduled broadcasts whose start time has arrived and whose reminder has not
+    /// gone out.
+    ///
+    /// The reminder is a fact that must happen once: `scheduled_notified_at` is the
+    /// marker, so a worker that restarts every minute does not notify the same
+    /// subscribers repeatedly.
+    async fn list_due_scheduled(&self, at: OffsetDateTime) -> Result<Vec<Broadcast>, MenoError>;
+
+    /// Claim one broadcast's reminder. `true` means this caller sent it.
+    async fn mark_scheduled_notified(
+        &self,
+        id: Uuid,
+        at: OffsetDateTime,
+    ) -> Result<bool, MenoError>;
 
     // ── users ──────────────────────────────────────────────────────────────
 
