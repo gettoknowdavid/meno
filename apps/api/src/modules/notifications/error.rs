@@ -108,9 +108,7 @@ mod tests {
 
         assert!(error.to_string().contains("live_broadcast_started"));
         assert!(
-            !to_body(&error)
-                .message
-                .contains("live_broadcast_started"),
+            !to_body(&error).message.contains("live_broadcast_started"),
             "an internal template name is not the client's business"
         );
     }

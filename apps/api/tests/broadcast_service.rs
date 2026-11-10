@@ -48,6 +48,7 @@ use meno_api::modules::broadcast::media::RecordingMedia;
 use meno_api::modules::broadcast::model::BroadcastState as ModelBroadcastState;
 use meno_api::modules::broadcast::model::{EndReason, ParticipantRole, UserSummary};
 use meno_api::modules::broadcast::repository::{BroadcastRepo, InMemoryBroadcastRepo};
+use meno_api::modules::broadcast::rooms::{BroadcastRooms, SilentRooms, recording::RecordingRooms};
 use meno_api::modules::broadcast::service::{self, BroadcastService};
 use meno_api::modules::broadcast::storage::BroadcastStorage;
 use meno_core::Error as MenoError;
@@ -121,8 +122,137 @@ fn service_with_events() -> (
         // the in-memory store so it can read back what was written.
         storage: BroadcastStorage::disabled(),
         events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
     });
     (svc, repo, media, events)
+}
+
+/// The same, with a recorder for room membership.
+///
+/// Apart from [`service_with_events`] rather than folded into it: most flows here care
+/// about one half of the announcement story or the other, and a fixture that recorded
+/// both would make every assertion carry fields it does not use.
+fn service_with_rooms() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingMedia>,
+    Arc<RecordingRooms>,
+) {
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let media = Arc::new(RecordingMedia::new());
+    let rooms = Arc::new(RecordingRooms::new());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn BroadcastRepo>,
+        media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::clone(&rooms) as Arc<dyn BroadcastRooms>,
+    });
+    (svc, repo, media, rooms)
+}
+
+// ── room membership (gap 1) ───────────────────────────────────────────────
+//
+// A message is persisted and then published to the broadcast's room channel; delivery
+// walks the membership these flows record. Before this, nothing wrote it, so every room
+// frame reached zero sockets — and no in-memory test could see it, because the double
+// recorded a publish whether or not anybody was subscribed to receive it. These assert
+// the half that was missing: who the service subscribes.
+
+#[tokio::test]
+async fn going_live_subscribes_the_host_to_the_room() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    assert_eq!(
+        rooms.joined(),
+        vec![(user(1, "Ada Lovelace").id, created.id)],
+        "the host is a member from the moment the broadcast is on air"
+    );
+}
+
+#[tokio::test]
+async fn joining_a_live_broadcast_subscribes_the_participant_to_its_room() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("joining");
+
+    assert!(
+        rooms
+            .joined()
+            .contains(&(user(2, "Grace Hopper").id, created.id)),
+        "a participant's socket has to be in the room the messages are published to"
+    );
+}
+
+#[tokio::test]
+async fn leaving_unsubscribes_the_participant() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("joining");
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leaving");
+
+    assert_eq!(
+        rooms.left(),
+        vec![(user(2, "Grace Hopper").id, created.id)],
+        "a closed roster row must stop receiving the room's frames"
+    );
+}
+
+#[tokio::test]
+async fn ending_closes_the_room_for_everybody() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("ending");
+
+    assert_eq!(
+        rooms.closed(),
+        vec![created.id],
+        "an ended broadcast must not keep a channel open"
+    );
 }
 
 /// Seed the three fixture users so the service can resolve them.
@@ -1430,12 +1560,11 @@ async fn a_token_failure_leaves_no_live_row() {
     // read `already_live` for a room no client had entered.
     let repo = Arc::new(InMemoryBroadcastRepo::new());
     let svc = BroadcastService::new(service::ServiceDeps {
-        repo: Arc::clone(&repo)
-            as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
-        media: Arc::new(MintFails)
-            as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        repo: Arc::clone(&repo) as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
+        media: Arc::new(MintFails) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
         storage: BroadcastStorage::disabled(),
         events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
     });
     seed(&repo);
     let created = svc
@@ -1450,7 +1579,11 @@ async fn a_token_failure_leaves_no_live_row() {
 
     assert_eq!(error.code(), meno_core::ErrorCode::UpstreamUnavailable);
 
-    let row = repo.find_by_id(created.id).await.expect("read").expect("row");
+    let row = repo
+        .find_by_id(created.id)
+        .await
+        .expect("read")
+        .expect("row");
     assert!(
         !row.is_live(),
         "a start that could not hand out a token is not a start"

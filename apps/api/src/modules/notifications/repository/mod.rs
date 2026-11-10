@@ -47,9 +47,9 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use super::model::{NotificationRow, NotificationTemplate};
-use crate::infrastructure::push::model::PushTarget;
 use crate::infrastructure::push::PushTokenStore;
 use crate::infrastructure::push::error::TokenStoreError;
+use crate::infrastructure::push::model::PushTarget;
 
 /// The notifications module's storage.
 #[async_trait]
@@ -103,7 +103,10 @@ pub trait NotificationsRepo: Send + Sync + std::fmt::Debug {
     // ── reads ─────────────────────────────────────────────────────────────
 
     /// One page of an owner's live inbox, newest first.
-    async fn find_page(&self, filter: &NotificationFilter) -> Result<Vec<NotificationRow>, MenoError>;
+    async fn find_page(
+        &self,
+        filter: &NotificationFilter,
+    ) -> Result<Vec<NotificationRow>, MenoError>;
 
     /// Whether a live notification carries this id for this owner.
     async fn exists(&self, notification_id: Uuid, owner_id: Uuid) -> Result<bool, MenoError>;
@@ -237,11 +240,7 @@ mod tests {
             Ok(0)
         }
 
-        async fn delete(
-            &self,
-            _notification_id: Uuid,
-            _owner_id: Uuid,
-        ) -> Result<bool, MenoError> {
+        async fn delete(&self, _notification_id: Uuid, _owner_id: Uuid) -> Result<bool, MenoError> {
             Ok(false)
         }
 
@@ -252,11 +251,7 @@ mod tests {
             Ok(Vec::new())
         }
 
-        async fn exists(
-            &self,
-            _notification_id: Uuid,
-            _owner_id: Uuid,
-        ) -> Result<bool, MenoError> {
+        async fn exists(&self, _notification_id: Uuid, _owner_id: Uuid) -> Result<bool, MenoError> {
             Ok(false)
         }
 

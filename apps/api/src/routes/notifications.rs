@@ -52,14 +52,8 @@ pub fn routes(guard: AuthState, redis: Arc<Redis>) -> Router<NotificationsState>
 
     let writes = Router::new()
         .route("/notifications/read-all", patch(handlers::mark_all_read))
-        .route(
-            "/notifications/{id}/read",
-            patch(handlers::mark_read),
-        )
-        .route(
-            "/notifications/{id}",
-            delete(handlers::delete_notification),
-        )
+        .route("/notifications/{id}/read", patch(handlers::mark_read))
+        .route("/notifications/{id}", delete(handlers::delete_notification))
         .layer(from_fn_with_state(
             RateLimitState::new(Redis::clone(&redis), LimitPolicy::write()),
             rate_limit_middleware,

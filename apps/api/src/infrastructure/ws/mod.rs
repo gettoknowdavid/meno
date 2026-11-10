@@ -202,6 +202,21 @@ impl Registry {
             .unwrap_or_default()
     }
 
+    /// Every room this replica holds `user_id` in.
+    ///
+    /// The reverse of [`Self::room_members`], and what socket cleanup needs: when a
+    /// user's last socket closes, this is the list of rooms to unsubscribe them from.
+    /// Returned as a snapshot rather than a live view, because the caller mutates the
+    /// registry while walking it.
+    #[must_use]
+    pub fn rooms_of(&self, user_id: Uuid) -> Vec<Uuid> {
+        self.rooms
+            .iter()
+            .filter(|entry| entry.value().contains(&user_id))
+            .map(|entry| *entry.key())
+            .collect()
+    }
+
     /// Whether the user has at least one socket on this replica.
     #[must_use]
     pub fn is_online(&self, user_id: Uuid) -> bool {
@@ -355,14 +370,15 @@ impl WsService {
         broadcast_id: Uuid,
         bridge: &pubsub::WsPubSubBridge,
     ) {
-        // The bool means "subscribe?" — the bridge asks that itself, once it has
-        // reached the shared SET. Here we only need the local membership recorded.
-        let _ = self.registry.add_local_room_member(broadcast_id, user_id);
-
+        // The bridge is the first writer, deliberately: it records the local member
+        // *and* decides from that whether this replica needs the room channel. Adding
+        // here beforehand made it see a room it already had and skip the subscription,
+        // so the replica received nothing published by another instance.
         if let Err(e) = bridge.join_room(user_id, broadcast_id).await {
             // Local delivery still works without the shared SET, so this is degraded
             // rather than broken: cross-instance membership checks and counts will
             // miss this user until it succeeds.
+            let _ = self.registry.add_local_room_member(broadcast_id, user_id);
             tracing::warn!(
                 error = %e,
                 user_id = %user_id,
@@ -382,17 +398,33 @@ impl WsService {
         broadcast_id: Uuid,
         bridge: &pubsub::WsPubSubBridge,
     ) {
-        let _ = self
-            .registry
-            .remove_local_room_member(broadcast_id, user_id);
-
+        // Same ordering as `join_room`: the bridge removes the local member and answers
+        // "did that empty the room?" from it, which is the unsubscribe decision.
         if let Err(e) = bridge.leave_room(user_id, broadcast_id).await {
+            // The shared SET is unreachable, but this replica's membership is not the
+            // shared one's problem: drop it locally so a dead socket stops being a
+            // delivery target.
+            let _ = self
+                .registry
+                .remove_local_room_member(broadcast_id, user_id);
             tracing::warn!(
                 error = %e,
                 user_id = %user_id,
                 broadcast_id = %broadcast_id,
                 "failed to leave room in Redis"
             );
+        }
+    }
+
+    /// Drop every local member of a room, unsubscribing when the last one goes.
+    ///
+    /// Call from `end` and from the reaper's ending path: a broadcast that is over must
+    /// not keep a channel subscription or a membership SET alive for a room nobody can
+    /// be in. Each member goes through [`Self::leave_room`], so the shared SET is
+    /// updated as well as the local registry.
+    pub async fn close_room(&self, broadcast_id: Uuid, bridge: &pubsub::WsPubSubBridge) {
+        for user_id in self.registry.room_members(broadcast_id) {
+            self.leave_room(user_id, broadcast_id, bridge).await;
         }
     }
 

@@ -397,6 +397,7 @@ mod tests {
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
             events: Arc::new(SilentEvents),
+            rooms: Arc::new(crate::modules::broadcast::rooms::SilentRooms),
         });
 
         repo.insert_user(user(1));
@@ -458,6 +459,7 @@ mod tests {
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
             events: Arc::new(SilentEvents),
+            rooms: Arc::new(crate::modules::broadcast::rooms::SilentRooms),
         });
 
         repo.insert_user(user(1));
@@ -550,6 +552,7 @@ mod tests {
             media: media.clone(),
             storage: BroadcastStorage::disabled(),
             events: Arc::new(SilentEvents),
+            rooms: Arc::new(crate::modules::broadcast::rooms::SilentRooms),
         });
 
         repo.insert_user(user(1));
@@ -655,6 +658,7 @@ mod tests {
             media: Arc::new(RecordingMedia::new()),
             storage: BroadcastStorage::disabled(),
             events: Arc::new(SilentEvents),
+            rooms: Arc::new(crate::modules::broadcast::rooms::SilentRooms),
         });
 
         repo.insert_user(user(1));

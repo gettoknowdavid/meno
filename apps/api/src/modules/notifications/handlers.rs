@@ -16,8 +16,7 @@ use axum::extract::{Extension, Path, Query, State};
 use uuid::Uuid;
 
 use super::dto::{
-    MarkAllReadResponse, MarkReadResponse, NotificationItem, NotificationQuery,
-    UnreadCountResponse,
+    MarkAllReadResponse, MarkReadResponse, NotificationItem, NotificationQuery, UnreadCountResponse,
 };
 use super::state::NotificationsState;
 use crate::middleware::auth::AuthUser;

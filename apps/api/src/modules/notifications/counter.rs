@@ -124,7 +124,11 @@ impl UnreadCounter for RedisUnreadCounter {
 
         if let Err(error) = self
             .redis
-            .eval::<i64, Vec<&str>, Vec<i64>>(script, vec![key.as_ref()], vec![key.ttl().as_secs() as i64])
+            .eval::<i64, Vec<&str>, Vec<i64>>(
+                script,
+                vec![key.as_ref()],
+                vec![key.ttl().as_secs() as i64],
+            )
             .await
         {
             tracing::warn!(
@@ -177,7 +181,9 @@ impl InMemoryUnreadCounter {
     }
 
     fn lock(&self) -> MutexGuard<'_, HashMap<Uuid, i64>> {
-        self.counts.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+        self.counts
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 

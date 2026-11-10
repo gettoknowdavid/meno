@@ -36,11 +36,16 @@
 //! dispatched into [`crate::modules::chat::service`] by [`handle_chat_frame`], and a
 //! refusal comes back as the socket code the client can act on.
 //!
-//! **Still not wired**, because the modules they belong to do not exist in the monorepo
-//! yet: room join/leave and the host grace period. `master`'s equivalent reached into
-//! `modules::broadcast` and `jobs/`; those events are answered with an honest "not
-//! available yet" connection error, and the room bookkeeping attaches to
-//! [`handle_socket`] at the same points `master` used when those modules land.
+//! **Room membership is wired.** The broadcast module subscribes and unsubscribes the
+//! room from its own flows — `go_live`, `join`, `resume`, `leave` and `end` — through
+//! [`crate::modules::broadcast::rooms`], and this handler drops a user's last socket from
+//! every room it held. The frames a client can send are still the heartbeat and the four
+//! chat events; ending and leaving are HTTP calls by design (the host may have lost the
+//! connection that would have carried the frame).
+//!
+//! **Still not wired:** the host grace period. It needs this socket's disconnect to start
+//! the reaper's clock and the `hostDisconnected` / `hostReconnected` frames that go with
+//! it (`docs/backend-gaps.md`, gap 6).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -90,6 +95,7 @@ const MAX_RECONNECTS_PER_WINDOW: u64 = 10;
 /// One message for "missing", "empty" and "whitespace-only" so the response is not an
 /// oracle for which check failed (§4.8's stable codes, same reasoning as the bearer
 /// parser in `middleware::auth`).
+#[must_use]
 pub fn token_required() -> MenoError {
     MenoError::Unauthorized {
         code: ErrorCode::Unauthorized,
@@ -236,8 +242,9 @@ pub async fn upgrade(
 ///    happens even on the error path: a leaked entry keeps `is_online` reporting
 ///    `true` forever, which is what presence and fan-outs branch on.
 ///
-/// Room join/leave would bracket steps 3–4 (`master`'s handler resolved the live
-/// broadcast here); they attach when `modules::broadcast` exists to ask.
+/// Room membership is not decided here: the broadcast module subscribed this account
+/// when it joined over HTTP, and step 5 is where the last socket for the account
+/// unsubscribes it. A socket that reconnects re-subscribes through `resume`.
 async fn handle_socket(socket: WebSocket, user: AuthUser, state: MenoState) {
     let user_id = user.id;
     let (mut sink, mut stream) = socket.split();
@@ -345,6 +352,19 @@ async fn handle_socket(socket: WebSocket, user: AuthUser, state: MenoState) {
     // every other caller, and a delivery attempted after this buffers instead of
     // writing into a dead channel.
     state.ws.registry().unregister(user_id, conn_id);
+
+    // The last socket is the moment this account's room memberships stop being true. A
+    // user with a second device must stay subscribed, so this runs only at zero; a user
+    // with none must not keep a replica listening to a channel nobody here reads.
+    if state.ws.registry().connection_count(user_id) == 0 {
+        for broadcast_id in state.ws.registry().rooms_of(user_id) {
+            state
+                .ws
+                .leave_room(user_id, broadcast_id, &state.ws_bridge)
+                .await;
+        }
+    }
+
     if let Err(error) = state.redis.del(&presence_key).await {
         tracing::debug!(user.id = %user_id, detail = %error, "could not clear presence");
     }

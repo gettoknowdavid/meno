@@ -110,7 +110,11 @@ mod tests {
     #[tokio::test]
     async fn a_state_built_from_doubles_notifies_without_any_infrastructure() {
         let (repo, notifier, counter) = doubles();
-        repo.seed_template(codes::USER_SUBSCRIBED, "New Follower", "{actor} follows you");
+        repo.seed_template(
+            codes::USER_SUBSCRIBED,
+            "New Follower",
+            "{actor} follows you",
+        );
         repo.seed_settings(uuid::Uuid::from_u128(1), false, true);
 
         let state = NotificationsState::from_parts(

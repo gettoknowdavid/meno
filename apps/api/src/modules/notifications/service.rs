@@ -35,12 +35,12 @@ use uuid::Uuid;
 
 use super::counter::UnreadCounter;
 use super::dto::{
-    MarkAllReadResponse, MarkReadResponse, NotificationItem, NotificationQuery,
-    UnreadCountResponse,
+    MarkAllReadResponse, MarkReadResponse, NotificationItem, NotificationQuery, UnreadCountResponse,
 };
 use super::error;
-use super::model::{ACTOR_VAR, ActorSummary, BROADCAST_TITLE_VAR, NotificationRow,
-    NotificationTemplate, codes};
+use super::model::{
+    ACTOR_VAR, ActorSummary, BROADCAST_TITLE_VAR, NotificationRow, NotificationTemplate, codes,
+};
 use super::publisher::Notifier;
 use super::repository::{NotificationFilter, NotificationsRepo, RepoTokenStore};
 use crate::infrastructure::push::model::{PushMessage, PushTarget};
@@ -157,15 +157,15 @@ impl NotificationsService {
         // Awaited, not spawned: the outcome is worth logging, and push is off the
         // request path anyway (§4.9). `notify_user` skips the token lookup entirely
         // when the sender is disabled, so a push-less deployment pays nothing.
-        let message = PushMessage::for_user(
-            title.clone(),
-            body.clone(),
-            owner_id,
-            deep_link.as_str(),
-        );
+        let message =
+            PushMessage::for_user(title.clone(), body.clone(), owner_id, deep_link.as_str());
         let outcome = self
             .push
-            .notify_user(owner_id, &RepoTokenStore::new(Arc::clone(&self.repo)), message)
+            .notify_user(
+                owner_id,
+                &RepoTokenStore::new(Arc::clone(&self.repo)),
+                message,
+            )
             .await;
         log_push(owner_id, &outcome, image_url.as_deref());
 
@@ -213,11 +213,7 @@ impl NotificationsService {
             .create_bulk(owner_ids, template.id, actor.map(|a| a.id), broadcast_id)
             .await?;
 
-        tracing::info!(
-            type_code,
-            inserted,
-            "bulk notification insert complete"
-        );
+        tracing::info!(type_code, inserted, "bulk notification insert complete");
 
         // The unread counters, one per recipient. Detached after the first chunk: a
         // 10k-subscriber fan-out must not turn into 10k round trips inside a request.
@@ -617,11 +613,17 @@ mod tests {
             deep_link_for(codes::USER_SUBSCRIBED, None, Some(id)),
             format!("meno://profile/{id}")
         );
-        assert_eq!(deep_link_for(codes::USER_SUBSCRIBED, None, None), "meno://home");
+        assert_eq!(
+            deep_link_for(codes::USER_SUBSCRIBED, None, None),
+            "meno://home"
+        );
     }
 
     #[test]
     fn an_unknown_type_is_home() {
-        assert_eq!(deep_link_for("something_new", Some(Uuid::nil()), None), "meno://home");
+        assert_eq!(
+            deep_link_for("something_new", Some(Uuid::nil()), None),
+            "meno://home"
+        );
     }
 }

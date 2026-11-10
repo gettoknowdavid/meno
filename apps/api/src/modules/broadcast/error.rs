@@ -101,8 +101,7 @@ pub fn already_live() -> MenoError {
 pub fn broadcast_already_ended() -> MenoError {
     MenoError::Conflict {
         code: ErrorCode::BroadcastAlreadyEnded,
-        message: "This broadcast has already ended. Create a new one to go live again."
-            .to_owned(),
+        message: "This broadcast has already ended. Create a new one to go live again.".to_owned(),
     }
 }
 

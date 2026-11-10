@@ -35,6 +35,7 @@ use super::handlers::Handlers;
 use super::media::{BroadcastMedia, DisabledMedia, LivekitMedia};
 use super::reaper::BroadcastReaper;
 use super::repository::{BroadcastRepo, PgBroadcastRepo, RepoDeps};
+use super::rooms::{BroadcastRooms, SilentRooms};
 use super::service::{BroadcastService, ServiceDeps};
 use super::storage::BroadcastStorage;
 use crate::config::LivekitSettings;
@@ -94,6 +95,13 @@ pub struct Wiring {
     /// [`SilentEvents`] and keeps working — a client that is not told still finds out on
     /// its next read (§4.6).
     pub events: Arc<dyn BroadcastEvents>,
+    /// Where room membership goes when a broadcast is joined, left or ended.
+    ///
+    /// [`super::rooms::WsRooms`] in production, so a participant's socket is subscribed
+    /// to the room channel on every replica that holds a socket for them. A wiring with
+    /// no realtime passes [`SilentRooms`] and keeps working — the roster and the history
+    /// still read, they just do not arrive live.
+    pub rooms: Arc<dyn BroadcastRooms>,
 }
 
 impl BroadcastState {
@@ -120,6 +128,7 @@ impl BroadcastState {
             media,
             BroadcastStorage::new(deps.storage),
             deps.events,
+            deps.rooms,
         )
     }
 
@@ -144,7 +153,13 @@ impl BroadcastState {
         media: Arc<dyn BroadcastMedia>,
         events: Arc<dyn BroadcastEvents>,
     ) -> Self {
-        Self::with_events(repo, media, BroadcastStorage::disabled(), events)
+        Self::with_events(
+            repo,
+            media,
+            BroadcastStorage::disabled(),
+            events,
+            Arc::new(SilentRooms),
+        )
     }
 
     /// The same, with a store the caller chose.
@@ -159,7 +174,13 @@ impl BroadcastState {
         media: Arc<dyn BroadcastMedia>,
         storage: BroadcastStorage,
     ) -> Self {
-        Self::with_events(repo, media, storage, Arc::new(SilentEvents))
+        Self::with_events(
+            repo,
+            media,
+            storage,
+            Arc::new(SilentEvents),
+            Arc::new(SilentRooms),
+        )
     }
 
     /// The one constructor: every other one is this with a default filled in.
@@ -168,6 +189,7 @@ impl BroadcastState {
         media: Arc<dyn BroadcastMedia>,
         storage: BroadcastStorage,
         events: Arc<dyn BroadcastEvents>,
+        rooms: Arc<dyn BroadcastRooms>,
     ) -> Self {
         Self {
             service: Arc::new(BroadcastService::new(ServiceDeps {
@@ -175,6 +197,7 @@ impl BroadcastState {
                 media: Arc::clone(&media),
                 storage: storage.clone(),
                 events: Arc::clone(&events),
+                rooms,
             })),
             reaper: BroadcastReaper::new(repo, media, events),
             storage,

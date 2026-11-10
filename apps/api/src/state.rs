@@ -374,6 +374,14 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         events: Arc::new(crate::modules::broadcast::events::PubSubEvents::new(
             Arc::clone(&bridge),
         )),
+        // Room membership: a join over HTTP subscribes the participant's sockets, and an
+        // ending drops them wherever they live. Local registry first, shared SET through
+        // the bridge — the same pair chat publishes through, so membership and delivery
+        // cannot disagree about which replicas hold the room.
+        rooms: Arc::new(crate::modules::broadcast::rooms::WsRooms::new(
+            ws.clone(),
+            Arc::clone(&bridge),
+        )),
     });
 
     // Profile and settings, for the same reason and in the same shape: `Wiring`

@@ -38,6 +38,7 @@ use super::model::{
     NewBroadcast, ParticipantRole, UserSummary, now,
 };
 use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
+use super::rooms::BroadcastRooms;
 use super::storage::BroadcastStorage;
 use crate::modules::broadcast::dto::{
     AddCohostRequest, BroadcastListItem, BroadcastQuery, BroadcastResponse,
@@ -64,6 +65,13 @@ pub struct ServiceDeps {
     /// site has to unwrap. A client that is not told a broadcast ended still finds out on
     /// its next read (§4.6).
     pub events: Arc<dyn BroadcastEvents>,
+    /// Where room membership goes when a broadcast is joined, left or ended.
+    ///
+    /// [`super::rooms::WsRooms`] in production, so a participant's socket is subscribed
+    /// to the broadcast's room channel. Defaulted to [`super::rooms::SilentRooms`] by
+    /// every constructor that has no socket layer: history still reads, it just does not
+    /// arrive live (§4.6).
+    pub rooms: Arc<dyn BroadcastRooms>,
 }
 
 impl std::fmt::Debug for ServiceDeps {
@@ -75,6 +83,7 @@ impl std::fmt::Debug for ServiceDeps {
             .field("media", &self.media)
             .field("storage", &self.storage)
             .field("events", &"<dyn BroadcastEvents>")
+            .field("rooms", &"<dyn BroadcastRooms>")
             .finish_non_exhaustive()
     }
 }
@@ -86,6 +95,7 @@ pub struct BroadcastService {
     media: Arc<dyn BroadcastMedia>,
     storage: BroadcastStorage,
     events: Arc<dyn BroadcastEvents>,
+    rooms: Arc<dyn BroadcastRooms>,
 }
 
 impl std::fmt::Debug for BroadcastService {
@@ -95,6 +105,7 @@ impl std::fmt::Debug for BroadcastService {
             .field("media", &self.media)
             .field("storage", &self.storage)
             .field("events", &"<dyn BroadcastEvents>")
+            .field("rooms", &"<dyn BroadcastRooms>")
             .finish_non_exhaustive()
     }
 }
@@ -108,6 +119,7 @@ impl BroadcastService {
             media: deps.media,
             storage: deps.storage,
             events: deps.events,
+            rooms: deps.rooms,
         }
     }
 
@@ -493,6 +505,12 @@ impl BroadcastService {
             })
             .await?;
 
+        // The host is a room member from the moment the broadcast is on air, not from
+        // their first chat frame: without this the room's fan-out — including the
+        // messages other participants send — reaches nobody, because delivery walks the
+        // membership this call records.
+        self.rooms.joined(actor.id, id).await;
+
         let row = self.require(id).await?;
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
@@ -591,6 +609,12 @@ impl BroadcastService {
             }
         }
 
+        // The room is over, so every replica that was subscribed drops its membership
+        // and its channel. Doing this here rather than leaving it to each socket's
+        // disconnect is what stops a participant who keeps the app open from receiving
+        // frames for a broadcast that ended.
+        self.rooms.closed(id).await;
+
         // The same announcement the reaper makes for an abandoned broadcast. Without it
         // a participant on the room page is only told what happened by the host's own
         // client, and a host whose device died mid-request would leave them in a room
@@ -661,6 +685,12 @@ impl BroadcastService {
             .await?;
 
         let token = self.media.mint_join_token(actor, id, role).await?;
+
+        // Coming back is a re-subscribe: the socket that reconnects is a new connection
+        // on this replica, and the room membership recorded for the old one went with
+        // it. Idempotent on both the local registry and the shared SET.
+        self.rooms.joined(actor.id, id).await;
+
         let row = self.require(id).await?;
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, actor).await?;
@@ -755,8 +785,13 @@ impl BroadcastService {
             JoinOutcome::Joined | JoinOutcome::Rejoined => {}
             JoinOutcome::AlreadyPresent => return Err(error::already_joined()),
         }
-
         let token = self.media.mint_join_token(user, id, role).await?;
+
+        // After the token, not before: a join whose media token could not be minted is
+        // a client that never enters the room, and subscribing it would leave a member
+        // nobody can deliver anything useful to.
+        self.rooms.joined(user.id, id).await;
+
         let row = self.require(id).await?;
         let creator = self.creator_of(&row).await?;
         let viewer = self.viewer_for(&row, user).await?;
@@ -808,6 +843,10 @@ impl BroadcastService {
         if let Err(failure) = self.media.remove_participant(id, user.id).await {
             tracing::warn!(%failure, broadcast_id = %id, "evicting a departed participant failed");
         }
+
+        // And out of the delivery room: the row is closed, so this socket must stop
+        // receiving frames for a room the account is no longer in.
+        self.rooms.left(user.id, id).await;
 
         // The count after the leave, because that is what the room header draws next.
         // A read that fails must not fail the leave: the row is already closed, and the
@@ -1187,9 +1226,9 @@ fn require_creator(broadcast: &Broadcast, actor: &UserSummary) -> Result<(), Men
 /// so a retried End and the original answer cannot describe the same broadcast
 /// differently — the duration is derived here, once, from the row.
 fn ended_summary(row: &Broadcast, ended_at: time::OffsetDateTime) -> EndBroadcastResponse {
-    let duration_secs = row
-        .published_at
-        .map_or(0, |started| ended_at.unix_timestamp() - started.unix_timestamp());
+    let duration_secs = row.published_at.map_or(0, |started| {
+        ended_at.unix_timestamp() - started.unix_timestamp()
+    });
 
     EndBroadcastResponse {
         broadcast_id: row.id,

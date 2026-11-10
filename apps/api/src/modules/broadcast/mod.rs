@@ -73,9 +73,11 @@
 //! because a broadcast without a cover is not a feature gap a client can paper over: the
 //! catalogue renders one and the create flow collects one. [`storage`] holds the seam,
 //! and [`service::BroadcastService::set_image`] is the flow that keeps the row in step.
-//! - **WebSocket fan-out of broadcast events.** [`crate::infrastructure::ws`] can carry
-//!   them; deciding which events matter to which sockets is a protocol decision, not a
-//!   wiring one.
+//! - **The realtime frame set is incomplete, but the wiring is not.** Lifecycle events
+//!   go through [`events`] and room membership through [`rooms`], so a join, a leave and
+//!   an ending reach the sockets that should hear them. What is still missing is the
+//!   cohost, recording and host-presence frames — constructors exist and nothing emits
+//!   them (`docs/backend-gaps.md`, gaps 5 and 6).
 //!
 //! Every one of these is a *missing feature*, not a missing test: nothing in this module
 //! pretends to do them.
@@ -88,6 +90,7 @@ pub mod media;
 pub mod model;
 pub mod reaper;
 pub mod repository;
+pub mod rooms;
 pub mod service;
 pub mod state;
 pub mod storage;
