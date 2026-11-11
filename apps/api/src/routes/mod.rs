@@ -127,6 +127,13 @@ pub fn build_routes(state: MenoState) -> Router {
             "/auth",
             auth::routes(guard, limiter, idempotency_for_auth).with_state(state.auth.clone()),
         )
+        // `DELETE /users/me` is an auth operation at a profile path: sessions and
+        // access tokens are revoked before the row is soft-deleted. Merge it here so
+        // it shares the auth guard without giving `ProfileState` an auth dependency.
+        .merge(
+            auth::account_routes(state.auth_guard.clone(), Arc::clone(&redis))
+                .with_state(state.auth.clone()),
+        )
         // Broadcast is merged, not nested: its sub-router spells `/broadcasts/...` in
         // full (see `broadcasts::routes`), so `nest("/broadcasts", …)` would strip
         // that prefix before the inner router matches and serve

@@ -43,12 +43,13 @@ use axum::body::Body;
 use axum::extract::Request;
 use axum::http::{Request as HttpRequest, StatusCode, header};
 use axum::middleware::{self, Next};
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use http_body_util::BodyExt;
 use meno_api::middleware::auth::{
     AuthState as GuardState, AuthUser, JwtVerifier, TokenBlocklist, auth_middleware,
 };
 use meno_api::modules::auth::model::{AuthProvider, UserRole};
+use meno_api::modules::auth::repository::AuthRepo;
 use meno_api::modules::auth::state::AuthState;
 use meno_core::Error as MenoError;
 use support::{Harness, PASSWORD, harness, last_mail, registered};
@@ -88,6 +89,10 @@ fn router(state: AuthState) -> Router {
             "/auth/reset-password",
             post(meno_api::modules::auth::handlers::reset_password),
         )
+        .route(
+            "/users/me",
+            delete(meno_api::modules::auth::handlers::delete_account),
+        )
         .with_state(state)
 }
 
@@ -109,6 +114,15 @@ fn json_get(uri: &str) -> HttpRequest<Body> {
 
 fn bearer_get(uri: &str, token: &str) -> HttpRequest<Body> {
     HttpRequest::builder()
+        .uri(uri)
+        .header(header::AUTHORIZATION, format!("Bearer {token}"))
+        .body(Body::empty())
+        .expect("the request is well formed")
+}
+
+fn bearer_delete(uri: &str, token: &str) -> HttpRequest<Body> {
+    HttpRequest::builder()
+        .method("DELETE")
         .uri(uri)
         .header(header::AUTHORIZATION, format!("Bearer {token}"))
         .body(Body::empty())
@@ -486,6 +500,40 @@ async fn every_date_on_the_wire_is_an_rfc3339_string() {
     assert!(
         (session_created - user_created).abs() < time::Duration::minutes(1),
         "one fixture, two unrelated timestamps: {session_created} vs {user_created}"
+    );
+}
+
+#[tokio::test]
+async fn deleting_the_account_through_the_router_revokes_and_hides_it() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    let pair = h
+        .tokens
+        .issue_pair(&user, vec![AuthProvider::Password], Default::default())
+        .await
+        .expect("issuing an access token");
+
+    let (status, body) = send(
+        router_as(h.state, caller(user.id)),
+        bearer_delete("/users/me", &pair.access_token),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["code"], "OK");
+    assert!(
+        h.repo
+            .find_user_by_id(user.id)
+            .await
+            .expect("looking up")
+            .is_none()
+    );
+    assert!(
+        h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty()
     );
 }
 

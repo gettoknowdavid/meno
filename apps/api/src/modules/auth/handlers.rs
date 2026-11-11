@@ -170,6 +170,21 @@ pub async fn logout_everywhere(
     Ok(MenoResponse::no_content("Logged out on all devices"))
 }
 
+/// `DELETE /users/me` — delete the caller's account.
+///
+/// The route lives beside the profile paths but takes [`AuthState`], because
+/// deleting an account is revoking its sessions and then soft-deleting the row; both
+/// halves belong to auth. The response has no payload, so a client does not need to
+/// parse anything before clearing its local session.
+pub async fn delete_account(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+) -> Outcome<()> {
+    state.service.delete_account(user.id).await?;
+
+    Ok(MenoResponse::no_content("Account deleted successfully"))
+}
+
 /// `GET /auth/google/url` — where to send the browser.
 pub async fn google_authorize_url(State(state): State<AuthState>) -> Outcome<GoogleAuthorize> {
     let authorize = state

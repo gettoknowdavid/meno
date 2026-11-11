@@ -123,9 +123,15 @@ impl NotificationRow {
     /// account reads as "no actor" rather than as an empty name.
     #[must_use]
     pub fn actor(&self) -> Option<ActorSummary> {
-        self.actor_id.map(|id| ActorSummary {
+        // The name, not the id, decides presence: the join keeps `n.actor_id`
+        // but drops the user columns for a deleted actor, so an id-only check
+        // would render a gone account as an actor with an empty name.
+        let full_name = self.actor_name.clone()?;
+        let id = self.actor_id?;
+
+        Some(ActorSummary {
             id,
-            full_name: self.actor_name.clone().unwrap_or_default(),
+            full_name,
             bio: self.actor_bio.clone(),
             avatar_id: self.actor_avatar_id.clone(),
             avatar_url: self.actor_avatar_url.clone(),

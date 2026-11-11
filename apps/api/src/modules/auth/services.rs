@@ -262,6 +262,34 @@ impl AuthService {
         self.tokens.revoke_all_for_user(user_id).await
     }
 
+    /// `DELETE /users/me` — close every session and soft-delete the account.
+    ///
+    /// Revocation runs before the row change on purpose. If the blocklist is down,
+    /// the account stays live and the caller can retry; the reverse order would leave
+    /// a deleted profile whose access tokens still work until they expire.
+    ///
+    /// A second delete is a success rather than a 404: the caller reached this with a
+    /// live credential, and the state they asked for is already true. The row is kept
+    /// (`deleted_at`, not `DELETE`) so broadcasts, chat and notes that reference the
+    /// account remain readable, and the address is released by the partial unique
+    /// index.
+    ///
+    /// # Errors
+    ///
+    /// Whatever revoking sessions or the soft delete reports. A failure after the
+    /// sessions were ended leaves the account recoverable by signing in again, which
+    /// is the safe half of the ordering.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id))]
+    pub async fn delete_account(&self, user_id: Uuid) -> Result<(), MenoError> {
+        self.tokens.revoke_all_for_user(user_id).await?;
+
+        if !self.repo.soft_delete(user_id).await? {
+            tracing::debug!(%user_id, "account deletion found no live row; treating it as done");
+        }
+
+        Ok(())
+    }
+
     /// `GET /auth/sessions` — the device list (§4.7 item 3).
     ///
     /// # Errors

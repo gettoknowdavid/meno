@@ -42,7 +42,7 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::middleware::from_fn_with_state;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 
 use crate::infrastructure::redis::Redis;
 use crate::middleware::auth::auth_middleware;
@@ -127,6 +127,26 @@ pub fn routes(
         .layer(from_fn_with_state(guard, auth_middleware));
 
     public.merge(protected)
+}
+
+/// `DELETE /users/me`, mounted at the root rather than under `/auth`.
+///
+/// The endpoint is part of the account surface (`/users/me`) but the operation is
+/// auth's: revoke every session and access token, then soft-delete the row. It gets
+/// the same protected stack as the auth session routes — auth first, then the write
+/// limiter — without widening [`ProfileState`](crate::modules::profile::state::ProfileState)
+/// with an auth dependency.
+pub fn account_routes(
+    guard: crate::middleware::auth::AuthState,
+    redis: Arc<Redis>,
+) -> Router<AuthState> {
+    Router::new()
+        .route("/users/me", delete(handlers::delete_account))
+        .layer(from_fn_with_state(
+            RateLimitState::new(Redis::clone(&redis), LimitPolicy::write()),
+            rate_limit_middleware,
+        ))
+        .layer(from_fn_with_state(guard, auth_middleware))
 }
 
 /// The rate-limit policy for the auth surface: 5/min, **fail closed** (§4.4).

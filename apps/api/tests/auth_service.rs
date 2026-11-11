@@ -282,6 +282,44 @@ async fn a_mail_failure_does_not_fail_the_registration() {
     );
 }
 
+#[tokio::test]
+async fn deleting_an_account_ends_its_sessions_and_hides_it() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    second_device(&h, &user).await;
+    assert_eq!(
+        h.repo.list_sessions(user.id).await.expect("listing").len(),
+        2,
+        "the fixture has two devices to revoke"
+    );
+
+    h.service
+        .delete_account(user.id)
+        .await
+        .expect("deleting the account");
+
+    assert!(
+        h.repo
+            .find_user_by_id(user.id)
+            .await
+            .expect("looking up")
+            .is_none(),
+        "a deleted account is hidden from every live-row lookup"
+    );
+    assert!(
+        h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "every device is signed out"
+    );
+    assert!(
+        h.cache.is_user_blocked(user.id),
+        "access tokens issued before the delete must stop working immediately"
+    );
+}
+
 // ── no enumeration ─────────────────────────────────────────────────────────
 
 #[tokio::test]

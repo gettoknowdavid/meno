@@ -186,6 +186,7 @@ pub struct CohostInvitationResponse {
     /// `pending`, `accepted`, `declined` or `expired`.
     pub status: String,
     /// When the invitation was issued.
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: time::OffsetDateTime,
 }
 
