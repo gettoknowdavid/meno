@@ -68,6 +68,7 @@ class _HeaderWidget extends StatelessWidget {
         forceElevated: innerBoxIsScrolled,
         elevation: innerBoxIsScrolled ? 1 : 0,
         shadowColor: colors.onBackground.withValues(alpha: 0.08),
+        expandedHeight: 160,
         bottom: PreferredSize(
           preferredSize: const .fromHeight(40),
           child: Container(

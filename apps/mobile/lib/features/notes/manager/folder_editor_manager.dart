@@ -27,7 +27,41 @@ final class FolderEditorManager implements Disposable {
     required this._folders,
     required this._logger,
     required this._folderId,
-  });
+  }) {
+    initialize = .createSyncNoParamNoResult(
+      () {
+        final folderId = _folderId;
+
+        if (folderId == null) {
+          folder.value = NoteFolder.fromNewId(Id.unique());
+          return;
+        }
+
+        final held = _folders.byId(folderId);
+        if (held == null) {
+          throw const NotFoundException(message: 'That folder is not loaded.');
+        }
+
+        isEdit.value = true;
+        folder.value = held;
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'notes.folderEditor',
+    );
+    submit = .createAsyncNoParamNoResult(
+      () async {
+        final current = folder.value;
+        if (!current.isValid) return;
+
+        await _local.saveFolder(current, pending: true);
+        folder.value = current;
+
+        await _deliver(current);
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'notes.folderEditor.submit',
+    );
+  }
 
   final NotesLocalService _local;
   final NotesSyncService _sync;
@@ -42,47 +76,19 @@ final class FolderEditorManager implements Disposable {
   final isEdit = ValueNotifier<bool>(false);
 
   /// Loads the folder, or primes a blank one with a fresh id.
-  late final Command<void, void> initialize =
-      Command.createSyncNoParamNoResult(() {
-    final folderId = _folderId;
-
-    if (folderId == null) {
-      folder.value = NoteFolder.fromNewId(Id.unique());
-      return;
-    }
-
-    final held = _folders.byId(folderId);
-    if (held == null) {
-      throw const NotFoundException(message: 'That folder is not loaded.');
-    }
-
-    isEdit.value = true;
-    folder.value = held;
-  }, errorFilterFn: menoExceptionFilter, debugName: 'notes.folderEditor');
-
-  /// Records a new title.
-  void onTitleChanged(String value) {
-    folder.value = folder.value.copyWith(title: SingleLineString(value));
-  }
+  late final Command<void, void> initialize;
 
   /// Stores the folder, then sends it.
   ///
   /// The submit itself does not wait for the network: the folder exists on the
   /// device the moment the user confirms, which is what lets the modal close
   /// and the picker behind it already offer it.
-  late final Command<void, void> submit = Command.createAsyncNoParamNoResult(
-    () async {
-      final current = folder.value;
-      if (!current.isValid) return;
+  late final Command<void, void> submit;
 
-      await _local.saveFolder(current, pending: true);
-      folder.value = current;
-
-      await _deliver(current);
-    },
-    errorFilterFn: menoExceptionFilter,
-    debugName: 'notes.folderEditor.submit',
-  );
+  /// Records a new title.
+  void onTitleChanged(String value) {
+    folder.value = folder.value.copyWith(title: SingleLineString(value));
+  }
 
   Future<void> _deliver(NoteFolder sent) async {
     try {

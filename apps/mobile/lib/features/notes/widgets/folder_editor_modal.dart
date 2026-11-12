@@ -50,10 +50,13 @@ class _EditorContent extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Wait for initialize to complete before building the form
-    final isEdit = watch(di<FolderEditorManager>().isEdit).value;
-    final isLoading =
-        watch(di<FolderEditorManager>().initialize.isRunning).value;
+    final isEdit = watchValue<FolderEditorManager, bool>(
+      (manager) => manager.isEdit,
+    );
+
+    final isLoading = watchValue<FolderEditorManager, bool>(
+      (manager) => manager.initialize.isRunningSync,
+    );
 
     if (isLoading) {
       return const Padding(
