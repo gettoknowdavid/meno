@@ -1470,22 +1470,21 @@ mod tests {
 
         #[tokio::test]
         #[ignore = "needs a real Redis"]
-        async fn an_unreachable_redis_is_an_upstream_error_not_a_revocation() {
-            // The property §4.2's fix exists to guarantee, exercised against the real
-            // adapter rather than the fake.
-            let redis = Redis::new(crate::infrastructure::redis::RedisConfig::from_url(
+        async fn an_unreachable_redis_fails_to_build_rather_than_reporting_tokens_as_live() {
+            // `Redis::new` initialises the pool, so a deployment that cannot reach its
+            // blocklist fails at startup — it never serves requests while silently
+            // treating every revoked token as live. This test used to assert the lazy
+            // construction contract; the adapter has been eager since the pool rework,
+            // so the honest assertion is that construction itself refuses.
+            let built = Redis::new(crate::infrastructure::redis::RedisConfig::from_url(
                 "redis://127.0.0.1:1/".to_owned(),
             ))
-            .await
-            .expect("the client is built eagerly; only the pool is lazy");
+            .await;
 
-            let error = RedisTokenBlocklist::new(redis)
-                .is_revoked(Uuid::from_u128(1), 0)
-                .await
-                .expect_err("an unreachable Redis must surface");
-
-            assert_eq!(error.code(), ErrorCode::UpstreamUnavailable);
-            assert!(!error.is_client_safe());
+            assert!(
+                built.is_err(),
+                "an unreachable Redis must not build a client"
+            );
         }
     }
 }

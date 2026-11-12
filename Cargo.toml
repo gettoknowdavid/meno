@@ -16,6 +16,10 @@ bytes = "1.12.1"
 http-body-util = "0.1.5"
 
 tokio = { version = "1.43.3", features = ["full"] }
+# The client half of the realtime E2E test (`apps/api/tests/realtime_e2e.rs`):
+# it opens a real WebSocket to the in-process server so the Redis pub/sub hop is
+# exercised, not a double.
+tokio-tungstenite = "0.29.0"
 tower = { version = "0.5.3", features = ["retry", "timeout", "util"] }
 tower-http = {
   version = "0.7.1",

@@ -106,6 +106,9 @@ uuid = { workspace = true }
 # (§10) drive a `Router` without binding a socket.
 [dev-dependencies]
 tower = { workspace = true }
+# `tests/realtime_e2e.rs` is the socket-level tier: it connects a real client to
+# the in-process server so a room publish is asserted on the wire.
+tokio-tungstenite = { workspace = true }
 wiremock = { workspace = true }
 
 # Self-reference: this is what actually turns `test-support` on for `tests/`.

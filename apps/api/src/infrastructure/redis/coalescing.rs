@@ -242,7 +242,7 @@ mod tests {
                 .eval(
                     "return redis.call('TTL', KEYS[1])",
                     vec![key.as_ref()],
-                    vec![()],
+                    Vec::<&str>::new(),
                 )
                 .await
                 .expect("eval");

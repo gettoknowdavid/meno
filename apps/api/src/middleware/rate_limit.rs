@@ -357,7 +357,8 @@ fn windowed_key(policy: &LimitPolicy, caller: &CallerId, window: u64) -> RedisKe
 /// The sliding-window counter, kept from `master`; §4.4 states it is correct.
 ///
 /// `KEYS[1]` is the current window's counter and `KEYS[2]` the previous one. Returns
-/// `{remaining, current_count}`; a remaining at or below zero is over budget.
+/// `{remaining, current_count}`; a negative remaining is over budget, and zero is the
+/// last request the budget allows.
 const SLIDING_WINDOW_SCRIPT: &str = r#"
     local current_key = KEYS[1]
     local previous_key = KEYS[2]
@@ -377,17 +378,17 @@ const SLIDING_WINDOW_SCRIPT: &str = r#"
 
     local estimated = current_count + math.floor(prev_count * weight)
 
-    if estimated > limit then
-        return {0, current_count}
-    else
-        return {limit - estimated, current_count}
-    end
+    -- A negative remaining is over budget. Zero is the Nth request: the budget is
+    -- exactly spent, but that request is allowed. Returning 0 for both made the
+    -- limiter reject the last request of every budget.
+    return {limit - estimated, current_count}
 "#;
 
 /// The outcome of one limiter check.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Verdict {
-    /// Requests left in the window. At or below zero means over budget.
+    /// Requests left in the window. Negative means over budget; zero is the last
+    /// request the budget allows.
     pub remaining: i64,
     /// The window the counters belong to.
     pub window: u64,
@@ -399,7 +400,7 @@ impl Verdict {
     /// Whether this request is over budget.
     #[must_use]
     pub const fn is_exhausted(self) -> bool {
-        self.remaining <= 0
+        self.remaining < 0
     }
 }
 
@@ -956,8 +957,8 @@ mod tests {
     // ── the verdict ────────────────────────────────────────────────────────
 
     #[test]
-    fn a_verdict_at_or_below_zero_is_exhausted() {
-        for (remaining, exhausted) in [(1_i64, false), (0, true), (-1, true)] {
+    fn a_verdict_below_zero_is_exhausted_and_zero_is_the_last_request() {
+        for (remaining, exhausted) in [(1_i64, false), (0, false), (-1, true)] {
             let verdict = Verdict {
                 remaining,
                 window: 1,
@@ -1069,9 +1070,6 @@ mod tests {
         }
 
         /// A router whose limiter enforces `policy` over a real Redis.
-        ///
-        /// The namespace is unique per test so a shared Redis instance cannot make one
-        /// test's budget another test's.
         fn router(redis: Redis, policy: LimitPolicy) -> axum::Router {
             axum::Router::new().route("/thing", get(ok_handler)).layer(
                 axum::middleware::from_fn_with_state(
@@ -1093,7 +1091,15 @@ mod tests {
                 .expect("the router answers")
         }
 
-        fn policy_for_test(namespace: &'static str, limit: u32) -> LimitPolicy {
+        /// A policy whose namespace is unique to this call.
+        ///
+        /// A shared Redis keeps a counter for two windows, so a fixed namespace makes
+        /// the test depend on nobody having run it in the last two minutes — including a
+        /// previous run of this very suite. A fresh UUID makes each run's budget its own.
+        fn policy_for_test(prefix: &str, limit: u32) -> LimitPolicy {
+            let namespace: &'static str =
+                Box::leak(format!("{prefix}-{}", Uuid::new_v4()).into_boxed_str());
+
             LimitPolicy {
                 config: RateLimitConfig {
                     limit,
