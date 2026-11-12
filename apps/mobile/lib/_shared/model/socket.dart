@@ -34,9 +34,23 @@ enum SocketEvent {
   // Server → client: host presence.
   hostDisconnected('hostDisconnected'),
   hostReconnected('hostReconnected'),
+  // Server → client: cohost handshake and roster changes.
+  cohostInvitation('cohostInvitation'),
+  cohostAccepted('cohostAccepted'),
+  cohostDeclined('cohostDeclined'),
+  cohostDemotion('cohostDemotion'),
+  newCohost('newCohost'),
+  removedCohost('removedCohost'),
+  // Server → client: lifecycle and counts.
+  broadcastDeleted('broadcastDeleted'),
+  scheduledBroadcast('scheduledBroadcast'),
+  // Server → client: recordings.
+  recordingReady('recordingReady'),
+  recordingPublished('recordingPublished'),
   // Server → client: participants.
   participantJoined('participantJoined'),
   participantLeft('participantLeft'),
+  numberOfLiveParticipants('numberOfLiveParticipants'),
   // Server → client: chat and notifications.
   newMessage('newMessage'),
   editedMessage('editedMessage'),

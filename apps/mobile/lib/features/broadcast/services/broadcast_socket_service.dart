@@ -41,6 +41,11 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
   final _left = StreamController<BroadcastParticipantEvent>.broadcast();
   final _hostState = StreamController<HostConnectionEvent>.broadcast();
   final _error = StreamController<BroadcastErrorEvent>.broadcast();
+  final _cohost = StreamController<CohostEvent>.broadcast();
+  final _deleted = StreamController<BroadcastDeletedEvent>.broadcast();
+  final _liveCount = StreamController<LiveParticipantCountEvent>.broadcast();
+  final _scheduled = StreamController<ScheduledBroadcastEvent>.broadcast();
+  final _recording = StreamController<RecordingEvent>.broadcast();
 
   /// The handles [install] created, held so [detach] can cancel exactly them.
   List<SocketSubscription> _handles = [];
@@ -76,6 +81,24 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
   /// leads to a token refresh rather than a re-join.
   Stream<BroadcastErrorEvent> get onBroadcastError => _error.stream;
 
+  /// The cohost handshake and roster changes: invitation, accept, decline,
+  /// demotion, addition and removal.
+  Stream<CohostEvent> get onCohostEvent => _cohost.stream;
+
+  /// A broadcast was deleted anywhere in the deployment.
+  Stream<BroadcastDeletedEvent> get onBroadcastDeleted => _deleted.stream;
+
+  /// The server's own live-participant count, independent of join/leave frames.
+  Stream<LiveParticipantCountEvent> get onLiveParticipantCount =>
+      _liveCount.stream;
+
+  /// A scheduled broadcast has reached its start time.
+  Stream<ScheduledBroadcastEvent> get onScheduledBroadcast =>
+      _scheduled.stream;
+
+  /// A recording became ready or was published.
+  Stream<RecordingEvent> get onRecordingEvent => _recording.stream;
+
   /// The underlying socket dropped and came back.
   ///
   /// The client is looking at a fresh socket with no rooms on it, so a client
@@ -93,6 +116,50 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
     _installed = true;
 
     _handles = [
+      _client.on(
+        SocketEvent.cohostInvitation,
+        (data) => _dispatch(_cohostInvitationEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.cohostAccepted,
+        (data) => _dispatch(_cohostAcceptedEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.cohostDeclined,
+        (data) => _dispatch(_cohostDeclinedEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.cohostDemotion,
+        (data) => _dispatch(_cohostDemotionEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.newCohost,
+        (data) => _dispatch(_newCohostEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.removedCohost,
+        (data) => _dispatch(_removedCohostEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.broadcastDeleted,
+        (data) => _dispatch(_broadcastDeletedEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.numberOfLiveParticipants,
+        (data) => _dispatch(_liveParticipantCountEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.scheduledBroadcast,
+        (data) => _dispatch(_scheduledBroadcastEvent(data)),
+      ),
+      _client.on(
+        SocketEvent.recordingReady,
+        (data) => _dispatch(_recordingEvent(data, published: false)),
+      ),
+      _client.on(
+        SocketEvent.recordingPublished,
+        (data) => _dispatch(_recordingEvent(data, published: true)),
+      ),
       _client.on(
         SocketEvent.newBroadcast,
         (data) => _dispatch(_newBroadcastEvent(data)),
@@ -175,6 +242,11 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
       _left.close(),
       _hostState.close(),
       _error.close(),
+      _cohost.close(),
+      _deleted.close(),
+      _liveCount.close(),
+      _scheduled.close(),
+      _recording.close(),
     ]);
   }
 
@@ -197,6 +269,16 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
         _emit(_hostState, host);
       case BroadcastFailedEvent(:final error):
         _emit(_error, error);
+      case final CohostEvent event:
+        _emit(_cohost, event);
+      case final BroadcastDeletedEvent event:
+        _emit(_deleted, event);
+      case final LiveParticipantCountEvent event:
+        _emit(_liveCount, event);
+      case final ScheduledBroadcastEvent event:
+        _emit(_scheduled, event);
+      case final RecordingEvent event:
+        _emit(_recording, event);
     }
   }
 
@@ -282,6 +364,129 @@ final class BroadcastSocketService implements Disposable, ConnectionAdapter {
         ),
       );
     });
+  }
+
+  BroadcastEvent? _cohostInvitationEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      final invitationId = _wireId(json['invitationId']);
+      if (broadcastId == null || invitationId == null) return null;
+
+      return CohostInvitedEvent(
+        broadcastId: broadcastId,
+        invitationId: invitationId,
+        inviterName: (json['inviterName'] as String? ?? '').trim(),
+        broadcastTitle: (json['broadcastTitle'] as String? ?? '').trim(),
+      );
+    });
+  }
+
+  BroadcastEvent? _cohostAcceptedEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      final userId = _wireId(json['userId']);
+      if (broadcastId == null || userId == null) return null;
+
+      return CohostAcceptedEvent(
+        broadcastId: broadcastId,
+        userId: userId,
+        userName: (json['userName'] as String? ?? '').trim(),
+      );
+    });
+  }
+
+  BroadcastEvent? _cohostDeclinedEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      final userId = _wireId(json['userId']);
+      if (broadcastId == null || userId == null) return null;
+
+      return CohostDeclinedEvent(broadcastId: broadcastId, userId: userId);
+    });
+  }
+
+  BroadcastEvent? _cohostDemotionEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      if (broadcastId == null) return null;
+
+      return CohostDemotionEvent(
+        broadcastId: broadcastId,
+        livekitToken: json['token'] as String? ?? '',
+      );
+    });
+  }
+
+  BroadcastEvent? _newCohostEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      final userId = _wireId(json['userId']);
+      if (broadcastId == null || userId == null) return null;
+
+      return NewCohostEvent(
+        broadcastId: broadcastId,
+        userId: userId,
+        userName: (json['userName'] as String? ?? '').trim(),
+        livekitToken: json['livekitToken'] as String? ?? '',
+      );
+    });
+  }
+
+  BroadcastEvent? _removedCohostEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      final userId = _wireId(json['userId']);
+      if (broadcastId == null || userId == null) return null;
+
+      return RemovedCohostEvent(broadcastId: broadcastId, userId: userId);
+    });
+  }
+
+  BroadcastEvent? _broadcastDeletedEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      if (broadcastId == null) return null;
+
+      return BroadcastDeletedEvent(broadcastId: broadcastId);
+    });
+  }
+
+  BroadcastEvent? _liveParticipantCountEvent(dynamic data) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      if (broadcastId == null) return null;
+
+      return LiveParticipantCountEvent(
+        broadcastId: broadcastId,
+        count: (json['count'] as num?)?.toInt() ?? 0,
+      );
+    });
+  }
+
+  BroadcastEvent? _scheduledBroadcastEvent(dynamic data) {
+    return _decode(
+      data,
+      (json) => ScheduledBroadcastEvent(
+        broadcast: BroadcastDto.fromJson(json).toDomain,
+      ),
+    );
+  }
+
+  BroadcastEvent? _recordingEvent(dynamic data, {required bool published}) {
+    return _decode<BroadcastEvent?>(data, (json) {
+      final broadcastId = _wireId(json['broadcastId']);
+      if (broadcastId == null) return null;
+
+      return published
+          ? RecordingPublishedEvent(broadcastId: broadcastId)
+          : RecordingReadyEvent(broadcastId: broadcastId);
+    });
+  }
+
+  static Id? _wireId(Object? raw) {
+    if (raw is! String) return null;
+    final id = Id.fromWire(raw);
+    return id.isValid ? id : null;
   }
 
   T? _decode<T>(dynamic data, T Function(Map<String, dynamic>) decode) {

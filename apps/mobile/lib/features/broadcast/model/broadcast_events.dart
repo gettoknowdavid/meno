@@ -73,6 +73,127 @@ final class BroadcastFailedEvent extends BroadcastEvent {
   final BroadcastErrorEvent error;
 }
 
+/// A cohost handshake or roster change.
+///
+/// One sealed family because these frames share a manager's interest: who may
+/// publish, and with which token. Each variant mirrors a `WsPayload`
+/// constructor in `apps/api/src/infrastructure/ws/dto.rs`.
+sealed class CohostEvent extends BroadcastEvent {
+  const new({required this.broadcastId});
+
+  /// The broadcast the handshake or change belongs to.
+  final Id broadcastId;
+}
+
+/// The v2 invitation: the invitee decides, so the frame carries who asked and
+/// which broadcast instead of a media token they have no right to yet.
+final class CohostInvitedEvent extends CohostEvent {
+  const new({
+    required super.broadcastId,
+    required this.invitationId,
+    required this.inviterName,
+    required this.broadcastTitle,
+  });
+
+  /// The invitation to accept or decline.
+  final Id invitationId;
+
+  /// Who sent it, for the prompt.
+  final String inviterName;
+
+  /// The broadcast's title, for the prompt.
+  final String broadcastTitle;
+}
+
+/// The invitee accepted; the creator and room learn who joined.
+final class CohostAcceptedEvent extends CohostEvent {
+  const new({
+    required super.broadcastId,
+    required this.userId,
+    required this.userName,
+  });
+
+  final Id userId;
+  final String userName;
+}
+
+/// The invitee declined.
+final class CohostDeclinedEvent extends CohostEvent {
+  const new({required super.broadcastId, required this.userId});
+
+  final Id userId;
+}
+
+/// A cohost was demoted back to a listener; the token re-authorises that role.
+final class CohostDemotionEvent extends CohostEvent {
+  const new({required super.broadcastId, required this.livekitToken});
+
+  final String livekitToken;
+}
+
+/// The accepted invitee's cohost session: the token they publish with.
+final class NewCohostEvent extends CohostEvent {
+  const new({
+    required super.broadcastId,
+    required this.userId,
+    required this.userName,
+    required this.livekitToken,
+  });
+
+  final Id userId;
+  final String userName;
+  final String livekitToken;
+}
+
+/// A cohost was removed from the broadcast entirely.
+final class RemovedCohostEvent extends CohostEvent {
+  const new({required super.broadcastId, required this.userId});
+
+  final Id userId;
+}
+
+/// A broadcast was deleted, so an open page or cached card for it is gone.
+final class BroadcastDeletedEvent extends BroadcastEvent {
+  const new({required this.broadcastId});
+
+  final Id broadcastId;
+}
+
+/// The live-participant count changed without a join or leave frame.
+final class LiveParticipantCountEvent extends BroadcastEvent {
+  const new({required this.broadcastId, required this.count});
+
+  final Id broadcastId;
+  final int count;
+}
+
+/// A scheduled broadcast's start time has arrived.
+///
+/// Carries the full broadcast response, because the frame does — the card
+/// can be refreshed from it without a follow-up request.
+final class ScheduledBroadcastEvent extends BroadcastEvent {
+  const new({required this.broadcast});
+
+  final Broadcast broadcast;
+}
+
+/// A recording lifecycle change.
+sealed class RecordingEvent extends BroadcastEvent {
+  const new({required this.broadcastId});
+
+  final Id broadcastId;
+}
+
+/// The recording finished processing and can be played.
+final class RecordingReadyEvent extends RecordingEvent {
+  const new({required super.broadcastId});
+}
+
+/// The creator published the recording.
+final class RecordingPublishedEvent extends RecordingEvent {
+  const new({required super.broadcastId});
+}
+
 /// Somebody joined or left a broadcast.
 final class BroadcastParticipantEvent {
   const new({required this.broadcastId, required this.count, this.participant});

@@ -12,6 +12,8 @@ import '../../_support/pump_until_found.dart';
 import '../../_support/stub_api.dart';
 
 const _broadcastId = '3f2b1c9e-8a4d-4f6b-9c1e-2d3a4b5c6d7e';
+const _invitationId = '11111111-2222-4333-8444-555555555555';
+const _userId = '77777777-8888-4999-8aaa-bbbbbbbbbbbb';
 
 /// The frames the backend emits, shaped exactly as `apps/api` serialises them.
 ///
@@ -36,6 +38,50 @@ final _fixtures = <String, String>{
     'code': 'TOKEN_EXPIRED',
     'message': 'expired',
     'recoverable': true,
+  }),
+  'cohostInvitation': _frame('cohostInvitation', {
+    'broadcastId': _broadcastId,
+    'invitationId': _invitationId,
+    'inviterName': 'Ada',
+    'broadcastTitle': 'Morning show',
+  }),
+  'cohostAccepted': _frame('cohostAccepted', {
+    'broadcastId': _broadcastId,
+    'userId': _userId,
+    'userName': 'Grace',
+  }),
+  'cohostDeclined': _frame('cohostDeclined', {
+    'broadcastId': _broadcastId,
+    'userId': _userId,
+  }),
+  'cohostDemotion': _frame('cohostDemotion', {
+    'broadcastId': _broadcastId,
+    'token': 'listener-token',
+  }),
+  'newCohost': _frame('newCohost', {
+    'broadcastId': _broadcastId,
+    'userId': _userId,
+    'userName': 'Grace',
+    'livekitToken': 'cohost-token',
+  }),
+  'removedCohost': _frame('removedCohost', {
+    'broadcastId': _broadcastId,
+    'userId': _userId,
+  }),
+  'broadcastDeleted': _frame('broadcastDeleted', {
+    'broadcastId': _broadcastId,
+  }),
+  'numberOfLiveParticipants': _frame('numberOfLiveParticipants', {
+    'broadcastId': _broadcastId,
+    'count': 7,
+  }),
+  'scheduledBroadcast': _frame(
+    'scheduledBroadcast',
+    _broadcastJson(_broadcastId),
+  ),
+  'recordingReady': _frame('recordingReady', {'broadcastId': _broadcastId}),
+  'recordingPublished': _frame('recordingPublished', {
+    'broadcastId': _broadcastId,
   }),
 };
 
@@ -202,6 +248,11 @@ void main() {
       socket.onBroadcastError.listen(
         (event) => events.add(BroadcastFailedEvent(error: event)),
       );
+      socket.onCohostEvent.listen(events.add);
+      socket.onBroadcastDeleted.listen(events.add);
+      socket.onLiveParticipantCount.listen(events.add);
+      socket.onScheduledBroadcast.listen(events.add);
+      socket.onRecordingEvent.listen(events.add);
 
       socket.install();
       await client.start();
@@ -242,6 +293,54 @@ void main() {
         events.whereType<BroadcastFailedEvent>().single.error.code,
         BroadcastErrorCode.tokenExpired,
       );
+
+      expect(events.whereType<CohostEvent>(), hasLength(6));
+      final invitation = events.whereType<CohostInvitedEvent>().single;
+      expect(invitation.invitationId.getOrNull, _invitationId);
+      expect(invitation.inviterName, 'Ada');
+      expect(invitation.broadcastTitle, 'Morning show');
+      expect(
+        events.whereType<CohostAcceptedEvent>().single.userName,
+        'Grace',
+      );
+      expect(
+        events.whereType<CohostDeclinedEvent>().single.userId.getOrNull,
+        _userId,
+      );
+      expect(
+        events.whereType<CohostDemotionEvent>().single.livekitToken,
+        'listener-token',
+      );
+      expect(
+        events.whereType<NewCohostEvent>().single.livekitToken,
+        'cohost-token',
+      );
+      expect(
+        events.whereType<RemovedCohostEvent>().single.userId.getOrNull,
+        _userId,
+      );
+      expect(
+        events
+            .whereType<BroadcastDeletedEvent>()
+            .single
+            .broadcastId
+            .getOrNull,
+        _broadcastId,
+      );
+      expect(
+        events.whereType<LiveParticipantCountEvent>().single.count,
+        7,
+      );
+      expect(
+        events
+            .whereType<ScheduledBroadcastEvent>()
+            .single
+            .broadcast
+            .title
+            .getOrNull,
+        'Morning show',
+      );
+      expect(events.whereType<RecordingEvent>(), hasLength(2));
     });
 
     test('a timestamp that is not RFC3339 fails instead of defaulting', () {
