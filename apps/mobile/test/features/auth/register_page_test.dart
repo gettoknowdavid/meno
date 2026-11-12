@@ -11,6 +11,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
+import '../../_support/test_database.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -27,8 +28,9 @@ void main() {
     SharedPreferences.setMockInitialValues({});
     FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
+    await installTestDatabase();
   });
-  tearDown(di.reset);
+  tearDown(resetTestLocator);
 
   /// Opens the register form from the intro, where a fresh install starts.
   Future<void> openRegisterForm(WidgetTester tester) async {

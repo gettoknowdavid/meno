@@ -77,15 +77,25 @@ class _AccountScopeHostState extends State<_AccountScopeHost> {
   /// a person who left it is not pulled back into it.
   bool _openedRecoveredRoom = false;
 
-  late final ActiveBroadcastManager _live;
+  /// The live owner, when this build has one.
+  ///
+  /// Null in a widget test that mounts the gate with only the registration it
+  /// is about: the refresh and the recovery hand-off are best-effort side
+  /// effects, and neither should force every gate test to compose the whole
+  /// account scope.
+  ActiveBroadcastManager? _live;
 
   @override
   void initState() {
     super.initState();
-    unawaited(di<MyProfileManager>().refresh());
+    if (di.isRegistered<MyProfileManager>()) {
+      unawaited(di<MyProfileManager>().refresh());
+    }
 
-    _live = di<ActiveBroadcastManager>();
-    _live.recovery.addListener(_onRecovered);
+    _live = di.isRegistered<ActiveBroadcastManager>()
+        ? di<ActiveBroadcastManager>()
+        : null;
+    _live?.recovery.addListener(_onRecovered);
 
     // Recovery may have finished before this widget was built — the account
     // becomes ready first — so the signal is read once here as well.
@@ -97,7 +107,10 @@ class _AccountScopeHostState extends State<_AccountScopeHost> {
 
   /// Takes the account back into the room a restart left it in.
   void _onRecovered() {
-    if (_openedRecoveredRoom || _live.recovery.value == null) return;
+    final live = _live;
+    if (live == null || _openedRecoveredRoom || live.recovery.value == null) {
+      return;
+    }
     _openedRecoveredRoom = true;
 
     // After the frame: recovery can complete while the navigator is still being
@@ -113,7 +126,7 @@ class _AccountScopeHostState extends State<_AccountScopeHost> {
 
   @override
   void dispose() {
-    _live.recovery.removeListener(_onRecovered);
+    _live?.recovery.removeListener(_onRecovered);
     super.dispose();
   }
 }

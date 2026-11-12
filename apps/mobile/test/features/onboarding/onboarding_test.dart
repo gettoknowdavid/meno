@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
+import '../../_support/test_database.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -18,11 +19,12 @@ const _config = Config(
 );
 
 void main() {
-  setUp(() {
+  setUp(() async {
     installFakePathProvider();
-    return di.reset();
+    await di.reset();
+    await installTestDatabase();
   });
-  tearDown(di.reset);
+  tearDown(resetTestLocator);
 
   testWidgets('a fresh install opens the intro carousel', (tester) async {
     SharedPreferences.setMockInitialValues({});

@@ -8,6 +8,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '_support/fake_path_provider.dart';
 import '_support/pump_until_found.dart';
+import '_support/test_database.dart';
 
 void main() {
   setUp(() async {
@@ -17,8 +18,9 @@ void main() {
     // restore a session without a platform channel.
     FlutterSecureStorage.setMockInitialValues({});
     await di.reset();
+    await installTestDatabase();
   });
-  tearDown(di.reset);
+  tearDown(resetTestLocator);
 
   testWidgets('MenoApp boots into the router and lands on onboarding', (
     tester,

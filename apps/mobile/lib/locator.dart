@@ -65,7 +65,11 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
     () => SecureStorage(di<FlutterSecureStorage>()),
     // onCreated: (storage) async => await storage.deleteAll(),
   );
-  di.registerSingletonAsync<Database>(Database.create);
+  // A test may register an in-memory store before composition; reuse it rather
+  // than opening the real one over the device's documents directory.
+  if (!di.isRegistered<Database>()) {
+    di.registerSingletonAsync<Database>(Database.create);
+  }
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
   // Async rather than `registerSingletonWithDependencies`: get_it completes the
   // ready future of a dependency-based registration twice when another
