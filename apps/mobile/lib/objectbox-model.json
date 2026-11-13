@@ -402,7 +402,7 @@
     },
     {
       "id": "7:7989880967248923529",
-      "lastPropertyId": "6:5524417491150965540",
+      "lastPropertyId": "8:627967171739554011",
       "name": "BibleVersionRow",
       "properties": [
         {
@@ -424,19 +424,14 @@
           "type": 9
         },
         {
-          "id": "4:3568103359583379793",
-          "name": "shortName",
+          "id": "7:3923566402067332995",
+          "name": "copyrightStatement",
           "type": 9
         },
         {
-          "id": "5:6220773720212794538",
-          "name": "language",
-          "type": 9
-        },
-        {
-          "id": "6:5524417491150965540",
-          "name": "metadataJson",
-          "type": 9
+          "id": "8:627967171739554011",
+          "name": "copyright",
+          "type": 6
         }
       ],
       "relations": []
@@ -450,7 +445,11 @@
   "modelVersionParserMinimum": 5,
   "retiredEntityUids": [],
   "retiredIndexUids": [],
-  "retiredPropertyUids": [],
+  "retiredPropertyUids": [
+    3568103359583379793,
+    6220773720212794538,
+    5524417491150965540
+  ],
   "retiredRelationUids": [],
   "version": 1
 }

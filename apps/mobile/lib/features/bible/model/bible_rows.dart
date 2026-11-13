@@ -12,13 +12,13 @@ String bibleVerseKey(
   int verse,
 ) => '${Uri.encodeComponent(translationCode)}/$book/$chapter/$verse';
 
-/// One row of the versions box: a translation's identity and metadata.
+/// One row of the versions box: a translation's identity and attribution.
 ///
-/// Only the fields the app displays in its own chrome are columns. The rest of
-/// the source JSON's `metadata` object is kept verbatim in [metadataJson],
-/// because the licence and copyright screens render it whole and because a
-/// future module may carry fields this app has never heard of — dropping them
-/// would mean recompiling to show what the file already contains.
+/// Deliberately small. The source JSON carries about twenty metadata fields
+/// (description, publisher, module version, typography flags, ...) and the
+/// design shows none of them, so they are not stored — four fields that are
+/// read beat twenty that are not. The JSON stays the source of record; bringing
+/// one back is a field here plus a bumped [BibleSeedRow.seedVersion].
 ///
 /// A storage row, not a domain entity: ObjectBox needs a mutable identity and
 /// its own key, which a `@freezed` entity cannot carry.
@@ -27,9 +27,8 @@ class BibleVersionRow {
   new({
     required this.code,
     required this.name,
-    this.shortName = '',
-    this.language = '',
-    this.metadataJson = '{}',
+    this.copyrightStatement = '',
+    this.copyright = 0,
   });
 
   @Id()
@@ -44,17 +43,11 @@ class BibleVersionRow {
 
   final String name;
 
-  final String shortName;
+  /// The translation's copyright line, shown in the attribution.
+  final String copyrightStatement;
 
-  final String language;
-
-  /// The source JSON's `metadata` object, JSON-encoded.
-  ///
-  /// Stored whole instead of mapped into a column per key: it is reference
-  /// text, the app never queries it, and keeping it intact is what makes
-  /// "everything from the JSON survives" true without a migration each time a
-  /// module adds a flag.
-  final String metadataJson;
+  /// The source JSON's `copyright` flag, kept as the number it is there.
+  final int copyright;
 }
 
 /// One verse of one translation.
