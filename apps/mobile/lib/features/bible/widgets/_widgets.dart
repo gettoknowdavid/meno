@@ -1,5 +1,6 @@
 //GENERATED BARREL FILE
 export 'bible_books_modal.dart';
+export 'bible_reader.dart';
 export 'bible_translations_modal.dart';
 export 'bible_verses.dart';
 export 'book_widget.dart';

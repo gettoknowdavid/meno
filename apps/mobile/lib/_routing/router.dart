@@ -8,6 +8,7 @@ import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/app/layouts/root_shell.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/features/broadcast/layouts/live_session_shell.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
@@ -256,7 +257,7 @@ List<RouteBase> get _liveSessionRoutes => [
         routes: [
           GoRoute(
             path: MRoutes.liveBible,
-            builder: (_, _) => const StubPage('Bible'),
+            builder: (_, _) => const LiveBibleTab(),
           ),
         ],
       ),
@@ -394,7 +395,7 @@ List<RouteBase> get _standaloneRoutes => [
     path: MRoutes.recentlyLive,
     builder: (_, _) => const StubPage('Recently Live'),
   ),
-  GoRoute(path: MRoutes.bible, builder: (_, _) => const StubPage('Bible')),
+  GoRoute(path: MRoutes.bible, builder: (_, _) => const BiblePage()),
   GoRoute(
     path: MRoutes.profiles,
     builder: (_, _) => const StubPage('Profiles'),
