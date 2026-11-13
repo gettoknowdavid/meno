@@ -6,6 +6,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/app/composition/account_registrations.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/onboarding/onboarding.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
@@ -70,6 +71,17 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   if (!di.isRegistered<Database>()) {
     di.registerSingletonAsync<Database>(Database.create);
   }
+  // The bundled translations are device data, not an account's, so the seeder
+  // belongs here rather than in the account scope.
+  //
+  // Registered lazily and started explicitly from `bootstrap()`, not through
+  // `dependsOn: [Database]`. A dependency-based registration would need the
+  // store to be a *waitable* registration (`isAsync`, `signalsReady`, or a
+  // pending result), and `test/_support/test_database.dart` deliberately
+  // registers a synchronous in-memory store — so `dependsOn` makes
+  // `configureDependencies` throw `Dependent Type Database is not an async
+  // Singleton` in every widget test. The seeder waits for the store itself.
+  di.registerLazySingleton<BibleSeedService>(BibleSeedService.new);
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
   // Async rather than `registerSingletonWithDependencies`: get_it completes the
   // ready future of a dependency-based registration twice when another

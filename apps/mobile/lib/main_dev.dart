@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/locator.dart';
 
 void main() {
@@ -25,6 +28,9 @@ void main() {
   di<MenoLogger>()
     ..i('App starting', tag: MenoLogTag.lifecycle.label)
     ..event('app_start', {'env': config.env.name});
+
+  // Same background start as `main.dart`, so a dev build has scripture too.
+  unawaited(di<BibleSeedService>().ensureSeeded());
 
   runApp(const MenoApp());
 }

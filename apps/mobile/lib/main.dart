@@ -1,6 +1,9 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/locator.dart';
 
 /// The only retry guard in the app: a second tap while a retry is running is
@@ -50,6 +53,12 @@ Future<void> bootstrap() async {
     di<MenoLogger>()
       ..i('App starting', tag: MenoLogTag.lifecycle.label)
       ..event('app_start', {'env': config.env.name});
+
+    // Started, never awaited: `MenoApp._startup` waits on `di.allReady()` and
+    // then restores the account, and a multi-second insert has no business
+    // either side of the first frame. The store's seed ledger means an app that
+    // is closed before this finishes simply resumes on the next launch.
+    unawaited(di<BibleSeedService>().ensureSeeded());
 
     runApp(const MenoApp(onRetryBootstrap: bootstrap));
   } finally {
