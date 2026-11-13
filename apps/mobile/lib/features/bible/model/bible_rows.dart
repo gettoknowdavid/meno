@@ -117,8 +117,7 @@ class BibleSeedRow {
     required this.seedVersion,
     this.verseCount = 0,
     int? seededAtMillis,
-  }) : seededAtMillis =
-           seededAtMillis ?? DateTime.now().millisecondsSinceEpoch;
+  }) : seededAtMillis = seededAtMillis ?? DateTime.now().millisecondsSinceEpoch;
 
   @Id()
   int id = 0;

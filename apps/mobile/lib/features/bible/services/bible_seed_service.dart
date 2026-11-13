@@ -27,11 +27,7 @@ const int _seedBatchSize = 1000;
 
 /// One translation this build bundles.
 final class BundledTranslation {
-  const new({
-    required this.code,
-    required this.asset,
-    required this.version,
-  });
+  const new({required this.code, required this.asset, required this.version});
 
   /// The code the verses are stored under, for example `kjv`.
   final String code;
@@ -50,9 +46,21 @@ final class BundledTranslation {
 
 /// What this build bundles, in the order seeding runs.
 const List<BundledTranslation> bundledTranslations = [
-  BundledTranslation(code: 'kjv', asset: 'assets/bible/kjv.json.gz', version: 1),
-  BundledTranslation(code: 'web', asset: 'assets/bible/web.json.gz', version: 1),
-  BundledTranslation(code: 'asv', asset: 'assets/bible/asv.json.gz', version: 1),
+  BundledTranslation(
+    code: 'kjv',
+    asset: 'assets/bible/kjv.json.gz',
+    version: 1,
+  ),
+  BundledTranslation(
+    code: 'web',
+    asset: 'assets/bible/web.json.gz',
+    version: 1,
+  ),
+  BundledTranslation(
+    code: 'asv',
+    asset: 'assets/bible/asv.json.gz',
+    version: 1,
+  ),
 ];
 
 /// Copies the bundled translations into the device's ObjectBox store.
@@ -82,11 +90,9 @@ const List<BundledTranslation> bundledTranslations = [
 /// [ensureSeeded] is also the await point for anything that needs the verses:
 /// it returns immediately when the device is already current.
 final class BibleSeedService {
-  new({
-    AssetBundle? bundle,
-    List<BundledTranslation>? translations,
-  }) : _bundle = bundle ?? rootBundle,
-       _translations = translations ?? bundledTranslations;
+  new({AssetBundle? bundle, List<BundledTranslation>? translations})
+    : _bundle = bundle ?? rootBundle,
+      _translations = translations ?? bundledTranslations;
 
   final AssetBundle _bundle;
 
@@ -135,7 +141,7 @@ final class BibleSeedService {
         await _seedTranslation(database, translation, logger);
       } on Object catch (error, stackTrace) {
         // One bad translation does not stop the others, and a store that was
-        // closed underneath this run (a container reset) is retried 
+        // closed underneath this run (a container reset) is retried
         // next launch.
         logger.e(
           'Bible seeding failed for ${translation.code}',
@@ -227,10 +233,7 @@ final class BibleSeedService {
       replaceExisting = false;
     }
 
-    logger.i(
-      'Seeded $code ($written verses)',
-      tag: MenoLogTag.lifecycle.label,
-    );
+    logger.i('Seeded $code ($written verses)', tag: MenoLogTag.lifecycle.label);
   }
 
   /// The store to seed into.

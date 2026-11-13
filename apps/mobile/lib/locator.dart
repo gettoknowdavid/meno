@@ -82,6 +82,21 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   // `configureDependencies` throw `Dependent Type Database is not an async
   // Singleton` in every widget test. The seeder waits for the store itself.
   di.registerLazySingleton<BibleSeedService>(BibleSeedService.new);
+  // Same scope: what the reader reads is device data too.
+  di.registerLazySingleton<BibleLocalService>(
+    () => BibleLocalService(di<Database>()),
+  );
+  di.registerLazySingleton<BibleManager>(
+    () =>
+        BibleManager(local: di<BibleLocalService>(), logger: di<MenoLogger>()),
+  );
+  di.registerLazySingleton<TranslationsManager>(
+    () => TranslationsManager(
+      local: di<BibleLocalService>(),
+      seed: di<BibleSeedService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
   // Async rather than `registerSingletonWithDependencies`: get_it completes the
   // ready future of a dependency-based registration twice when another

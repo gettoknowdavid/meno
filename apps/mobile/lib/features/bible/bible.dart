@@ -1,2 +1,4 @@
-export 'model/bible_rows.dart';
-export 'services/bible_seed_service.dart';
+export 'manager/_manager.dart';
+export 'model/_model.dart';
+export 'services/_services.dart';
+export 'widgets/_widgets.dart';
