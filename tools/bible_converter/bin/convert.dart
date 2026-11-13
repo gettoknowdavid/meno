@@ -1,4 +1,5 @@
 import 'package:bible_converter/converter.dart' as converter;
+import 'package:bible_converter/seed_writer.dart';
 
 import 'dart:convert';
 import 'dart:io';
@@ -22,6 +23,9 @@ void main(List<String> arguments) {
     return;
   }
 
+  // Optional: additionally emit the gzipped payload the mobile app seeds from.
+  final seedOutputPath = _getFlag(arguments, 'seed-output');
+
   final jsonText = File(inputPath).readAsStringSync();
   final jsonDoc = jsonDecode(jsonText) as Map<String, dynamic>;
 
@@ -34,6 +38,15 @@ void main(List<String> arguments) {
     versionCode: code,
     outputPath: outputPath,
   );
+
+  if (seedOutputPath != null) {
+    writeSeedPayload(
+      metadata: metadata,
+      versesJson: versesJson,
+      versionCode: code,
+      outputPath: seedOutputPath,
+    );
+  }
 }
 
 String? _getFlag(List<String> args, String name) {
