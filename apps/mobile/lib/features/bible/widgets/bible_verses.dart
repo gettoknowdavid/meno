@@ -115,10 +115,7 @@ class _SelectionActionBar extends StatelessWidget {
   Future<void> _copy(BuildContext ctx, String reference, String text) async {
     await Clipboard.setData(ClipboardData(text: text));
     manager.clearSelection();
-    if (ctx.mounted) {
-      ScaffoldMessenger.of(ctx)
-          .showSnackBar(SnackBar(content: Text('Copied: $reference')));
-    }
+    if (ctx.mounted) ctx.showSuccessToast('Copied: $reference');
   }
 
   /// Puts the selection in the room's composer and sends it.
@@ -140,9 +137,6 @@ class _SelectionActionBar extends StatelessWidget {
     chat.sendMessage.run();
     manager.clearSelection();
 
-    if (context.mounted) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Sent: $reference')));
-    }
+    if (context.mounted) context.showSuccessToast('Sent: $reference');
   }
 }

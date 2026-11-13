@@ -77,16 +77,11 @@ class VerseOptionsModal extends StatelessWidget {
     chat.onContentChange(_fullText);
     chat.sendMessage.run();
 
-    _notify(context, 'Sent: $_reference');
+    context.showSuccessToast('Sent: $_reference');
   }
 
   void _copy(BuildContext context) {
     unawaited(Clipboard.setData(ClipboardData(text: _fullText)));
-    _notify(context, 'Copied: $_reference');
-  }
-
-  void _notify(BuildContext context, String message) {
-    ScaffoldMessenger.maybeOf(context)
-        ?.showSnackBar(SnackBar(content: Text(message)));
+    context.showSuccessToast('Copied: $_reference');
   }
 }

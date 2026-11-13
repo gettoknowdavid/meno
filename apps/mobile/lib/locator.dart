@@ -96,6 +96,11 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
       seed: di<BibleSeedService>(),
       logger: di<MenoLogger>(),
     ),
+    // The list is read as the manager is created, which can be before the
+    // launch-time seeding has finished. `initialize` waits for that same seed
+    // run and re-reads, so a translations sheet opened early fills in instead
+    // of showing an empty list until the app restarts.
+    onCreated: (manager) => manager.initialize.run(),
   );
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
   // Async rather than `registerSingletonWithDependencies`: get_it completes the

@@ -30,10 +30,7 @@ class BibleTranslationsModal extends StatelessWidget {
             MText('Downloaded', style: textTheme.microRegular),
             Spaces.verticalSmall,
             const _DownloadedList(),
-            Spaces.verticalXXLarge,
-            MText('Available Online', style: textTheme.microRegular),
-            Spaces.verticalSmall,
-            const _OnlineList(),
+            const _OnlineSection(),
           ],
         ),
       ),
@@ -75,7 +72,13 @@ class _DownloadedList extends WatchingWidget {
   }
 }
 
-class _OnlineList extends WatchingWidget {
+/// The translations a catalogue offers beyond the bundled ones.
+///
+/// Nothing is offered today: every translation ships in the app and is seeded
+/// on first launch, and there is no Bible endpoint to list anything else. The
+/// section is therefore drawn only when a catalogue has something in it, rather
+/// than as an "Available Online" heading over an empty list.
+class _OnlineSection extends WatchingWidget {
   const new();
 
   @override
@@ -84,25 +87,34 @@ class _OnlineList extends WatchingWidget {
       (m) => m.remoteTranslations,
     );
 
-    return ListView.separated(
-      shrinkWrap: true,
-      primary: false,
-      physics: const NeverScrollableScrollPhysics(),
-      itemCount: translations.length,
-      separatorBuilder: (_, _) => Spaces.verticalLarge,
-      itemBuilder: (context, index) {
-        final t = translations[index];
-        return TranslationWidget(
-          key: ObjectKey(t.code),
-          translation: t,
-          isDownloaded: false,
-          onDownload: () => _download(context, t),
-        );
-      },
-    );
-  }
+    if (translations.isEmpty) return const SizedBox.shrink();
 
-  void _download(BuildContext context, BibleVersionRow t) {
-    di<TranslationsManager>().downloadTranslation.run(t.code);
+    final textTheme = MTextTheme.of(context);
+
+    return Column(
+      crossAxisAlignment: .stretch,
+      children: [
+        Spaces.verticalXXLarge,
+        MText('Available Online', style: textTheme.microRegular),
+        Spaces.verticalSmall,
+        ListView.separated(
+          shrinkWrap: true,
+          primary: false,
+          physics: const NeverScrollableScrollPhysics(),
+          itemCount: translations.length,
+          separatorBuilder: (_, _) => Spaces.verticalLarge,
+          itemBuilder: (context, index) {
+            final t = translations[index];
+            return TranslationWidget(
+              key: ObjectKey(t.code),
+              translation: t,
+              isDownloaded: false,
+              onDownload: () =>
+                  di<TranslationsManager>().downloadTranslation.run(t.code),
+            );
+          },
+        ),
+      ],
+    );
   }
 }
