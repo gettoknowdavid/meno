@@ -306,10 +306,144 @@
         }
       ],
       "relations": []
+    },
+    {
+      "id": "5:3054350533671651168",
+      "lastPropertyId": "5:4092952053196867296",
+      "name": "BibleSeedRow",
+      "properties": [
+        {
+          "id": "1:9101969979299384945",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4623626258471508382",
+          "name": "translationCode",
+          "indexId": "15:8085588633542013010",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "3:7945818115811375519",
+          "name": "seedVersion",
+          "type": 6
+        },
+        {
+          "id": "4:3574595445720697190",
+          "name": "verseCount",
+          "type": 6
+        },
+        {
+          "id": "5:4092952053196867296",
+          "name": "seededAtMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "6:7890418645505610194",
+      "lastPropertyId": "8:1352647856324597895",
+      "name": "BibleVerseRow",
+      "properties": [
+        {
+          "id": "1:3583580913424867273",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5455078566937913",
+          "name": "translationCode",
+          "indexId": "16:1890776628477369739",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:3100130996740505514",
+          "name": "book",
+          "indexId": "17:9178348644673799717",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:5009743918455852243",
+          "name": "chapter",
+          "indexId": "18:1131297891886832460",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:3458908295918937531",
+          "name": "verse",
+          "type": 6
+        },
+        {
+          "id": "6:958408604350623649",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "7:5136198148998464185",
+          "name": "bookName",
+          "type": 9
+        },
+        {
+          "id": "8:1352647856324597895",
+          "name": "uniqueKey",
+          "indexId": "19:3631534284991416937",
+          "type": 9,
+          "flags": 34848
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "7:7989880967248923529",
+      "lastPropertyId": "6:5524417491150965540",
+      "name": "BibleVersionRow",
+      "properties": [
+        {
+          "id": "1:8857267547282788128",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2555984409011888489",
+          "name": "code",
+          "indexId": "20:198391767663911416",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "3:893482261355094898",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "4:3568103359583379793",
+          "name": "shortName",
+          "type": 9
+        },
+        {
+          "id": "5:6220773720212794538",
+          "name": "language",
+          "type": 9
+        },
+        {
+          "id": "6:5524417491150965540",
+          "name": "metadataJson",
+          "type": 9
+        }
+      ],
+      "relations": []
     }
   ],
-  "lastEntityId": "4:3057471866715198153",
-  "lastIndexId": "14:5084076122021576091",
+  "lastEntityId": "7:7989880967248923529",
+  "lastIndexId": "20:198391767663911416",
   "lastRelationId": "0:0",
   "lastSequenceId": "0:0",
   "modelVersion": 5,
