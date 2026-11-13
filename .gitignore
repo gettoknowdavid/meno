@@ -223,3 +223,6 @@ $RECYCLE.BIN/
 !ops/docker-compose.yml
 !ops/*.yaml
 !ops/*.yml
+
+samples/**
+native_libs/**

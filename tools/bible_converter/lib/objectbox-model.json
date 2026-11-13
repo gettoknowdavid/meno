@@ -1,0 +1,196 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:3528982615106520633",
+      "lastPropertyId": "25:718519032442045041",
+      "name": "BibleVersion",
+      "properties": [
+        {
+          "id": "1:1552161036770165766",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5456450387744310399",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "3:2281513978006015650",
+          "name": "code",
+          "type": 9
+        },
+        {
+          "id": "4:4409575696851972504",
+          "name": "shortName",
+          "type": 9
+        },
+        {
+          "id": "5:6005014186384457325",
+          "name": "language",
+          "type": 9
+        },
+        {
+          "id": "6:3703825576909275521",
+          "name": "sourceModule",
+          "type": 9
+        },
+        {
+          "id": "7:6343954451978534389",
+          "name": "year",
+          "type": 9
+        },
+        {
+          "id": "8:6450026497352824995",
+          "name": "publisher",
+          "type": 9
+        },
+        {
+          "id": "9:4804981434374812088",
+          "name": "owner",
+          "type": 9
+        },
+        {
+          "id": "10:3612811721113091743",
+          "name": "copyrightStatement",
+          "type": 9
+        },
+        {
+          "id": "11:8184230209760957396",
+          "name": "url",
+          "type": 9
+        },
+        {
+          "id": "12:1150033815430791162",
+          "name": "lang",
+          "type": 9
+        },
+        {
+          "id": "13:1558170626800537806",
+          "name": "langShort",
+          "type": 9
+        },
+        {
+          "id": "14:1233163769284249736",
+          "name": "moduleVersion",
+          "type": 9
+        },
+        {
+          "id": "15:3696073454886310497",
+          "name": "description",
+          "type": 9
+        },
+        {
+          "id": "16:4631516577152108722",
+          "name": "copyright",
+          "type": 6
+        },
+        {
+          "id": "17:3895071043405139328",
+          "name": "citationLimit",
+          "type": 6
+        },
+        {
+          "id": "18:3446769798109877279",
+          "name": "restrict",
+          "type": 6
+        },
+        {
+          "id": "19:5725825338572773057",
+          "name": "italics",
+          "type": 6
+        },
+        {
+          "id": "20:2775783726470547206",
+          "name": "strongs",
+          "type": 6
+        },
+        {
+          "id": "21:2506853207182880084",
+          "name": "redLetter",
+          "type": 6
+        },
+        {
+          "id": "22:1615129041418081094",
+          "name": "paragraph",
+          "type": 6
+        },
+        {
+          "id": "23:381259789050086130",
+          "name": "official",
+          "type": 6
+        },
+        {
+          "id": "24:8879349153943814276",
+          "name": "research",
+          "type": 6
+        },
+        {
+          "id": "25:718519032442045041",
+          "name": "audioStructure",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:2126000464363948638",
+      "lastPropertyId": "7:416049077915081988",
+      "name": "Verse",
+      "properties": [
+        {
+          "id": "1:8043361146398004046",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4817117201024976018",
+          "name": "versionCode",
+          "type": 9
+        },
+        {
+          "id": "3:6078740984480197607",
+          "name": "book",
+          "type": 6
+        },
+        {
+          "id": "4:660295590688261743",
+          "name": "chapter",
+          "type": 6
+        },
+        {
+          "id": "5:1718298161426227015",
+          "name": "verse",
+          "type": 6
+        },
+        {
+          "id": "6:8800838131084552244",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "7:416049077915081988",
+          "name": "bookName",
+          "type": 9
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "2:2126000464363948638",
+  "lastIndexId": "0:0",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [],
+  "retiredRelationUids": [],
+  "version": 1
+}

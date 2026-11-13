@@ -1,0 +1,19 @@
+name: bible_converter
+description: Converts Bible JSON files into per-translation ObjectBox DB files.
+version: 1.0.0
+# repository: https://github.com/my_org/my_repo
+
+environment:
+  sdk: ^3.13.7
+
+# Add regular dependencies here.
+dependencies:
+  objectbox: ^6.0.0-preview.4
+  path: ^1.9.0
+  
+
+dev_dependencies:
+  build_runner: ^2.15.1
+  lints: ^6.0.0
+  objectbox_generator: ^6.0.0-preview.4
+  test: ^1.25.6
