@@ -1,8 +1,10 @@
 import 'dart:async';
 
 import 'package:flutter/services.dart';
+import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/bible/model/bible_rows.dart';
+import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 class VerseOptionsModal extends StatelessWidget {
@@ -36,8 +38,8 @@ class VerseOptionsModal extends StatelessWidget {
             leading: const Icon(MIcons.send),
             title: 'Send to chat',
             onTap: () {
-              Navigator.of(context, rootNavigator: true).pop();
               _sendToChat(context);
+              Navigator.of(context, rootNavigator: true).pop();
             },
           ),
           Spaces.verticalLarge,
@@ -45,8 +47,8 @@ class VerseOptionsModal extends StatelessWidget {
             leading: const Icon(MIcons.copy_06),
             title: 'Copy verse',
             onTap: () {
-              Navigator.of(context, rootNavigator: true).pop();
               _copy(context);
+              Navigator.of(context, rootNavigator: true).pop();
             },
           ),
           Spaces.verticalLarge,
@@ -55,20 +57,36 @@ class VerseOptionsModal extends StatelessWidget {
     );
   }
 
+  /// Puts the verse in the room's composer and sends it.
+  ///
+  /// The chat belongs to the live broadcast, not to the container: outside a
+  /// room there is no composer to write into, so the verse goes to the
+  /// clipboard instead of disappearing.
   void _sendToChat(BuildContext context) {
-    // try {
-    //   final chat = di<ChatManager>();
-    //   chat.onContentChange(_fullText);
-    //   chat.sendMessage.run();
-    //   if (context.mounted) context.showSnackBar('Sent: $_reference');
-    // } catch (_) {
-    //   // TODO(gettoknowdavid): Handle sending to chat.
-    //   _copy(context);
-    // }
+    // The live owner is registered inside the account scope, so it is absent
+    // both signed out and between rooms.
+    final chat = di.isRegistered<ActiveBroadcastManager>()
+        ? di<ActiveBroadcastManager>().session?.chat
+        : null;
+
+    if (chat == null) {
+      _copy(context);
+      return;
+    }
+
+    chat.onContentChange(_fullText);
+    chat.sendMessage.run();
+
+    _notify(context, 'Sent: $_reference');
   }
 
   void _copy(BuildContext context) {
     unawaited(Clipboard.setData(ClipboardData(text: _fullText)));
-    // if (context.mounted) context.showSnackBar('Copied: $_reference');
+    _notify(context, 'Copied: $_reference');
+  }
+
+  void _notify(BuildContext context, String message) {
+    ScaffoldMessenger.maybeOf(context)
+        ?.showSnackBar(SnackBar(content: Text(message)));
   }
 }
