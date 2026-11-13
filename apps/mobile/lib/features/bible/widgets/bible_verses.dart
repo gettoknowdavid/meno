@@ -1,8 +1,11 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/bible/manager/bible_manager.dart';
 import 'package:meno_mobile/features/bible/model/bible_rows.dart';
+import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/bible/widgets/verse_options_modal.dart';
 import 'package:meno_mobile/features/bible/widgets/verse_widget.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -118,16 +121,28 @@ class _SelectionActionBar extends StatelessWidget {
     }
   }
 
+  /// Puts the selection in the room's composer and sends it.
+  ///
+  /// The chat belongs to the live broadcast, not to the container: outside a
+  /// room there is no composer to write into, so the selection goes to the
+  /// clipboard instead of disappearing.
   void _sendToChat(BuildContext context, String reference, String text) {
-    // try {
-    //   final chat = di<ChatManager>();
-    //   chat.onContentChange(text);
-    //   chat.sendMessage.run();
-    //   manager.clearSelection();
-    //   if (context.mounted) context.showSnackBar('Sent: $reference');
-    // } catch (_) {
-    //   // Not inside a live broadcast scope — fall back to clipboard.
-    //   _copy(context, reference, text);
-    // }
+    final chat = di.isRegistered<ActiveBroadcastManager>()
+        ? di<ActiveBroadcastManager>().session?.chat
+        : null;
+
+    if (chat == null) {
+      unawaited(_copy(context, reference, text));
+      return;
+    }
+
+    chat.onContentChange(text);
+    chat.sendMessage.run();
+    manager.clearSelection();
+
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('Sent: $reference')));
+    }
   }
 }
