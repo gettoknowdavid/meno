@@ -1,11 +1,14 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:bible_converter/json_reader.dart';
+
 /// Layout version of the seed payload.
 ///
 /// Bumped whenever the shape changes, so the app can refuse a file it would
-/// otherwise parse into the wrong rows.
-const int seedPayloadFormat = 1;
+/// otherwise parse into the wrong rows. 2 dropped the verbatim `metadata`
+/// object in favour of the four fields the app stores.
+const int seedPayloadFormat = 2;
 
 /// Builds the payload the mobile app seeds its own ObjectBox store from.
 ///
@@ -13,7 +16,8 @@ const int seedPayloadFormat = 1;
 /// — so the shipped asset is data the app parses and writes through its own
 /// entities. The layout is chosen to keep that cheap:
 ///
-/// * `metadata` is the source JSON map verbatim, so nothing is dropped.
+/// * `code`, `name`, `copyrightStatement` and `copyright` are the only version
+///   fields kept, matching what the app displays.
 /// * `books` carries each book name once instead of on ~31k verse rows.
 /// * `verses` are positional `[book, chapter, verse, text]` arrays.
 Map<String, dynamic> buildSeedPayload({
@@ -44,7 +48,9 @@ Map<String, dynamic> buildSeedPayload({
   return {
     'format': seedPayloadFormat,
     'code': versionCode,
-    'metadata': metadata,
+    'name': metadata['name'] as String? ?? versionCode,
+    'copyrightStatement': metadata['copyright_statement'] as String? ?? '',
+    'copyright': toInt(metadata['copyright']),
     'books': [
       for (final book in books) [book, bookNames[book] ?? ''],
     ],

@@ -100,10 +100,11 @@ values like `1.0` produce rows nothing can look up.
 - The `.mdb` is the store's `data.mdb`, copied out of a temp store after the
   store is closed.
 - With `--seed-output`, one `.json.gz` per translation next to the app's other
-  assets: `assets/bible/kjv.json.gz` (1.30 MB), `web.json.gz` (1.25 MB),
+  assets: `assets/bible/kjv.json.gz` (1.29 MB), `web.json.gz` (1.25 MB),
   `asv.json.gz` (1.27 MB).
 - Expected verse counts: KJV 31,102, ASV 31,102, WEB 31,103. Each payload
-  carries 66 books and all 22 metadata keys from the source JSON.
+  carries 66 books and only the version's `code`, `name`,
+  `copyrightStatement` and `copyright`.
 
 Treat `outputs/` as build artifacts: regenerate, don't edit. Do not hand-edit a
 `.mdb`, and never copy a converter `.mdb` over the mobile app's own store — it
@@ -126,7 +127,7 @@ To check the contents, open the file with the same generated model
 (`lib/objectbox.g.dart`) and assert `Box<Verse>().count()` and
 `Box<BibleVersion>().getAll().first.code`; Genesis 1:1 is a good spot check.
 
-To check a seed payload, gunzip it and confirm `format` is `1`, `code` matches
+To check a seed payload, gunzip it and confirm `format` is `2`, `code` matches
 the translation, `books` has 66 entries, `verses` matches the count above, and
 the first Genesis 1:1 entry reads as expected.
 
@@ -160,17 +161,13 @@ it per the ObjectBox docs rather than deleting it.
 {
   "metadata": {
     "name": "Authorized King James Version",
-    "shortname": "KJV",
-    "module": "KJV",
-    "year": "1611",
+    "module": "kjv",
     "copyright_statement": "...",
-    "lang": "en",
-    "lang_short": "en",
-    "module_version": "1.0",
+    "copyright": 0,
+    "description": "<h2>...</h2>",
+    "year": "1611 / 1769",
     "italics": 1,
-    "red_letter": 1,
-    "strongs": 0,
-    "paragraph": 1
+    "red_letter": 1
   },
   "verses": [
     { "book": 1, "book_name": "Genesis", "chapter": 1, "verse": 1, "text": "..." }
@@ -178,12 +175,13 @@ it per the ObjectBox docs rather than deleting it.
 }
 ```
 
-Metadata is mapped field by field onto `BibleVersion`
-(`json_reader.dart::mapMetadata`): name, code, short name, language, source
-module, year, publisher, owner, copyright statement, url, lang, lang short,
-module version, description, copyright, citation limit, restrict, italics,
-strongs, red letter, paragraph, official, research, audio structure. Absent
-strings become `''`, absent numbers `0`, absent optional strings `null`.
+Only four things are taken from `metadata` (`json_reader.dart::mapMetadata`):
+`name`, `copyright_statement`, `copyright`, plus the code passed as `--code`.
+Everything else the source carries — description, publisher, module version,
+typography flags, citation limits — is deliberately not stored, because the
+app's design does not display it. The JSON stays the source of record; adding a
+field back is one line in that function plus a regeneration. Absent strings
+become `''` and absent numbers `0`.
 
 Verses map to `versionCode`, `book`, `chapter`, `verse`, `text`, `bookName`.
 `book`, `chapter` and `verse` stay integers; `text` is stored verbatim.
@@ -204,16 +202,18 @@ Verses map to `versionCode`, `book`, `chapter`, `verse`, `text`, `bookName`.
 
 ```json
 {
-  "format": 1,
+  "format": 2,
   "code": "kjv",
-  "metadata": { "name": "Authorized King James Version", "shortname": "KJV", "year": "1611" },
+  "name": "Authorized King James Version",
+  "copyrightStatement": "...",
+  "copyright": 0,
   "books": [[1, "Genesis"], [2, "Exodus"]],
   "verses": [[1, 1, 1, "In the beginning God created the heaven and the earth."]]
 }
 ```
 
-`metadata` in the real file is the complete source map, not just these three
-keys.
+`format: 2` is the trimmed shape: the four version fields sit at the top level
+instead of a verbatim `metadata` object, mirroring exactly what the app stores.
 
 - `format` is bumped whenever the layout changes, so the app can reject a file
   it would parse into the wrong rows instead of half-seeding.

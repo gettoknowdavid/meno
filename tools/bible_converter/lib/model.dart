@@ -1,60 +1,34 @@
 import 'package:objectbox/objectbox.dart';
 
+/// A translation's identity and attribution.
+///
+/// Deliberately four fields. The source JSON carries about twenty more
+/// (description, publisher, module version, typography flags, ...) and the
+/// app's design shows none of them yet, so they are not stored. Adding one back
+/// is a field here, a line in `mapMetadata`, and a regeneration — cheaper than
+/// carrying columns nothing reads.
 @Entity()
 class BibleVersion {
   @Id()
   int id;
-  String name;
+
+  /// `kjv`, `web`, `asv` — the same code every verse of this translation holds.
   String code;
-  String shortName;
-  String language;
-  String sourceModule;
-  String year;
-  String publisher;
-  String owner;
+
+  String name;
+
+  /// The source JSON's `copyright_statement`.
   String copyrightStatement;
-  String url;
-  String lang;
-  String langShort;
-  String moduleVersion;
-  String? description;
+
+  /// The source JSON's `copyright` flag, kept as the number it is there.
   int copyright;
-  int citationLimit;
-  int restrict;
-  int italics;
-  int strongs;
-  int redLetter;
-  int paragraph;
-  int official;
-  int research;
-  String? audioStructure;
 
   BibleVersion({
     this.id = 0,
     required this.code,
     required this.name,
-    required this.shortName,
-    this.language = '',
-    this.sourceModule = '',
-    this.year = '',
-    this.publisher = '',
-    this.owner = '',
     this.copyrightStatement = '',
-    this.url = '',
-    this.lang = '',
-    this.langShort = '',
-    this.moduleVersion = '',
-    this.description,
     this.copyright = 0,
-    this.citationLimit = 0,
-    this.restrict = 0,
-    this.italics = 0,
-    this.strongs = 0,
-    this.redLetter = 0,
-    this.paragraph = 0,
-    this.official = 0,
-    this.research = 0,
-    this.audioStructure,
   });
 }
 

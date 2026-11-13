@@ -8,39 +8,26 @@ Map<String, dynamic> readJsonFile(String path) {
   return jsonDecode(text) as Map<String, dynamic>;
 }
 
+/// Maps the source JSON's `metadata` object onto the stored version record.
+///
+/// Only the four fields the app shows are taken. Everything else in the source
+/// metadata (description, publisher, module version, typography flags, ...) is
+/// intentionally left behind: the app's design does not display it, and the
+/// JSON remains the source of record if it is ever needed again.
 BibleVersion mapMetadata(String versionCode, Map<String, dynamic> metadata) {
-  int toInt(dynamic value) {
-    if (value is int) return value;
-    if (value is num) return value.toInt();
-    return 0;
-  }
-
   return BibleVersion(
     code: versionCode,
-    name: metadata['name'] as String,
-    shortName: metadata['shortname'] as String,
-    language: metadata['lang'] as String? ?? '',
-    sourceModule: metadata['module'] as String? ?? '',
-    year: metadata['year'] as String? ?? '',
-    publisher: metadata['publisher'] as String? ?? '',
-    owner: metadata['owner'] as String? ?? '',
+    name: metadata['name'] as String? ?? versionCode,
     copyrightStatement: metadata['copyright_statement'] as String? ?? '',
-    url: metadata['url'] as String? ?? '',
-    lang: metadata['lang'] as String? ?? '',
-    langShort: metadata['lang_short'] as String? ?? '',
-    moduleVersion: metadata['module_version'] as String? ?? '',
-    description: metadata['description'] as String?,
     copyright: toInt(metadata['copyright']),
-    citationLimit: toInt(metadata['citation_limit']),
-    restrict: toInt(metadata['restrict']),
-    italics: toInt(metadata['italics']),
-    strongs: toInt(metadata['strongs']),
-    redLetter: toInt(metadata['red_letter']),
-    paragraph: toInt(metadata['paragraph']),
-    official: toInt(metadata['official']),
-    research: toInt(metadata['research']),
-    audioStructure: metadata['audio_structure'] as String?,
   );
+}
+
+/// Reads a JSON number as an int, treating anything absent or unparseable as 0.
+int toInt(dynamic value) {
+  if (value is int) return value;
+  if (value is num) return value.toInt();
+  return 0;
 }
 
 List<Verse> mapVerses(String versionCode, List<dynamic> verses) {
