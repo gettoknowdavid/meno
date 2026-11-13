@@ -5,9 +5,9 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/bible/manager/bible_manager.dart';
 import 'package:meno_mobile/features/bible/model/bible_rows.dart';
-import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/bible/widgets/verse_options_modal.dart';
 import 'package:meno_mobile/features/bible/widgets/verse_widget.dart';
+import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 class BibleVerses extends WatchingWidget {
