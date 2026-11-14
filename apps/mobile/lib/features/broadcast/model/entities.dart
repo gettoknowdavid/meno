@@ -594,3 +594,118 @@ abstract class Participant with _$Participant {
 
   bool get isListener => role.isListener;
 }
+
+/// Where a co-host invitation is in its handshake.
+///
+enum InvitationStatus {
+  /// Waiting for the invitee.
+  pending('pending'),
+
+  /// The invitee joined the co-host list.
+  accepted('accepted'),
+
+  /// The invitee refused.
+  declined('declined'),
+
+  /// The invitation passed its useful life.
+  expired('expired');
+
+  new(this.value);
+
+  /// Reads the status the API stored.
+  ///
+  /// An unknown value is read as [pending]: the API is the one that decides a
+  /// handshake's state, and a client that cannot name it must not claim the
+  /// invitation is over.
+  static InvitationStatus fromWire(String? raw) {
+    return switch (raw) {
+      'accepted' => accepted,
+      'declined' => declined,
+      'expired' => expired,
+      _ => pending,
+    };
+  }
+
+  /// The status as the API spells it.
+  final String value;
+}
+
+/// One co-host invitation, from either source that can announce it.
+///
+/// The invite endpoint answers with the invitation and no names; the socket
+/// frame carries the names and no invitee. One type holds both, because the
+/// prompt and the two buttons are the same either way — a field the source did
+/// not carry stays null.
+final class CohostInvitation {
+  /// Creates an invitation.
+  const new({
+    required this.id,
+    required this.broadcastId,
+    this.inviterName,
+    this.broadcastTitle,
+    this.status = InvitationStatus.pending,
+    this.createdAt,
+  });
+
+  /// The invitation to accept or decline.
+  final Id id;
+
+  /// Which broadcast it is for.
+  final Id broadcastId;
+
+  /// Who sent it, when the source names them.
+  final String? inviterName;
+
+  /// The broadcast's title, when the source names it.
+  final String? broadcastTitle;
+
+  /// Where it is in its lifecycle.
+  final InvitationStatus status;
+
+  /// When it was issued.
+  final DateTime? createdAt;
+
+  /// Whether it can still be answered.
+  bool get isPending => status == InvitationStatus.pending;
+
+  /// The line the card shows.
+  String get prompt {
+    final who = inviterName;
+    final what = broadcastTitle;
+    if (who == null) {
+      return what == null
+          ? 'You are invited to co-host'
+          : 'You are invited to co-host "$what"';
+    }
+    if (what == null) return '$who invited you to co-host';
+    return '$who invited you to co-host "$what"';
+  }
+
+  /// This invitation, keeping the names it has when [other] does not carry
+  /// them.
+  CohostInvitation merge(CohostInvitation other) {
+    return CohostInvitation(
+      id: other.id,
+      broadcastId: other.broadcastId,
+      inviterName: other.inviterName ?? inviterName,
+      broadcastTitle: other.broadcastTitle ?? broadcastTitle,
+      status: other.status,
+      createdAt: other.createdAt ?? createdAt,
+    );
+  }
+}
+
+/// The session an accepted invitation produces.
+final class CohostSession {
+  /// Creates an accepted invitation's session.
+  const new({required this.user, this.livekitToken});
+
+  /// The new co-host.
+  final Participant user;
+
+  /// The publish token, when the room already exists.
+  ///
+  /// A draft's invitation is accepted without one: the token is minted at
+  /// go-live, for the room that does not exist yet.
+  final String? livekitToken;
+}

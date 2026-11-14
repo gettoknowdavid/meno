@@ -110,10 +110,24 @@ class LiveSessionShellState extends State<LiveSessionShell>
           showChatDot: hasUnread && controller.index != _chatTabIndex,
           onTabChanged: onTabTap,
         ),
-        body: MTabBarView(
-          controller: controller,
-          children: widget.children,
-          onPageChanged: (_) => FocusScope.of(context).unfocus(),
+        // The invitations float over the room: a co-host may be asked while
+        // watching, and the answer must not cost them the tab they are on.
+        body: Stack(
+          children: [
+            Positioned.fill(
+              child: MTabBarView(
+                controller: controller,
+                children: widget.children,
+                onPageChanged: (_) => FocusScope.of(context).unfocus(),
+              ),
+            ),
+            const Positioned(
+              top: Insets.sm,
+              left: Insets.lg,
+              right: Insets.lg,
+              child: CohostInvitationList(),
+            ),
+          ],
         ),
       ),
     );

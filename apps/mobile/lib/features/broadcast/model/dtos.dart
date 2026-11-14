@@ -94,7 +94,12 @@ abstract class BroadcastSessionDto with _$BroadcastSessionDto {
       _$BroadcastSessionDtoFromJson(json);
 }
 
-/// `CohostResponse` in `apps/api/src/modules/broadcast/dto.rs`.
+/// The pre-handshake response (`CohostResponse` in the old API).
+///
+/// Nothing reads it any more: `POST /co-hosts` answers a
+/// [CohostInvitationDto], and the accept answer is a [CohostSessionDto]. The
+/// class stays because its generated part is checked in, and deleting a freezed
+/// class means regenerating every model in the app.
 @freezed
 abstract class CohostDto with _$CohostDto {
   const factory({required UserSummaryDto user, required int cohostCount}) =
@@ -381,4 +386,89 @@ extension UserSummaryDtoX on UserSummaryDto {
     avatarId: avatarId,
     avatarUrl: avatarUrl,
   );
+}
+
+/// `CohostInvitationResponse` in `apps/api/src/modules/broadcast/dto.rs`.
+///
+/// Not freezed: it is a wire shape and two lines of mapping, and a generated
+/// part would have to be regenerated with every other model in the app.
+final class CohostInvitationDto {
+  /// Creates the wire shape.
+  const new({
+    required this.id,
+    required this.broadcastId,
+    required this.status,
+    this.invitee,
+    this.createdAt,
+  });
+
+  /// Reads the API's answer.
+  factory fromJson(Map<String, dynamic> json) {
+    final invitee = json['invitee'];
+    return CohostInvitationDto(
+      id: json['id'] as String? ?? '',
+      broadcastId: json['broadcastId'] as String? ?? '',
+      status: json['status'] as String? ?? '',
+      invitee: invitee is Map<String, dynamic>
+          ? UserSummaryDto.fromJson(invitee)
+          : null,
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
+    );
+  }
+
+  /// The invitation's id.
+  final String id;
+
+  /// The broadcast it is for.
+  final String broadcastId;
+
+  /// Where it is in its lifecycle.
+  final String status;
+
+  /// Who was invited.
+  final UserSummaryDto? invitee;
+
+  /// When it was issued.
+  final DateTime? createdAt;
+}
+
+/// `CohostSessionResponse` in `apps/api/src/modules/broadcast/dto.rs`: the
+/// answer to accepting an invitation.
+final class CohostSessionDto {
+  /// Creates the wire shape.
+  const new({required this.user, this.livekitToken});
+
+  /// Reads the API's answer.
+  factory fromJson(Map<String, dynamic> json) {
+    final user = json['user'];
+    if (user is! Map<String, dynamic>) {
+      throw const FormatException('A cohost session needs its user');
+    }
+    return CohostSessionDto(
+      user: UserSummaryDto.fromJson(user),
+      livekitToken: json['livekitToken'] as String?,
+    );
+  }
+
+  /// The new co-host.
+  final UserSummaryDto user;
+
+  /// The publish token, when the room already exists.
+  final String? livekitToken;
+}
+
+/// The domain view of a [CohostInvitationDto].
+extension CohostInvitationDtoX on CohostInvitationDto {
+  CohostInvitation get toDomain => CohostInvitation(
+    id: _wireId(id),
+    broadcastId: _wireId(broadcastId),
+    status: InvitationStatus.fromWire(status),
+    createdAt: createdAt,
+  );
+}
+
+/// The domain view of a [CohostSessionDto].
+extension CohostSessionDtoX on CohostSessionDto {
+  CohostSession get toDomain =>
+      CohostSession(user: user.toDomain, livekitToken: livekitToken);
 }

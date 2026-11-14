@@ -246,6 +246,10 @@ class PreStreamActionButtons extends WatchingWidget {
       (manager) => manager.join.isRunning,
     );
 
+    // Only the host invites: the API refuses anyone else, and a button that
+    // can only fail is not an action.
+    final isHost = broadcast.isHostedBy(di<ActiveBroadcastManager>().accountId);
+
     return SizedBox(
       height: 32,
       child: Row(
@@ -266,6 +270,16 @@ class PreStreamActionButtons extends WatchingWidget {
           Expanded(
             child: MSecondaryButton(label: 'Share', onPressed: () {}),
           ),
+          if (isHost) ...[
+            Spaces.horizontalSmall,
+            Expanded(
+              child: MSecondaryButton(
+                label: 'Invite',
+                onPressed: () =>
+                    AddCohostModal.show(context, broadcastId: broadcast.id),
+              ),
+            ),
+          ],
         ],
       ),
     );

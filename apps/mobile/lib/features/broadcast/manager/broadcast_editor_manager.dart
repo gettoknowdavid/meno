@@ -7,6 +7,7 @@ import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/_services.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:uuid/uuid.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
@@ -142,6 +143,7 @@ final class BroadcastEditorManager implements Disposable {
       cohosts.startTransAction();
       cohosts.clear();
       cohosts.endTransAction();
+      pickedCohosts.value = [];
       record.value = false;
       session.value = null;
       _draftId = null;
@@ -162,6 +164,9 @@ final class BroadcastEditorManager implements Disposable {
       cohosts.clear();
       cohosts.addAll(draft.cohosts);
       cohosts.endTransAction();
+      // The stored draft kept the ids and nothing else, so a reopened form
+      // shows its chips without names.
+      pickedCohosts.value = [];
 
       _createdBroadcastId = draft.createdBroadcastId;
       step.value = draft.creationStep;
@@ -246,6 +251,12 @@ final class BroadcastEditorManager implements Disposable {
   final imagePath = ValueNotifier<ImageInput?>(null);
 
   final cohosts = ListNotifier<Id>(data: []);
+
+  /// The accounts behind [cohosts], when the picker named them.
+  ///
+  /// A draft stores ids, and a draft reopened after a restart has no names to
+  /// show; the chips fall back to a plain label rather than inventing one.
+  final pickedCohosts = ValueNotifier<List<Profile>>([]);
   final ValueNotifier<bool> record = ValueNotifier(false);
 
   /// The session going live produced, once there is one.
@@ -276,17 +287,23 @@ final class BroadcastEditorManager implements Disposable {
 
   /// Adds [cohostId] to the form, or removes it.
   ///
-  /// Capped at two: the API accepts more, but the pre-stream lobby and the
-  /// broadcast card both draw slots for two, so the form stops at what can be
-  /// seen.
-  void toggleCohost(Id cohostId) {
+  /// Capped at [maxCohosts], which is the API's own limit: an invitation past
+  /// it would be refused at creation, so the form stops where the API does.
+  void toggleCohost(Id cohostId, {Profile? profile}) {
     hasUnsavedChanges.value = true;
     if (cohosts.contains(cohostId)) {
       cohosts.remove(cohostId);
+      pickedCohosts.value = [
+        for (final item in pickedCohosts.value)
+          if (item.id != cohostId) item,
+      ];
       return;
     }
-    if (cohosts.length >= _maxCohosts) return;
+    if (cohosts.length >= maxCohosts) return;
     cohosts.add(cohostId);
+    if (profile != null) {
+      pickedCohosts.value = [...pickedCohosts.value, profile];
+    }
   }
 
   /// Picks an image with the platform picker.
@@ -417,12 +434,14 @@ final class BroadcastEditorManager implements Disposable {
     description.dispose();
     imagePath.dispose();
     cohosts.dispose();
+    pickedCohosts.dispose();
     record.dispose();
     session.dispose();
     _isRunning.dispose();
   }
 
-  static const int _maxCohosts = 2;
+  /// How many co-hosts a broadcast may have — `MAX_COHOSTS` in the API.
+  static const int maxCohosts = 3;
 
   void _loadDrafts() {
     final stored = _local.drafts();

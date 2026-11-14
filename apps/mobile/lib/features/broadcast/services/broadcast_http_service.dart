@@ -242,17 +242,54 @@ final class BroadcastHttpService {
     );
   }
 
-  /// `POST /broadcasts/{id}/cohosts` — invites [cohostId] to publish.
-  Future<CohostDto> addCohost(
+  /// `POST /broadcasts/{id}/co-hosts` — invites [cohostId] to publish.
+  ///
+  /// The answer is the **pending invitation**, not a co-host: the account
+  /// already in the room is the host, and the invitee becomes one only by
+  /// answering it. `MAX_COHOSTS` in the API caps the list at three.
+  Future<CohostInvitation> inviteCohost(
     Id broadcastId,
     Id cohostId, {
     CancelToken? cancelToken,
   }) {
     return _client.post(
-      '/broadcasts/${broadcastId.getOrCrash}/cohosts',
+      '/broadcasts/${broadcastId.getOrCrash}/co-hosts',
       data: {'cohost': cohostId.getOrCrash},
       cancelToken: cancelToken,
-      fromJson: (data) => CohostDto.fromJson(_map(data)),
+      fromJson: (data) => CohostInvitationDto.fromJson(_map(data)).toDomain,
+    );
+  }
+
+  /// `POST /broadcasts/{id}/co-hosts/{invitationId}/accept` — the invitee's
+  /// yes.
+  ///
+  /// The answer names the new co-host and, when the broadcast is already on
+  /// air, the publish token for its room. A draft answers without a token: the
+  /// room does not exist until go-live mints one.
+  Future<CohostSession> acceptCohostInvitation(
+    Id broadcastId,
+    Id invitationId, {
+    CancelToken? cancelToken,
+  }) {
+    return _client.post(
+      '/broadcasts/${broadcastId.getOrCrash}/co-hosts/'
+      '${invitationId.getOrCrash}/accept',
+      cancelToken: cancelToken,
+      fromJson: (data) => CohostSessionDto.fromJson(_map(data)).toDomain,
+    );
+  }
+
+  /// `POST /broadcasts/{id}/co-hosts/{invitationId}/decline` — the invitee's
+  /// no. The endpoint answers with no data.
+  Future<void> declineCohostInvitation(
+    Id broadcastId,
+    Id invitationId, {
+    CancelToken? cancelToken,
+  }) {
+    return _client.postUnit(
+      '/broadcasts/${broadcastId.getOrCrash}/co-hosts/'
+      '${invitationId.getOrCrash}/decline',
+      cancelToken: cancelToken,
     );
   }
 

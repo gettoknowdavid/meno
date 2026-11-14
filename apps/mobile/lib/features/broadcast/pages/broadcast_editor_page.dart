@@ -7,6 +7,7 @@ import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/_shared/services/permission_prompts.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// What a required field says while it is empty.
@@ -453,14 +454,70 @@ class _DescriptionField extends WatchingWidget {
   }
 }
 
-class CoHostSection extends StatelessWidget {
+class CoHostSection extends WatchingWidget {
   const new({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return const LimitedBox(
+    final cohosts = watchValue<BroadcastEditorManager, List<Id>>(
+      (manager) => manager.cohosts,
+    );
+    final picked = watchValue<BroadcastEditorManager, List<Profile>>(
+      (manager) => manager.pickedCohosts,
+    );
+
+    if (cohosts.isEmpty) return const SizedBox.shrink();
+
+    final byId = {for (final profile in picked) profile.id: profile};
+
+    return LimitedBox(
       maxHeight: 72,
-      child: Row(children: [Spaces.horizontalSmall, Wrap(spacing: 8)]),
+      child: Row(
+        children: [
+          Spaces.horizontalSmall,
+          Wrap(
+            spacing: 8,
+            children: [
+              for (final id in cohosts)
+                _CohostChip(key: ValueKey(id), profile: byId[id]),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// One picked co-host, named when the picker knew the account.
+class _CohostChip extends StatelessWidget {
+  const new({required this.profile, super.key});
+
+  final Profile? profile;
+
+  @override
+  Widget build(BuildContext context) {
+    final styles = MCardStyles.of(context);
+    final textTheme = MTextTheme.of(context);
+
+    return Container(
+      padding: const .symmetric(horizontal: Insets.sm, vertical: 4),
+      decoration: BoxDecoration(
+        color: styles.backgroundColor,
+        borderRadius: Corners.sm,
+      ),
+      child: Row(
+        mainAxisSize: .min,
+        children: [
+          MAvatar(radius: 12, url: profile?.avatarUrl?.getUrl),
+          Spaces.horizontalMicro,
+          MText(
+            profile?.fullName.orEmpty ?? 'Co-host',
+            style: textTheme.microRegular,
+            maxLines: 1,
+            overflow: .ellipsis,
+          ),
+        ],
+      ),
     );
   }
 }

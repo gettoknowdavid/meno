@@ -4,37 +4,6 @@ import 'package:meno_mobile/_shared/model/_model.dart';
 
 part 'entities.freezed.dart';
 
-/// Sample public profiles for cards, lists, and placeholder states.
-final List<Profile> fakeProfileList = [
-  Profile(
-    id: Id.fromString('b1b1b1b1-0001-4b1b-8b1b-1b1b1b1b1b1b'),
-    fullName: SingleLineString('Grace Okonkwo'),
-    bio: MultiLineString('Sharing moments of worship, prayer, and testimony.'),
-    isFollowing: true,
-    stats: const ProfileStats(broadcasts: 5, followers: 120, following: 34),
-    createdAt: DateTime(2023, 9, 20),
-  ),
-  Profile(
-    id: Id.fromString('b1b1b1b1-0002-4b1b-8b1b-2b1b1b1b1b1b'),
-    fullName: SingleLineString('Daniel Cho'),
-    bio: MultiLineString('Teacher, speaker, and lifelong learner.'),
-    stats: const ProfileStats(broadcasts: 1, followers: 8, following: 2),
-  ),
-  Profile(
-    id: Id.fromString('b1b1b1b1-0003-4b1b-8b1b-3b1b1b1b1b1b'),
-    fullName: SingleLineString('Sofia Bianchi'),
-    stats: const ProfileStats(broadcasts: 10, followers: 90, following: 3),
-    createdAt: DateTime(2026, 1, 15),
-  ),
-  Profile(
-    id: Id.fromString('b1b1b1b1-0004-4b1b-8b1b-4b1b1b1b1b1b'),
-    fullName: SingleLineString('Aisha Rahman'),
-    isFollowing: true,
-  ),
-];
-
-List<Profile> fakeProfiles = <Profile>[];
-
 /// Where an uploaded avatar now lives.
 ///
 /// `POST /users/me/avatar` answers with the two keys the account's row was

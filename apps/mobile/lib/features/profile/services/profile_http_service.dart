@@ -29,6 +29,25 @@ final class ProfileHttpService {
     );
   }
 
+  /// `GET /users` — one page of accounts matching [query].
+  ///
+  /// The search is the API's: it matches names and biographies, and it refuses
+  /// a term shorter than its own minimum rather than answering everything. The
+  /// result carries the viewer's standing ([Profile.isFollowing]) but not the
+  /// counters' history, which is all the invite sheet needs.
+  Future<CursorPage<Profile>> searchUsers(
+    String query, {
+    String? cursor,
+    int limit = 20,
+  }) {
+    return _client.get(
+      '/users',
+      queryParameters: {'q': query, 'cursor': ?cursor, 'limit': limit},
+      fromJson: (data) =>
+          CursorPage.fromJson(data, _searchResult, logger: _client.logger),
+    );
+  }
+
   /// `POST /subscribers/{id}` — follows [userId].
   ///
   /// Answers with no body: the row the API wrote is the whole result, and the
@@ -86,4 +105,22 @@ final class ProfileHttpService {
   /// Reads the record both `/users/me` endpoints answer with.
   static MyProfile _me(dynamic data) =>
       MeDto.fromJson(data as Map<String, dynamic>).toDomain;
+
+  /// Reads one hit of `GET /users` (`ProfileSearchResult` in the API).
+  static Profile _searchResult(Map<String, dynamic> json) {
+    final bio = json['bio'] as String?;
+    return Profile(
+      id: Id.fromWire(json['id'] as String? ?? ''),
+      fullName: SingleLineString(json['fullName'] as String? ?? ''),
+      bio: bio == null ? null : MultiLineString(bio),
+      avatarUrl: ImageInput.fromUrl(json['avatarUrl'] as String?),
+      isFollowing: json['isFollowing'] as bool? ?? false,
+      stats: ProfileStats(
+        broadcasts: json['broadcasts'] as int? ?? 0,
+        followers: json['followers'] as int? ?? 0,
+        following: json['following'] as int? ?? 0,
+      ),
+      createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
+    );
+  }
 }

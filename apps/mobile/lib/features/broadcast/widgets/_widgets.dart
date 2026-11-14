@@ -5,6 +5,7 @@ export 'broadcast_control_buttons.dart';
 export 'broadcast_draft_modal.dart';
 export 'broadcast_exit_alert_dialog.dart';
 export 'broadcast_info_modal.dart';
+export 'cohost_invitation_card.dart';
 export 'ended_broadcast_participants_widget.dart';
 export 'live_broadcast_widgets.dart';
 export 'live_session_banner.dart';

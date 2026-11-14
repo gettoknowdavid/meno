@@ -80,6 +80,21 @@ Future<void> registerAccountScope(
     () => BroadcastHttpService(di<HttpClient>()),
   );
 
+  // The invitee's half of the co-host handshake. It listens from the moment the
+  // account is built rather than from a page: an invitation can arrive while
+  // the reader is anywhere, and the API never lists the ones it sent, so a
+  // frame this manager was not there to hear is an invitation lost.
+  final invitations = CohostInvitationsManager(
+    http: di<BroadcastHttpService>(),
+    events: di<BroadcastSocketService>().onCohostEvent,
+    logger: di<MenoLogger>(),
+  )..init();
+  scope.registerSingleton<CohostInvitationsManager>(invitations);
+
+  scope.registerLazySingleton<CohostSearchManager>(
+    () => CohostSearchManager(profiles: di<ProfileHttpService>()),
+  );
+
   // The chat's two ends. Both belong to the account for the same reason the
   // broadcast adapter does: the handshake is authenticated as this account, and
   // the history is that account's view of a room. Which room is the room

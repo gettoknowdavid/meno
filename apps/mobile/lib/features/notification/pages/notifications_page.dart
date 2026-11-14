@@ -1,5 +1,6 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart' hide Notification;
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/notification/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -13,7 +14,17 @@ class NotificationsPage extends WatchingWidget {
     return MScaffold(
       appBar: const _AppBar(),
       body: CustomScrollView(
-        slivers: [_NotificationsPageView(feedSource: manager.feed)],
+        slivers: [
+          // The invitations come first: they are the only thing in this page
+          // that is waiting for the reader, and they are gone once answered.
+          const SliverToBoxAdapter(
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(Insets.lg, Insets.md, Insets.lg, 0),
+              child: CohostInvitationList(),
+            ),
+          ),
+          _NotificationsPageView(feedSource: manager.feed),
+        ],
       ),
     );
   }
