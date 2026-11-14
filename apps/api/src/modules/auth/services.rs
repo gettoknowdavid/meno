@@ -1,390 +1,530 @@
-use crate::jobs::Jobs;
-use crate::jobs::email_jobs::{SendEmailJob, reset_pwd_email_html, verify_email_html};
-use crate::modules::auth::cache::AuthCache;
-use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
-    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, UserResponse, VerifyEmailRequest,
-};
-use crate::modules::auth::errors::AuthError;
-use crate::modules::auth::model::{AuthProvider, OtpType, User};
-use crate::modules::auth::password::verify_password_async;
-use crate::modules::auth::repository::AuthRepo;
-use crate::modules::auth::token::{IssuedTokenPair, TokenService};
-use crate::shared::integrations::google::GoogleAuth;
-use crate::shared::integrations::google::GoogleUserInfo;
-use std::sync::Arc;
+//! Auth orchestration: the layer between HTTP and storage (plan §4.1, §4.8).
+//!
+//! # What belongs here
+//!
+//! Ordering, and only ordering. Every decision about *what* is acceptable was made by
+//! [`super::dto`] (shape) or [`super::validators`] (rules); every question about *what
+//! exists* is the repository's. What is left — "hash before comparing", "do not reveal
+//! whether the account exists", "rotate before minting" — is the part that has to be
+//! right in a specific order, and it has no other home.
+//!
+//! The one-time-code and password-reset flows are in [`super::credentials`]. They are a
+//! separate service rather than more methods here because they share a code generator, a
+//! store-and-mail step and an enumeration rule, and none of which needs a session
+//! (§5.1's split-by-responsibility, §9.3's line cap).
+//!
+//! # §4.8 observability
+//!
+//! Every public method is `#[tracing::instrument]` with structured fields and no
+//! `format!` in the log message. The fields use `skip` for anything sensitive: an email
+//! address, a password, a token and a one-time code never appear in a log line.
+//!
+//! # User enumeration
+//!
+//! [`AuthService::login`] answers identically whether or not the address exists, and
+//! still verifies a password when no account matched — against the dummy hash built at
+//! startup — so the timing does not give it away either.
 
-/// `AuthService` orchestrates auth flows. It holds its dependencies directly.
-/// It never takes `&MenoState`.
+use std::sync::Arc;
+use std::time::Instant;
+
+use uuid::Uuid;
+
+use super::dto::{
+    AuthResponse, DeviceHint, GoogleMobileAuthRequest, GoogleWebAuthRequest, LoginRequest,
+    LogoutRequest, RefreshTokenRequest, RegisterRequest, SessionResponse, UserResponse,
+    Validatable,
+};
+use super::error;
+use super::google::{GoogleAuthorize, GoogleExchange, GoogleIdentity};
+use super::mailer::AuthMailer;
+use super::model::{AuthProvider, DeviceContext, NewUser, OtpType, User};
+use super::password;
+use super::repository::AuthRepo;
+use super::token::TokenService;
+use meno_core::Error as MenoError;
+
+/// Auth's sign-in, registration and session use cases.
+///
+/// Every dependency is an explicit trait object (§4.1) and every one is required, so a
+/// missing dependency is a compile error rather than an `Option` unwrapped at runtime.
 #[derive(Clone)]
 pub struct AuthService {
     repo: Arc<dyn AuthRepo>,
-    cache: Arc<dyn AuthCache>,
-    tokens: Arc<TokenService>,
-    google: Arc<GoogleAuth>,
-    jobs: Jobs,
+    tokens: TokenService,
+    mailer: Arc<dyn AuthMailer>,
+    /// Hash verified against when no account matched, so a login for an unknown address
+    /// costs the same as one for a known address with a wrong password.
+    dummy_hash: Arc<String>,
+}
+
+impl std::fmt::Debug for AuthService {
+    /// `dummy_hash` is a real Argon2id hash; it is not secret in the way a signing key
+    /// is, but it is credential-shaped and there is no reason to print it.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AuthService")
+            .field("repo", &self.repo)
+            .field("tokens", &self.tokens)
+            .field("mailer", &self.mailer)
+            .field("dummy_hash", &"[redacted]")
+            .finish()
+    }
+}
+
+/// Everything [`AuthService::new`] needs.
+#[derive(Debug, Clone)]
+pub struct AuthDeps {
+    /// Storage.
+    pub repo: Arc<dyn AuthRepo>,
+    /// Token issuing and rotation.
+    pub tokens: TokenService,
+    /// Transactional mail, for the registration verification code.
+    pub mailer: Arc<dyn AuthMailer>,
 }
 
 impl AuthService {
-    pub fn new(
-        repo: Arc<dyn AuthRepo>,
-        cache: Arc<dyn AuthCache>,
-        tokens: Arc<TokenService>,
-        google: Arc<GoogleAuth>,
-        jobs: Jobs,
-    ) -> Self {
-        Self {
-            repo,
-            cache,
-            tokens,
-            google,
-            jobs,
-        }
-    }
-
-    pub async fn register(&self, req: &RegisterRequest) -> Result<AuthResponse, AuthError> {
-        let existing = self
-            .repo
-            .find_identity(&AuthProvider::Email, &req.email)
-            .await?;
-
-        if existing.is_some() {
-            return Err(AuthError::EmailTaken);
-        }
-
-        let pwd_hash = hash_password_async(req.password.clone()).await?;
-        let user = self.repo.create_user(&req.full_name, &req.email).await?;
-        self.repo
-            .create_identity(user.id, &AuthProvider::Email, &user.email, Some(&pwd_hash))
-            .await?;
-
-        let otp = generate_otp();
-        self.cache
-            .store_otp(&user.email, &otp, &OtpType::VerifyEmail)
-            .await?;
-        self.push_email(&user.email, &user.full_name, &otp, &OtpType::VerifyEmail);
-
-        // New users have only the email provider
-        let pair = self
-            .tokens
-            .issue_pair(&user, vec![AuthProvider::Email])
-            .await?;
-        Ok(build_auth_response(user, pair, vec![AuthProvider::Email]))
-    }
-
-    pub async fn verify_email(&self, req: &VerifyEmailRequest) -> Result<AuthResponse, AuthError> {
-        let user = self
-            .repo
-            .find_by_email(&req.email)
-            .await?
-            .ok_or(AuthError::UserNotFound)?;
-
-        if user.verified {
-            return Err(AuthError::EmailAlreadyVerified);
-        }
-
-        if !self
-            .cache
-            .verify_otp(&req.email, &req.code, &OtpType::VerifyEmail)
-            .await?
-        {
-            return Err(AuthError::InvalidOtp);
-        }
-
-        self.repo.set_verified(&req.email).await?;
-
-        // Re-fetch to get updated verified flag
-        let user = self
-            .repo
-            .find_by_id(user.id)
-            .await?
-            .ok_or(AuthError::UserNotFound)?;
-
-        let providers = vec![AuthProvider::Email];
-        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
-        Ok(build_auth_response(user, pair, providers))
-    }
-
-    pub async fn resend_otp(&self, req: &ResendOtpRequest) -> Result<(), AuthError> {
-        // Return Ok even if user not found (don't leak email existence)
-        let Some(user) = self.repo.find_by_email(&req.email).await? else {
-            return Ok(());
-        };
-
-        if matches!(req.otp_type, OtpType::VerifyEmail) && user.verified {
-            return Ok(());
-        }
-
-        if !self.cache.can_resend_otp(&req.email).await? {
-            return Err(AuthError::TooManyRequests);
-        }
-
-        self.cache
-            .revoke_otp(&req.email, req.otp_type.clone())
-            .await?;
-        let otp = generate_otp();
-        self.cache
-            .store_otp(&req.email, &otp, &req.otp_type)
-            .await?;
-        self.push_email(&user.email, &user.full_name, &otp, &req.otp_type);
-        self.cache.set_resend_cooldown(&req.email).await?;
-        Ok(())
-    }
-
-    pub async fn login(&self, req: &LoginRequest) -> Result<AuthResponse, AuthError> {
-        // Throttle the login request before any look up
-        self.cache.check_login_rate_limit(&req.email).await?;
-
-        let identity = self
-            .repo
-            .find_identity(&AuthProvider::Email, &req.email)
-            .await?;
-
-        // Performs a (possibly dummy) Argon2 verify off-thread so timing
-        // is identical whether or not the account exists.
-        let hash = identity
-            .as_ref()
-            .and_then(|i| i.password_hash.clone())
-            .unwrap_or_else(|| crate::modules::auth::password::DUMMY_HASH.clone());
-
-        let password_ok = verify_password_async(req.password.clone(), hash).await;
-
-        let Some(identity) = identity else {
-            tracing::warn!(email = %req.email, "login.unknown_email");
-            return Err(AuthError::InvalidCredentials);
-        };
-
-        if identity.password_hash.is_none() || !password_ok {
-            return Err(AuthError::InvalidCredentials);
-        }
-
-        let user = self
-            .repo
-            .find_by_id(identity.user_id)
-            .await?
-            .ok_or(AuthError::UserNotFound)?;
-
-        if !user.verified {
-            return Err(AuthError::EmailNotVerified);
-        }
-
-        let _ = self.cache.clear_login_rate_limit(&req.email).await;
-        let providers = self.get_providers(user.id).await?;
-        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
-
-        tracing::info!(user_id = %user.id, "login.success");
-        Ok(build_auth_response(user, pair, providers))
-    }
-
-    pub async fn logout(&self, req: &LogoutRequest) -> Result<(), AuthError> {
-        self.tokens
-            .revoke(&req.refresh_token, req.access_token.as_deref())
-            .await?;
-        Ok(())
-    }
-
-    pub async fn refresh(&self, req: &RefreshTokenRequest) -> Result<AuthResponse, AuthError> {
-        let providers = self.get_providers_from_refresh(&req.refresh_token).await?;
-        let (pair, user) = self
-            .tokens
-            .rotate(&req.refresh_token, providers.clone())
-            .await?;
-        Ok(build_auth_response(user, pair, providers))
-    }
-
-    pub async fn forgot_password(&self, req: &ForgotPasswordRequest) -> Result<(), AuthError> {
-        let Some(user) = self.repo.find_by_email(&req.email).await? else {
-            return Ok(());
-        };
-
-        let otp = generate_otp();
-        self.cache
-            .store_otp(&req.email, &otp, &OtpType::ResetPassword)
-            .await?;
-        self.push_email(&user.email, &user.full_name, &otp, &OtpType::ResetPassword);
-        Ok(())
-    }
-
-    pub async fn reset_password(&self, req: &ResetPasswordRequest) -> Result<(), AuthError> {
-        let Some(user) = self.repo.find_by_email(&req.email).await? else {
-            return Ok(());
-        };
-
-        if !self
-            .cache
-            .verify_otp(&user.email, &req.code, &OtpType::ResetPassword)
-            .await?
-        {
-            return Err(AuthError::InvalidOtp);
-        }
-
-        let hash = hash_password_async(req.new_password.clone()).await?;
-        self.repo.update_password(user.id, hash).await?;
-        self.cache
-            .revoke_otp(&user.email, OtpType::ResetPassword)
-            .await?;
-
-        // Revoke all sessions — password changed
-        self.tokens.revoke_all_for_user(user.id).await?;
-        Ok(())
-    }
-
-    pub async fn google_authorize(&self) -> Result<GoogleUrlResponse, AuthError> {
-        let (url, csrf_token, pkce_verifier) = self.google.authorize_url();
-        self.cache
-            .store_oauth_state(csrf_token.secret(), pkce_verifier.secret())
-            .await?;
-        Ok(GoogleUrlResponse {
-            url: url.to_string(),
+    /// Build the service.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::Internal`] if the timing-equalising dummy hash cannot be computed.
+    /// Failing startup is deliberate: a deployment that cannot produce one cannot
+    /// equalise login timing, and running anyway would look fine until it was exploited.
+    pub fn new(deps: AuthDeps) -> Result<Self, MenoError> {
+        Ok(Self {
+            repo: deps.repo,
+            tokens: deps.tokens,
+            mailer: deps.mailer,
+            dummy_hash: Arc::new(password::dummy_hash()?),
         })
     }
 
+    /// Remove auth rows that can no longer be used.
+    ///
+    /// The module's one maintenance entry point, called from [`crate::jobs`] and never
+    /// from a request. It lives on the service rather than exposing the repository so
+    /// the job layer still cannot name `AuthRepo` — the same rule `state.rs` enforces
+    /// for every other consumer.
+    ///
+    /// # Errors
+    ///
+    /// A storage failure. The caller logs it and tries again on the next tick; there is
+    /// nothing to roll back, because each statement is an independent delete of rows that
+    /// were already unusable.
+    pub async fn purge_expired(
+        &self,
+        now: time::OffsetDateTime,
+        session_cutoff: time::OffsetDateTime,
+    ) -> Result<super::repository::AuthPurge, MenoError> {
+        self.repo.purge_expired(now, session_cutoff).await
+    }
+
+    /// `POST /auth/register`.
+    ///
+    /// # Errors
+    ///
+    /// [`error::email_taken`] when the address is already registered, and whatever the
+    /// repository reports for the rest. The verification code is sent on a best-effort
+    /// basis — a mail failure is logged, never returned, because a client told "we could
+    /// not send your code" learns whether the account exists.
+    #[tracing::instrument(skip_all, fields(user_email = %redact(&req.email)))]
+    pub async fn register(&self, req: &RegisterRequest) -> Result<AuthResponse, MenoError> {
+        req.validate()?;
+
+        let email = User::normalized_email(&req.email);
+        // Hash before the insert, not after: a unique-violation on the address must not
+        // cost a wasted Argon2id, and a hash that fails must not leave a row behind.
+        let hash = password::hash_password(&req.password)?;
+
+        let user = self
+            .repo
+            .create_user(NewUser {
+                full_name: req.full_name.trim().to_owned(),
+                email: email.clone(),
+                password_hash: hash,
+            })
+            .await?;
+
+        // Delegated rather than duplicated: storing-then-mailing is one decision, and a
+        // second caller that did it slightly differently would be a second enumeration
+        // rule.
+        super::credentials::send_code(
+            self.repo.as_ref(),
+            self.mailer.as_ref(),
+            &email,
+            OtpType::VerifyEmail,
+        )
+        .await;
+
+        self.issue(user).await
+    }
+
+    /// `POST /auth/login`.
+    ///
+    /// # Errors
+    ///
+    /// [`error::invalid_credentials`] for an unknown address *and* a wrong password —
+    /// the same error, the same message and the same amount of work either way.
+    #[tracing::instrument(skip_all, fields(user_email = %redact(&req.email)))]
+    pub async fn login(&self, req: &LoginRequest) -> Result<AuthResponse, MenoError> {
+        req.validate()?;
+
+        let email = User::normalized_email(&req.email);
+        let started = Instant::now();
+
+        let Some(hash) = self.repo.find_password_hash(&email).await? else {
+            // Named rather than a discarded `bool`: the point is the elapsed time, and a
+            // caller holding a `false` is a caller who will eventually branch on it.
+            password::spend_verification_time(req.password.clone(), self.dummy_hash.to_string())
+                .await;
+            tracing::debug!(
+                elapsed_ms = started.elapsed().as_millis(),
+                "no account matched"
+            );
+            return Err(error::invalid_credentials());
+        };
+
+        let matches = password::verify_password_async(req.password.clone(), hash).await;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "password checked"
+        );
+
+        if !matches {
+            return Err(error::invalid_credentials());
+        }
+
+        let user = self
+            .repo
+            .find_user_by_email(&email)
+            .await?
+            .ok_or(error::invalid_credentials())?;
+
+        self.issue(user).await
+    }
+
+    /// `POST /auth/refresh`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`TokenService::refresh`] reports, including
+    /// [`error::refresh_token_reused`] for a replayed token (§4.7 item 2).
+    #[tracing::instrument(skip_all)]
+    pub async fn refresh(&self, req: &RefreshTokenRequest) -> Result<AuthResponse, MenoError> {
+        req.validate()?;
+
+        let (pair, user) = self.tokens.refresh(&req.refresh_token).await?;
+        let providers = self.repo.list_providers(user.id).await?;
+
+        Ok(AuthResponse::new(
+            pair.access_token,
+            pair.refresh_token,
+            self.tokens.access_ttl_secs(),
+            user_response(&user, providers),
+        ))
+    }
+
+    /// `POST /auth/logout`.
+    ///
+    /// # Errors
+    ///
+    /// Whatever the token service reports. A token that is already invalid is *not* an
+    /// error: logging out twice has to succeed, or a client that retries on a timeout
+    /// ends up permanently "logged in" with a stale token.
+    #[tracing::instrument(skip_all)]
+    pub async fn logout(&self, req: &LogoutRequest) -> Result<(), MenoError> {
+        req.validate()?;
+
+        if let Err(problem) = self
+            .tokens
+            .revoke(&req.refresh_token, req.access_token.as_deref())
+            .await
+        {
+            // An unusable token means there is nothing left to revoke, which is the
+            // state the caller asked for.
+            if invalid_token_codes().contains(&problem.code()) {
+                tracing::debug!(error = %problem, "logout with an already-dead token");
+                return Ok(());
+            }
+            return Err(problem);
+        }
+
+        Ok(())
+    }
+
+    /// `POST /auth/logout-all` — "log out everywhere" (§4.7 item 3).
+    ///
+    /// # Errors
+    ///
+    /// Whatever the repository or the blocklist reports.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id))]
+    pub async fn logout_everywhere(&self, user_id: Uuid) -> Result<(), MenoError> {
+        self.tokens.revoke_all_for_user(user_id).await
+    }
+
+    /// `DELETE /users/me` — close every session and soft-delete the account.
+    ///
+    /// Revocation runs before the row change on purpose. If the blocklist is down,
+    /// the account stays live and the caller can retry; the reverse order would leave
+    /// a deleted profile whose access tokens still work until they expire.
+    ///
+    /// A second delete is a success rather than a 404: the caller reached this with a
+    /// live credential, and the state they asked for is already true. The row is kept
+    /// (`deleted_at`, not `DELETE`) so broadcasts, chat and notes that reference the
+    /// account remain readable, and the address is released by the partial unique
+    /// index.
+    ///
+    /// # Errors
+    ///
+    /// Whatever revoking sessions or the soft delete reports. A failure after the
+    /// sessions were ended leaves the account recoverable by signing in again, which
+    /// is the safe half of the ordering.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id))]
+    pub async fn delete_account(&self, user_id: Uuid) -> Result<(), MenoError> {
+        self.tokens.revoke_all_for_user(user_id).await?;
+
+        if !self.repo.soft_delete(user_id).await? {
+            tracing::debug!(%user_id, "account deletion found no live row; treating it as done");
+        }
+
+        Ok(())
+    }
+
+    /// `GET /auth/sessions` — the device list (§4.7 item 3).
+    ///
+    /// # Errors
+    ///
+    /// Whatever the repository reports.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id))]
+    pub async fn list_sessions(&self, user_id: Uuid) -> Result<Vec<SessionResponse>, MenoError> {
+        Ok(self
+            .tokens
+            .list_sessions(user_id)
+            .await?
+            .into_iter()
+            .map(|session| SessionResponse {
+                id: session.id,
+                device_label: session.display_label().into_owned(),
+                created_at: session.created_at,
+                last_used_at: session.last_used_at,
+                rotations: u32::from(session.rotated_from.is_some()),
+            })
+            .collect())
+    }
+
+    /// `POST /auth/sessions/{id}/revoke` (§4.7 item 3).
+    ///
+    /// # Errors
+    ///
+    /// [`error::session_not_found`] for an unknown id and for someone else's, so the
+    /// endpoint cannot enumerate session ids.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id, session_id = %session_id))]
+    pub async fn revoke_session(&self, user_id: Uuid, session_id: Uuid) -> Result<(), MenoError> {
+        self.tokens.revoke_session(user_id, session_id).await
+    }
+
+    /// `POST /auth/google/callback` — the web flow.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `exchange_code` reports: a rejected or replayed state is a
+    /// [`MenoError::BadRequest`], an unverified address is
+    /// [`error::email_not_verified`] (§7.12), and a provider fault is
+    /// [`MenoError::Upstream`].
+    #[tracing::instrument(skip_all)]
     pub async fn google_web_auth(
         &self,
         req: &GoogleWebAuthRequest,
-    ) -> Result<AuthResponse, AuthError> {
-        let raw_verifier = self.cache.consume_oauth_state(&req.state).await?;
-        let pkce = oauth2::PkceCodeVerifier::new(raw_verifier);
-        let userinfo = self
-            .google
-            .exchange_code(req.code.clone(), pkce)
-            .await
-            .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
-        self.upsert_google_user(&userinfo).await
+        provider: &dyn GoogleExchange,
+    ) -> Result<AuthResponse, MenoError> {
+        req.validate()?;
+
+        let identity = provider.exchange_code(&req.code, &req.state).await?;
+        self.complete_google(identity, DeviceHint::default()).await
     }
 
+    /// `POST /auth/google` — the mobile flow.
+    ///
+    /// # Errors
+    ///
+    /// Whatever `verify_id_token` reports. The device label is carried into the session
+    /// so "your devices" names this one (§4.7 item 1).
+    #[tracing::instrument(skip_all)]
     pub async fn google_mobile_auth(
         &self,
         req: &GoogleMobileAuthRequest,
-    ) -> Result<AuthResponse, AuthError> {
-        let userinfo = self
-            .google
-            .verify_id_token(&req.id_token)
-            .await
-            .map_err(|e| AuthError::GoogleAuthFailed(e.to_string()))?;
-        self.upsert_google_user(&userinfo).await
+        provider: &dyn GoogleExchange,
+    ) -> Result<AuthResponse, MenoError> {
+        req.validate()?;
+
+        let identity = provider.verify_id_token(&req.id_token).await?;
+        let hint = DeviceHint {
+            device_label: req.device_label.clone(),
+            user_agent: None,
+        };
+        self.complete_google(identity, hint).await
     }
 
-    /// Exposed for the auth middleware — no DB call on the hot path.
-    pub fn decode_access_claims(
+    /// `GET /auth/google/url` — where to send the browser.
+    ///
+    /// # Errors
+    ///
+    /// [`error::provider_disabled`] when Google sign-in is switched off, and
+    /// [`MenoError::Upstream`] when the provider is configured but unreachable.
+    #[tracing::instrument(skip_all)]
+    pub async fn google_authorize(
         &self,
-        token: &str,
-    ) -> Result<crate::modules::auth::token::AccessClaims, AuthError> {
-        self.tokens.decode_access(token)
+        provider: &dyn GoogleExchange,
+    ) -> Result<GoogleAuthorize, MenoError> {
+        provider.authorize().await
     }
 
-    pub async fn find_user_by_id(&self, id: uuid::Uuid) -> Result<Option<User>, AuthError> {
-        self.repo.find_by_id(id).await
-    }
+    /// Link-or-create for a verified Google identity (§4.7 item 7).
+    ///
+    /// The `email_verified` guard has already run inside [`GoogleExchange`]: an
+    /// unverified provider email never reaches here, which is what stops this from being
+    /// an account-takeover primitive. There is deliberately no second check — the seam is
+    /// the check, and a second one would be a third place to remember it.
+    async fn complete_google(
+        &self,
+        identity: GoogleIdentity,
+        hint: DeviceHint,
+    ) -> Result<AuthResponse, MenoError> {
+        let subject = identity.subject().to_owned();
 
-    pub async fn cleanup_expired_refresh_tokens(&self) -> Result<u64, AuthError> {
-        self.repo.cleanup_expired_refresh_tokens().await
-    }
-
-    async fn upsert_google_user(&self, info: &GoogleUserInfo) -> Result<AuthResponse, AuthError> {
-        let existing = self
+        if let Some(user) = self
             .repo
-            .find_identity(&AuthProvider::Google, &info.sub)
-            .await?;
+            .find_user_by_provider(AuthProvider::Google, &subject)
+            .await?
+        {
+            return self.issue_with_device(user, hint).await;
+        }
 
-        let user = if let Some(identity) = existing {
-            self.repo
-                .find_by_id(identity.user_id)
-                .await?
-                .ok_or(AuthError::UserNotFound)?
-        } else {
-            if let Some(user) = self.repo.find_by_email(&info.email).await? {
+        // Not a known Google account. If the *address* is already ours, link it —
+        // §4.7 item 7 permits this only because the provider verified the address.
+        let email = User::normalized_email(identity.email());
+        let user = match self.repo.find_user_by_email(&email).await? {
+            Some(existing) => {
                 self.repo
-                    .link_provider(user.id, &AuthProvider::Google, &info.sub)
-                    .await?;
-
-                user
-            } else {
-                let user = self.repo.create_user(&info.name, &info.email).await?;
-
-                self.repo
-                    .create_identity(user.id, &AuthProvider::Google, &user.email, None)
-                    .await?;
-
-                if info.email_verified {
-                    self.repo.set_verified(&info.email).await?;
-                }
-
-                self.repo
-                    .find_by_id(user.id)
+                    .link_provider(existing.id, AuthProvider::Google, &subject)
                     .await?
-                    .ok_or(AuthError::UserNotFound)?
+            }
+            None => {
+                self.repo
+                    .create_user_from_provider(
+                        NewUser {
+                            full_name: identity.display_name(),
+                            email,
+                            // Empty because a Google-only account has no password. The
+                            // repository writes NULL rather than an empty hash, and
+                            // `find_password_hash` returns `None` — so a password login
+                            // against such an account fails as "no such credentials"
+                            // rather than as an Argon2 verification against "".
+                            password_hash: String::new(),
+                        },
+                        AuthProvider::Google,
+                        &subject,
+                    )
+                    .await?
             }
         };
 
-        let providers = self.get_providers(user.id).await?;
-        let pair = self.tokens.issue_pair(&user, providers.clone()).await?;
-        Ok(build_auth_response(user, pair, providers))
+        self.issue_with_device(user, hint).await
     }
 
-    async fn get_providers(&self, user_id: uuid::Uuid) -> Result<Vec<AuthProvider>, AuthError> {
-        self.repo.find_user_providers(user_id).await
+    /// Mint a pair for `user` with no device context.
+    async fn issue(&self, user: User) -> Result<AuthResponse, MenoError> {
+        self.issue_with_device(user, DeviceHint::default()).await
     }
 
-    async fn get_providers_from_refresh(
+    /// Mint a pair for `user`, binding it to the device (§4.7 item 1).
+    async fn issue_with_device(
         &self,
-        refresh_token: &str,
-    ) -> Result<Vec<AuthProvider>, AuthError> {
-        let claims = self.tokens.decode_refresh(refresh_token)?;
-        self.get_providers(claims.sub).await
+        user: User,
+        hint: DeviceHint,
+    ) -> Result<AuthResponse, MenoError> {
+        let providers = self.repo.list_providers(user.id).await?;
+
+        let pair = self
+            .tokens
+            .issue_pair(
+                &user,
+                providers.clone(),
+                DeviceContext {
+                    device_label: hint.device_label,
+                    user_agent: hint.user_agent,
+                    ip: None,
+                },
+            )
+            .await?;
+
+        Ok(AuthResponse::new(
+            pair.access_token,
+            pair.refresh_token,
+            self.tokens.access_ttl_secs(),
+            user_response(&user, providers),
+        ))
     }
-
-    fn push_email(&self, to: &str, name: &str, otp: &str, otp_type: &OtpType) {
-        let (subject, html) = match otp_type {
-            OtpType::VerifyEmail => verify_email_html(name, otp),
-            OtpType::ResetPassword => reset_pwd_email_html(name, otp),
-        };
-        let job = SendEmailJob {
-            to: to.to_string(),
-            subject,
-            html,
-        };
-        let jobs = self.jobs.clone();
-        tokio::spawn(async move {
-            jobs.push_email(job)
-                .await
-                .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue email"));
-        });
-    }
 }
 
-pub(crate) fn generate_otp() -> String {
-    use rand::RngExt;
-    format!("{:06}", rand::rng().random_range(100_000_u32..=999_999))
-}
-
-async fn hash_password_async(password: String) -> Result<String, AuthError> {
-    tokio::task::spawn_blocking(move || crate::modules::auth::password::hash_password(&password))
-        .await
-        .map_err(|e| AuthError::Internal(e.into()))?
-        .map_err(|_| AuthError::PasswordHash)
-}
-
-fn build_auth_response(
+/// Mint a pair and project the account onto the wire shape.
+///
+/// Free rather than a method because [`super::credentials::CredentialService`] needs it
+/// too — verify-email hands back a fresh session — and a duplicate of this in two files
+/// is two places for `expires_in` to go missing.
+pub(crate) async fn issue_response(
+    tokens: &TokenService,
+    repo: &dyn AuthRepo,
     user: User,
-    pair: IssuedTokenPair,
-    providers: Vec<AuthProvider>,
-) -> AuthResponse {
-    AuthResponse {
-        access_token: pair.access_token,
-        refresh_token: pair.refresh_token,
-        user: UserResponse {
-            id: user.id,
-            full_name: user.full_name,
-            bio: user.bio,
-            email: user.email,
-            verified: user.verified,
-            avatar_id: user.avatar_id,
-            avatar_url: user.avatar_url,
-            providers,
-            created_at: user.created_at,
-            deleted_at: user.deleted_at,
-        },
+) -> Result<AuthResponse, MenoError> {
+    let providers = repo.list_providers(user.id).await?;
+
+    let pair = tokens
+        .issue_pair(&user, providers.clone(), DeviceContext::default())
+        .await?;
+
+    Ok(AuthResponse::new(
+        pair.access_token,
+        pair.refresh_token,
+        tokens.access_ttl_secs(),
+        user_response(&user, providers),
+    ))
+}
+
+/// Project a `User` onto the wire shape.
+#[must_use]
+pub fn user_response(user: &User, providers: Vec<AuthProvider>) -> UserResponse {
+    UserResponse {
+        id: user.id,
+        full_name: user.full_name.clone(),
+        bio: user.bio.clone(),
+        email: user.email.clone(),
+        verified: user.verified,
+        avatar_id: user.avatar_id.clone(),
+        avatar_url: user.avatar_url.clone(),
+        providers,
+        role: user.role(),
+        created_at: user.created_at,
     }
+}
+
+/// An email address safe to put in a log line.
+///
+/// The local part is what identifies a person and what a breach list is keyed on, so
+/// only the domain survives. A log line is not the place for an address.
+#[must_use]
+pub fn redact(address: &str) -> String {
+    match address.rsplit_once('@') {
+        Some((_, domain)) => format!("***@{domain}"),
+        None => "***".to_owned(),
+    }
+}
+
+/// The codes that mean "this token is not usable", which logout treats as success.
+fn invalid_token_codes() -> [meno_core::ErrorCode; 3] {
+    [
+        meno_core::ErrorCode::InvalidToken,
+        meno_core::ErrorCode::TokenExpired,
+        meno_core::ErrorCode::RefreshTokenExpired,
+    ]
 }

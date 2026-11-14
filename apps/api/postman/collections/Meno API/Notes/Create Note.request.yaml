@@ -1,0 +1,35 @@
+$kind: http-request
+name: Create Note
+method: POST
+url: '{{base_url}}/notes'
+order: 2000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "id": "{{$randomUUID}}",
+      "title": "My Note",
+      "content": "Note body goes here.",
+      "pinned": false,
+      "folderId": null
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 201", () => pm.response.to.have.status(201));
+      pm.test("Has note id", () => pm.expect(json.data.id).to.be.a('string'));
+      pm.test("Has version", () => pm.expect(json.data.version).to.be.a('number'));
+
+      if (json.data && json.data.id) {
+        pm.environment.set('note_id', json.data.id);
+        pm.environment.set('note_version', json.data.version);
+        pm.collectionVariables.set('note_id', json.data.id);
+        console.log('[Create Note] note_id =', json.data.id, 'version =', json.data.version);
+      }

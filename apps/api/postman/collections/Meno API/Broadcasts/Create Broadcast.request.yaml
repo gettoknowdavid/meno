@@ -1,0 +1,34 @@
+$kind: http-request
+name: Create Broadcast
+method: POST
+url: '{{base_url}}/broadcasts'
+order: 2000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "My First Broadcast",
+      "description": "A test broadcast from Postman",
+      "timeZone": "Africa/Lagos",
+      "startTime": null,
+      "recordingEnabled": false,
+      "cohosts": []
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 201", () => pm.response.to.have.status(201));
+      pm.test("Has broadcast id", () => pm.expect(json.data.id).to.be.a('string'));
+
+      if (json.data && json.data.id) {
+        pm.environment.set('broadcast_id', json.data.id);
+        pm.collectionVariables.set('broadcast_id', json.data.id);
+        console.log('[Create Broadcast] broadcast_id =', json.data.id);
+      }

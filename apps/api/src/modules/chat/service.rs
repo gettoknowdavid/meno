@@ -1,233 +1,350 @@
-use crate::modules::chat::cache::{ChatCache, ChatRedisCache};
-use crate::modules::chat::dto::{
-    ChatMessageQuery, ChatMessageResponse, ChatReactionResponse, DeleteMessageRequest,
-    EditMessageRequest, SendMessageRequest, SendReactionRequest,
-};
-use crate::modules::chat::errors::ChatError;
-use crate::modules::chat::repository::{ChatRepo, ChatRepository};
-use crate::shared::constants::{TTL_10_SECS, TTL_60_SECS};
-use crate::shared::pagination::{Cursor, CursorPage};
-use crate::shared::services::redis::Redis;
-use crate::shared::services::redis::coalescing::coalesce_cache;
-use crate::shared::services::ws::dto::WsPayload;
-use crate::shared::services::ws::pubsub::WsPubSubBridge;
+//! The chat rules, as orchestration (§5.1's `service` row).
+//!
+//! # Validation is not here, on purpose
+//!
+//! §9.5 puts the boundary in charge of shape, and the boundary is where the frames are
+//! parsed (`routes::ws` against [`crate::infrastructure::ws::dto`]). What *is* here are
+//! the rules that need state: is this broadcast live, is the caller in the room, is the
+//! edit window still open, does this message belong to the broadcast the caller named.
+//! Those cannot be decided from a payload.
+//!
+//! # The rule that is checked before the write, and the one that is inside it
+//!
+//! "Is this broadcast live, and is the caller in the room" is enforced *by the insert
+//! statement* ([`ChatRepo::insert_message`]), so there is no window in which a broadcast
+//! ends between the check and the write. Re-reading it in this file would be a second
+//! home for a rule that already has one, and the second home is the one that goes stale.
+//!
+//! The edit window is the opposite case: it needs the row's `created_at`, so the service
+//! has already loaded the row and the check belongs with the other decisions that need it.
+//!
+//! # Every mutation announces itself
+//!
+//! A stored message that nobody hears about is a message only its sender can see, so
+//! each mutating method publishes through [`ChatPublisher`] after the write succeeds —
+//! and, just as deliberately, publishes *nothing* when a gate refused. The negative half
+//! is asserted in `tests/chat_service.rs`.
+
 use std::sync::Arc;
+
+use time::OffsetDateTime;
 use uuid::Uuid;
 
+use super::dto::{ChatMessageResponse, ChatReactionResponse};
+use super::error;
+use super::model::{NewMessage, NewReaction};
+use super::publisher::ChatPublisher;
+use super::repository::{ChatRepo, MessageFilter};
+use crate::infrastructure::ws::dto::WsPayload;
+use meno_core::{Cursor, CursorPage, CursorParams, Error as MenoError, Order};
+
+/// The broadcast, and the account acting in it.
+///
+/// One value rather than two `Uuid` parameters, because both are ids and a call site that
+/// swapped them would compile. It is also the reason `sender_id` is never deserialised
+/// from a frame: the identity is filled in by the transport from the authenticated
+/// socket, so a client cannot claim to be somebody else by adding a field.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ChatMember {
+    /// The broadcast being acted on.
+    pub broadcast_id: Uuid,
+    /// The authenticated account acting on it.
+    pub user_id: Uuid,
+}
+
+/// The chat module's rules.
 #[derive(Clone)]
 pub struct ChatService {
     repo: Arc<dyn ChatRepo>,
-    cache: Arc<dyn ChatCache>,
-    redis: Redis,
-    pubsub: Arc<WsPubSubBridge>,
+    publisher: Arc<dyn ChatPublisher>,
 }
-impl ChatService {
-    pub fn new(db: sqlx::PgPool, redis: Redis, pubsub: Arc<WsPubSubBridge>) -> Self {
-        let repo: Arc<dyn ChatRepo> = Arc::new(ChatRepository::new(db));
-        let cache: Arc<dyn ChatCache> = Arc::new(ChatRedisCache::new(redis.clone()));
 
-        Self {
-            repo: Arc::clone(&repo),
-            cache: Arc::clone(&cache),
-            redis,
-            pubsub,
-        }
+impl std::fmt::Debug for ChatService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ChatService").finish_non_exhaustive()
+    }
+}
+
+impl ChatService {
+    /// Build from its collaborators. `state.rs` supplies the concrete ones.
+    #[must_use]
+    pub fn new(repo: Arc<dyn ChatRepo>, publisher: Arc<dyn ChatPublisher>) -> Self {
+        Self { repo, publisher }
     }
 
+    /// A page of a broadcast's chat history.
+    ///
+    /// Readable by anybody in the room, live or not: a broadcast's chat is part of what
+    /// it produced, and hiding it the moment the host ends the broadcast would throw away
+    /// the conversation the listeners just had.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::Forbidden`] with `NOT_PARTICIPANT` for a caller who is not in the
+    /// room; [`MenoError::BadRequest`] with `INVALID_CURSOR` for a `?cursor=` that cannot
+    /// be decoded; a repository failure.
+    #[tracing::instrument(
+        name = "chat.messages",
+        skip(self, pagination),
+        fields(broadcast_id = %member.broadcast_id, viewer_id = %member.user_id)
+    )]
+    pub async fn messages(
+        &self,
+        member: ChatMember,
+        pagination: &CursorParams,
+    ) -> Result<CursorPage<ChatMessageResponse>, MenoError> {
+        if !self
+            .repo
+            .is_participant(member.broadcast_id, member.user_id)
+            .await?
+        {
+            return Err(error::not_participant());
+        }
+
+        let limit = pagination.limit();
+        let cursor = match &pagination.cursor {
+            None => None,
+            // A bad cursor is the client's to fix; `CursorError` converts to
+            // `400 INVALID_CURSOR` at the crate boundary, so the detail stays internal.
+            Some(cursor) => Some(cursor.to_timestamp_id()?),
+        };
+
+        let filter = MessageFilter {
+            broadcast_id: member.broadcast_id,
+            limit_plus_one: pagination.limit_plus_one(),
+            cursor,
+            order: Order::Desc,
+        };
+
+        let rows = self.repo.list_messages(filter).await?;
+        let responses: Vec<ChatMessageResponse> = rows.into_iter().map(Into::into).collect();
+
+        // `from_rows` drops the probe row and advertises a cursor only when another page
+        // really exists, so the client never follows a cursor into an empty page.
+        Ok(CursorPage::from_rows(responses, limit, |message| {
+            Cursor::from_timestamp_id(message.created_at, message.id)
+        }))
+    }
+
+    /// Store a message and announce it to the room.
+    ///
+    /// # Errors
+    ///
+    /// `409 CONFLICT` when the broadcast is not live,
+    /// `403 NOT_PARTICIPANT` when the sender is not in the room, a repository failure.
     #[tracing::instrument(
         name = "chat.send_message",
-        skip(self, req),
-        fields(broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
+        skip(self, content),
+        fields(broadcast_id = %member.broadcast_id, sender_id = %member.user_id)
     )]
     pub async fn send_message(
         &self,
-        req: &SendMessageRequest,
-    ) -> Result<ChatMessageResponse, ChatError> {
-        let (is_active_broadcast_result, is_participant_result) = tokio::join!(
-            self.repo.is_active_broadcast(req.broadcast_id),
-            self.repo
-                .is_broadcast_participant(req.broadcast_id, req.sender_id)
-        );
-
-        let is_active_broadcast = is_active_broadcast_result?;
-        let is_participant = is_participant_result?;
-
-        if !is_active_broadcast {
-            return Err(ChatError::BroadcastNotLive);
-        }
-        if !is_participant {
-            return Err(ChatError::NotParticipant);
-        }
-
-        let row = self
+        member: ChatMember,
+        content: &str,
+    ) -> Result<ChatMessageResponse, MenoError> {
+        let inserted = self
             .repo
-            .create_message(req.broadcast_id, req.sender_id, &req.content)
+            .insert_message(NewMessage {
+                broadcast_id: member.broadcast_id,
+                sender_id: member.user_id,
+                content,
+            })
             .await?;
 
-        self.cache.invalidate_chat(req.broadcast_id).await;
+        let Some(message) = inserted else {
+            return Err(self.refusal_for(member).await);
+        };
 
-        let response = ChatMessageResponse::from(row);
-
-        let payload = WsPayload::new_message(response.clone());
-        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        let response = ChatMessageResponse::from(message);
+        self.publisher
+            .publish(member.broadcast_id, WsPayload::new_message(&response))
+            .await;
 
         tracing::info!(
-            broadcast_id = %req.broadcast_id,
-            message_id   = %response.id,
-            "Chat message sent"
+            broadcast_id = %member.broadcast_id,
+            message_id = %response.id,
+            "chat message sent"
         );
 
         Ok(response)
     }
 
-    #[tracing::instrument(
-        name = "chat.get_messages",
-        skip(self, query),
-        fields(broadcast_id = %query.broadcast_id)
-    )]
-    pub async fn get_messages(
-        &self,
-        user_id: Uuid,
-        query: &ChatMessageQuery,
-    ) -> Result<CursorPage<ChatMessageResponse>, ChatError> {
-        let b_id = query.broadcast_id;
-
-        if !self.repo.is_broadcast_participant(b_id, user_id).await? {
-            return Err(ChatError::NotParticipant);
-        }
-
-        let limit = query.limit();
-        let cursor_str = query.cursor().map(|c| c.0.as_str()).unwrap_or("");
-        let cache_key = Self::chat_list_cache_key(b_id, Some(cursor_str), limit);
-
-        let ttl = if self.cache.is_live(b_id).await.unwrap_or(false) {
-            TTL_10_SECS
-        } else {
-            TTL_60_SECS
-        };
-
-        coalesce_cache(&self.redis, &cache_key, ttl, || async {
-            let rows = self.repo.find_messages(b_id, query).await?;
-            Ok(CursorPage::from_rows(rows, limit, |r| {
-                Cursor::from_timestamp_id(r.created_at, r.id)
-            }))
-        })
-        .await
-    }
-
+    /// Replace the body of a message its author still owns.
+    ///
+    /// # Errors
+    ///
+    /// `404 NOT_FOUND` when the message does not exist, is deleted, or belongs to a
+    /// different broadcast; `409 CONFLICT` when the broadcast is not live;
+    /// `403 FORBIDDEN` when the caller did not write it; `400 BAD_REQUEST` once the edit
+    /// window has closed.
     #[tracing::instrument(
         name = "chat.edit_message",
-        skip(self, req),
-        fields(message_id = %req.message_id, sender_id = %req.sender_id)
+        skip(self, content),
+        fields(broadcast_id = %member.broadcast_id, sender_id = %member.user_id, message_id = %message_id)
     )]
     pub async fn edit_message(
         &self,
-        req: &EditMessageRequest,
-    ) -> Result<ChatMessageResponse, ChatError> {
-        let (message_result, is_active_broadcast_result) = tokio::join!(
-            self.repo.find_message_by_id(req.message_id),
-            self.repo.is_active_broadcast(req.broadcast_id),
+        member: ChatMember,
+        message_id: Uuid,
+        content: &str,
+    ) -> Result<ChatMessageResponse, MenoError> {
+        // Two independent reads, one round trip's worth of latency.
+        let (found, live) = tokio::join!(
+            self.repo.find_message(message_id),
+            self.repo.is_live_broadcast(member.broadcast_id),
         );
 
-        let message = message_result?.ok_or(ChatError::NotFound)?;
-
-        if !is_active_broadcast_result? {
-            return Err(ChatError::BroadcastNotLive);
-        }
-        if req.sender_id != message.sender_id {
-            return Err(ChatError::NotSender);
-        }
-        if !message.can_be_edited() {
-            return Err(ChatError::EditWindowExpired);
+        let message = found?.ok_or_else(error::message_not_found)?;
+        if !live? {
+            return Err(error::broadcast_not_live());
         }
 
-        let row = self
+        // `master` never compared the message's broadcast to the one in the request, so a
+        // member of one room could edit their own message *in another room's name* — the
+        // edit was applied and announced to a room that had never seen the message.
+        if message.broadcast_id != member.broadcast_id {
+            return Err(error::message_not_found());
+        }
+        if message.sender.id != member.user_id {
+            return Err(error::not_sender());
+        }
+        if !message.editable_at(OffsetDateTime::now_utc()) {
+            return Err(error::edit_window_expired());
+        }
+
+        let updated = self
             .repo
-            .update_message(req.message_id, req.sender_id, &req.content)
-            .await?
-            .ok_or(ChatError::NotFound)?;
+            .update_message(message_id, member.user_id, content)
+            .await?;
+        // Deleted or reassigned between the read above and this write.
+        let Some(updated) = updated else {
+            return Err(error::message_not_found());
+        };
 
-        let response = ChatMessageResponse::from(row);
+        let response = ChatMessageResponse::from(updated);
+        self.publisher
+            .publish(member.broadcast_id, WsPayload::edited_message(&response))
+            .await;
 
-        self.cache.invalidate_chat(req.broadcast_id).await;
-
-        let payload = WsPayload::edited_message(response.clone());
-        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
-
-        tracing::info!(message_id = %req.message_id, "Chat message edited");
+        tracing::info!(
+            broadcast_id = %member.broadcast_id,
+            message_id = %message_id,
+            "chat message edited"
+        );
 
         Ok(response)
     }
 
+    /// Soft-delete a message its author owns.
+    ///
+    /// Allowed after the broadcast ends, unlike sending and editing: a host clearing
+    /// something they regret should not need the room to be live to do it.
+    ///
+    /// # Errors
+    ///
+    /// `404 NOT_FOUND` when there is no such live message or it belongs to another
+    /// broadcast; `403 FORBIDDEN` when somebody else wrote it.
     #[tracing::instrument(
         name = "chat.delete_message",
-        skip(self, req),
-        fields(broadcast_id = %req.broadcast_id, message_id = %req.message_id, sender_id = %req.sender_id)
+        skip(self),
+        fields(broadcast_id = %member.broadcast_id, sender_id = %member.user_id, message_id = %message_id)
     )]
-    pub async fn delete_message(&self, req: &DeleteMessageRequest) -> Result<(), ChatError> {
+    pub async fn delete_message(
+        &self,
+        member: ChatMember,
+        message_id: Uuid,
+    ) -> Result<(), MenoError> {
         let deleted = self
             .repo
-            .soft_delete_message(req.message_id, req.sender_id)
+            .soft_delete_message(message_id, member.user_id)
             .await?;
+
         if !deleted {
-            return Err(ChatError::NotSender);
+            // One extra read, only on the refusal path, to say *which* refusal it was:
+            // `master` answered `NOT_MESSAGE_SENDER` for every case, including a message
+            // that had already been deleted, which is a message the caller cannot act on.
+            let Some(message) = self.repo.find_message(message_id).await? else {
+                return Err(error::message_not_found());
+            };
+            if message.broadcast_id != member.broadcast_id {
+                return Err(error::message_not_found());
+            }
+            return Err(error::not_sender());
         }
 
-        self.cache.invalidate_chat(req.broadcast_id).await;
+        self.publisher
+            .publish(
+                member.broadcast_id,
+                WsPayload::deleted_message(member.broadcast_id, message_id),
+            )
+            .await;
 
-        let payload = WsPayload::deleted_message(req.broadcast_id, req.message_id);
-        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        tracing::info!(
+            broadcast_id = %member.broadcast_id,
+            message_id = %message_id,
+            "chat message deleted"
+        );
 
-        tracing::info!(message_id = %req.message_id, "Chat message deleted");
         Ok(())
     }
 
+    /// Store a reaction and announce it to the room.
+    ///
+    /// # Errors
+    ///
+    /// `409 CONFLICT` when the broadcast is not live,
+    /// `403 NOT_PARTICIPANT` when the sender is not in the room, a repository failure.
     #[tracing::instrument(
-        name   = "chat.send_reaction",
-        skip   (self),
-        fields (broadcast_id = %req.broadcast_id, sender_id = %req.sender_id)
+        name = "chat.send_reaction",
+        skip(self, content),
+        fields(broadcast_id = %member.broadcast_id, sender_id = %member.user_id)
     )]
     pub async fn send_reaction(
         &self,
-        req: &SendReactionRequest,
-    ) -> Result<ChatReactionResponse, ChatError> {
-        let (is_active_broadcast, is_participant_result) = tokio::join!(
-            self.repo.is_active_broadcast(req.broadcast_id),
-            self.repo
-                .is_broadcast_participant(req.broadcast_id, req.sender_id),
-        );
-
-        if !is_active_broadcast? {
-            return Err(ChatError::BroadcastNotLive);
-        }
-        if !is_participant_result? {
-            return Err(ChatError::NotParticipant);
-        }
-
-        let row = self
+        member: ChatMember,
+        content: &str,
+    ) -> Result<ChatReactionResponse, MenoError> {
+        let inserted = self
             .repo
-            .create_reaction(req.broadcast_id, req.sender_id, &req.content)
+            .insert_reaction(NewReaction {
+                broadcast_id: member.broadcast_id,
+                sender_id: member.user_id,
+                content,
+            })
             .await?;
-        let response = ChatReactionResponse::from(row);
 
-        let payload = WsPayload::new_reaction(response.clone());
-        self.pubsub.publish_to_room(req.broadcast_id, payload).await;
+        let Some(reaction) = inserted else {
+            return Err(self.refusal_for(member).await);
+        };
+
+        let response = ChatReactionResponse::from(reaction);
+        self.publisher
+            .publish(member.broadcast_id, WsPayload::new_reaction(&response))
+            .await;
 
         tracing::info!(
-            broadcast_id = %req.broadcast_id,
-            reaction_id  = %response.id,
-            "Chat reaction sent"
+            broadcast_id = %member.broadcast_id,
+            reaction_id = %response.id,
+            "chat reaction sent"
         );
 
         Ok(response)
     }
 
-    fn chat_list_cache_key(broadcast_id: Uuid, cursor: Option<&str>, limit: i64) -> String {
-        match cursor {
-            Some(c) if !c.is_empty() => {
-                format!("chat:{}:msgs:cur={}:lim={}", broadcast_id, c, limit)
-            }
-            _ => format!("chat:{}:msgs:cur=_start:lim={}", broadcast_id, limit),
+    /// Say *why* a guarded write was refused.
+    ///
+    /// The guarded statements write nothing for two reasons, and only this module knows
+    /// which answer to give — so this is one extra read on a path that is already an
+    /// error, rather than a check on the happy path that could go stale between the read
+    /// and the write.
+    ///
+    /// A failed check is reported as itself: the client is told the truth ("we could not
+    /// tell") rather than a refusal it might act on wrongly.
+    async fn refusal_for(&self, member: ChatMember) -> MenoError {
+        match self.repo.is_live_broadcast(member.broadcast_id).await {
+            Ok(true) => error::not_participant(),
+            Ok(false) => error::broadcast_not_live(),
+            Err(failure) => failure,
         }
     }
 }

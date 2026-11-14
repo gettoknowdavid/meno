@@ -1,109 +1,228 @@
-use crate::modules::auth::dto::{
-    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleUrlResponse,
-    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
-    ResendOtpRequest, ResetPasswordRequest, VerifyEmailRequest,
+//! The auth endpoints (plan §9.3).
+//!
+//! # Thin on purpose
+//!
+//! Each function is parse → validate → delegate → respond, and nothing else. §9.3 says
+//! "no business logic in `handlers.rs`", and that is not a style preference: the
+//! decisions these endpoints make — whether an address is taken, whether a code is
+//! still live, whether a session belongs to the caller — are the ones that have to be
+//! testable without HTTP. Putting one here means it can only be tested by driving a
+//! router, and the interesting failures are the ones a router test cannot set up.
+//!
+//! So the rule this file keeps is narrow and checkable: a handler may read a body, call
+//! `validate`, call exactly one service method, and build a [`MenoResponse`]. If a
+//! handler ever needs an `if` that is not "which extractor did I get", it belongs in
+//! [`super::services`] or [`super::credentials`].
+//!
+//! # Errors
+//!
+//! Every function returns [`Outcome`], whose error is [`Failure`] — a one-field
+//! newtype whose only job is to render a [`MenoError`] through
+//! [`crate::middleware::from_error`], the crate's single §4.2 renderer. The newtype
+//! exists because `impl From<MenoError> for Response` is the orphan rule: neither type
+//! is local. Handlers do not build error bodies themselves, which is what stops the nine
+//! parallel shapes `master` had from reappearing.
+//!
+//! # Authentication
+//!
+//! The three session endpoints read [`AuthUser`] from request extensions, inserted by
+//! [`crate::middleware::auth::auth_middleware`]. That extractor is what enforces the
+//! layer order documented in [`crate::middleware`]; a missing `AuthUser` there is a
+//! wiring bug reported as a 500, not a user who forgot to log in.
+
+use axum::extract::{Extension, Path, State};
+use uuid::Uuid;
+
+use super::dto::{
+    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleWebAuthRequest,
+    LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest, ResendOtpRequest,
+    ResetPasswordRequest, SessionResponse, VerifyEmailRequest,
 };
-use crate::modules::auth::errors::AuthError;
-use crate::shared::middleware::extractors::MenoBody;
-use crate::shared::types::meno_response::MenoResponse;
-use crate::state::MenoState;
-use axum::extract::State;
-use std::sync::Arc;
-use validator::Validate;
+use super::google::GoogleAuthorize;
+use super::state::AuthState;
+use crate::middleware::auth::AuthUser;
+use crate::middleware::extractors::MenoBody;
+use crate::types::meno_response::MenoResponse;
 
+/// A handler result: the envelope on success, the shared renderer on failure.
+///
+/// Re-exported from [`crate::types`] rather than defined here, so a module that may not
+/// reach sideways into `auth` can still return the same shape.
+pub use crate::types::meno_response::{Failure, Outcome};
+
+/// `POST /auth/register`.
 pub async fn register(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<RegisterRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let user = app.auth.service.register(&body).await?;
-    Ok(MenoResponse::created("Account created successfully", user))
+) -> Outcome<AuthResponse> {
+    let response = state.service.register(&body).await?;
+
+    Ok(MenoResponse::created(
+        "Account created successfully",
+        response,
+    ))
 }
 
-pub async fn verify_email(
-    State(app): State<Arc<MenoState>>,
-    MenoBody(body): MenoBody<VerifyEmailRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let user = app.auth.service.verify_email(&body).await?;
-    Ok(MenoResponse::ok("Account verified successfully", user))
-}
-
-pub async fn resend_otp(
-    State(app): State<Arc<MenoState>>,
-    MenoBody(body): MenoBody<ResendOtpRequest>,
-) -> Result<MenoResponse<()>, AuthError> {
-    body.validate()?;
-    app.auth.service.resend_otp(&body).await?;
-    Ok(MenoResponse::no_content("Verification email resent"))
-}
-
+/// `POST /auth/login`.
 pub async fn login(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<LoginRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let user = app.auth.service.login(&body).await?;
-    Ok(MenoResponse::ok("Login successful", user))
+) -> Outcome<AuthResponse> {
+    let response = state.service.login(&body).await?;
+
+    Ok(MenoResponse::ok("Login successful", response))
 }
 
+/// `POST /auth/refresh`.
 pub async fn refresh(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<RefreshTokenRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let user = app.auth.service.refresh(&body).await?;
-    Ok(MenoResponse::ok("Token refreshed successfully", user))
+) -> Outcome<AuthResponse> {
+    let response = state.service.refresh(&body).await?;
+
+    Ok(MenoResponse::ok("Token refreshed successfully", response))
 }
 
+/// `POST /auth/logout`.
+///
+/// 200 with no payload rather than 204: the §4.2 envelope has to carry the `code` a
+/// client matches on, and a 204 has no body to put it in.
 pub async fn logout(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<LogoutRequest>,
-) -> Result<MenoResponse<()>, AuthError> {
-    body.validate()?;
-    app.auth.service.logout(&body).await?;
+) -> Outcome<()> {
+    state.service.logout(&body).await?;
+
     Ok(MenoResponse::no_content("Logout successful"))
 }
 
+/// `POST /auth/verify-email`.
+pub async fn verify_email(
+    State(state): State<AuthState>,
+    MenoBody(body): MenoBody<VerifyEmailRequest>,
+) -> Outcome<AuthResponse> {
+    let response = state.credentials.verify_email(&body).await?;
+
+    Ok(MenoResponse::ok("Account verified successfully", response))
+}
+
+/// `POST /auth/resend-otp`.
+pub async fn resend_otp(
+    State(state): State<AuthState>,
+    MenoBody(body): MenoBody<ResendOtpRequest>,
+) -> Outcome<()> {
+    state.credentials.resend_otp(&body).await?;
+
+    Ok(MenoResponse::no_content("Verification email resent"))
+}
+
+/// `POST /auth/forgot-password`.
 pub async fn forgot_password(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<ForgotPasswordRequest>,
-) -> Result<MenoResponse<()>, AuthError> {
-    body.validate()?;
-    app.auth.service.forgot_password(&body).await?;
+) -> Outcome<()> {
+    state.credentials.forgot_password(&body).await?;
+
     Ok(MenoResponse::no_content("Password reset email sent"))
 }
 
+/// `POST /auth/reset-password`.
 pub async fn reset_password(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<ResetPasswordRequest>,
-) -> Result<MenoResponse<()>, AuthError> {
-    body.validate()?;
-    app.auth.service.reset_password(&body).await?;
+) -> Outcome<()> {
+    state.credentials.reset_password(&body).await?;
+
     Ok(MenoResponse::no_content("Password reset successful"))
 }
 
-pub async fn google_auth_url(
-    State(app): State<Arc<MenoState>>,
-) -> Result<MenoResponse<GoogleUrlResponse>, AuthError> {
-    let response = app.auth.service.google_authorize().await?;
-    Ok(MenoResponse::ok("Google auth URL generated", response))
+/// `GET /auth/sessions` — the device list (§4.7 item 3).
+pub async fn list_sessions(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+) -> Outcome<Vec<SessionResponse>> {
+    let sessions = state.service.list_sessions(user.id).await?;
+
+    Ok(MenoResponse::ok(
+        "Sessions retrieved successfully",
+        sessions,
+    ))
 }
 
+/// `POST /auth/sessions/{id}/revoke` (§4.7 item 3).
+pub async fn revoke_session(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+    Path(session_id): Path<Uuid>,
+) -> Outcome<()> {
+    state.service.revoke_session(user.id, session_id).await?;
+
+    Ok(MenoResponse::no_content("Session revoked successfully"))
+}
+
+/// `POST /auth/logout-all` — "log out everywhere" (§4.7 item 3).
+pub async fn logout_everywhere(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+) -> Outcome<()> {
+    state.service.logout_everywhere(user.id).await?;
+
+    Ok(MenoResponse::no_content("Logged out on all devices"))
+}
+
+/// `DELETE /users/me` — delete the caller's account.
+///
+/// The route lives beside the profile paths but takes [`AuthState`], because
+/// deleting an account is revoking its sessions and then soft-deleting the row; both
+/// halves belong to auth. The response has no payload, so a client does not need to
+/// parse anything before clearing its local session.
+pub async fn delete_account(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+) -> Outcome<()> {
+    state.service.delete_account(user.id).await?;
+
+    Ok(MenoResponse::no_content("Account deleted successfully"))
+}
+
+/// `GET /auth/google/url` — where to send the browser.
+pub async fn google_authorize_url(State(state): State<AuthState>) -> Outcome<GoogleAuthorize> {
+    let authorize = state
+        .service
+        .google_authorize(state.google.as_ref())
+        .await?;
+
+    Ok(MenoResponse::ok("Google auth URL generated", authorize))
+}
+
+/// `POST /auth/google/callback` — the web flow.
 pub async fn google_web_callback(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<GoogleWebAuthRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let response = app.auth.service.google_web_auth(&body).await?;
-    Ok(MenoResponse::ok("Google authentication success", response))
+) -> Outcome<AuthResponse> {
+    let response = state
+        .service
+        .google_web_auth(&body, state.google.as_ref())
+        .await?;
+
+    Ok(MenoResponse::ok(
+        "Google authentication successful",
+        response,
+    ))
 }
 
+/// `POST /auth/google` — the mobile flow.
 pub async fn google_mobile_auth(
-    State(app): State<Arc<MenoState>>,
+    State(state): State<AuthState>,
     MenoBody(body): MenoBody<GoogleMobileAuthRequest>,
-) -> Result<MenoResponse<AuthResponse>, AuthError> {
-    body.validate()?;
-    let response = app.auth.service.google_mobile_auth(&body).await?;
-    Ok(MenoResponse::ok("Google authentication success", response))
+) -> Outcome<AuthResponse> {
+    let response = state
+        .service
+        .google_mobile_auth(&body, state.google.as_ref())
+        .await?;
+
+    Ok(MenoResponse::ok(
+        "Google authentication successful",
+        response,
+    ))
 }

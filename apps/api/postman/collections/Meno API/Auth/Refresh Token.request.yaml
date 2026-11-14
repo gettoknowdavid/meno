@@ -1,0 +1,30 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/auth/refresh'
+order: 3000
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "refresh_token": "{{refresh_token}}"
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      // Refresh tokens are single-use — the old pair is invalidated on rotation.
+      const { access_token, refresh_token, expires_in } = json.data;
+
+      pm.environment.set('access_token', access_token);
+      pm.environment.set('refresh_token', refresh_token);
+
+      pm.collectionVariables.set('access_token', access_token);
+      pm.collectionVariables.set('refresh_token', refresh_token);
+
+      console.log(`[Refresh] Tokens rotated. New access token expires in ${expires_in}s.`);

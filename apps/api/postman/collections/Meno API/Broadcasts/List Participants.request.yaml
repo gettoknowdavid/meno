@@ -1,0 +1,32 @@
+$kind: http-request
+name: List Participants
+method: GET
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/participants'
+order: 9000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+queryParams:
+  - key: role
+    value: participant
+    description: 'Filter by role: host | cohost | participant (optional)'
+    disabled: true
+  - key: order
+    value: asc
+    description: 'Sort direction: asc (default, earliest join first) | desc'
+    disabled: true
+  - key: limit
+    value: '50'
+    description: 'Page size, 1–100'
+    disabled: true
+  - key: cursor
+    value: ''
+    description: 'Opaque cursor from previous page'
+    disabled: true
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has items array", () => pm.expect(json.data.items).to.be.an('array'));

@@ -1,0 +1,7 @@
+$kind: websocket-request
+description: ""
+url: "{{base_url_ws}}/ws?token={{access_token}}"
+settings: {}
+order: 1000
+queryParams:
+  token: "{{access_token}}"

@@ -1,1605 +1,1683 @@
-use crate::jobs::Jobs;
-use crate::jobs::notification_jobs::BroadcastStartedFanOutJob;
-use crate::modules::broadcast::cache::BroadcastCache;
-use crate::modules::broadcast::dto::{
-    BroadcastListCacheKey, BroadcastListItem, BroadcastQuery, BroadcastRefreshTokenResponse,
-    BroadcastResponse, BroadcastSessionResponse, BroadcastSortBy, CohostSessionResponse,
-    CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse, MAX_COHOSTS,
-    ParticipantListCacheKey, ParticipantListItem, ParticipantQuery, ParticipantSortBy,
-    UpdateBroadcastRequest,
-};
-use crate::modules::broadcast::errors::BroadcastError;
-use crate::modules::broadcast::model::{
-    Broadcast, BroadcastContext, BroadcastParticipant, BroadcastState, BroadcastStatus, EndReason,
-    ParticipantRole,
-};
-use crate::modules::broadcast::repository::{
-    BroadcastRepo, BroadcastRepository, CreateBroadcastInput, SetActiveInput, UpdateBroadcastInput,
-    UpsertParticipantInput,
-};
-use crate::shared::constants::{TTL_10_SECS, TTL_30_SECS, TTL_60_SECS};
-use crate::shared::pagination::{Cursor, CursorPage, Order};
-use crate::shared::services::livekit::LivekitService;
-use crate::shared::services::livekit::dto::LivekitRole;
-use crate::shared::services::redis::Redis;
-use crate::shared::services::redis::coalescing::coalesce_cache;
-use crate::shared::services::redis::keys::RedisKey;
-use crate::shared::services::ws::WsService;
-use crate::shared::services::ws::dto::WsPayload;
-use crate::shared::services::ws::model::WsEvent;
-use crate::shared::services::ws::pubsub::WsPubSubBridge;
-use crate::shared::types::dto::UserSummary;
-use sqlx::{PgPool, Postgres, Transaction};
-use std::collections::HashMap;
+//! In what order a broadcast's rules apply (plan §4.1: `service` answers "in what
+//! order things happen").
+//!
+//! # The shape of every flow here
+//!
+//! Validate → authorise → act → report. Validation is [`super::dto`]'s job and has
+//! already happened at the handler; this layer authorises (is the caller the creator?
+//! is it live?), performs the write *through* the media server, and renders.
+//!
+//! # Three rules that are enforced here and nowhere else
+//!
+//! - **Only the creator starts, ends, edits or deletes a broadcast.** A cohost may
+//!   publish and moderate; they may not end the broadcast, because ending it is the
+//!   creator's decision about their own channel.
+//! - **A live broadcast is immutable.** A title changed under a listener is a lie they
+//!   saw, and a schedule changed under a running room is meaningless.
+//! - **The creator cannot join.** They are the host; joining would replace their host
+//!   grant with a participant one and hand them a token that cannot administer the room
+//!   they own.
+//!
+//! # Ordering of the media call
+//!
+//! The room is created *before* the row is marked live, and the token is minted *after*.
+//! The reverse would leave a live broadcast whose room does not exist, and the failure
+//! would appear to a listener as a silent room rather than as a 503.
+
 use std::sync::Arc;
+
+use meno_core::{Cursor, CursorPage, Error as MenoError};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-pub type DynBroadcastService = BroadcastService<BroadcastRepository>;
+use super::error;
+use super::events::{BroadcastEvents, ParticipantChange, ParticipantFrame};
+use super::media::BroadcastMedia;
+use super::model::{
+    Broadcast, BroadcastPatch, BroadcastStatus, EndReason, JoinOutcome, JoinRequest, LeaveOutcome,
+    NewBroadcast, ParticipantRole, UserSummary, now,
+};
+use super::notices::BroadcastNotices;
+use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
+use super::rooms::BroadcastRooms;
+use super::storage::BroadcastStorage;
+use crate::infrastructure::ws::model::GracePeriodConfig;
+use crate::modules::broadcast::dto::{
+    AddCohostRequest, BroadcastListItem, BroadcastQuery, BroadcastResponse,
+    BroadcastSessionResponse, CreateBroadcastRequest, EndBroadcastResponse, LeaveBroadcastResponse,
+    ParticipantListItem, ParticipantQuery, UpdateBroadcastRequest, Viewer, user_summary,
+};
+use crate::modules::broadcast::model::{BroadcastCohost, BroadcastParticipant};
 
-#[derive(Default)]
-pub struct BroadcastServiceBuilder<R: BroadcastRepo = BroadcastRepository> {
-    repo: Option<Arc<R>>,
-    cache: Option<Arc<dyn BroadcastCache>>,
-    db: Option<PgPool>,
-    redis: Option<Redis>,
-    livekit: Option<LivekitService>,
-    pubsub: Option<Arc<WsPubSubBridge>>,
-    ws: Option<WsService>,
-    jobs: Option<Jobs>,
-}
-impl<R: BroadcastRepo> BroadcastServiceBuilder<R> {
-    pub fn new() -> Self {
-        Self {
-            repo: None,
-            cache: None,
-            db: None,
-            redis: None,
-            livekit: None,
-            pubsub: None,
-            ws: None,
-            jobs: None,
-        }
-    }
-
-    pub fn repo(mut self, repo: Arc<R>) -> Self {
-        self.repo = Some(repo);
-        self
-    }
-
-    pub fn cache(mut self, cache: Arc<dyn BroadcastCache>) -> Self {
-        self.cache = Some(cache);
-        self
-    }
-
-    pub fn db(mut self, db: PgPool) -> Self {
-        self.db = Some(db);
-        self
-    }
-
-    pub fn redis(mut self, redis: Redis) -> Self {
-        self.redis = Some(redis);
-        self
-    }
-
-    pub fn livekit(mut self, livekit: LivekitService) -> Self {
-        self.livekit = Some(livekit);
-        self
-    }
-
-    pub fn pubsub(mut self, pubsub: Arc<WsPubSubBridge>) -> Self {
-        self.pubsub = Some(pubsub);
-        self
-    }
-
-    pub fn ws(mut self, ws: WsService) -> Self {
-        self.ws = Some(ws);
-        self
-    }
-
-    pub fn jobs(mut self, jobs: Jobs) -> Self {
-        self.jobs = Some(jobs);
-        self
-    }
-
-    pub fn build(self) -> BroadcastService<R> {
-        BroadcastService {
-            repo: self.repo.expect("repo is required"),
-            cache: self.cache.expect("cache is required"),
-            db: self.db.expect("db is required"),
-            redis: self.redis.expect("redis is required"),
-            livekit: self.livekit.expect("livekit is required"),
-            pubsub: self.pubsub.expect("pubsub is required"),
-            ws: self.ws.expect("ws is required"),
-            jobs: self.jobs.expect("jobs is required"),
-        }
-    }
-}
-
+/// Everything [`BroadcastService::new`] needs.
 #[derive(Clone)]
-pub struct BroadcastService<R: BroadcastRepo = BroadcastRepository> {
-    repo: Arc<R>,
-    cache: Arc<dyn BroadcastCache>,
-    db: PgPool,
-    redis: Redis,
-    livekit: LivekitService,
-    pubsub: Arc<WsPubSubBridge>,
-    ws: WsService,
-    jobs: Jobs,
+pub struct ServiceDeps {
+    /// Storage.
+    pub repo: Arc<dyn BroadcastRepo>,
+    /// The media server seam (§5.5).
+    pub media: Arc<dyn BroadcastMedia>,
+    /// The object store seam (§5.5), for cover images.
+    pub storage: BroadcastStorage,
+    /// Where lifecycle events go.
+    ///
+    /// Required, and defaulted to [`super::events::SilentEvents`] by every constructor
+    /// that has no bridge: a service with "no events" *is* a service that announces
+    /// nothing, so the null case is an implementation rather than an `Option` every call
+    /// site has to unwrap. A client that is not told a broadcast ended still finds out on
+    /// its next read (§4.6).
+    pub events: Arc<dyn BroadcastEvents>,
+    /// Where room membership goes when a broadcast is joined, left or ended.
+    ///
+    /// [`super::rooms::WsRooms`] in production, so a participant's socket is subscribed
+    /// to the broadcast's room channel. Defaulted to [`super::rooms::SilentRooms`] by
+    /// every constructor that has no socket layer: history still reads, it just does not
+    /// arrive live (§4.6).
+    pub rooms: Arc<dyn BroadcastRooms>,
+    /// Where the notification rows a lifecycle owes are produced.
+    ///
+    /// [`super::notices::SilentNotices`] in a deployment with no inbox, and in every
+    /// service test that is not about notifications: going live still works, the
+    /// followers simply have nothing to read.
+    pub notices: Arc<dyn BroadcastNotices>,
 }
-impl<R: BroadcastRepo> BroadcastService<R> {
-    pub fn builder() -> BroadcastServiceBuilder<R> {
-        BroadcastServiceBuilder::new()
+
+impl std::fmt::Debug for ServiceDeps {
+    /// Both fields are trait objects whose `Debug` would name an adapter with a
+    /// credential in it, and a `{:?}` in a log line is not worth that.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ServiceDeps")
+            .field("repo", &self.repo)
+            .field("media", &self.media)
+            .field("storage", &self.storage)
+            .field("events", &"<dyn BroadcastEvents>")
+            .field("rooms", &"<dyn BroadcastRooms>")
+            .field("notices", &"<dyn BroadcastNotices>")
+            .finish_non_exhaustive()
+    }
+}
+
+/// The broadcast module's rules.
+#[derive(Clone)]
+pub struct BroadcastService {
+    repo: Arc<dyn BroadcastRepo>,
+    media: Arc<dyn BroadcastMedia>,
+    storage: BroadcastStorage,
+    events: Arc<dyn BroadcastEvents>,
+    rooms: Arc<dyn BroadcastRooms>,
+    notices: Arc<dyn BroadcastNotices>,
+}
+
+impl std::fmt::Debug for BroadcastService {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("BroadcastService")
+            .field("repo", &self.repo)
+            .field("media", &self.media)
+            .field("storage", &self.storage)
+            .field("events", &"<dyn BroadcastEvents>")
+            .field("rooms", &"<dyn BroadcastRooms>")
+            .field("notices", &"<dyn BroadcastNotices>")
+            .finish_non_exhaustive()
+    }
+}
+
+impl BroadcastService {
+    /// Wire the service to its collaborators.
+    #[must_use]
+    pub fn new(deps: ServiceDeps) -> Self {
+        Self {
+            repo: deps.repo,
+            media: deps.media,
+            storage: deps.storage,
+            events: deps.events,
+            rooms: deps.rooms,
+            notices: deps.notices,
+        }
     }
 
+    /// `POST /broadcasts` — create a draft or a scheduled broadcast.
+    ///
+    /// # Errors
+    ///
+    /// - [`super::error::invalid_time_zone`] when `time_zone` is not an IANA
+    ///   identifier.
+    /// - [`error::start_time_in_past`] when `start_time` has passed — re-checked here
+    ///   even though `dto::validate` refused it, because a request validated at `t` and
+    ///   handled at `t + 1s` has moved.
+    /// - [`error::user_not_found`] when a cohost id has no live account.
+    /// - [`error::already_live_elsewhere`] when the creator already has a broadcast on
+    ///   air. Checked first, before anything is read or written: a client whose create
+    ///   succeeded but whose response was lost would otherwise retry into a second
+    ///   broadcast, which is exactly the shape of the bug that produced several of them.
+    #[tracing::instrument(skip_all, fields(creator_id = %creator.id))]
     pub async fn create(
         &self,
-        req: CreateBroadcastRequest,
-        creator_id: Uuid,
-    ) -> Result<BroadcastResponse, BroadcastError> {
-        if self.repo.is_active_host(creator_id).await? {
-            return Err(BroadcastError::AlreadyLive);
+        request: CreateBroadcastRequest,
+        creator: UserSummary,
+    ) -> Result<BroadcastResponse, MenoError> {
+        if self.repo.find_live_by_creator(creator.id).await?.is_some() {
+            return Err(error::already_live_elsewhere());
         }
 
-        if let Some(st) = req.start_time
-            && st <= OffsetDateTime::now_utc()
-        {
-            return Err(BroadcastError::StartTimeInPast);
+        if let Some(zone) = request.time_zone.as_deref() {
+            check_time_zone(zone)?;
+        }
+        if request.start_time.is_some_and(|start| start <= now()) {
+            return Err(error::start_time_in_past());
         }
 
-        let cohost_ids = req.cohosts.clone().unwrap_or_default();
-        let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
+        let cohosts = self.resolve_cohosts(&creator.id, request.cohosts).await?;
 
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        let input = CreateBroadcastInput {
-            title: &req.title,
-            description: req.description.as_deref(),
-            image_id: req.image_id.as_deref(),
-            image_url: req.image_url.as_deref(),
-            time_zone: req.time_zone.as_deref(),
-            start_time: req.start_time,
-            recording_enabled: req.recording_enabled.unwrap_or(false),
-            creator_id,
-        };
-        let broadcast = self.repo.create(&mut *tx, &input).await?;
-
-        if !cohost_ids.is_empty() {
-            self.repo
-                .add_cohosts(&mut *tx, broadcast.id, &cohost_ids, creator_id)
-                .await?;
-        }
-
-        tx.commit().await?;
-
-        // Schedule start notification job (fire-and-forget; not part of the tx).
-        if broadcast.start_time.is_some() {
-            // TODO: schedule apalis BroadcastStartJob here
-        }
-
-        let creator = self
+        let row = self
             .repo
-            .find_user_summary(broadcast.creator_id)
-            .await?
-            .ok_or(BroadcastError::UserNotFound)?;
+            .create(NewBroadcast {
+                creator_id: creator.id,
+                title: request.title,
+                description: request.description,
+                time_zone: request.time_zone,
+                image_id: request.image_id,
+                image_url: request.image_url,
+                start_time: request.start_time,
+                recording_enabled: request.recording_enabled.unwrap_or(false),
+                cohosts,
+            })
+            .await?;
 
-        let ctx = BroadcastContext {
-            participant_id: Some(creator_id),
-            participant_role: ParticipantRole::Host,
-            is_subscribed_to_creator: false, // creator can't subscribe to themselves
-            is_bookmarked: false,
-            live_count: 0,
-            total_count: 0,
-            ..Default::default()
-        };
-
-        self.build_response(broadcast, creator, cohosts, ctx).await
+        // A new draft does not move the home sections; only a broadcast that went
+        // live, changed, was deleted or ended does. `go_live` is where the home gets
+        // nudged for a newly live broadcast.
+        self.render(row, Some(creator), None).await
     }
 
+    /// `GET /broadcasts/{id}` — one broadcast, with the caller's view of it.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when no live broadcast carries that id, including one that
+    /// was soft-deleted — a deleted broadcast and a broadcast that never existed answer
+    /// identically so the endpoint cannot be used to discover deleted ids.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id))]
+    pub async fn get(
+        &self,
+        id: Uuid,
+        viewer: Option<&UserSummary>,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let row = self.require(id).await?;
+        let viewer = match viewer {
+            Some(viewer) => Some(self.viewer_for(&row, viewer).await?),
+            None => None,
+        };
+
+        self.render(row, None, viewer).await
+    }
+
+    /// `GET /broadcasts` — a keyset-paginated feed.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::BadRequest`] with [`meno_core::ErrorCode::InvalidCursor`] when the
+    /// `?cursor=` cannot be decoded. The decoding happens here rather than in a handler
+    /// so the SQL below cannot be built from an opaque string by any other caller.
+    #[tracing::instrument(skip_all)]
+    pub async fn list(
+        &self,
+        query: &BroadcastQuery,
+    ) -> Result<CursorPage<BroadcastListItem>, MenoError> {
+        let cursor = decode_cursor(query.cursor())?;
+        let rows = self
+            .repo
+            .list(BroadcastFilter {
+                creator_id: query.creator_id,
+                status: query.status,
+                q: query.keywords().map(str::to_owned),
+                limit_plus_one: query.limit_plus_one(),
+                cursor,
+                order: query.effective_order(),
+            })
+            .await?;
+
+        // One query for every creator in the page, not one per row (§9.4).
+        let creators = self
+            .repo
+            .find_users(&rows.iter().map(|row| row.creator_id).collect::<Vec<_>>())
+            .await?;
+        let by_id: std::collections::HashMap<Uuid, UserSummary> =
+            creators.into_iter().map(|user| (user.id, user)).collect();
+
+        Ok(CursorPage::from_rows(
+            rows.iter()
+                .map(|row| BroadcastListItem {
+                    id: row.id,
+                    title: row.title.clone(),
+                    description: row.description.clone(),
+                    time_zone: row.time_zone.clone(),
+                    image_url: row.image_url.clone(),
+                    image_id: row.image_id.clone(),
+                    status: row.status,
+                    state: row.state(),
+                    created_at: row.created_at,
+                    start_time: row.start_time,
+                    end_time: row.end_time,
+                    total_participants: row.total_participants,
+                    creator_id: row.creator_id,
+                    creator_name: by_id
+                        .get(&row.creator_id)
+                        .map_or("Unknown".to_owned(), |user| user.full_name.clone()),
+                    creator_avatar_id: by_id
+                        .get(&row.creator_id)
+                        .and_then(|user| user.avatar_id.clone()),
+                    creator_avatar_url: by_id
+                        .get(&row.creator_id)
+                        .and_then(|user| user.avatar_url.clone()),
+                })
+                .collect::<Vec<_>>(),
+            query.limit(),
+            |item| Cursor::from_timestamp_id(item.created_at, item.id),
+        ))
+    }
+
+    /// `PATCH /broadcasts/{id}` — edit, as the creator.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], [`error::broadcast_is_live`] when it is live,
+    /// [`error::invalid_time_zone`], [`error::start_time_in_past`], or
+    /// [`error::cohost_limit_reached`] — the limit is a service rule because the
+    /// database has no constraint for it.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
     pub async fn update(
         &self,
-        req: UpdateBroadcastRequest,
-        broadcast_id: Uuid,
-        creator_id: Uuid,
-    ) -> Result<BroadcastResponse, BroadcastError> {
-        let (broadcast_result, creator_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(creator_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-
-        if broadcast.creator_id != creator_id {
-            return Err(BroadcastError::NotCreator);
+        id: Uuid,
+        request: UpdateBroadcastRequest,
+        actor: &UserSummary,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
+        if existing.is_live() {
+            return Err(error::broadcast_is_live());
         }
 
-        if broadcast.status == BroadcastStatus::Active {
-            return Err(BroadcastError::CannotModifyLiveBroadcast);
+        if let Some(zone) = request.time_zone.as_deref() {
+            check_time_zone(zone)?;
+        }
+        if request.start_time.is_some_and(|start| start <= now()) {
+            return Err(error::start_time_in_past());
         }
 
-        let cohost_ids = req.cohosts.clone().unwrap_or_default();
-        let cohosts = self.deduplicate_cohosts(&cohost_ids, creator_id).await?;
-
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        let input = UpdateBroadcastInput {
-            title: req.title.as_deref(),
-            description: req.description.as_deref(),
-            image_id: req.image_id.as_deref(),
-            image_url: req.image_url.as_deref(),
-            time_zone: req.time_zone.as_deref(),
-            start_time: req.start_time,
-            recording_enabled: req.recording_enabled,
-            broadcast_id,
-        };
-        let broadcast = self.repo.update(&mut *tx, &input).await?;
-
-        if !cohost_ids.is_empty() {
-            self.repo
-                .add_cohosts(&mut *tx, broadcast.id, &cohost_ids, creator_id)
-                .await?;
-        }
-
-        tx.commit().await?;
-
-        // Cache Invalidation
-        self.cache.invalidate_list_caches();
-        self.cache.invalidate_broadcast_cache(broadcast_id);
-
-        let ctx = BroadcastContext {
-            participant_id: Some(creator_id),
-            participant_role: ParticipantRole::Host,
-            is_subscribed_to_creator: false,
-            is_bookmarked: false,
-            live_count: 0,
-            total_count: 0,
-            ..Default::default()
+        let cohosts = match &request.cohosts {
+            Some(list) => Some(self.resolve_cohosts(&actor.id, Some(list.clone())).await?),
+            None => None,
         };
 
-        self.build_response(broadcast, creator, cohosts, ctx).await
-    }
-
-    pub async fn delete(&self, broadcast_id: Uuid, creator_id: Uuid) -> Result<(), BroadcastError> {
-        let (broadcast_result, creator_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(creator_id)
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-
-        if broadcast.deleted_at.is_some() {
-            return Ok(());
-        }
-
-        if broadcast.status == BroadcastStatus::Active {
-            return Err(BroadcastError::CannotModifyLiveBroadcast);
-        }
-
-        if broadcast.creator_id != creator_id {
-            return Err(BroadcastError::NotCreator);
-        }
-
-        self.repo.delete(broadcast_id).await?;
-
-        let repo = Arc::clone(&self.repo);
-        let pubsub = Arc::clone(&self.pubsub);
-        let redis = self.redis.clone();
-        let broadcast_clone = broadcast.clone();
-        let creator_clone = creator.clone();
-        let is_scheduled = broadcast.can_be_scheduled();
-
-        tokio::spawn(async move {
-            let keys = vec![
-                RedisKey::live_count(broadcast_id),
-                RedisKey::host_grace(broadcast_id),
-                RedisKey::started_at(broadcast_id),
-            ];
-            for key in keys {
-                let _ = redis.del(&key).await;
-            }
-
-            if is_scheduled {
-                let Ok(sub_ids) = repo.get_subscriber_ids(creator_clone.id).await else {
-                    return;
-                };
-                if !sub_ids.is_empty() {
-                    let payload = WsPayload::new(
-                        WsEvent::BroadcastDeleted,
-                        serde_json::json!({
-                            "broadcastId":    broadcast_clone.id,
-                            "broadcastTitle": broadcast_clone.title,
-                            "message": format!(
-                                "The broadcast scheduled by {} has been cancelled.",
-                                creator_clone.full_name,
-                            ),
-                        }),
-                    );
-                    let _ = pubsub.publish_to_users(&sub_ids, payload).await;
-                }
-            }
-        });
-
-        tracing::info!(
-            "Broadcast deleted: id={}, title={}, deleted_by={}",
-            broadcast_id,
-            broadcast.title,
-            creator_id,
-        );
-
-        Ok(())
-    }
-
-    #[tracing::instrument(
-        name = "broadcast.start",
-        skip(self),
-        fields(
-            broadcast_id = %broadcast_id,
-            creator_id   = %user_id,
-            room_created = tracing::field::Empty,
-            token_minted = tracing::field::Empty,
-        )
-    )]
-    pub async fn start(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<BroadcastSessionResponse, BroadcastError> {
-        let span = tracing::Span::current();
-
-        // Fetch broadcast and user summary concurrently
-        let (broadcast_result, creator_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(user_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-
-        // Confirm that the person trying to start the current broadcast is the creator
-        if broadcast.creator_id != user_id {
-            return Err(BroadcastError::NotCreator);
-        }
-
-        // Confirm that the current broadcast is not already live
-        if broadcast.status == BroadcastStatus::Active {
-            return Err(BroadcastError::AlreadyLive);
-        }
-
-        self.livekit.create_room(broadcast_id).await?;
-        span.record("room_created", true);
-        tracing::debug!(broadcast_id = %broadcast_id, "LiveKit room created");
-
-        let broadcast_token = self
-            .livekit
-            .mint_host_token(&creator, broadcast_id)
-            .map_err(BroadcastError::LiveKitAccess)?;
-        span.record("token_minted", true);
-        tracing::debug!(broadcast_id = %broadcast_id, "HOST token minted");
-
-        let now = OffsetDateTime::now_utc();
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        // Set the broadcast status to `active`
-        let set_active_input = SetActiveInput {
-            broadcast_id,
-            broadcast_token: broadcast_token.clone(),
-            start_time: now,
-        };
-        let broadcast = self.repo.set_active(&mut *tx, &set_active_input).await?;
-
-        // Add the creator to the broadcast participants table, so others can see the creator in
-        // the list of participants
-        let p_input = UpsertParticipantInput {
-            broadcast_id,
-            participant_id: creator.id,
-            role: &ParticipantRole::Host,
-            joined_at: now,
-        };
-        self.repo.upsert_participant_tx(&mut *tx, &p_input).await?;
-
-        // Commit everything using a transaction
-        tx.commit().await?;
-
-        // Cache Invalidation
-        self.cache.invalidate_list_caches();
-        self.cache.invalidate_broadcast_cache(broadcast_id);
-
-        //  Seed the Redis room with the host as the first member so that
-        if let Err(e) = self.pubsub.init_room(broadcast_id, &[creator.id]).await {
-            tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to init room in Redis");
-        }
-
-        self.jobs
-            .push_broadcast_started_fanout(BroadcastStartedFanOutJob {
-                broadcast_id,
-                creator_id: broadcast.creator_id,
-                title: broadcast.title.clone(),
-                image_url: broadcast.image_url.clone(),
-            })
-            .await
-            .unwrap_or_else(|e| tracing::warn!(error=%e, "Failed to queue broadcast fanout"));
-
-        // Generate the broadcast response struct
-        let cohosts = self.repo.get_cohosts(broadcast_id).await?;
-        let ctx = BroadcastContext {
-            participant_id: Some(creator.id),
-            participant_role: ParticipantRole::Host,
-            live_count: 1,
-            total_count: 1,
-            ..Default::default()
-        };
-        let broadcast_response = self
-            .build_response(broadcast, creator, cohosts, ctx)
-            .await?;
-
-        let repo = Arc::clone(&self.repo);
-        let cache = Arc::clone(&self.cache);
-        let pubsub = Arc::clone(&self.pubsub);
-        let response_clone = broadcast_response.clone();
-        tokio::spawn(async move {
-            let creator_id = response_clone.creator.id;
-
-            // Store broadcast start time for quota
-            let _ = cache.set_started_at(broadcast_id, &now).await;
-
-            // Set a live count key Redis to 1
-            // This is the number of currently live participants, and the creator is the first
-            // in the list
-            let _ = cache.set_live_count(broadcast_id).await;
-
-            if let Ok(sub_ids) = repo.get_subscriber_ids(creator_id).await
-                && !sub_ids.is_empty()
-            {
-                let payload = WsPayload::new_broadcast(response_clone);
-                pubsub.publish_to_users(&sub_ids, payload).await;
-            }
-
-            // Notify the FE of changes on the home page
-            pubsub.broadcast_all(WsPayload::home_invalidated()).await;
-        });
-
-        tracing::info!(
-            broadcast_id = %broadcast_id,
-            creator_id   = %user_id,
-            "broadcast went live"
-        );
-
-        Ok(BroadcastSessionResponse {
-            broadcast: broadcast_response,
-            token: broadcast_token,
-        })
-    }
-
-    #[tracing::instrument(
-        name = "broadcast.end",
-        skip(self),
-        fields(
-            broadcast_id = %broadcast_id,
-            requester_id = %user_id,
-            total_participants = tracing::field::Empty,
-            duration_secs = tracing::field::Empty,
-        )
-    )]
-    pub async fn end(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<EndBroadcastResponse, BroadcastError> {
-        let span = tracing::Span::current();
-
-        // Find the broadcast using the `broadcast_id`, return the appropriate error if not found
-        let broadcast = self.repo.find_by_id_or_error(broadcast_id).await?;
-
-        // Ensure the person trying to end the broadcast is the one that created it;
-        // Only a broadcast creator (and the BE) can end a broadcast
-        if broadcast.creator_id != user_id {
-            return Err(BroadcastError::CannotEnd);
-        }
-
-        // Ensure that the broadcast is actually live; you cannot end what you did not start
-        if broadcast.status != BroadcastStatus::Active {
-            return Err(BroadcastError::NotLive);
-        }
-
-        // Calculate the total duration of the broadcast in seconds
-        let ended_at = OffsetDateTime::now_utc();
-        let duration_secs = broadcast
-            .start_time
-            .map(|s| (ended_at - s).whole_seconds())
-            .unwrap_or(0);
-
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        // We have to clear the list of participants from the `broadcast_participants` table,
-        // but before we do, we need to return the list of participant IDs so we can calculate
-        // the total number of participants and...
-        let participant_ids = self
+        let row = self
             .repo
-            .get_participant_ids_and_clear(&mut *tx, broadcast_id)
-            .await?;
-
-        // We set the broadcast status to `in-active`
-        self.repo
-            .set_inactive(&mut *tx, broadcast_id, &EndReason::Normal)
-            .await?;
-
-        tx.commit().await?;
-
-        // Cache Invalidation
-        self.cache.invalidate_list_caches();
-        self.cache.invalidate_broadcast_cache(broadcast_id);
-
-        let cache = Arc::clone(&self.cache);
-        let pubsub = Arc::clone(&self.pubsub);
-        let livekit = self.livekit.clone();
-        let reason = EndReason::Normal;
-        tokio::spawn(async move {
-            let _ = livekit.delete_room(broadcast_id).await;
-
-            let _ = cache.delete_live_count(broadcast_id).await;
-            let _ = cache.delete_host_grace(broadcast_id).await;
-
-            // Notify every participant on every instance that the broadcast ended.
-            // publish_to_room targets only room members; broadcast_all targets
-            // every connected user (non-members may also want to update their UI).
-            // We do both: room members get it first via room channel, then
-            // broadcast_all ensures the home feed update reaches non-participants.
-            let ended_payload = WsPayload::ended_broadcast(broadcast_id, reason);
-            pubsub.publish_to_room(broadcast_id, ended_payload).await;
-
-            // HomeInvalidated is already sent via broadcast_all — no change needed there.
-
-            // Tear down the Redis room membership set now that the broadcast is over.
-            if let Err(e) = pubsub.destroy_room(broadcast_id).await {
-                tracing::warn!(error = %e, broadcast_id = %broadcast_id, "Failed to destroy room");
-            }
-        });
-
-        // Check if the recording is available and ready; this is only possible if the creator
-        // enabled the `recording` flag when creating the broadcast
-        let recording_ready = if broadcast.recording_enabled {
-            let key = RedisKey::recording_ready(broadcast_id);
-            self.redis.exists(&key).await.unwrap_or(false)
-        } else {
-            false
-        };
-
-        span.record("total_participants", participant_ids.len() as i64);
-        span.record("duration_secs", duration_secs);
-        tracing::info!(
-            broadcast_id  = %broadcast_id,
-            duration_secs = duration_secs,
-            participants  = participant_ids.len(),
-            "broadcast ended"
-        );
-
-        // Return the ended broadcast response
-        Ok(EndBroadcastResponse {
-            broadcast_id,
-            broadcast_title: broadcast.title,
-            broadcast_image_url: broadcast.image_url,
-            creator_id: broadcast.creator_id,
-            ended_reason: EndReason::Normal,
-            ended_at,
-            duration_secs,
-            total_participants: participant_ids.iter().len() as i64,
-            recording_enabled: broadcast.recording_enabled,
-            recording_ready,
-        })
-    }
-
-    #[tracing::instrument(
-        name = "broadcast.join",
-        skip(self),
-        fields(
-            broadcast_id = %broadcast_id,
-            user_id = %user_id,
-            role = tracing::field::Empty,
-        )
-    )]
-    pub async fn join(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<BroadcastSessionResponse, BroadcastError> {
-        let span = tracing::Span::current();
-
-        let (broadcast_result, user_result, is_cohost_result, is_participant_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(user_id),
-            self.repo.is_cohost(broadcast_id, user_id),
-            self.repo.find_active_participant(user_id)
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
-        let is_cohost = is_cohost_result?;
-
-        if broadcast.status != BroadcastStatus::Active {
-            return Err(BroadcastError::NotLive);
-        }
-
-        if broadcast.creator_id == user_id {
-            return Err(BroadcastError::CreatorCannotJoin);
-        }
-
-        if let Some(participant) = is_participant_result? {
-            if participant.broadcast_id == broadcast_id {
-                return Err(BroadcastError::AlreadyParticipant);
-            }
-
-            return Err(BroadcastError::AlreadyAParticipant);
-        }
-
-        let role = if is_cohost {
-            ParticipantRole::Cohost
-        } else {
-            ParticipantRole::Participant
-        };
-        span.record("role", role.clone().to_string().as_str());
-
-        let livekit_role = match &role {
-            ParticipantRole::Cohost => LivekitRole::Cohost,
-            ParticipantRole::Participant => LivekitRole::Participant,
-            _ => LivekitRole::Participant,
-        };
-
-        let broadcast_token = self
-            .livekit
-            .mint_token(user_id, &user.full_name, broadcast_id, &livekit_role)
-            .map_err(BroadcastError::LiveKitAccess)?;
-
-        let now = OffsetDateTime::now_utc();
-
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        let input = UpsertParticipantInput {
-            broadcast_id,
-            participant_id: user_id,
-            role: &role,
-            joined_at: now,
-        };
-        self.repo.upsert_participant_tx(&mut *tx, &input).await?;
-
-        tx.commit().await?;
-
-        // Cache Invalidation
-        self.cache.invalidate_list_caches();
-        self.cache.invalidate_broadcast_cache(broadcast_id);
-
-        self.ws.join_room(user_id, broadcast.id, &self.pubsub).await;
-
-        let cache = Arc::clone(&self.cache);
-        let pubsub = Arc::clone(&self.pubsub);
-        let b_id = broadcast.id;
-        let user_clone = user.clone();
-        tokio::spawn(async move {
-            let new_count = cache.increment_live_count(b_id).await.unwrap_or(1);
-
-            let joined_payload = WsPayload::participant_joined(user_clone);
-            pubsub.publish_to_room(b_id, joined_payload).await;
-
-            let count_payload = WsPayload::number_of_live_participants(b_id, new_count);
-            pubsub.publish_to_room(b_id, count_payload).await;
-        });
-
-        let (creator_result, cohosts_result, total_count_result) = tokio::join!(
-            self.repo.find_user_summary(broadcast.creator_id),
-            self.repo.get_cohosts(broadcast_id),
-            self.repo.get_total_participants(broadcast_id),
-        );
-
-        let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-        let cohosts = cohosts_result?;
-        let total_count = total_count_result?;
-
-        let live_count = self.cache.get_live_count(broadcast_id).await?.unwrap_or(1);
-
-        let ctx = self
-            .build_ctx(
-                &broadcast,
-                Some(user_id),
-                Some(role.clone()),
-                live_count,
-                total_count,
+            .update(
+                id,
+                BroadcastPatch {
+                    title: request.title,
+                    description: request.description,
+                    time_zone: request.time_zone,
+                    image_id: request.image_id,
+                    image_url: request.image_url,
+                    start_time: request.start_time,
+                    recording_enabled: request.recording_enabled,
+                    cohosts,
+                },
             )
             .await?;
 
-        let broadcast_response = self
-            .build_response(broadcast, creator, cohosts, ctx)
-            .await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+        let response = self.render(row, Some(creator), Some(viewer)).await?;
 
-        tracing::info!(
-            broadcast_id = %broadcast_id,
-            user_id      = %user_id,
-            role         = %role,
-            "user joined broadcast"
-        );
-
-        Ok(BroadcastSessionResponse {
-            broadcast: broadcast_response,
-            token: broadcast_token,
-        })
-    }
-
-    pub async fn leave(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<LeaveBroadcastResponse, BroadcastError> {
-        let (broadcast_result, user_result, participant_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(user_id),
-            self.repo.find_participant(broadcast_id, user_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
-        let participant = participant_result?.ok_or(BroadcastError::NotParticipant)?;
-
-        if broadcast.is_not_active() || participant.left_at.is_some() {
-            let left_at = participant.left_at.unwrap_or_else(OffsetDateTime::now_utc);
-            return Ok(LeaveBroadcastResponse {
-                success: true,
-                broadcast_id,
-                user_id,
-                left_at,
-            });
-        }
-
-        self.repo
-            .remove_participant(&self.db, broadcast_id, user_id)
-            .await?;
-
-        // Cache Invalidation
-        self.cache.invalidate_list_caches();
-        self.cache.invalidate_broadcast_cache(broadcast_id);
-
-        self.ws
-            .leave_room(user_id, broadcast_id, &self.pubsub)
-            .await;
-
-        let pubsub = Arc::clone(&self.pubsub);
-        let cache = Arc::clone(&self.cache);
-        let user_clone = user.clone();
-        tokio::spawn(async move {
-            let _ = cache.decrement_live_count(broadcast_id).await;
-
-            let payload = WsPayload::participant_left(user_clone);
-            pubsub.publish_to_room(broadcast_id, payload).await;
-        });
-
-        tracing::info!(
-            broadcast_id = %broadcast_id,
-            user_id      = %user_id,
-            "user left broadcast"
-        );
-
-        Ok(LeaveBroadcastResponse {
-            success: true,
-            broadcast_id,
-            user_id,
-            left_at: OffsetDateTime::now_utc(),
-        })
-    }
-
-    #[tracing::instrument(
-        name = "broadcast.add_cohost",
-        skip(self),
-        fields(broadcast_id = %broadcast_id, requester = %requester_id, cohost = %cohost_id)
-    )]
-    pub async fn add_cohost(
-        &self,
-        broadcast_id: Uuid,
-        requester_id: Uuid,
-        cohost_id: Uuid,
-    ) -> Result<CohostSessionResponse, BroadcastError> {
-        if self.repo.is_cohost(broadcast_id, cohost_id).await? {
-            return Err(BroadcastError::AlreadyCohost);
-        }
-
-        let (broadcast_result, cohost_user_result, cohosts_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(cohost_id),
-            self.repo.get_cohosts(broadcast_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let cohost = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
-
-        if let Ok(cohosts) = cohosts_result
-            && cohosts.len() == MAX_COHOSTS
-        {
-            return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
-        }
-
-        if broadcast.status != BroadcastStatus::Active {
-            return Err(BroadcastError::NotLive);
-        }
-
-        if broadcast.creator_id != requester_id {
-            return Err(BroadcastError::NotCreator);
-        }
-
-        if broadcast.creator_id == cohost_id {
-            return Err(BroadcastError::CannotAddSelfAsCohost);
-        }
-
-        let broadcast_token = self
-            .livekit
-            .mint_cohost_token(&cohost, broadcast_id)
-            .map_err(BroadcastError::LiveKitAccess)?;
-
-        let now = OffsetDateTime::now_utc();
-
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        self.repo
-            .add_cohosts(&mut *tx, broadcast_id, &[cohost_id], requester_id)
-            .await?;
-
-        let input = UpsertParticipantInput {
-            broadcast_id,
-            participant_id: cohost_id,
-            role: &ParticipantRole::Cohost,
-            joined_at: now,
-        };
-        self.repo.upsert_participant_tx(&mut *tx, &input).await?;
-
-        tx.commit().await?;
-
-        let pubsub = Arc::clone(&self.pubsub);
-        let token = broadcast_token.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::cohost_invitation(broadcast_id, token);
-            pubsub.publish_to_user(cohost_id, payload).await;
-        });
-
-        tracing::info!(
-            broadcast_id = %broadcast_id,
-            cohost_id    = %cohost_id,
-            "cohost added"
-        );
-
-        Ok(CohostSessionResponse {
-            user: cohost,
-            token: broadcast_token,
-        })
-    }
-
-    #[tracing::instrument(
-        name = "broadcast.remove_cohost",
-        skip(self),
-        fields(
-            broadcast_id    = %broadcast_id,
-            cohost_id       = %cohost_id,
-            remove_from_room = remove_from_room,
-        )
-    )]
-    pub async fn remove_cohost(
-        &self,
-        broadcast_id: Uuid,
-        cohost_id: Uuid,
-        requester_id: Uuid,
-        remove_from_room: bool,
-    ) -> Result<(), BroadcastError> {
-        let (broadcast_result, cohost_user_result, is_cohost_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_user_summary(cohost_id),
-            self.repo.is_cohost(broadcast_id, cohost_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let cohost_user = cohost_user_result?.ok_or(BroadcastError::UserNotFound)?;
-        let is_cohost = is_cohost_result?;
-
-        if broadcast.status != BroadcastStatus::Active {
-            return Err(BroadcastError::NotLive);
-        }
-
-        if broadcast.creator_id != requester_id {
-            return Err(BroadcastError::NotCreator);
-        }
-
-        if !is_cohost {
-            return Ok(());
-        }
-
-        let mut tx: Transaction<'_, Postgres> = self.db.begin().await?;
-
-        self.repo
-            .remove_cohost(&mut *tx, broadcast_id, cohost_id)
-            .await?;
-
-        let new_role = if remove_from_room {
-            self.repo
-                .remove_participant(&mut *tx, broadcast_id, cohost_id)
-                .await?;
-            ParticipantRole::None
-        } else {
-            ParticipantRole::Participant
-        };
-
-        if !remove_from_room {
-            let input = UpsertParticipantInput {
-                broadcast_id,
-                participant_id: cohost_id,
-                role: &new_role,
-                joined_at: OffsetDateTime::now_utc(),
-            };
-            self.repo.upsert_participant_tx(&mut *tx, &input).await?;
-        }
-
-        tx.commit().await?;
-
-        if remove_from_room {
-            // Remove from room completely
-            let _ = self
-                .livekit
-                .remove_participant(broadcast_id, cohost_id)
-                .await;
-
-            // Decrement live count (cohost was a live participant)
-            let pubsub = Arc::clone(&self.pubsub);
-            let redis = self.redis.clone();
-            tokio::spawn(async move {
-                let count_key = RedisKey::live_count(broadcast_id);
-                let remaining = redis.decr(&count_key).await.unwrap_or(0).max(0);
-
-                let payload = WsPayload::number_of_live_participants(broadcast_id, remaining);
-                pubsub.publish_to_room(broadcast_id, payload).await;
-            });
-        } else {
-            // Update LiveKit permissions (revokes publish capability)
-            // On Cloud: This automatically invalidates the old token
-            // On Self-hosted: Permissions change, but token remains valid
-            let _ = self
-                .livekit
-                .update_permission(broadcast_id, cohost_id, false)
-                .await;
-
-            // Mint new participant token (lower permissions)
-            let new_token = self
-                .livekit
-                .mint_participant_token(&cohost_user, broadcast_id)
-                .map_err(BroadcastError::LiveKitAccess)?;
-
-            // Send token via WebSocket
-            // Client will use this to either:
-            //   a) Reconnect if disconnected (Cloud), or
-            //   b) Refresh their token (Self-hosted)
-            let payload = WsPayload::cohost_demotion(broadcast_id, new_token);
-            self.pubsub.publish_to_user(cohost_id, payload).await;
-        }
-
-        let pubsub = Arc::clone(&self.pubsub);
-        let cohost_clone = cohost_user.clone();
-        tokio::spawn(async move {
-            let payload = WsPayload::removed_cohost(cohost_clone);
-            pubsub.publish_to_room(broadcast_id, payload).await;
-        });
-
-        tracing::info!(
-            broadcast_id     = %broadcast_id,
-            cohost_id        = %cohost_id,
-            remove_from_room = remove_from_room,
-            "cohost removed"
-        );
-
-        Ok(())
-    }
-
-    pub async fn get_broadcast(
-        &self,
-        broadcast_id: Uuid,
-    ) -> Result<BroadcastResponse, BroadcastError> {
-        let key = RedisKey::broadcast(broadcast_id);
-        let response = coalesce_cache(&self.redis, key.as_ref(), TTL_60_SECS, || async {
-            let broadcast = self
-                .repo
-                .find_by_id(broadcast_id)
-                .await?
-                .ok_or(BroadcastError::NotFound)?;
-
-            let (creator_result, cohosts_result, total_participants_result) = tokio::join!(
-                self.repo.find_user_summary(broadcast.creator_id),
-                self.repo.get_cohosts(broadcast_id),
-                self.repo.get_total_participants(broadcast_id),
-            );
-
-            let creator = creator_result?.ok_or(BroadcastError::UserNotFound)?;
-            let cohosts = cohosts_result?;
-            let total_count = total_participants_result?;
-
-            let live_count = if broadcast.is_active() {
-                let key = RedisKey::live_count(broadcast_id);
-                self.redis.get::<i64>(&key).await?.unwrap_or(1)
-            } else {
-                0
-            };
-
-            let ctx = self
-                .build_ctx(&broadcast, None, None, live_count, total_count)
-                .await?;
-
-            self.build_response(broadcast, creator, cohosts, ctx).await
-        })
-        .await?;
+        // A title, a cover or a schedule time is drawn on a home card, so an edit
+        // that landed invalidates it. Announced after the write: a client that
+        // refetches on the frame must find the new values.
+        self.notify_home().await;
 
         Ok(response)
     }
 
-    #[tracing::instrument(name = "broadcast_service.get_broadcasts", skip(self))]
-    pub async fn get_broadcasts(
+    /// `POST /broadcasts/{id}/image` — replace the cover, as the creator (§3.3).
+    ///
+    /// One call rather than a pre-signed PUT plus a PATCH: the client sends the bytes and
+    /// the API decides the key, so the row can never be made to point at an object that
+    /// was never written, and a failed write can be undone before anything references it.
+    /// That is what lets the create and edit flows collect a title, a description and a
+    /// picture as one action (§3.3 retired pre-signing for exactly this).
+    ///
+    /// # Ordering, and why this order
+    ///
+    /// Authorise (creator, not live) → store → write the row → delete the *previous*
+    /// object. Storing before the row write means a store failure leaves the row
+    /// untouched; writing the row before the delete means the worst case is an orphaned
+    /// blob rather than a cover that does not load. A failed row write deletes the object
+    /// it just stored, so a retry starts from a clean slate instead of leaking one object
+    /// per attempt.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], [`error::broadcast_is_live`], the image rules in
+    /// [`super::storage`] (422 with field `file`), or [`error::storage_unavailable`]
+    /// (503).
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn set_image(
         &self,
-        query: &BroadcastQuery,
-        requester_id: Option<Uuid>,
-    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
-        let ttl = if query.status == Some(BroadcastStatus::Active) {
-            TTL_10_SECS
-        } else {
-            TTL_30_SECS
+        id: Uuid,
+        bytes: &[u8],
+        actor: &UserSummary,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
+        if existing.is_live() {
+            return Err(error::broadcast_is_live());
+        }
+
+        let previous = existing.image_id.clone();
+        let stored = self.storage.put_image(id, bytes).await?;
+
+        let row = match self
+            .repo
+            .update(
+                id,
+                BroadcastPatch {
+                    title: None,
+                    description: None,
+                    time_zone: None,
+                    image_id: Some(stored.key.clone()),
+                    image_url: stored.url.clone(),
+                    start_time: None,
+                    recording_enabled: None,
+                    cohosts: None,
+                },
+            )
+            .await
+        {
+            Ok(row) => row,
+            Err(failure) => {
+                // Nothing references the new object yet, so leaving it would be a leak
+                // with no row to find it by.
+                if let Err(error) = self.storage.delete_image(&stored.key).await {
+                    tracing::warn!(
+                        %error,
+                        key = %stored.key,
+                        "could not undo a cover upload after a failed write"
+                    );
+                }
+                return Err(failure);
+            }
         };
 
-        let start = std::time::Instant::now();
-
-        let broadcast_list_cache_key = BroadcastListCacheKey::build(query);
-        if broadcast_list_cache_key.is_none() {
-            // Personalized query - go directly to DB without caching
-            tracing::debug!("Personalized query (only_subscriptions=true) — skipping cache");
-            return self.get_broadcasts_from_db(query, requester_id).await;
+        // Only a *different* previous key is worth deleting: the same key was overwritten
+        // by the upload above, and deleting it would remove the cover we just stored.
+        if let Some(previous) = previous.filter(|previous| previous != &stored.key)
+            && let Err(error) = self.storage.delete_image(&previous).await
+        {
+            tracing::warn!(%error, key = %previous, "replaced cover image could not be deleted");
         }
 
-        let cache_key = broadcast_list_cache_key.unwrap();
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+        let response = self.render(row, Some(creator), Some(viewer)).await?;
 
-        // Use coalescing cache to prevent thundering herd
-        let page = coalesce_cache(&self.redis, &cache_key, ttl, || async {
-            self.get_broadcasts_from_db(query, requester_id).await
-        })
-        .await?;
+        // The new cover is what a home card draws.
+        self.notify_home().await;
 
-        let elapsed = start.elapsed();
-        tracing::debug!(
-            returned = page.data.len(),
-            elapsed_ms = elapsed.as_millis(),
-            "broadcast list query complete"
-        );
-
-        Ok(page)
+        Ok(response)
     }
 
-    /// Now live — all active broadcasts, sorted by live participant count desc.
-    /// Cached for 15 seconds: fast-changing but expensive to compute.
-    pub async fn get_now_live(
-        &self,
-        query: &BroadcastQuery,
-    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
-        let mut q = query.clone();
-        q.status = Some(BroadcastStatus::Active);
-        q.sort_by = Some(BroadcastSortBy::TotalParticipants);
-        q.order = Some(Order::Desc);
-
-        let limit = q.limit();
-        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
-        let cache_key = format!("bc:now_live:cur={cursor_str}:lim={limit}");
-
-        coalesce_cache(&self.redis, &cache_key, TTL_10_SECS, || async {
-            self.get_broadcasts_from_db(&q, None).await
-        })
-        .await
-    }
-
-    /// Live for you — active broadcasts from creators the user follows.
-    /// NOT cached (personalized per user).
-    pub async fn get_live_for_you(
-        &self,
-        query: &BroadcastQuery,
-        user_id: Uuid,
-    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
-        let mut q = query.clone();
-        q.status = Some(BroadcastStatus::Active);
-        q.only_subscriptions = Some(true);
-        q.sort_by = Some(BroadcastSortBy::CreatedAt);
-        q.order = Some(Order::Desc);
-
-        let limit = q.limit();
-        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
-        let cache_key = format!(
-            "bc:live_for_you:v={v}:cur={cur}:lim={lim}",
-            v = user_id,
-            cur = cursor_str,
-            lim = limit,
-        );
-
-        coalesce_cache(&self.redis, &cache_key, TTL_10_SECS, || async {
-            self.get_broadcasts_from_db(&q, None).await
-        })
-        .await
-    }
-
-    /// Recently live — ended in the last 24 hours, sorted by end_time desc.
-    /// Cached for 5 minutes: content changes infrequently.
-    pub async fn get_recently_live(
-        &self,
-        query: &BroadcastQuery,
-    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
-        let mut q = query.clone();
-        q.status = Some(BroadcastStatus::Inactive);
-        q.end_time_exists = Some(true);
-        q.sort_by = Some(BroadcastSortBy::EndTime);
-        q.order = Some(Order::Desc);
-
-        let now = OffsetDateTime::now_utc();
-        let yesterday = now - time::Duration::hours(24);
-        q.end_time_gte = Some(yesterday);
-        q.end_time_lte = Some(now);
-
-        let limit = q.limit();
-        let cursor_str = q.cursor().map(|c| c.0.clone()).unwrap_or_default();
-        let cache_key = format!("bc:recently_live:cur={cursor_str}:lim={limit}");
-
-        coalesce_cache(&self.redis, &cache_key, 300, || async {
-            self.get_broadcasts_from_db(&q, None).await
-        })
-        .await
-    }
-
-    pub async fn get_participants(
-        &self,
-        broadcast_id: Uuid,
-        query: &ParticipantQuery,
-    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
-        let cache_key = ParticipantListCacheKey::all(broadcast_id, query);
-        coalesce_cache(&self.redis, &cache_key, TTL_30_SECS, || async {
-            self.get_participants_from_db(broadcast_id, query).await
-        })
-        .await
-    }
-
-    #[tracing::instrument(
-        name = "broadcast_service.get_live_participants",
-        skip(self),
-        fields(broadcast_id = %broadcast_id)
-    )]
-    pub async fn get_live_participants(
-        &self,
-        broadcast_id: Uuid,
-        query: &ParticipantQuery,
-    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
-        let broadcast = self
-            .repo
-            .find_by_id(broadcast_id)
-            .await?
-            .ok_or(BroadcastError::NotFound)?;
-
-        if !broadcast.is_active() {
-            return Err(BroadcastError::NotLive);
+    /// `DELETE /broadcasts/{id}` — soft-delete, as the creator.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], or [`error::broadcast_is_live`] — deleting a live
+    /// broadcast would strand every participant in a room nobody owns.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn delete(&self, id: Uuid, actor: &UserSummary) -> Result<(), MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
+        if existing.is_live() {
+            return Err(error::broadcast_is_live());
         }
 
-        let lk_participants = coalesce_cache(
-            &self.redis,
-            &format!("bc:live_participants:{broadcast_id}"),
-            5,
-            || async { self.livekit.list_participants(broadcast_id).await },
-        )
-        .await?;
+        self.repo.soft_delete(id).await?;
 
-        if lk_participants.is_empty() {
-            return Ok(CursorPage {
-                data: Vec::new(),
-                next_cursor: None,
-                has_next_page: false,
+        // Any open page for it is now a page for nothing: a client that followed a
+        // shared link has no other way to learn the broadcast is gone.
+        self.events.broadcast_deleted(id).await;
+
+        // The deleted broadcast disappears from every home section it was in.
+        self.notify_home().await;
+
+        Ok(())
+    }
+
+    /// `POST /broadcasts/{id}/live` — go live, as the creator.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], [`error::already_live`],
+    /// [`error::already_live_elsewhere`] when the creator has a *different* broadcast on
+    /// air, [`error::media_unavailable`] when the room cannot be created, or
+    /// [`error::internal`].
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn go_live(
+        &self,
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
+
+        // A broadcast is one event. Re-opening an ended row wrote `active` over it while
+        // its `end_time` stayed, which made it live to the catalogue and dead to `end`,
+        // `resume` and the reaper — and it held this creator's one on-air slot forever.
+        if existing.end_time.is_some() || existing.status == BroadcastStatus::Ended {
+            return Err(error::broadcast_already_ended());
+        }
+        if existing.is_live() {
+            return Err(error::already_live());
+        }
+
+        // The other half of the one-on-air rule: this row is a draft, but another of
+        // the creator's rows may be live. The unique index refuses the write anyway;
+        // checking here is what makes the answer a named 409 instead of an unexplained
+        // `already_live` from `mark_live`'s `None`.
+        if self.repo.find_live_by_creator(actor.id).await?.is_some() {
+            return Err(error::already_live_elsewhere());
+        }
+
+        // Room first: a row marked live with no room behind it is a broadcast that
+        // looks live to every client and is not.
+        self.media.create_room(id).await?;
+
+        // The token before the commit. Minting it after `mark_live` left the row live
+        // behind every signing failure, and the retry then read `already_live` for a
+        // broadcast no client had ever entered.
+        let token = self
+            .media
+            .mint_join_token(actor, id, ParticipantRole::Host)
+            .await?;
+
+        if self.repo.mark_live(id, now()).await?.is_none() {
+            // Something won the race: a second go-live, an end between the read and the
+            // write, or a terminal row. Re-read so the answer says which it was instead
+            // of blaming "already live" for every case.
+            let current = self.require(id).await?;
+            return Err(if current.end_time.is_some() {
+                error::broadcast_already_ended()
+            } else {
+                error::already_live()
             });
         }
 
-        let user_ids: Vec<Uuid> = lk_participants.iter().map(|p| p.id).collect();
-        let (users, role_map) = tokio::join!(
-            self.repo.find_users_batch(&user_ids),
-            self.repo.get_participant_roles(broadcast_id)
-        );
-
-        let users = users?;
-        let role_map = role_map?;
-        let user_map: HashMap<Uuid, UserSummary> = users.into_iter().map(|u| (u.id, u)).collect();
-
-        // Get roles from broadcast_participants table
-        let mut enriched: Vec<ParticipantListItem> = lk_participants
-            .into_iter()
-            .map(|lp| {
-                let user = user_map.get(&lp.id);
-
-                // Role from DB map; fall back to None if somehow missing
-                let role = role_map.get(&lp.id).cloned().unwrap_or_else(|| {
-                    if broadcast.creator_id == lp.id {
-                        ParticipantRole::Host
-                    } else {
-                        ParticipantRole::Participant
-                    }
-                });
-
-                ParticipantListItem {
-                    id: lp.id,
-                    full_name: user
-                        .map(|u| u.full_name.clone())
-                        .unwrap_or_else(|| "Unknown".to_string()),
-                    avatar_id: user.and_then(|u| u.avatar_id.clone()),
-                    avatar_url: user.and_then(|u| u.avatar_url.clone()),
-                    role,
-                    joined_at: lp.joined_at,
-                }
-            })
-            .collect();
-
-        // Apply search filter (keywords)
-        if let Some(ref kw) = query.keywords {
-            let kw_lower = kw.to_lowercase();
-            enriched.retain(|p| p.full_name.to_lowercase().contains(&kw_lower));
-        }
-        if let Some(ref role_filter) = query.role {
-            enriched.retain(|p| &p.role == role_filter);
-        }
-
-        let sort = query.sort_by.unwrap_or(ParticipantSortBy::Role);
-        let order = query.order.unwrap_or(Order::Asc);
-
-        enriched.sort_by(|a, b| {
-            let comparison = match sort {
-                ParticipantSortBy::Role => {
-                    let a_priority = a.role.priority();
-                    let b_priority = b.role.priority();
-                    a_priority.cmp(&b_priority)
-                }
-                ParticipantSortBy::JoinedAt => a.joined_at.cmp(&b.joined_at),
-                ParticipantSortBy::Name => a.full_name.cmp(&b.full_name),
-            };
-
-            match order {
-                Order::Asc => comparison,
-                Order::Desc => comparison.reverse(),
-            }
-        });
-
-        let limit = query.limit();
-        let cursor = query.cursor();
-
-        let start_index = if let Some(cursor) = cursor {
-            match sort {
-                ParticipantSortBy::Role => {
-                    let (priority, id) = cursor.to_score_id().map_err(BroadcastError::Cursor)?;
-                    enriched
-                        .iter()
-                        .position(|p| {
-                            let p_priority = p.role.priority();
-                            (p_priority, p.id) > (priority, id)
-                        })
-                        .unwrap_or(0)
-                }
-                ParticipantSortBy::JoinedAt => {
-                    let (ts, id) = cursor.to_timestamp_id().map_err(BroadcastError::Cursor)?;
-                    enriched
-                        .iter()
-                        .position(|p| (p.joined_at, p.id) > (ts, id))
-                        .unwrap_or(0)
-                }
-                ParticipantSortBy::Name => {
-                    let (name, id) = cursor.to_name_id().map_err(BroadcastError::Cursor)?;
-                    enriched
-                        .iter()
-                        .position(|p| (p.full_name.clone(), p.id) > (name.clone(), id))
-                        .unwrap_or(0)
-                }
-            }
-        } else {
-            0
-        };
-
-        let items: Vec<ParticipantListItem> = enriched
-            .into_iter()
-            .skip(start_index)
-            .take(limit as usize)
-            .collect();
-
-        tracing::debug!(
-            broadcast_id = %broadcast_id,
-            total_live = items.len(),
-            "live participant list resolved with cursor pagination"
-        );
-
-        Ok(CursorPage::from_rows(items, limit, |p| match sort {
-            ParticipantSortBy::Role => Cursor::from_score_id(p.role.priority(), p.id),
-            ParticipantSortBy::JoinedAt => Cursor::from_timestamp_id(p.joined_at, p.id),
-            ParticipantSortBy::Name => Cursor::from_name_id(&p.full_name, p.id),
-        }))
-    }
-
-    #[tracing::instrument(
-        name = "broadcast_service.refresh_token",
-        skip(self),
-        fields(broadcast_id = %broadcast_id, user_id = %user_id)
-    )]
-    pub async fn refresh_token(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<BroadcastRefreshTokenResponse, BroadcastError> {
-        let (broadcast_result, participant_result, user_result) = tokio::join!(
-            self.repo.find_by_id(broadcast_id),
-            self.repo.find_participant(broadcast_id, user_id),
-            self.repo.find_user_summary(user_id),
-        );
-
-        let broadcast = broadcast_result?.ok_or(BroadcastError::NotFound)?;
-        let user = user_result?.ok_or(BroadcastError::UserNotFound)?;
-
-        if !broadcast.is_active() {
-            return Err(BroadcastError::NotLive);
-        }
-
-        // Determine the participant's CURRENT role from DB (never trust the client)
-        let role = if broadcast.creator_id == user_id {
-            ParticipantRole::Host
-        } else {
-            match participant_result? {
-                None => return Err(BroadcastError::NotParticipant),
-                Some(p) if p.left_at.is_some() => return Err(BroadcastError::NotParticipant),
-                Some(p) => p.role,
-            }
-        };
-
-        let livekit_role =
-            LivekitRole::try_from(role.clone()).map_err(|_| BroadcastError::NotParticipant)?;
-
-        // Mint a fresh token with the current (possibly downgraded) role
-        let token = self
-            .livekit
-            .mint_token_with_attributes(
-                user_id,
-                &user.full_name,
-                broadcast_id,
-                &livekit_role,
-                HashMap::from([
-                    ("meno_role".to_string(), role.to_string()),
-                    ("meno_broadcast_id".to_string(), broadcast_id.to_string()),
-                ]),
-            )
-            .map_err(BroadcastError::LiveKitAccess)?;
-
-        // Token TTL is 6 hours from now
-        let expires_at = OffsetDateTime::now_utc() + time::Duration::hours(6);
-
-        tracing::info!(
-            broadcast_id = %broadcast_id,
-            user_id = %user_id,
-            role = %role,
-            "LiveKit token refreshed"
-        );
-
-        Ok(BroadcastRefreshTokenResponse {
-            broadcast_id,
-            token,
-            expires_at,
-        })
-    }
-
-    /// Find active broadcast hosted by user
-    /// Returns the broadcast if found, otherwise None
-    pub async fn find_active_hosted_by(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Option<Broadcast>, BroadcastError> {
-        self.repo.find_active_broadcast_hosted_by_id(user_id).await
-    }
-
-    pub async fn find_active_participant(
-        &self,
-        user_id: Uuid,
-    ) -> Result<Option<BroadcastParticipant>, BroadcastError> {
-        self.repo.find_active_participant(user_id).await
-    }
-
-    pub async fn remove_participant(
-        &self,
-        broadcast_id: Uuid,
-        user_id: Uuid,
-    ) -> Result<(), BroadcastError> {
+        // The host's participant row is written by the same join path a listener uses,
+        // so "who is in this room" has one answer rather than two.
         self.repo
-            .remove_participant(&self.db, broadcast_id, user_id)
-            .await
-    }
+            .join(JoinRequest {
+                broadcast_id: id,
+                participant_id: actor.id,
+                role: ParticipantRole::Host,
+            })
+            .await?;
 
-    pub async fn get_participants_ids(
-        &self,
-        broadcast_id: Uuid,
-    ) -> Result<Vec<Uuid>, BroadcastError> {
-        self.repo.get_participant_ids(broadcast_id).await
-    }
+        // The host is a room member from the moment the broadcast is on air, not from
+        // their first chat frame: without this the room's fan-out — including the
+        // messages other participants send — reaches nobody, because delivery walks the
+        // membership this call records.
+        self.rooms.joined(actor.id, id).await;
 
-    pub async fn get_subscriber_ids(&self, creator_id: Uuid) -> Result<Vec<Uuid>, BroadcastError> {
-        self.repo.get_subscriber_ids(creator_id).await
-    }
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
 
-    pub async fn find_by_id(
-        &self,
-        broadcast_id: Uuid,
-    ) -> Result<Option<Broadcast>, BroadcastError> {
-        self.repo.find_by_id(broadcast_id).await
-    }
-
-    /// Check if user is currently hosting any active broadcast
-    /// Useful for quick checks without fetching full broadcast data
-    pub async fn is_active_host(&self, user_id: Uuid) -> Result<bool, BroadcastError> {
-        self.repo.is_active_host(user_id).await
-    }
-
-    // ==================== HELPERS ====================
-    async fn build_response(
-        &self,
-        broadcast: Broadcast,
-        creator: UserSummary,
-        cohosts: Vec<UserSummary>,
-        ctx: BroadcastContext,
-    ) -> Result<BroadcastResponse, BroadcastError> {
-        let broadcast_state = if broadcast.status == BroadcastStatus::Active {
-            if ctx.is_reconnecting {
-                BroadcastState::Reconnecting
-            } else {
-                BroadcastState::Live
-            }
-        } else {
-            broadcast.get_partial_state()
+        let response = BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
         };
 
-        let duration_in_seconds = match (broadcast.start_time, broadcast.end_time) {
-            (Some(start), Some(end)) => {
-                let difference = end - start;
-                Some(difference.whole_seconds())
-            }
-            _ => None,
-        };
+        // Announced from the response the creator is about to receive, so the frame a
+        // subscriber gets is byte-for-byte the shape `GET /broadcasts/{id}` answers
+        // with — one type, one spelling, no second read to build it.
+        self.events
+            .broadcast_created(&response.broadcast, &[actor.id])
+            .await;
 
-        Ok(BroadcastResponse {
-            id: broadcast.id,
-            title: broadcast.title,
-            description: broadcast.description,
-            time_zone: broadcast.time_zone,
-            image_id: broadcast.image_id,
-            image_url: broadcast.image_url,
-            created_at: broadcast.created_at,
-            start_time: broadcast.start_time,
-            end_time: broadcast.end_time,
-            end_reason: broadcast.end_reason,
-            published_at: broadcast.published_at,
-            recording_enabled: broadcast.recording_enabled,
-            recording_url: broadcast.recording_url,
-            status: broadcast.status,
-            state: broadcast_state,
-            duration_seconds: duration_in_seconds,
-            participant_role: ctx.participant_role,
-            is_subscribed_to_creator: ctx.is_subscribed_to_creator,
-            is_bookmarked: ctx.is_bookmarked,
-            live_participants_count: ctx.live_count,
-            total_participants: ctx.total_count,
-            time_remaining_seconds: ctx.time_remaining_seconds,
-            last_listened_at: ctx.last_listened_at,
-            creator,
-            cohosts,
-        })
+        // The inbox half of the same fact: a follower who was not watching the home
+        // screen still hears that the creator is live. Best-effort by contract, so a
+        // notification outage cannot fail a broadcast that is already on air.
+        self.notices.started(&response.broadcast).await;
+        // Everybody else's "now live" section changed, and only this global nudge can
+        // tell them: the follow graph this module would fan a `newBroadcast` out over
+        // does not exist here.
+        self.notify_home().await;
+
+        Ok(response)
     }
 
-    /// Gathers all viewer-specific signals for a broadcast in one batch.
-    /// Runs the Redis + subscription + bookmark checks concurrently.
-    async fn build_ctx(
+    /// `POST /broadcasts/{id}/end` — end it, as the creator.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`] or [`error::not_live`]. A media failure while tearing the
+    /// room down is logged and swallowed: the broadcast is already ended in the
+    /// database, and refusing the response would tell the client it is still live.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn end(
         &self,
-        broadcast: &Broadcast,
-        participant_id: Option<Uuid>,
-        participant_role: Option<ParticipantRole>,
-        live_count: i64,
-        total_count: i64,
-    ) -> Result<BroadcastContext, BroadcastError> {
-        let grace_key = RedisKey::host_grace(broadcast.id);
-        let is_reconnecting = self.redis.exists(&grace_key).await.unwrap_or(false);
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<EndBroadcastResponse, MenoError> {
+        let existing = self.require(id).await?;
+        require_creator(&existing, actor)?;
 
-        let (is_subscribed, is_bookmarked) = match participant_id {
-            None => (false, false),
-            Some(pid) => {
-                let (is_sub_res, is_bm_res) = tokio::join!(
-                    self.repo.is_subscribed(pid, broadcast.creator_id),
-                    self.repo.is_bookmarked(pid, broadcast.creator_id),
-                );
-                (is_sub_res?, is_bm_res?)
-            }
-        };
-
-        Ok(BroadcastContext {
-            participant_id,
-            is_reconnecting,
-            live_count,
-            total_count,
-            participant_role: participant_role.unwrap_or(ParticipantRole::Participant),
-            participant_is_in_room: false,
-            is_subscribed_to_creator: is_subscribed,
-            is_bookmarked,
-            time_remaining_seconds: None,
-            last_listened_at: None,
-        })
-    }
-
-    async fn deduplicate_cohosts(
-        &self,
-        cohost_ids: &Vec<Uuid>,
-        creator_id: Uuid,
-    ) -> Result<Vec<UserSummary>, BroadcastError> {
-        if cohost_ids.is_empty() {
-            Ok(vec![])
-        } else {
-            if cohost_ids.len() > 3 {
-                return Err(BroadcastError::CohostLimitExceeded(MAX_COHOSTS));
-            }
-
-            if cohost_ids.contains(&creator_id) {
-                return Err(BroadcastError::CannotAddSelfAsCohost);
-            }
-
-            // Handle Deduplicate here
-            let mut deduped = cohost_ids.to_owned();
-            deduped.sort_unstable();
-            deduped.dedup();
-
-            let users = self.repo.find_users_batch(&deduped).await?;
-            if users.len() != deduped.len() {
-                return Err(BroadcastError::OneOrMoreUsersNotFound);
-            }
-
-            Ok(users)
+        // Already over: End is idempotent, so a client whose response was lost — or whose
+        // body failed to parse — can say it twice and be told the same thing. The old
+        // 409 here is what made a successfully ended broadcast look unended to a caller
+        // that retried, and what made a stuck `active` + `end_time` row impossible to
+        // close at all.
+        if existing.end_time.is_some() || existing.status == BroadcastStatus::Ended {
+            return Ok(ended_summary(
+                &existing,
+                existing.end_time.unwrap_or_else(now),
+            ));
         }
+
+        if !existing.is_live() {
+            return Err(error::not_live());
+        }
+
+        let ended_at = now();
+
+        // Who has to hear it, computed *before* the room is torn down and the roster
+        // closed: both of those erase the answer. Presence comes from the media server
+        // for the same reason the reaper reads it there — `left_at` is written by a
+        // client that leaves politely, and the one this list matters for never does.
+        // A media outage is not a reason to refuse the host's End, so it degrades to
+        // "the people we know about".
+        let cohosts = self.repo.list_cohosts(id).await.unwrap_or_default();
+        let present = self.media.room_participants(id).await.unwrap_or_default();
+        let mut recipients = vec![existing.creator_id];
+        for id in cohosts
+            .iter()
+            .filter(|cohost| cohost.is_current())
+            .map(|cohost| cohost.cohost_id)
+            .chain(present)
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        let row = self
+            .repo
+            .mark_ended(id, EndReason::Normal, ended_at)
+            .await?
+            .ok_or_else(error::not_live)?;
+
+        if let Err(failure) = self.media.end_room(id).await {
+            tracing::warn!(%failure, broadcast_id = %id, "room teardown failed after end");
+        }
+
+        // Every open row is closed with the broadcast. Best effort: the row is already
+        // ended, and failing the response would tell the client the opposite of what
+        // happened — but a stale roster is a live count that never falls and a next
+        // broadcast whose all-time counter starts from a room that never emptied.
+        match self.repo.close_participants(id, ended_at).await {
+            Ok(closed) => tracing::info!(broadcast_id = %id, closed, "closed participant rows"),
+            Err(failure) => {
+                tracing::error!(%failure, broadcast_id = %id, "could not close participant rows");
+            }
+        }
+
+        // The room is over, so every replica that was subscribed drops its membership
+        // and its channel. Doing this here rather than leaving it to each socket's
+        // disconnect is what stops a participant who keeps the app open from receiving
+        // frames for a broadcast that ended.
+        self.rooms.closed(id).await;
+
+        // The same announcement the reaper makes for an abandoned broadcast. Without it
+        // a participant on the room page is only told what happened by the host's own
+        // client, and a host whose device died mid-request would leave them in a room
+        // that no longer exists.
+        self.events
+            .ended(row.id, EndReason::Normal, &recipients)
+            .await;
+
+        // The inbox row the same recipients are owed. `recipients` was computed before
+        // the roster closed, which is what makes it the audience rather than a guess.
+        self.notices.ended(row.id, &row.title, &recipients).await;
+
+        // And the ended broadcast leaves the home sections it was drawn in.
+        self.notify_home().await;
+
+        Ok(ended_summary(&row, ended_at))
     }
 
-    /// Actual database fetch (extracted for use in coalesce_cache)
-    async fn get_broadcasts_from_db(
+    /// `POST /broadcasts/{id}/resume` — re-enter a live broadcast this account is
+    /// already part of.
+    ///
+    /// A restart needs this and cannot use the other two: `go_live` refuses a broadcast
+    /// that is already on air, and `join` refuses the creator. Both refusals are right
+    /// on their own — neither is a "come back" — so coming back has its own flow.
+    ///
+    /// It exists because a media token lives for minutes, not hours: the token in a
+    /// session stored before the process died is expired by the time the app is back, so
+    /// re-entering means asking the API for a fresh one. Nothing about the broadcast
+    /// changes; this is the same host, the same room, and the same roster row re-opened.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_live`] when it is not on air, [`error::not_joined`] when the caller
+    /// is neither its host, one of its cohosts, nor on its roster,
+    /// [`error::media_unavailable`] when a fresh token cannot be minted.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn resume(
         &self,
-        query: &BroadcastQuery,
-        requester_id: Option<Uuid>,
-    ) -> Result<CursorPage<BroadcastListItem>, BroadcastError> {
-        let limit = query.limit();
-        let sort = query.effective_sort();
-        let rows = self.repo.find_broadcasts(query, requester_id).await?;
-        let page = self.build_broadcast_page(rows, limit, sort);
-        Ok(page)
-    }
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let existing = self.require(id).await?;
+        if !existing.is_live() {
+            return Err(error::not_live());
+        }
 
-    async fn get_participants_from_db(
-        &self,
-        broadcast_id: Uuid,
-        query: &ParticipantQuery,
-    ) -> Result<CursorPage<ParticipantListItem>, BroadcastError> {
-        let limit = query.limit();
-        let rows = self.repo.find_participants(broadcast_id, query).await?;
-        Ok(CursorPage::from_rows(rows, limit, |r| {
-            Cursor::from_timestamp_id(r.joined_at, r.id)
-        }))
-    }
+        let role = self.role_for(&existing, actor.id).await?;
+        if role == ParticipantRole::Participant
+            && self.repo.find_participant(id, actor.id).await?.is_none()
+        {
+            // Not on the roster and not invited: this is a join, and a join of a live
+            // broadcast is a deliberate act rather than something a launch does.
+            return Err(error::not_joined());
+        }
 
-    fn build_broadcast_page(
-        &self,
-        rows: Vec<BroadcastListItem>,
-        limit: i64,
-        sort: BroadcastSortBy,
-    ) -> CursorPage<BroadcastListItem> {
-        CursorPage::from_rows(rows, limit, |r: &BroadcastListItem| match sort {
-            BroadcastSortBy::Title | BroadcastSortBy::CreatedAt => {
-                Cursor::from_timestamp_id(r.created_at, r.id)
-            }
-            BroadcastSortBy::StartTime => {
-                let ts = r.start_time.unwrap_or(OffsetDateTime::now_utc());
-                Cursor::from_timestamp_id(ts, r.id)
-            }
-            BroadcastSortBy::EndTime => {
-                let ts = r.end_time.unwrap_or(r.created_at);
-                Cursor::from_timestamp_id(ts, r.id)
-            }
-            BroadcastSortBy::TotalParticipants => Cursor::from_score_id(r.total_participants, r.id),
+        // The room may have been torn down while nobody was in it — a broadcast two
+        // minutes from being reaped is exactly the one a host comes back to — and
+        // creating it is idempotent.
+        if role == ParticipantRole::Host {
+            self.media.create_room(id).await?;
+        }
+
+        // Re-opening a closed roster row, or doing nothing when it is still open: both
+        // are what "this client is here" means, and the all-time counter moves for the
+        // first only.
+        self.repo
+            .join(JoinRequest {
+                broadcast_id: id,
+                participant_id: actor.id,
+                role,
+            })
+            .await?;
+
+        let token = self.media.mint_join_token(actor, id, role).await?;
+
+        // Coming back is a re-subscribe: the socket that reconnects is a new connection
+        // on this replica, and the room membership recorded for the old one went with
+        // it. Idempotent on both the local registry and the shared SET.
+        self.rooms.joined(actor.id, id).await;
+
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+
+        Ok(BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
         })
     }
+
+    /// `POST /broadcasts/{id}/token` — a fresh media token for a session already in a
+    /// live broadcast.
+    ///
+    /// The role is read from the broadcast, never from the request: a cohost demoted
+    /// since they joined gets a participant token, and somebody removed from the roster
+    /// is refused. Nothing here re-joins them or changes the roster — a refresh is not a
+    /// re-entry, and announcing one again would duplicate the room's presence event.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_live`] when it is not on air, [`error::not_joined`] when the caller is
+    /// neither its host, a current cohost, nor on its open roster,
+    /// [`error::media_unavailable`] when a token cannot be minted.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn token(
+        &self,
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let existing = self.require(id).await?;
+        if !existing.is_live() {
+            return Err(error::not_live());
+        }
+
+        let role = self.role_for(&existing, actor.id).await?;
+        if role == ParticipantRole::Participant {
+            let present = self
+                .repo
+                .find_participant(id, actor.id)
+                .await?
+                .is_some_and(|participant| participant.is_present());
+            if !present {
+                return Err(error::not_joined());
+            }
+        }
+
+        let token = self.media.mint_join_token(actor, id, role).await?;
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, actor).await?;
+
+        Ok(BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/join` — join a live broadcast.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_live`], [`error::creator_cannot_join`], [`error::already_joined`],
+    /// or [`error::media_unavailable`].
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, user = %user.id))]
+    pub async fn join(
+        &self,
+        id: Uuid,
+        user: &UserSummary,
+    ) -> Result<BroadcastSessionResponse, MenoError> {
+        let row = self.require(id).await?;
+        if !row.is_live() {
+            return Err(error::not_live());
+        }
+        if row.creator_id == user.id {
+            return Err(error::creator_cannot_join());
+        }
+
+        // One read answers both questions this flow asks: what the account may do, and
+        // who has to hear that they arrived.
+        let cohosts = self.repo.list_cohosts(id).await?;
+        let role = role_in(&row, &cohosts, user.id);
+
+        match self
+            .repo
+            .join(JoinRequest {
+                broadcast_id: id,
+                participant_id: user.id,
+                role,
+            })
+            .await?
+        {
+            JoinOutcome::Joined | JoinOutcome::Rejoined => {}
+            JoinOutcome::AlreadyPresent => return Err(error::already_joined()),
+        }
+        let token = self.media.mint_join_token(user, id, role).await?;
+
+        // After the token, not before: a join whose media token could not be minted is
+        // a client that never enters the room, and subscribing it would leave a member
+        // nobody can deliver anything useful to.
+        self.rooms.joined(user.id, id).await;
+
+        let row = self.require(id).await?;
+        let creator = self.creator_of(&row).await?;
+        let viewer = self.viewer_for(&row, user).await?;
+
+        let response = BroadcastSessionResponse {
+            broadcast: self.assemble(&row, Some(creator), Some(viewer)).await?,
+            token,
+        };
+
+        // Announced once the token exists: a frame about a participant who was never
+        // given a room to enter would be an announcement about nobody. The count comes
+        // from the response the joiner receives, so the number a host applies is the
+        // number the joiner was shown.
+        self.announce_roster_change(
+            &row,
+            &cohosts,
+            participant_frame(user, role, true),
+            response.broadcast.live_participants_count,
+            user.id,
+        )
+        .await;
+
+        Ok(response)
+    }
+
+    /// `POST /broadcasts/{id}/leave`.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_joined`] or [`error::host_cannot_leave`].
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, user = %user.id))]
+    pub async fn leave(
+        &self,
+        id: Uuid,
+        user: &UserSummary,
+    ) -> Result<LeaveBroadcastResponse, MenoError> {
+        let row = self.require(id).await?;
+        let cohosts = self.repo.list_cohosts(id).await?;
+        let role = role_in(&row, &cohosts, user.id);
+
+        match self.repo.leave(id, user.id).await? {
+            LeaveOutcome::IsHost => return Err(error::host_cannot_leave()),
+            LeaveOutcome::NotPresent => return Err(error::not_joined()),
+            LeaveOutcome::Left => {}
+        }
+
+        // Best effort, and deliberately not fatal: the row is closed either way, and a
+        // de-participant still in the room is a media problem rather than a lost write.
+        if let Err(failure) = self.media.remove_participant(id, user.id).await {
+            tracing::warn!(%failure, broadcast_id = %id, "evicting a departed participant failed");
+        }
+
+        // And out of the delivery room: the row is closed, so this socket must stop
+        // receiving frames for a room the account is no longer in.
+        self.rooms.left(user.id, id).await;
+
+        // The count after the leave, because that is what the room header draws next.
+        // A read that fails must not fail the leave: the row is already closed, and the
+        // client that cares will refetch.
+        let count = self.repo.live_participant_count(id).await.unwrap_or(0);
+        self.announce_roster_change(
+            &row,
+            &cohosts,
+            participant_frame(user, role, false),
+            count,
+            user.id,
+        )
+        .await;
+
+        // A participant leaving does not change what any home section draws, so no
+        // home nudge here.
+        Ok(LeaveBroadcastResponse {
+            success: true,
+            broadcast_id: id,
+            user_id: user.id,
+            left_at: now(),
+        })
+    }
+
+    /// `POST /broadcasts/{id}/cohosts` — invite one, as the creator.
+    ///
+    /// §8.6 makes co-hosting a two-step handshake: this writes the invitation and tells
+    /// the invitee, but the cohost list changes only when they accept. The notification
+    /// row is created here, with the invitation, so the invitee's inbox and socket
+    /// arrive together.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`], [`error::cannot_add_self_as_cohost`],
+    /// [`error::user_not_found`], [`error::already_cohost`] or
+    /// [`error::cohost_limit_reached`].
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn add_cohost(
+        &self,
+        id: Uuid,
+        request: AddCohostRequest,
+        actor: &UserSummary,
+    ) -> Result<super::dto::CohostInvitationResponse, MenoError> {
+        let row = self.require(id).await?;
+        require_creator(&row, actor)?;
+
+        if request.cohost == actor.id {
+            return Err(error::cannot_add_self_as_cohost());
+        }
+
+        let existing = self.repo.list_cohosts(id).await?;
+        if existing.iter().any(|c| c.cohost_id == request.cohost) {
+            return Err(error::already_cohost());
+        }
+        if existing.len() >= super::dto::MAX_COHOSTS {
+            return Err(error::cohost_limit_reached(super::dto::MAX_COHOSTS));
+        }
+
+        let user = self
+            .repo
+            .find_user(request.cohost)
+            .await?
+            .ok_or_else(error::user_not_found)?;
+
+        // Re-issuing an outstanding invitation is deliberate: the upsert refreshes it,
+        // and the invitee gets one more frame rather than a silent no-op.
+        let invitation = self
+            .repo
+            .create_invitation(id, actor.id, request.cohost)
+            .await?;
+        let invitee = user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url);
+
+        self.events
+            .cohost_invited(
+                id,
+                invitation.id,
+                &actor.full_name,
+                &row.title,
+                &[request.cohost],
+            )
+            .await;
+        self.notices
+            .cohost_invited(id, &row.title, actor, request.cohost)
+            .await;
+
+        Ok(super::dto::CohostInvitationResponse {
+            id: invitation.id,
+            broadcast_id: id,
+            invitee,
+            status: invitation.status.as_str().to_owned(),
+            created_at: invitation.created_at,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/cohosts/{invitationId}/accept` — the invitee's yes.
+    ///
+    /// Accepting into a live room also mints the cohost's publish token and sends it on
+    /// `newCohost`; a draft has no room yet, so the token is minted on go-live instead.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when the invitation is not this invitee's on this broadcast,
+    /// 409 when it is no longer pending.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, invitation_id = %invitation_id, actor = %actor.id))]
+    pub async fn accept_cohost_invitation(
+        &self,
+        id: Uuid,
+        invitation_id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<super::dto::CohostSessionResponse, MenoError> {
+        let row = self.require(id).await?;
+        let invitation = self
+            .repo
+            .find_invitation(invitation_id)
+            .await?
+            .ok_or_else(error::not_found)?;
+
+        if invitation.broadcast_id != id || invitation.invitee_id != actor.id {
+            return Err(error::not_found());
+        }
+        if invitation.status != super::model::InvitationStatus::Pending {
+            return Err(MenoError::Conflict {
+                code: meno_core::ErrorCode::Conflict,
+                message: "this cohost invitation is no longer pending".to_owned(),
+            });
+        }
+
+        let existing = self.repo.list_cohosts(id).await?;
+        if !existing.iter().any(|c| c.cohost_id == actor.id) {
+            if existing.len() >= super::dto::MAX_COHOSTS {
+                return Err(error::cohost_limit_reached(super::dto::MAX_COHOSTS));
+            }
+            let mut ids: Vec<Uuid> = existing.iter().map(|c| c.cohost_id).collect();
+            ids.push(actor.id);
+            self.repo.set_cohosts(id, row.creator_id, &ids).await?;
+        }
+
+        self.repo
+            .respond_invitation(
+                invitation_id,
+                super::model::InvitationStatus::Accepted,
+                now(),
+            )
+            .await?;
+
+        let token = if row.is_live() {
+            let token = self
+                .media
+                .mint_join_token(actor, id, ParticipantRole::Cohost)
+                .await?;
+            self.repo
+                .join(JoinRequest {
+                    broadcast_id: id,
+                    participant_id: actor.id,
+                    role: ParticipantRole::Cohost,
+                })
+                .await?;
+            // The socket has to be in the room before the token is used to publish to
+            // it, exactly as `join` does for a listener.
+            self.rooms.joined(actor.id, id).await;
+            self.events
+                .cohost_joined(id, actor.id, &actor.full_name, &token, &[actor.id])
+                .await;
+            Some(token)
+        } else {
+            None
+        };
+
+        self.events
+            .cohost_accepted(id, actor.id, &actor.full_name, &[row.creator_id])
+            .await;
+
+        Ok(super::dto::CohostSessionResponse {
+            user: user_summary(
+                actor.id,
+                actor.full_name.clone(),
+                actor.avatar_id.clone(),
+                actor.avatar_url.clone(),
+            ),
+            livekit_token: token,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/cohosts/{invitationId}/decline` — the invitee's no.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when the invitation is not this invitee's, 409 when it is no
+    /// longer pending.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, invitation_id = %invitation_id, actor = %actor.id))]
+    pub async fn decline_cohost_invitation(
+        &self,
+        id: Uuid,
+        invitation_id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<(), MenoError> {
+        let row = self.require(id).await?;
+        let invitation = self
+            .repo
+            .find_invitation(invitation_id)
+            .await?
+            .ok_or_else(error::not_found)?;
+
+        if invitation.broadcast_id != id || invitation.invitee_id != actor.id {
+            return Err(error::not_found());
+        }
+        if invitation.status != super::model::InvitationStatus::Pending {
+            return Err(MenoError::Conflict {
+                code: meno_core::ErrorCode::Conflict,
+                message: "this cohost invitation is no longer pending".to_owned(),
+            });
+        }
+
+        self.repo
+            .respond_invitation(
+                invitation_id,
+                super::model::InvitationStatus::Declined,
+                now(),
+            )
+            .await?;
+        self.events
+            .cohost_declined(id, actor.id, &[row.creator_id])
+            .await;
+
+        Ok(())
+    }
+
+    /// The §8.2 start job: a broadcast whose start time has arrived gets one reminder to
+    /// the creator's subscribers.
+    ///
+    /// It deliberately does **not** go live. The module guide is explicit that the
+    /// creator still presses go-live; the job only makes the scheduled moment visible.
+    /// `scheduled_notified_at` is claimed before anything is sent, so a restart cannot
+    /// repeat the reminder.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure, before or during the sweep.
+    #[tracing::instrument(skip_all)]
+    pub async fn announce_due_scheduled(&self, at: OffsetDateTime) -> Result<usize, MenoError> {
+        let due = self.repo.list_due_scheduled(at).await?;
+        let mut sent = 0;
+
+        for row in due {
+            if !self.repo.mark_scheduled_notified(row.id, at).await? {
+                continue;
+            }
+
+            let response = self.render(row, None, None).await?;
+            let recipients = self.notices.scheduled(&response).await;
+            self.events
+                .scheduled_broadcast(&response, &recipients)
+                .await;
+            sent += 1;
+        }
+
+        Ok(sent)
+    }
+
+    /// `DELETE /broadcasts/{id}/cohosts/{cohostId}` — remove one, as the creator.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_creator`] or [`error::not_joined`] when there is no such cohost —
+    /// which is the honest answer for "that user is not a cohost of this broadcast".
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn remove_cohost(
+        &self,
+        id: Uuid,
+        cohost_id: Uuid,
+        actor: &UserSummary,
+        remove_from_room: bool,
+    ) -> Result<(), MenoError> {
+        let row = self.require(id).await?;
+        require_creator(&row, actor)?;
+
+        let existing = self.repo.list_cohosts(id).await?;
+        if !existing.iter().any(|cohost| cohost.cohost_id == cohost_id) {
+            return Err(error::not_joined());
+        }
+
+        let ids: Vec<Uuid> = existing
+            .iter()
+            .map(|c| c.cohost_id)
+            .filter(|id| *id != cohost_id)
+            .collect();
+        self.repo.set_cohosts(id, actor.id, &ids).await?;
+
+        // The demoted account is still in the room and still holds a cohost token; tell
+        // it, with a listener token, before (or instead of) evicting it.
+        if row.is_live() && !remove_from_room {
+            match self.repo.find_user(cohost_id).await {
+                Ok(Some(user)) => {
+                    let who =
+                        user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url);
+                    match self
+                        .media
+                        .mint_join_token(&who, id, ParticipantRole::Participant)
+                        .await
+                    {
+                        Ok(token) => {
+                            self.events.cohost_demoted(id, &token, &[cohost_id]).await;
+                        }
+                        Err(failure) => tracing::warn!(
+                            %failure,
+                            broadcast_id = %id,
+                            cohost_id = %cohost_id,
+                            "minting a listener token for a removed cohost failed"
+                        ),
+                    }
+                }
+                Ok(None) => {}
+                Err(failure) => tracing::warn!(
+                    %failure,
+                    broadcast_id = %id,
+                    cohost_id = %cohost_id,
+                    "reading a removed cohost failed"
+                ),
+            }
+        }
+
+        // Demoted to a listener in the room, and evicted if the caller asked: a
+        // de-cohosted participant who keeps publishing is the failure
+        // `remove_from_room` exists to prevent, and its default is the safe branch.
+        self.repo
+            .join(JoinRequest {
+                broadcast_id: id,
+                participant_id: cohost_id,
+                role: ParticipantRole::Participant,
+            })
+            .await?;
+
+        if remove_from_room && let Err(failure) = self.media.remove_participant(id, cohost_id).await
+        {
+            tracing::warn!(%failure, broadcast_id = %id, cohost_id = %cohost_id, "evicting a removed cohost failed");
+        }
+
+        // Announced after the roster write, so a client that reacts by refetching sees
+        // the demoted role rather than the old one. The removed account is included:
+        // its client is the one that must stop drawing host controls.
+        let mut recipients = vec![actor.id];
+        for cohost in existing.iter().filter(|cohost| cohost.is_current()) {
+            if cohost.cohost_id != cohost_id && !recipients.contains(&cohost.cohost_id) {
+                recipients.push(cohost.cohost_id);
+            }
+        }
+        if !recipients.contains(&cohost_id) {
+            recipients.push(cohost_id);
+        }
+        self.events.cohost_removed(id, cohost_id, &recipients).await;
+
+        Ok(())
+    }
+
+    /// `GET /broadcasts/{id}/participants` — the roster.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] for the broadcast, or an invalid cursor as 400.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id))]
+    pub async fn participants(
+        &self,
+        id: Uuid,
+        query: &ParticipantQuery,
+    ) -> Result<CursorPage<ParticipantListItem>, MenoError> {
+        self.require(id).await?;
+        let cursor = decode_cursor(query.cursor())?;
+
+        let rows = self
+            .repo
+            .list_participants(
+                id,
+                ParticipantFilter {
+                    role: query.role,
+                    present_only: false,
+                    limit_plus_one: query.limit_plus_one(),
+                    cursor,
+                    order: query.effective_order(),
+                },
+            )
+            .await?;
+
+        let users = self
+            .repo
+            .find_users(&rows.iter().map(|p| p.participant_id).collect::<Vec<_>>())
+            .await?;
+        let by_id: std::collections::HashMap<Uuid, UserSummary> =
+            users.into_iter().map(|user| (user.id, user)).collect();
+
+        Ok(CursorPage::from_rows(
+            rows.iter()
+                .map(|participant| ParticipantListItem {
+                    id: participant.participant_id,
+                    full_name: by_id
+                        .get(&participant.participant_id)
+                        .map_or("Unknown".to_owned(), |user| user.full_name.clone()),
+                    avatar_id: by_id
+                        .get(&participant.participant_id)
+                        .and_then(|user| user.avatar_id.clone()),
+                    avatar_url: by_id
+                        .get(&participant.participant_id)
+                        .and_then(|user| user.avatar_url.clone()),
+                    role: participant.role,
+                    joined_at: participant.joined_at,
+                    is_joined: participant.is_present(),
+                })
+                .collect::<Vec<_>>(),
+            query.limit(),
+            |item| Cursor::from_timestamp_id(item.joined_at, item.id),
+        ))
+    }
+
+    // ── internals ─────────────────────────────────────────────────────────
+
+    /// The row, or [`error::not_found`].
+    async fn require(&self, id: Uuid) -> Result<Broadcast, MenoError> {
+        self.repo.find_by_id(id).await?.ok_or_else(error::not_found)
+    }
+
+    /// The creator, as a [`UserSummary`].
+    ///
+    /// # Errors
+    ///
+    /// [`error::internal`]. Not [`error::user_not_found`]: the row has a foreign key to
+    /// `users`, so a missing creator means the database is inconsistent, and a 404 would
+    /// blame the client for it.
+    async fn creator_of(&self, row: &Broadcast) -> Result<UserSummary, MenoError> {
+        self.repo.find_user(row.creator_id).await?.ok_or_else(|| {
+            error::internal(
+                "load_creator",
+                format!("broadcast {} has no creator row", row.id),
+            )
+        })
+    }
+
+    /// What `user_id` may do in `row`'s room: host, cohost, participant or nothing.
+    async fn role_for(&self, row: &Broadcast, user_id: Uuid) -> Result<ParticipantRole, MenoError> {
+        if row.creator_id == user_id {
+            return Ok(ParticipantRole::Host);
+        }
+        Ok(role_in(
+            row,
+            &self.repo.list_cohosts(row.id).await?,
+            user_id,
+        ))
+    }
+
+    /// The caller's view of a broadcast, or `None` when they are not a live account.
+    ///
+    /// # Errors
+    ///
+    /// [`error::user_not_found`] when the caller id has no live `users` row. It cannot
+    /// fall back to "not joined": a deleted account would otherwise be told it is simply
+    /// not in the room, which is a different problem with the same fix.
+    async fn viewer_for(&self, row: &Broadcast, user: &UserSummary) -> Result<Viewer, MenoError> {
+        let role = self.role_for(row, user.id).await?;
+        let participant: Option<BroadcastParticipant> =
+            self.repo.find_participant(row.id, user.id).await?;
+
+        Ok(Viewer {
+            role,
+            is_joined: participant.as_ref().is_some_and(|p| p.is_present()),
+            // Bookmarks live in `broadcast_bookmarks`, which this port does not read
+            // yet; reporting `false` would be a measurement, so it is reported as the
+            // absence of a fact the module does not have. See the module docs on what
+            // this port leaves out.
+            is_bookmarked: false,
+            live_participants_count: self.repo.live_participant_count(row.id).await?,
+            time_remaining_seconds: None,
+        })
+    }
+
+    /// Turn a row plus the caller's facts into a response.
+    async fn render(
+        &self,
+        row: Broadcast,
+        creator: Option<UserSummary>,
+        viewer: Option<Viewer>,
+    ) -> Result<BroadcastResponse, MenoError> {
+        self.assemble(&row, creator, viewer).await
+    }
+
+    /// The shared half of every response: relations first, then the row.
+    async fn assemble(
+        &self,
+        row: &Broadcast,
+        creator: Option<UserSummary>,
+        viewer: Option<Viewer>,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let creator = match creator {
+            Some(creator) => creator,
+            None => self.creator_of(row).await?,
+        };
+
+        let cohosts = self
+            .repo
+            .list_cohosts(row.id)
+            .await?
+            .iter()
+            .map(|cohost: &BroadcastCohost| cohost.cohost_id)
+            .collect::<Vec<_>>();
+        let cohost_users = self.repo.find_users(&cohosts).await?;
+
+        BroadcastResponse::new(
+            row,
+            creator,
+            cohost_users
+                .into_iter()
+                .map(|user| user_summary(user.id, user.full_name, user.avatar_id, user.avatar_url))
+                .collect(),
+            viewer.as_ref(),
+        )
+    }
+
+    /// Tell the creator and the current cohosts that a roster row changed.
+    ///
+    /// The audience is §10.3's for both directions of this event — host and cohosts —
+    /// minus the account the frame is about, which is the one client that already knows.
+    /// The cohost list is passed in rather than re-read: every caller has just read it to
+    /// work out the role, and a second read is a query that can disagree with the first.
+    async fn announce_roster_change(
+        &self,
+        row: &Broadcast,
+        cohosts: &[BroadcastCohost],
+        participant: ParticipantFrame,
+        count: i64,
+        actor: Uuid,
+    ) {
+        let mut recipients = Vec::with_capacity(1 + cohosts.len());
+        for id in std::iter::once(row.creator_id).chain(
+            cohosts
+                .iter()
+                .filter(|c| c.is_current())
+                .map(|c| c.cohost_id),
+        ) {
+            if id != actor && !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        if recipients.is_empty() {
+            return;
+        }
+
+        self.events
+            .participant_changed(
+                &ParticipantChange {
+                    broadcast_id: row.id,
+                    participant,
+                    count,
+                },
+                &recipients,
+            )
+            .await;
+
+        // The header counter, for clients that ignore roster rows and for a poll answer
+        // that should not have to invent a participant to update it.
+        self.events
+            .participant_count_changed(row.id, count, &recipients)
+            .await;
+    }
+
+    /// The host's last socket closed.
+    ///
+    /// Starts the abandonment clock and tells the room how long it has. The clock is the
+    /// same `abandoned_since` the reaper ends on, so the frame's `gracePeriodInSecs` and
+    /// the sweep cannot disagree about the deadline — the reaper counts from this write.
+    ///
+    /// `disconnect_count` is 1 for this process's first drop. The tiered counter lives in
+    /// Redis on `master`; without a shared counter a second drop inside the window would
+    /// be indistinguishable from the first, so the conservative tier is used and the
+    /// reaper still enforces the same deadline.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure. A missing live broadcast is not an error: most sockets
+    /// belong to people who are not hosting anything.
+    #[tracing::instrument(skip_all, fields(user = %user_id))]
+    pub async fn host_disconnected(&self, user_id: Uuid) -> Result<(), MenoError> {
+        let Some(row) = self.repo.find_live_by_creator(user_id).await? else {
+            return Ok(());
+        };
+
+        let disconnect_count = 1_u64;
+        let grace_secs = GracePeriodConfig::default().grace_seconds(disconnect_count);
+        self.repo.set_abandoned_since(row.id, Some(now())).await?;
+
+        let recipients = self.room_recipients(&row).await;
+        self.events
+            .host_disconnected(row.id, grace_secs, disconnect_count, &recipients)
+            .await;
+        Ok(())
+    }
+
+    /// The host's socket is back.
+    ///
+    /// Clears the abandonment clock and tells the room to keep watching. A reconnect
+    /// with no clock set is silent: announcing "still here" every time somebody opens a
+    /// tab would be a frame per connection for a fact nobody needed.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure.
+    #[tracing::instrument(skip_all, fields(user = %user_id))]
+    pub async fn host_reconnected(&self, user_id: Uuid) -> Result<(), MenoError> {
+        let Some(row) = self.repo.find_live_by_creator(user_id).await? else {
+            return Ok(());
+        };
+
+        let abandoned = self
+            .repo
+            .list_live()
+            .await?
+            .into_iter()
+            .find(|live| live.id == row.id)
+            .and_then(|live| live.abandoned_since);
+        if abandoned.is_none() {
+            return Ok(());
+        }
+
+        self.repo.set_abandoned_since(row.id, None).await?;
+        let recipients = self.room_recipients(&row).await;
+        self.events.host_reconnected(row.id, &recipients).await;
+        Ok(())
+    }
+
+    /// Who is in `row`'s room: its creator, its current cohosts, and everybody the media
+    /// server reports.
+    ///
+    /// The same audience the reaper computes for an end, and degraded the same way: a
+    /// media outage means "the people we know about", not a failed announcement.
+    async fn room_recipients(&self, row: &Broadcast) -> Vec<Uuid> {
+        let mut recipients = vec![row.creator_id];
+
+        for id in self
+            .repo
+            .list_cohosts(row.id)
+            .await
+            .unwrap_or_default()
+            .iter()
+            .filter(|cohost| cohost.is_current())
+            .map(|cohost| cohost.cohost_id)
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        for id in self
+            .media
+            .room_participants(row.id)
+            .await
+            .unwrap_or_default()
+        {
+            if !recipients.contains(&id) {
+                recipients.push(id);
+            }
+        }
+
+        recipients
+    }
+
+    /// Nudge every connected client that its home screen is stale.
+    ///
+    /// Fired after any mutation that changes what the home sections draw, so a client
+    /// does not have to poll to notice a broadcast went live, changed, ended or was
+    /// deleted. The frame carries only a timestamp; the client refetches the sections it
+    /// already has.
+    async fn notify_home(&self) {
+        self.events.home_invalidated().await;
+    }
+
+    /// Resolve a cohost list, refusing a duplicate and an unknown account.
+    async fn resolve_cohosts(
+        &self,
+        inviter: &Uuid,
+        requested: Option<Vec<Uuid>>,
+    ) -> Result<Vec<Uuid>, MenoError> {
+        let Some(requested) = requested else {
+            return Ok(Vec::new());
+        };
+        if requested.len() > super::dto::MAX_COHOSTS {
+            return Err(error::cohost_limit_reached(super::dto::MAX_COHOSTS));
+        }
+
+        // One query for the whole list, not one per id (§9.4).
+        let found = self.repo.find_users(&requested).await?;
+        if found.len() != requested.len() {
+            return Err(error::user_not_found());
+        }
+
+        if requested.contains(inviter) {
+            return Err(error::cannot_add_self_as_cohost());
+        }
+
+        Ok(requested)
+    }
+}
+
+/// Creator-only. Deliberately separate from the "does it exist" check so a reader sees
+/// both rules named rather than one combined condition.
+fn require_creator(broadcast: &Broadcast, actor: &UserSummary) -> Result<(), MenoError> {
+    if broadcast.creator_id == actor.id {
+        Ok(())
+    } else {
+        Err(error::not_creator())
+    }
+}
+
+/// The summary `end` answers with, for a broadcast that is over.
+///
+/// Shared by the flow that ends it and the idempotent path that finds it already ended,
+/// so a retried End and the original answer cannot describe the same broadcast
+/// differently — the duration is derived here, once, from the row.
+fn ended_summary(row: &Broadcast, ended_at: time::OffsetDateTime) -> EndBroadcastResponse {
+    let duration_secs = row.published_at.map_or(0, |started| {
+        ended_at.unix_timestamp() - started.unix_timestamp()
+    });
+
+    EndBroadcastResponse {
+        broadcast_id: row.id,
+        broadcast_title: row.title.clone(),
+        broadcast_image_url: row.image_url.clone(),
+        creator_id: row.creator_id,
+        ended_reason: row.end_reason.unwrap_or(EndReason::Normal),
+        ended_at,
+        duration_secs,
+        total_participants: row.total_participants,
+        recording_enabled: row.recording_enabled,
+    }
+}
+
+/// What `user_id` may do in `broadcast`, given its current cohosts.
+///
+/// Split out from [`BroadcastService::role_for`] so the flows that need the cohost list
+/// for a second reason — join and leave, which also address the roster announcement —
+/// compute the role from the list they already have instead of reading it twice.
+fn role_in(broadcast: &Broadcast, cohosts: &[BroadcastCohost], user_id: Uuid) -> ParticipantRole {
+    if broadcast.creator_id == user_id {
+        return ParticipantRole::Host;
+    }
+    if cohosts
+        .iter()
+        .any(|cohost| cohost.is_current() && cohost.cohost_id == user_id)
+    {
+        ParticipantRole::Cohost
+    } else {
+        ParticipantRole::Participant
+    }
+}
+
+/// One account's row in a roster announcement.
+fn participant_frame(
+    user: &UserSummary,
+    role: ParticipantRole,
+    is_joined: bool,
+) -> ParticipantFrame {
+    ParticipantFrame {
+        id: user.id,
+        full_name: user.full_name.clone(),
+        avatar_id: user.avatar_id.clone(),
+        avatar_url: user.avatar_url.clone(),
+        role,
+        is_joined,
+    }
+}
+
+/// Refuse a time zone that is not shaped like an IANA identifier.
+///
+/// # Why this is a shape check and not a lookup
+///
+/// `std` has no zone database, and the workspace deliberately does not pull in a tzdb
+/// crate: a wrong zone renders a scheduled broadcast at the wrong wall-clock time, and
+/// the *cheap* failure — refusing a name that is obviously not a zone — is the one that
+/// catches every client bug. A syntactically valid but unknown zone is stored as sent,
+/// which is recorded here as a known limitation rather than dressed up: a deployment
+/// that needs real resolution wants the tzdb, and that is a dependency decision, not a
+/// validation one.
+fn check_time_zone(zone: &str) -> Result<(), MenoError> {
+    let plausible = zone.split('/').count() == 2
+        && zone
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '/' | '_' | '-'));
+
+    if plausible {
+        Ok(())
+    } else {
+        Err(error::invalid_time_zone(zone))
+    }
+}
+
+/// Decode a `?cursor=` into the keyset boundary, once, at the edge.
+fn decode_cursor(cursor: Option<&Cursor>) -> Result<Option<(OffsetDateTime, Uuid)>, MenoError> {
+    cursor
+        .map(Cursor::to_timestamp_id)
+        .transpose()
+        .map_err(Into::into)
+}
+
+/// A [`UserSummary`] built from a caller the auth middleware already verified.
+///
+/// The one place an [`AuthUser`](crate::middleware::auth::AuthUser) becomes the
+/// broadcast module's own type. Avatars are `None` because the token's claims do not
+/// carry them; the avatar columns are read by the repository for the users a response
+/// actually lists, and inventing an empty one here would render a blank avatar for the
+/// caller on their own broadcast.
+#[must_use]
+pub fn summary_of(user: &crate::middleware::auth::AuthUser) -> UserSummary {
+    user_summary(user.id, user.full_name.clone(), None, None)
 }

@@ -1,225 +1,686 @@
-use crate::modules::auth::repository::AuthRepository;
-use crate::modules::notes::state::NotesState;
-use crate::shared::identity::IdentityReader;
-use crate::{
-    config::Config,
-    jobs::Jobs,
-    modules::{
-        auth::state::AuthState, broadcast::state::BroadcastState, chat::state::ChatState,
-        notifications::state::NotificationState, profile::state::ProfileState,
-        subscribers::state::SubscribersState,
-    },
-    routes::{build_meno_routes, health},
-    shared::{
-        middleware::timing::timing_middleware,
-        services::{
-            livekit::LivekitService,
-            push::PushNotificationService,
-            redis::Redis,
-            storage::StorageService,
-            ws::{WsService, pubsub::WsPubSubBridge},
-        },
-    },
-};
-use axum::{
-    Router,
-    http::{HeaderName, Request, StatusCode, header},
-    middleware::from_fn,
-    routing::get,
-};
-use axum_prometheus::PrometheusMetricLayer;
-use lettre::{AsyncSmtpTransport, Tokio1Executor};
-use livekit_api::services::room::RoomClient;
-use sqlx::PgPool;
-use std::{sync::Arc, time::Duration};
-use tower::ServiceBuilder;
-use tower_http::{
-    cors::{AllowHeaders, AllowOrigin, Any, CorsLayer},
-    request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer},
-    timeout::TimeoutLayer,
-    trace::TraceLayer,
-};
-use crate::modules::settings::state::SettingsState;
+//! Top-level application state.
+//!
+//! # What this is, and what `master` had
+//!
+//! `master` had a `MenoState` with thirteen fields — `ProfileState`, `BroadcastState`,
+//! `SubscribersState`, `NotificationState`, `ChatState`, `NotesState`, `SettingsState`,
+//! `WsService`, `Jobs`, `smtp` — assembled by a `build_meno_router` that constructed
+//! each one and merged a route tree from a `routes` module that also does not exist here.
+//! None of that code compiles against the current tree, and `lib.rs` never declared this
+//! module, so the file was dead: a description of an application rather than part of one.
+//!
+//! This is the same idea rebuilt around what actually exists. **Auth, broadcasts,
+//! profile, settings and chat are the refactored modules**, so [`MenoState`] carries
+//! those five plus the infrastructure every module will need. When the next module
+//! lands it adds a field here, and nothing else in this file changes — which is the
+//! property worth preserving.
+//!
+//! # Why not the other modules
+//!
+//! Three reasons, and the third is the one that matters:
+//!
+//! 1. **They do not exist.** There is no `modules::subscribers`, no `modules::notes`,
+//!    no `jobs/`. Naming them would not compile.
+//! 2. **A field is a promise.** A field asserts that the module's routes work, that
+//!    its adapters are wired, and that someone can review it. With no implementation
+//!    behind it the field is a lie the type system cannot catch — which is why `chat
+//!    : ChatState` was left out until the module behind it existed.
+//! 3. **The alternative already failed once.** `master` shipped all thirteen and the
+//!    result was a wiring layer that could not be compiled, tested, or reasoned about
+//!    without the modules underneath it. Rebuilding it incrementally is the point.
+//!
+//! [`ChatState`](crate::modules::chat::state::ChatState) is the newest of the five and
+//! the one that needed the least: one pool and the pub/sub bridge, because a chat event
+//! has to reach sockets on *other* replicas ([`Self::ws_bridge`]) and nothing else.
+//!
+//! # No handler takes `&MenoState`
+//!
+//! Each handler receives its own module state through axum's [`State`] extractor. This
+//! struct is the assembly point, not a god object handed to business logic — a handler
+//! that needed all thirteen fields would be a handler doing too much, and making that
+//! awkward to express is deliberate.
+//!
+//! # Construction is fallible (§4.3, §7.11)
+//!
+//! [`build`] returns a `Result`. `master`'s equivalent used `.expect("Invalid Google
+//! redirect URI")` and three `.unwrap()`s, so a typo in one `.env` variable became a
+//! panic with a stack trace at boot. Here every failure names the variable that is
+//! wrong.
 
-/// Top-level application state.
+use std::sync::Arc;
+
+use sqlx::PgPool;
+
+use crate::config::Config;
+use crate::infrastructure::oauth::{OAuthStateStore, RedisOAuthStateStore};
+use crate::infrastructure::push::PushSender;
+use crate::infrastructure::redis::Redis;
+use crate::infrastructure::storage::ObjectStore;
+use crate::modules::auth::mailer::AuthMailer;
+use crate::modules::auth::state::AuthState;
+use crate::modules::broadcast::state::BroadcastState;
+use crate::modules::chat::state::ChatState;
+use crate::modules::notes::state::NotesState;
+use crate::modules::notifications::state::NotificationsState;
+use crate::modules::profile::state::ProfileState;
+use crate::modules::settings::state::SettingsState;
+use crate::modules::subscribers::state::SubscribersState;
+
+/// Everything the running application holds.
 ///
-/// Every field is an `Arc`-wrapped module state or shared service.
-/// No field is mutable after startup.
-/// No handler or service takes `&MenoState` — they receive their own
-/// module state via `app.auth`, `app.broadcast`, etc.
+/// Cheap to clone — every field is an `Arc`, a pool or a handle — so axum's `State`
+/// extractor can hold one per request without meaningful cost.
 #[derive(Clone)]
 pub struct MenoState {
+    /// Validated configuration (§4.6). Shared rather than cloned per module.
     pub config: Arc<Config>,
+    /// The Postgres pool, for migrations, health checks and future modules.
     pub db: PgPool,
+    /// Redis, for the auth token blocklist and the OAuth state store.
     pub redis: Redis,
+    /// Authentication (§4.7).
     pub auth: AuthState,
-    pub profile: ProfileState,
+    /// Broadcasts — create, schedule, go live, join, participants (§2's tree).
+    ///
+    /// The second module to land, and the one that shows why a module carries its own
+    /// state rather than reaching into the application: this field is a projection of a
+    /// repository and a media adapter, and nothing outside `state` names either.
     pub broadcast: BroadcastState,
-    pub subscribers: SubscribersState,
-    pub notifications: NotificationState,
-    pub chat: ChatState,
-    pub notes: NotesState,
+    /// The caller's own profile, other people's, search, and avatar upload (§2's tree).
+    ///
+    /// A projection of a repository, a cache and the object store — chosen in
+    /// `profile::state::Wiring`, so `STORAGE_ENABLED=false` makes avatar upload a
+    /// 503 rather than a compile failure (§4.6).
+    pub profile: ProfileState,
+    /// The caller's notification, theme, language and preference switches (§2's tree).
+    ///
+    /// Arrives with `profile` because `GET /users/me` embeds this block — one wire
+    /// contract, two directories, and two fields that must be wired together or
+    /// neither answers honestly.
     pub settings: SettingsState,
-    pub ws: WsService,
-    pub pubsub: Arc<WsPubSubBridge>,
-    pub jobs: Jobs,
-    pub smtp: AsyncSmtpTransport<Tokio1Executor>,
+    /// Broadcast chat: history, messages and reactions (§2's tree).
+    ///
+    /// Built from a pool and the pub/sub bridge, and nothing else — which is the whole
+    /// of what chat needs. The bridge rather than [`Self::ws`] on purpose: a message
+    /// published to the local registry only would reach the sender's neighbours and
+    /// nobody else, and a room's participants are spread across replicas.
+    pub chat: ChatState,
+    /// Notes and folders, with their offline sync (§2's tree).
+    ///
+    /// A projection of a repository over one pool and nothing else — which is the whole
+    /// of what notes needs. Built from [`NotesState::new`], so this file never names
+    /// `PgNotesRepo`.
+    pub notes: NotesState,
+    /// Subscribers: who follows whom, and the two lists that read it (§2's tree).
+    ///
+    /// A projection of a repository over one pool and nothing else — which is the whole of
+    /// what subscribers needs. Built from [`SubscribersState::new`], so this file never
+    /// names `PgSubscribersRepo`.
+    pub subscribers: SubscribersState,
+    /// Notifications: the inbox, its templates, and the fan-out that fills it (§2's
+    /// tree).
+    ///
+    /// A projection of a repository, an unread counter and two delivery adapters —
+    /// chosen in `notifications::state::Wiring`, so `PUSH_ENABLED=false` is a no-op
+    /// sender rather than a compile failure (§4.6).
+    pub notifications: NotificationsState,
+    /// The access-token guard the router mounts on protected routes (§4.7 items 5-6).
+    ///
+    /// Built here rather than in `routes.rs` because it is fallible — a blank
+    /// `JWT_SECRET` must stop boot (§7.11) — and because this file is the one place
+    /// allowed to name concrete adapters. It is the middleware's own view (verifier +
+    /// blocklist); no handler takes it, which is the point of keeping it beside — but
+    /// separate from — [`Self::auth`].
+    pub auth_guard: crate::middleware::auth::AuthState,
+    /// Push notifications. Optional (§4.6); a no-op sender when disabled.
+    ///
+    /// Held here rather than by a module because no module uses it yet. It is the first
+    /// thing `notifications/` will need, and wiring it at that point is a one-line
+    /// change to this struct.
+    pub push: Arc<dyn PushSender>,
+    /// Object storage. Optional (§4.6); a no-op store when disabled.
+    pub storage: Arc<dyn ObjectStore>,
+    /// The Prometheus handle `GET /metrics` renders (§7.5, §4.8).
+    ///
+    /// Cloned from the process-wide recorder; whether the endpoint *answers* is
+    /// decided by [`Self::config`]'s `metrics_token`, not by this field — the
+    /// recorder keeps counting either way, so enabling the endpoint later shows
+    /// history from the moment it started counting.
+    pub metrics: crate::infrastructure::metrics::Metrics,
+    /// The local socket registry behind `GET /ws` (plan §4.7's realtime surface).
+    ///
+    /// "Local" is the point: which sockets live on *this* replica, and nothing about
+    /// the others. Cross-replica delivery is [`Self::ws_bridge`]'s job, and keeping
+    /// the two apart is what lets the registry be I/O-free — and therefore tested
+    /// without a Redis.
+    pub ws: crate::infrastructure::ws::WsService,
+    /// Redis pub/sub fan-out for events that must reach other replicas (§3.1).
+    ///
+    /// Built eagerly rather than on first publish: a bridge that cannot reach Redis
+    /// must stop boot with a message (§7.11), not fail one delivery at a time once
+    /// traffic is live. Its subscriber loop is spawned by `bootstrap`, because only
+    /// that knows whether this process holds sockets.
+    pub ws_bridge: crate::infrastructure::ws::pubsub::WsPubSubBridge,
 }
 
-pub async fn build_meno_router(config: Config, db: PgPool, redis: Redis) -> Router {
-    let config = Arc::new(config);
-
-    let storage = StorageService::new(&config);
-    let jobs = Jobs::new(&db);
-    let livekit = build_livekit(&config);
-    let smtp = build_smtp(&config);
-    let push = PushNotificationService::new(&config);
-    let ws = WsService::new(redis.clone());
-
-    let bridge = build_ws_pubsub_bridge(&config, ws.clone(), redis.clone()).await;
-    let pubsub = Arc::new(bridge);
-
-    let id_reader: Arc<dyn IdentityReader> = Arc::new(AuthRepository::new(db.clone()));
-
-    let auth = AuthState::new(db.clone(), redis.clone(), &config, jobs.clone());
-    let profile = ProfileState::new(db.clone(), redis.clone(), storage.clone());
-    let broadcast = BroadcastState::new(
-        db.clone(),
-        redis.clone(),
-        livekit.clone(),
-        pubsub.clone(),
-        ws.clone(),
-        jobs.clone(),
-    );
-    let notifications = NotificationState::new(db.clone(), redis.clone(), push.clone(), pubsub.clone());
-    let subscribers = SubscribersState::new(db.clone(), Arc::clone(&id_reader), notifications.clone());
-    let chat = ChatState::new(db.clone(), redis.clone(), pubsub.clone());
-    let notes = NotesState::new(db.clone());
-    let settings = SettingsState::new(db.clone(), redis.clone());
-
-    let state = Arc::new(MenoState {
-        auth,
-        profile,
-        broadcast,
-        subscribers,
-        notifications,
-        chat,
-        notes,
-        settings,
-        ws,
-        pubsub,
-        jobs,
-        smtp,
-        redis,
-        config,
-        db: db.clone(),
-    });
-
-    start_background_workers(&state.db, &state);
-    build_middleware_stack(state)
+/// Lets axum hand a nested sub-router its own state.
+///
+/// This is the one place the application state is allowed to know about a module's
+/// state, and it is a *projection*: the router can extract `AuthState` from
+/// `MenoState` without a handler ever seeing `MenoState`. Without it, mounting the
+/// auth routes would mean either widening all fourteen handlers to take the whole
+/// application — the god object §9.3 rules out — or unwrapping the field inside
+/// [`build_routes`](crate::routes::build_routes), which would tie the route table to
+/// this struct's layout.
+///
+/// The impl is infallible and total, so it cannot refuse a mount.
+impl axum::extract::FromRef<MenoState> for AuthState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.auth.clone()
+    }
 }
 
-async fn build_ws_pubsub_bridge(config: &Config, ws: WsService, redis: Redis) -> WsPubSubBridge {
-    let bridge = WsPubSubBridge::build(config, ws, redis)
-        .await
-        .expect("WsPubSubBridge failed to initialise");
-    bridge.spawn_subscriber_loop();
-    bridge
+/// The same projection for the broadcast module (plan §4.1).
+///
+/// The second implementation of the same idea, and the point of naming it: every
+/// module that lands adds one `FromRef` and one field, and the handlers keep taking
+/// their own state. The alternative — a sub-router taking `MenoState` — would hand every
+/// handler the whole application, which §9.3 calls a god object and §2's tree is built
+/// to avoid.
+impl axum::extract::FromRef<MenoState> for BroadcastState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.broadcast.clone()
+    }
 }
 
-fn build_livekit(config: &Config) -> LivekitService {
-    LivekitService::new(
-        config,
-        Arc::new(RoomClient::with_api_key(
-            &config.livekit_host,
-            &config.livekit_api_key,
-            &config.livekit_api_secret,
+/// The same projection for profile — the third implementation of the idea.
+impl axum::extract::FromRef<MenoState> for ProfileState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.profile.clone()
+    }
+}
+
+/// The same projection for settings — the fourth.
+impl axum::extract::FromRef<MenoState> for SettingsState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.settings.clone()
+    }
+}
+
+/// The same projection for chat — the fifth, and the last one that needs an `impl`
+/// rather than a merge: chat's paths live under `/broadcasts/{id}/...`, so it is merged
+/// at the root like the broadcast table and lifted with `with_state` at the same time.
+impl axum::extract::FromRef<MenoState> for ChatState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.chat.clone()
+    }
+}
+
+/// The same projection for notes — the sixth, merged at the root like the broadcast
+/// table because its paths span two prefixes (`/notes` and `/folders`).
+impl axum::extract::FromRef<MenoState> for NotesState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.notes.clone()
+    }
+}
+
+/// The same projection for subscribers — the seventh, merged at the root like the
+/// broadcast table because its paths are written in full.
+impl axum::extract::FromRef<MenoState> for SubscribersState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.subscribers.clone()
+    }
+}
+
+/// The same projection for notifications — the eighth, merged at the root like the
+/// broadcast table because its paths are written in full.
+impl axum::extract::FromRef<MenoState> for NotificationsState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.notifications.clone()
+    }
+}
+
+impl std::fmt::Debug for MenoState {
+    /// Names the fields and nothing else.
+    ///
+    /// Every one of these holds a credential somewhere — the config has JWT secrets,
+    /// `Redis` and the config's URL fields have passwords — so this writes the
+    /// struct's shape rather than deriving it. §4.8's structured logs are only useful
+    /// if a `{:?}` cannot leak one.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MenoState")
+            .field("config", &"[redacted]")
+            .field("db", &"[pool]")
+            .field("redis", &"[redacted]")
+            .field("auth", &self.auth)
+            .field("auth_guard", &self.auth_guard)
+            .field("broadcast", &self.broadcast)
+            .field("profile", &self.profile)
+            .field("settings", &self.settings)
+            .field("chat", &self.chat)
+            .field("notes", &self.notes)
+            .field("subscribers", &self.subscribers)
+            .field("notifications", &self.notifications)
+            .field("push", &"[sender]")
+            .field("storage", &"[store]")
+            .field("metrics", &self.metrics)
+            .field("ws", &"[sockets]")
+            .field("ws_bridge", &"[bridge]")
+            .finish()
+    }
+}
+
+/// The collaborators [`build`] cannot assemble for itself.
+///
+/// Kept as a parameter rather than constructed inside so a test — or a future
+/// in-process job runner — can supply an [`AuthMailer`] of its choosing. The mailer is
+/// §4.6's optional integration, and the decision about which one to use belongs to
+/// whoever is assembling the application.
+#[derive(Clone)]
+pub struct Assembly {
+    /// Validated configuration.
+    pub config: Arc<Config>,
+    /// The Postgres pool.
+    pub db: PgPool,
+    /// The Redis handle.
+    pub redis: Redis,
+    /// Transactional mail for verification and reset codes.
+    pub mailer: Arc<dyn AuthMailer>,
+    /// The push sender, already built from configuration.
+    pub push: Arc<dyn PushSender>,
+    /// The object store, already built from configuration.
+    pub storage: Arc<dyn ObjectStore>,
+}
+
+/// Wire the application.
+///
+/// # Errors
+///
+/// [`AuthState::new`], which returns the first of these that is wrong:
+///
+/// - a blank, placeholder or shared JWT secret pair, or a non-positive lifetime
+///   (§4.7 item 4 — a shared pair means a refresh token would validate as an access
+///   token);
+/// - Google sign-in enabled but the settings do not build a client;
+/// - the Argon2id dummy hash that equalises login timing could not be computed;
+/// - the WebSocket pub/sub bridge cannot reach Redis — an eagerly-built adapter that
+///   is enabled but unusable, refused at boot rather than per message.
+///
+/// All of these are startup failures by design: booting anyway turns each into a
+/// one-request-at-a-time outage discovered by a user, rather than a boot that stops
+/// with a message naming the variable at fault.
+pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
+    // Redis, not the in-memory store: an OAuth callback is a separate request that may
+    // land on another replica, and a state stored in one process's memory is invisible
+    // to the others — which would refuse every such callback as a CSRF replay.
+    let oauth_states: Arc<dyn OAuthStateStore> =
+        Arc::new(RedisOAuthStateStore::new(parts.redis.clone()));
+
+    let auth = AuthState::new(crate::modules::auth::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+        config: Arc::clone(&parts.config),
+        oauth_states,
+        mailer: parts.mailer.clone(),
+    })?;
+
+    // The router's guard (§4.7 items 5-6): one HMAC check against the access secret
+    // and one blocklist round trip per protected request. `JwtVerifier::new` refuses a
+    // blank secret so a typo'd `JWT_SECRET` fails here, at boot, instead of rejecting
+    // every token at runtime (§7.11).
+    let auth_guard = crate::middleware::auth::AuthState::new(
+        Arc::new(crate::middleware::auth::JwtVerifier::new(
+            parts.config.jwt_secret.expose(),
+        )?),
+        Arc::new(crate::middleware::auth::RedisTokenBlocklist::new(
+            parts.redis.clone(),
         )),
+    );
+
+    // The realtime pair: the local socket registry, and the pub/sub bridge that makes
+    // a message published here reach sockets on other replicas (§3.1). The bridge is
+    // built — and verifies both of its clients — right now rather than on first
+    // publish, so an unreachable Redis is a boot failure with a message instead of a
+    // silent one-replica delivery failure discovered when a message goes missing.
+    let ws = crate::infrastructure::ws::WsService::new(parts.redis.clone());
+    let ws_bridge = crate::infrastructure::ws::pubsub::WsPubSubBridge::build_from_config(
+        &crate::infrastructure::redis::RedisConfig::from_url(
+            parts.config.redis_url.expose().to_owned(),
+        ),
+        ws.clone(),
+        parts.redis.clone(),
     )
-}
+    .await
+    .map_err(|error| meno_core::Error::Internal {
+        context: "build_ws_pubsub_bridge",
+        detail: error.to_string(),
+    })?;
 
-fn build_smtp(config: &Config) -> AsyncSmtpTransport<Tokio1Executor> {
-    use lettre::transport::smtp::authentication::Credentials;
-    use lettre::transport::smtp::client::Tls;
-    let creds = Credentials::new(config.smtp_user.clone(), config.smtp_password.clone());
-    AsyncSmtpTransport::<Tokio1Executor>::relay(&config.smtp_host)
-        .unwrap()
-        .port(config.smtp_port)
-        .credentials(creds)
-        .tls(Tls::None)
-        .build()
-}
+    // One `Arc` of the bridge, shared by chat and the broadcast module: a second
+    // subscriber connection per module would be a connection nobody needs.
+    let bridge = Arc::new(ws_bridge.clone());
 
-fn build_cors(config: &Config) -> CorsLayer {
-    let origins: Vec<_> = config.origins.iter().map(|o| o.parse().unwrap()).collect();
-    CorsLayer::new()
-        .allow_origin(AllowOrigin::list(origins))
-        .allow_methods(Any)
-        .allow_headers(AllowHeaders::list([
-            header::AUTHORIZATION,
-            header::CONTENT_TYPE,
-            header::ACCEPT,
-            header::ORIGIN,
-            "X-Requested-With".parse().unwrap(),
-        ]))
-}
-
-fn build_middleware_stack(app: Arc<MenoState>) -> Router {
-    let (prometheus_layer, metric_handle) = PrometheusMetricLayer::pair();
-    let cors = build_cors(&app.config);
-    let x_req_id = HeaderName::from_static("x-request-id");
-
-    Router::<Arc<MenoState>>::new()
-        .route(
-            "/metrics",
-            get(move || async move { metric_handle.render() }),
-        )
-        .route("/health", get(health::health_handler))
-        .route(
-            "/ws",
-            get(crate::shared::services::ws::handlers::ws_upgrade),
-        )
-        .layer(prometheus_layer)
-        .merge(build_meno_routes(app.clone()))
-        .layer(from_fn(timing_middleware))
-        .layer(
-            ServiceBuilder::new()
-                .layer(SetRequestIdLayer::new(x_req_id.clone(), MakeRequestUuid))
-                .layer(PropagateRequestIdLayer::new(x_req_id))
-                .layer(TraceLayer::new_for_http().make_span_with(|r: &Request<_>| {
-                    let rid = r
-                        .headers()
-                        .get("x-request-id")
-                        .and_then(|v| v.to_str().ok())
-                        .unwrap_or("unknown");
-                    tracing::info_span!(
-                        "http_request",
-                        request_id = %rid,
-                        method     = %r.method(),
-                        uri        = %r.uri(),
-                        user_id    = tracing::field::Empty,
-                    )
-                }))
-                .layer(TimeoutLayer::with_status_code(
-                    StatusCode::REQUEST_TIMEOUT,
-                    Duration::from_secs(30),
-                ))
-                .layer(cors),
-        )
-        .with_state(app)
-}
-
-fn start_background_workers(db: &PgPool, app: &Arc<MenoState>) {
-    let pool = db.clone();
-    let a = Arc::clone(app);
-    tokio::spawn(async move {
-        if let Err(e) = crate::jobs::monitor::run_monitor(pool, a).await {
-            tracing::error!(error = %e, "Apalis monitor exited unexpectedly");
-        }
+    // Profile and settings, for the same reason and in the same shape: `Wiring`
+    // takes raw handles and chooses the adapters (§5.6), so this file never names
+    // `PgProfileRepo` or `ProfileRedisCache`. `profile` needs the object store
+    // because avatar upload proxies through it (§3.3); `settings` needs only the
+    // pool and Redis. Both are built before the struct literal, which moves
+    // `parts.db` and `parts.redis`.
+    let profile = ProfileState::new(crate::modules::profile::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+        storage: Arc::clone(&parts.storage),
+    });
+    let settings = SettingsState::new(crate::modules::settings::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
     });
 
-    let pool_1 = db.clone();
-    let pool_2 = db.clone();
-    tokio::spawn(crate::jobs::monitor::schedule_cleanup_job(pool_1));
-    tokio::spawn(crate::jobs::monitor::schedule_notes_cleanup_job(pool_2));
+    // Chat: one pool and the bridge.
+    let chat = ChatState::new(crate::modules::chat::state::Wiring {
+        pool: parts.db.clone(),
+        bridge: Arc::clone(&bridge),
+    });
+
+    // Notes and folders (§2's tree): one pool, no external service.
+    let notes = NotesState::new(crate::modules::notes::state::Wiring {
+        pool: parts.db.clone(),
+    });
+
+    // Notifications first: the follow and broadcast producers below announce through
+    // it, so it has to exist before either module that writes a sentence is wired.
+    let notifications = NotificationsState::new(crate::modules::notifications::state::Wiring {
+        pool: parts.db.clone(),
+        redis: parts.redis.clone(),
+        push: Arc::clone(&parts.push),
+        bridge: Arc::clone(&bridge),
+    });
+
+    // Subscribers: the follow table, plus the announcement a new follow owes. The
+    // adapter is this file's job (§5.6), so the module never names the notification
+    // service.
+    let subscribers = SubscribersState::new(crate::modules::subscribers::state::Wiring {
+        pool: parts.db.clone(),
+        notices: Some(Arc::new(ModuleSubscriberNotices {
+            notifications: Arc::clone(&notifications.service),
+        })),
+    });
+
+    // Broadcasts (§2's tree): the media seam, the lifecycle frames, and the producers
+    // that fill an inbox. Built after both modules it announces through.
+    let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
+        pool: parts.db.clone(),
+        livekit: parts.config.livekit.clone(),
+        // Cover images proxy through the object store (§3.3), exactly as avatars do
+        // below — one handle, two modules.
+        storage: Arc::clone(&parts.storage),
+        // How the reaper tells everybody in a broadcast that it ended: through the
+        // pub/sub bridge, because the host's socket may live on another replica.
+        events: Arc::new(crate::modules::broadcast::events::PubSubEvents::new(
+            Arc::clone(&bridge),
+        )),
+        // Room membership: a join over HTTP subscribes the participant's sockets, and an
+        // ending drops them wherever they live. Local registry first, shared SET through
+        // the bridge — the same pair chat publishes through, so membership and delivery
+        // cannot disagree about which replicas hold the room.
+        rooms: Arc::new(crate::modules::broadcast::rooms::WsRooms::new(
+            ws.clone(),
+            Arc::clone(&bridge),
+        )),
+        notices: Arc::new(ModuleBroadcastNotices {
+            notifications: Arc::clone(&notifications.service),
+            subscribers: Arc::clone(&subscribers.service),
+        }),
+    });
+
+    Ok(MenoState {
+        config: parts.config,
+        db: parts.db,
+        redis: parts.redis,
+        auth,
+        // Broadcasts (§2's tree). The media server is optional — §4.6 — so `Wiring`
+        // chose an adapter from configuration rather than this file demanding one, and a
+        // deployment without LiveKit still gets drafts, schedules and the catalogue.
+        broadcast,
+        // Profile and settings (§2's tree). The object store is optional (§4.6), so
+        // `profile::state::Wiring` chose an adapter from what `parts` carries: a
+        // deployment without S3 serves profiles and search normally and answers
+        // avatar upload with a 503.
+        profile,
+        settings,
+        // Chat (§2's tree). A pool and the bridge, so a message stored on this replica
+        // is announced to the room wherever its sockets live.
+        chat,
+        // Notes and folders (§2's tree). One pool.
+        notes,
+        // Subscribers (§2's tree). One pool.
+        subscribers,
+        // Notifications (§2's tree). The inbox, its counter, and its two delivery
+        // adapters.
+        notifications,
+        auth_guard,
+        push: parts.push,
+        storage: parts.storage,
+        metrics: crate::infrastructure::metrics::Metrics::global(),
+        ws,
+        ws_bridge,
+    })
+}
+
+/// The subscribers module's adapter onto notifications: one port implementation, placed
+/// where naming both modules is allowed (§5.6).
+#[derive(Clone)]
+struct ModuleSubscriberNotices {
+    notifications: Arc<crate::modules::notifications::service::NotificationsService>,
+}
+
+#[async_trait::async_trait]
+impl crate::modules::subscribers::notices::SubscriberNotices for ModuleSubscriberNotices {
+    async fn subscribed(
+        &self,
+        actor: &crate::modules::subscribers::repository::SubscriberProfile,
+        target_id: uuid::Uuid,
+    ) {
+        let actor = crate::modules::notifications::model::ActorSummary {
+            id: actor.id,
+            full_name: actor.full_name.clone(),
+            bio: actor.bio.clone(),
+            avatar_id: actor.avatar_id.clone(),
+            avatar_url: actor.avatar_url.clone(),
+        };
+
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                target_id,
+                crate::modules::notifications::model::codes::USER_SUBSCRIBED,
+                Some(&actor),
+                None,
+                None,
+            )
+            .await
+        {
+            tracing::warn!(%failure, user.id = %target_id, "follow notification not stored");
+        }
+    }
+}
+
+/// The broadcast module's adapter onto notifications and the follow graph.
+#[derive(Clone)]
+struct ModuleBroadcastNotices {
+    notifications: Arc<crate::modules::notifications::service::NotificationsService>,
+    subscribers: Arc<crate::modules::subscribers::service::SubscribersService>,
+}
+
+#[async_trait::async_trait]
+impl crate::modules::broadcast::notices::BroadcastNotices for ModuleBroadcastNotices {
+    async fn started(&self, broadcast: &crate::modules::broadcast::dto::BroadcastResponse) {
+        let recipients = match self.subscribers.subscriber_ids(broadcast.creator.id).await {
+            Ok(recipients) => recipients,
+            Err(failure) => {
+                tracing::warn!(
+                    %failure,
+                    broadcast_id = %broadcast.id,
+                    "could not read the followers to notify"
+                );
+                return;
+            }
+        };
+        if recipients.is_empty() {
+            return;
+        }
+
+        let actor = broadcast_actor(&broadcast.creator);
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                &recipients,
+                crate::modules::notifications::model::codes::LIVE_BROADCAST_STARTED,
+                Some(&actor),
+                Some(broadcast.id),
+                Some(&broadcast.title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast.id,
+                "live broadcast notification not stored"
+            );
+        }
+    }
+
+    async fn ended(&self, broadcast_id: uuid::Uuid, title: &str, recipients: &[uuid::Uuid]) {
+        if recipients.is_empty() {
+            return;
+        }
+
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                recipients,
+                crate::modules::notifications::model::codes::BROADCAST_ENDED,
+                None,
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                "broadcast-ended notification not stored"
+            );
+        }
+    }
+
+    async fn cohost_invited(
+        &self,
+        broadcast_id: uuid::Uuid,
+        title: &str,
+        inviter: &crate::modules::broadcast::model::UserSummary,
+        invitee: uuid::Uuid,
+    ) {
+        let actor = broadcast_actor(inviter);
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                invitee,
+                crate::modules::notifications::model::codes::ADDED_AS_COHOST,
+                Some(&actor),
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                invitee = %invitee,
+                "cohost invitation not stored"
+            );
+        }
+    }
+
+    async fn scheduled(
+        &self,
+        broadcast: &crate::modules::broadcast::dto::BroadcastResponse,
+    ) -> Vec<uuid::Uuid> {
+        let recipients = match self.subscribers.subscriber_ids(broadcast.creator.id).await {
+            Ok(recipients) => recipients,
+            Err(failure) => {
+                tracing::warn!(
+                    %failure,
+                    broadcast_id = %broadcast.id,
+                    "could not read the followers to remind"
+                );
+                return Vec::new();
+            }
+        };
+        if recipients.is_empty() {
+            return Vec::new();
+        }
+
+        let actor = broadcast_actor(&broadcast.creator);
+        if let Err(failure) = self
+            .notifications
+            .notify_many(
+                &recipients,
+                crate::modules::notifications::model::codes::SCHEDULED_BROADCAST,
+                Some(&actor),
+                Some(broadcast.id),
+                Some(&broadcast.title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast.id,
+                "scheduled broadcast notification not stored"
+            );
+        }
+
+        recipients
+    }
+
+    async fn cohost_added(
+        &self,
+        broadcast_id: uuid::Uuid,
+        title: &str,
+        actor: &crate::modules::broadcast::model::UserSummary,
+        cohost: uuid::Uuid,
+    ) {
+        let actor = broadcast_actor(actor);
+        if let Err(failure) = self
+            .notifications
+            .notify(
+                cohost,
+                crate::modules::notifications::model::codes::ADDED_AS_COHOST,
+                Some(&actor),
+                Some(broadcast_id),
+                Some(title),
+            )
+            .await
+        {
+            tracing::warn!(
+                %failure,
+                broadcast_id = %broadcast_id,
+                cohost_id = %cohost,
+                "cohost notification not stored"
+            );
+        }
+    }
+}
+
+/// The notification module's actor projection, from the broadcast module's summary.
+fn broadcast_actor(
+    user: &crate::modules::broadcast::model::UserSummary,
+) -> crate::modules::notifications::model::ActorSummary {
+    crate::modules::notifications::model::ActorSummary {
+        id: user.id,
+        full_name: user.full_name.clone(),
+        bio: None,
+        avatar_id: user.avatar_id.clone(),
+        avatar_url: user.avatar_url.clone(),
+    }
 }

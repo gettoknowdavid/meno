@@ -1,0 +1,20 @@
+# Clippy configuration for the Meno workspace.
+#
+# `msrv` stops clippy suggesting APIs newer than the pinned toolchain (rust-toolchain.toml
+# pins 1.88). This is the difference between a lint gate people respect and one they
+# disable with a blanket allow.
+msrv = "1.88"
+
+too-many-arguments-threshold = 8
+
+# §9.1: "Never panic!/unwrap()/expect() in request-serving code. Enforced by Clippy
+# (unwrap_used, expect_used, panic) as deny in apps/api/src, allow in tests/."
+#
+# Cargo cannot express "deny for lib targets, allow for test targets" — a package's
+# [lints] table applies to every target it builds. These three keys are the supported
+# way to get that split, and they are what make guide Step 3.5's pagination tests
+# (which use .expect() to keep the assertions readable) possible without weakening the
+# policy in the code they actually protect.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true

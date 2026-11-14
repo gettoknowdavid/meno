@@ -1,0 +1,38 @@
+include: package:very_good_analysis/analysis_options.yaml
+
+analyzer:
+  errors:
+    prefer_constructors_over_static_methods: ignore
+
+  language:
+    strict-casts: true
+    strict-inference: true
+    strict-raw-types: true
+
+  exclude:
+    - lib/src/gen/**
+    - lib/**/*.g.dart
+    - lib/**/*.freezed.dart
+    - build/**
+
+linter:
+  rules:
+    # Shared package: consumers only see these doc comments, so unlike the
+    # app layer (which relaxes this), the package keeps them enforced.
+    public_member_api_docs: true
+
+    # Design-system widgets should be const-constructible where possible and
+    # expose a Key so consumers can target them from tests/overlays.
+    prefer_const_constructors: true
+    prefer_const_constructors_in_immutables: true
+    prefer_const_literals_to_create_immutables: true
+    use_key_in_widget_constructors: true
+
+    # Keep the package surface tidy: explicit return types, ordered imports,
+    # single quotes, child properties last, no dynamic dispatch, no print.
+    always_declare_return_types: true
+    directives_ordering: true
+    avoid_dynamic_calls: true
+    avoid_print: true
+    prefer_single_quotes: true
+    sort_child_properties_last: true

@@ -1,0 +1,455 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:6971376935178366471",
+      "lastPropertyId": "14:4621658050109501137",
+      "name": "BroadcastDraftRow",
+      "properties": [
+        {
+          "id": "1:3881354151520507688",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4285121030568054062",
+          "name": "draftId",
+          "indexId": "1:6462190058027907036",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:3426583879379950268",
+          "name": "ownerId",
+          "indexId": "2:6929754015158009820",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:913301806174918401",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "5:8946880014569752011",
+          "name": "description",
+          "type": 9
+        },
+        {
+          "id": "6:824210086399868497",
+          "name": "record",
+          "type": 1
+        },
+        {
+          "id": "7:7357967371434636455",
+          "name": "cohostIds",
+          "type": 9
+        },
+        {
+          "id": "8:7766040722004930484",
+          "name": "imagePath",
+          "type": 9
+        },
+        {
+          "id": "9:3274963398439617974",
+          "name": "imageId",
+          "type": 9
+        },
+        {
+          "id": "10:5889189839186217917",
+          "name": "createdBroadcastId",
+          "type": 9
+        },
+        {
+          "id": "11:4765145402303930034",
+          "name": "creationStepValue",
+          "type": 5
+        },
+        {
+          "id": "12:1423460426400578225",
+          "name": "lastModified",
+          "type": 10
+        },
+        {
+          "id": "13:4670104760691460116",
+          "name": "uniqueKey",
+          "indexId": "5:4794032612217736887",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "14:4621658050109501137",
+          "name": "idempotencyKey",
+          "type": 9
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:9055719608144194889",
+      "lastPropertyId": "8:6649936849402211099",
+      "name": "FavouriteBroadcastRow",
+      "properties": [
+        {
+          "id": "1:3893352812875198354",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:7038556303227491480",
+          "name": "broadcastId",
+          "indexId": "3:1258147261151089740",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:454688658476704684",
+          "name": "ownerId",
+          "indexId": "4:3354882842028629596",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:2066058633740540103",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "5:6741194714956785072",
+          "name": "creatorName",
+          "type": 9
+        },
+        {
+          "id": "6:6667297941197182203",
+          "name": "imageUrl",
+          "type": 9
+        },
+        {
+          "id": "7:5801104341541620160",
+          "name": "savedAt",
+          "type": 10
+        },
+        {
+          "id": "8:6649936849402211099",
+          "name": "uniqueKey",
+          "indexId": "6:6641961697593249166",
+          "type": 9,
+          "flags": 34848
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "3:6881536816200829258",
+      "lastPropertyId": "12:3658496102137564554",
+      "name": "NoteFolderRow",
+      "properties": [
+        {
+          "id": "1:2977007317309511317",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5904912841848411960",
+          "name": "folderId",
+          "indexId": "7:3358724060430196304",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:5550194200547949326",
+          "name": "ownerId",
+          "indexId": "8:8740767295057175020",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:2335468136638785827",
+          "name": "uniqueKey",
+          "indexId": "9:8863857641422467988",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "5:5110802212274441697",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "6:8154987947357893649",
+          "name": "pinned",
+          "type": 1
+        },
+        {
+          "id": "7:1530487936243901344",
+          "name": "version",
+          "type": 6
+        },
+        {
+          "id": "8:6207024618970743964",
+          "name": "createdAtMillis",
+          "type": 6
+        },
+        {
+          "id": "9:1359221482969716970",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "10:1388231009851202496",
+          "name": "deleted",
+          "type": 1
+        },
+        {
+          "id": "11:3716846629620996305",
+          "name": "pending",
+          "type": 1
+        },
+        {
+          "id": "12:3658496102137564554",
+          "name": "lastModifiedMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "4:3057471866715198153",
+      "lastPropertyId": "14:8771513053808371234",
+      "name": "NoteRow",
+      "properties": [
+        {
+          "id": "1:7534353370575172104",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5765652650434909076",
+          "name": "noteId",
+          "indexId": "10:368065072019656375",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:4258898162226043821",
+          "name": "ownerId",
+          "indexId": "11:5972834443117450749",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "4:4674143768433369446",
+          "name": "uniqueKey",
+          "indexId": "12:7699941769894555515",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "5:250537066783295803",
+          "name": "title",
+          "type": 9
+        },
+        {
+          "id": "6:736667252677677176",
+          "name": "content",
+          "type": 9
+        },
+        {
+          "id": "7:4735580209107445625",
+          "name": "pinned",
+          "type": 1
+        },
+        {
+          "id": "8:7692186413394370535",
+          "name": "folderId",
+          "indexId": "13:5058063908629476322",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "9:2841469238393725476",
+          "name": "version",
+          "type": 6
+        },
+        {
+          "id": "10:2450307364368753931",
+          "name": "createdAtMillis",
+          "type": 6
+        },
+        {
+          "id": "11:1737938905545890038",
+          "name": "updatedAtMillis",
+          "type": 6
+        },
+        {
+          "id": "12:8399716492109573497",
+          "name": "deleted",
+          "type": 1
+        },
+        {
+          "id": "13:5965813809756459378",
+          "name": "pending",
+          "indexId": "14:5084076122021576091",
+          "type": 1,
+          "flags": 8
+        },
+        {
+          "id": "14:8771513053808371234",
+          "name": "lastModifiedMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "5:3054350533671651168",
+      "lastPropertyId": "5:4092952053196867296",
+      "name": "BibleSeedRow",
+      "properties": [
+        {
+          "id": "1:9101969979299384945",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4623626258471508382",
+          "name": "translationCode",
+          "indexId": "15:8085588633542013010",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "3:7945818115811375519",
+          "name": "seedVersion",
+          "type": 6
+        },
+        {
+          "id": "4:3574595445720697190",
+          "name": "verseCount",
+          "type": 6
+        },
+        {
+          "id": "5:4092952053196867296",
+          "name": "seededAtMillis",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "6:7890418645505610194",
+      "lastPropertyId": "8:1352647856324597895",
+      "name": "BibleVerseRow",
+      "properties": [
+        {
+          "id": "1:3583580913424867273",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5455078566937913",
+          "name": "translationCode",
+          "indexId": "16:1890776628477369739",
+          "type": 9,
+          "flags": 2048
+        },
+        {
+          "id": "3:3100130996740505514",
+          "name": "book",
+          "indexId": "17:9178348644673799717",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "4:5009743918455852243",
+          "name": "chapter",
+          "indexId": "18:1131297891886832460",
+          "type": 6,
+          "flags": 8
+        },
+        {
+          "id": "5:3458908295918937531",
+          "name": "verse",
+          "type": 6
+        },
+        {
+          "id": "6:958408604350623649",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "7:5136198148998464185",
+          "name": "bookName",
+          "type": 9
+        },
+        {
+          "id": "8:1352647856324597895",
+          "name": "uniqueKey",
+          "indexId": "19:3631534284991416937",
+          "type": 9,
+          "flags": 34848
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "7:7989880967248923529",
+      "lastPropertyId": "8:627967171739554011",
+      "name": "BibleVersionRow",
+      "properties": [
+        {
+          "id": "1:8857267547282788128",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:2555984409011888489",
+          "name": "code",
+          "indexId": "20:198391767663911416",
+          "type": 9,
+          "flags": 34848
+        },
+        {
+          "id": "3:893482261355094898",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "7:3923566402067332995",
+          "name": "copyrightStatement",
+          "type": 9
+        },
+        {
+          "id": "8:627967171739554011",
+          "name": "copyright",
+          "type": 6
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "7:7989880967248923529",
+  "lastIndexId": "20:198391767663911416",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [
+    3568103359583379793,
+    6220773720212794538,
+    5524417491150965540
+  ],
+  "retiredRelationUids": [],
+  "version": 1
+}

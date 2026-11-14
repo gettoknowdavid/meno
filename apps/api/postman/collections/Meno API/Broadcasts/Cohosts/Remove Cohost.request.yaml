@@ -1,0 +1,23 @@
+$kind: http-request
+name: Remove Cohost
+method: DELETE
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/cohosts/{{cohost_id}}'
+order: 2000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "removeFromRoom": true
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has cohostCount", () => pm.expect(json.data.cohostCount).to.be.a('number'));

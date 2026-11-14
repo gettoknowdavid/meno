@@ -1,50 +1,136 @@
-[[bin]]
-name = "meno-api"
-
 [package]
 name = "meno-api"
-version = "0.1.0"
-edition = "2024"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+description = "Meno HTTP API and background worker."
+
+# Two binaries from one crate (Step 3.6): the web server and the job worker. Same
+# image, same dependencies, different entry point — see src/main.rs and src/worker.rs.
+[[bin]]
+name = "meno-api"
+path = "src/main.rs"
+
+[[bin]]
+name = "meno-worker"
+path = "src/worker.rs"
+
+[lib]
+name = "meno_api"
+path = "src/lib.rs"
+
+# Declared incrementally: this manifest lists what the modules that exist *today* need
+# (`config`, `infrastructure/*`, `middleware`, `types` and `modules/auth`). The plan's
+# remaining adapter — apalis for §6's job queue — is added when `jobs/` lands to use it,
+# because an unused dependency is a build-time cost nobody chose.
+[features]
+# Test doubles, made reachable from outside the crate.
+#
+# Rust's integration tests live in `tests/` and link `meno_api` as an *external*
+# dependency, where `#[cfg(test)]` is false — so an in-memory repository gated that way
+# does not exist as far as they are concerned. This feature is the alternative to
+# ungating unconditionally: `cargo test` turns it on automatically for the test targets,
+# while a production build compiles none of the doubles.
+#
+# Nothing here is reachable from a deployment binary, because a deployment builds with
+# `--no-default-features` semantics by simply not asking for this feature.
+test-support = []
 
 [dependencies]
-anyhow = "1.0.102"
-axum = { version = "0.8.9", features = ["multipart", "ws", "macros"] }
-dotenvy = "0.15.7"
-fred = { version = "10.1.0", features = ["subscriber-client", "tokio-rustls", "serde-json", "i-scripts", "i-pubsub", "native-tls", "enable-native-tls"] }
-jsonwebtoken = { version = "10.4.0", features = ["aws_lc_rs"] }
-serde = { version = "1.0.228", features = ["derive"] }
-serde_json = "1.0.149"
-sqlx = { version = "0.8.6", features = ["postgres", "runtime-tokio", "time", "uuid"] }
-thiserror = "2.0.18"
-time = { version = "0.3.47", features = ["serde", "serde-well-known"] }
-tokio = { version = "1.52.3", features = ["full"] }
-tower = "0.5.3"
-tower-http = { version = "0.7.0", features = ["cors", "trace", "timeout", "request-id"] }
-tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
-uuid = { version = "1.23.1", features = ["v4", "serde"] }
-validator = { version = "0.20.0", features = ["derive"] }
-regex = "1.12.3"
-axum-prometheus = "0.10.0"
-argon2 = "0.5.3"
-strum = { version = "0.28", features = ["derive"] }
-lettre = { version = "0.11.22", features = ["tokio1-native-tls", "builder"] }
-rand = "0.10.1"
-sha2 = "0.11.0"
-hex = "0.4.3"
-oauth2 = { version = "5.0.0", features = ["reqwest", "reqwest-blocking"] }
-reqwest = { version = "0.13.3", features = ["json", "blocking", "form", "query"] }
-object_store = { version = "0.13.2", features = ["aws"] }
-livekit-api = "0.5.0"
-dashmap = "6.2.1"
-chrono = "0.4.44"
-livekit-protocol = "0.7.7"
-futures-util = "0.3.32"
-apalis = { version = "1.0.0-rc.9", features = ["limit", "prometheus"] }
-apalis-postgres = { version = "1.0.0-rc.8", features = ["time"] }
-http-body-util = "0.1.3"
-bytes = "1.11.1"
-base64 = "0.22.1"
-serde_with = "3.21.0"
-async-trait = "0.1.89"
-once_cell = "1.21.4"
+meno-core = { workspace = true }
+
+anyhow = { workspace = true }
+# `argon2` is the password KDF (plan S3.2): hashing and verifying, both on
+# `spawn_blocking` because a single verification costs ~50ms of deliberate work.
+argon2 = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+# `/metrics` (§7.5): the Prometheus recorder plus the axum layer and endpoint.
+axum-prometheus = { workspace = true }
+bytes = { workspace = true }
+dashmap = { workspace = true }
+# `http-body-util` is what `BodyExt::collect` comes from. The idempotency middleware has
+# to buffer a response body to cache it (§4.5: the replay must carry the body *and* its
+# `Content-Type`), and axum's `Body` implements `http_body::Body`, not the concrete
+# buffering traits — so this is a genuine runtime dependency, not a test convenience.
+http-body-util = { workspace = true }
+# `config` is required by §4.6 ("replace `env::var` + `Context` chains with a typed,
+# layered config ... with a single aggregated error"). It is declared in the workspace
+# manifest and used by `config.rs` via the `ConfigSource` trait, which keeps the
+# parsing testable without mutating the process environment.
+config = { workspace = true }
+dotenvy = { workspace = true }
+fred = { workspace = true }
+# `futures_util` splits the axum WebSocket into its sink and stream halves for the
+# `/ws` read/write/heartbeat loop (`routes::ws`), which is three tasks over one socket.
+futures-util = { workspace = true }
+# `hex` renders the SHA-256 digest a refresh token is stored as; `sha2` computes it. A
+# refresh token is never stored verbatim, so a database dump holds nothing replayable.
+hex = { workspace = true }
+jsonwebtoken = { workspace = true }
+livekit-api = { workspace = true }
+livekit-protocol = { workspace = true }
+oauth2 = { workspace = true }
+object_store = { workspace = true }
+# `once_cell` gives `infrastructure::http` a fallible one-time initialiser
+# (`OnceCell::get_or_try_init`), which std's `OnceLock` does not offer on this
+# toolchain — the shared HTTP client has to be able to *report* a build failure.
+once_cell = { workspace = true }
+# `rand` draws the six-digit one-time codes from the OS CSPRNG. A predictable code
+# turns a 10^6 search space into a target (plan S4.7).
+rand = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+thiserror = { workspace = true }
+time = { workspace = true }
+tokio = { workspace = true }
+# The cross-cutting router layers §9.3 puts in one place: CORS from `CORS_ORIGINS`,
+# request-id propagation, and the HTTP trace layer that pairs with `timing` (§4.8).
+tower-http = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+validator = { workspace = true }
+
+serde = { workspace = true }
+sqlx = { workspace = true }
+serde_json = { workspace = true }
+uuid = { workspace = true }
+
+# `wiremock` is §10's HTTP double: it serves the FCM token and `messages:send`
+# endpoints on loopback so the adapter's real request path — bearer auth, JSON body,
+# status classification — is exercised without a Firebase project. Without it the push
+# adapter's HTTP behaviour is only reachable from `#[ignore]`d tests that need
+# credentials.
+# `tower` provides `ServiceExt::oneshot`, which is how the middleware contract tests
+# (§10) drive a `Router` without binding a socket.
+[dev-dependencies]
+tower = { workspace = true }
+# `tests/realtime_e2e.rs` is the socket-level tier: it connects a real client to
+# the in-process server so a room publish is asserted on the wire.
+tokio-tungstenite = { workspace = true }
+wiremock = { workspace = true }
+
+# Self-reference: this is what actually turns `test-support` on for `tests/`.
+#
+# Cargo unifies features across a target's dependency edges, and a test target depends
+# on this package both normally and through this dev-dependency — so building any test
+# target compiles `meno_api` with `test-support`, while `cargo build` (which never
+# resolves dev-dependencies) compiles none of the doubles. The comment on the
+# `[features]` table above promises exactly that; this line is the mechanism, because
+# Cargo has no feature that enables a feature for tests by itself.
+meno-api = { path = ".", features = ["test-support"] }
+
+# Named by the `tests/` suite. Most are already normal dependencies of the crate; they
+# are repeated here because a test target can only use what `[dev-dependencies]` (or
+# `[dependencies]`) offers, and being explicit keeps the suite's needs legible.
+axum = { workspace = true }
+http-body-util = { workspace = true }
+# The integration suites assert on `meno_core::ErrorCode` when checking an error
+# rendering; a test target cannot name it without declaring it.
+meno-core = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+
+[lints]
+workspace = true

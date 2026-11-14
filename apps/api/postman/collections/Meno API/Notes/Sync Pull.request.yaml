@@ -1,0 +1,28 @@
+$kind: http-request
+name: Sync Pull
+method: GET
+url: '{{base_url}}/notes/sync'
+order: 6000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+queryParams:
+  - key: since
+    value: '2024-01-01T00:00:00Z'
+    description: 'RFC 3339 timestamp — return all mutations after this point'
+  - key: limit
+    value: '100'
+    description: 'Max mutations to return per page'
+    disabled: true
+  - key: cursor
+    value: ''
+    description: 'Opaque cursor from previous page'
+    disabled: true
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has items array", () => pm.expect(json.data.items).to.be.an('array'));
+      console.log('[Sync Pull] mutations since last sync:', json.data.items.length);

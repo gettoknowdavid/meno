@@ -1,0 +1,27 @@
+$kind: http-request
+method: PATCH
+url: '{{base_url}}/users/me'
+order: 2000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+headers:
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "full_name": "Ada Lovelace",
+      "bio": "Mathematician and writer, chiefly known for her work on Charles Babbage's Analytical Engine."
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      console.log(`[Update My Profile] Profile updated for ${json.data.email}.`);

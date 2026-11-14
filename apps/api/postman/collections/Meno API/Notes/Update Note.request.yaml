@@ -1,0 +1,31 @@
+$kind: http-request
+name: Update Note
+method: PATCH
+url: '{{base_url}}/notes/{{note_id}}'
+order: 3000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "Updated Note Title",
+      "content": "Updated note body.",
+      "pinned": true,
+      "baseVersion": {{note_version}}
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Version incremented", () => pm.expect(json.data.version).to.be.a('number'));
+
+      if (json.data && json.data.version !== undefined) {
+        pm.environment.set('note_version', json.data.version);
+        console.log('[Update Note] new version =', json.data.version);
+      }

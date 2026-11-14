@@ -1,0 +1,28 @@
+$kind: http-request
+name: Update Folder
+method: PATCH
+url: '{{base_url}}/folders/{{folder_id}}'
+order: 3000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: |-
+    {
+      "title": "Renamed Folder",
+      "baseVersion": {{folder_version}}
+    }
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Title updated", () => pm.expect(json.data.title).to.equal("Renamed Folder"));
+
+      if (json.data && json.data.version !== undefined) {
+        pm.environment.set('folder_version', json.data.version);
+      }

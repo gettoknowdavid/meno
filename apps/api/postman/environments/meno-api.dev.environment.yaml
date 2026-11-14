@@ -1,0 +1,76 @@
+name: Meno API - Dev
+values:
+  - key: base_url
+    value: 'http://localhost:3000'
+  - key: base_url_ws
+    value: 'ws://localhost:3000'
+  - key: ENV
+    value: dev
+  - key: PORT
+    value: '3000'
+  - key: DATABASE_URL
+    value: 'postgres://postgres:postgres@localhost:5432/meno_dev'
+  - key: REDIS_URL
+    value: 'redis://localhost:6379'
+  - key: JWT_SECRET
+    value: dev-jwt-secret-change-me
+  - key: JWT_REFRESH_SECRET
+    value: dev-jwt-refresh-secret-change-me
+  - key: CORS_ORIGINS
+    value: 'http://localhost:3000,http://localhost:5173'
+  - key: ACCESS_TOKEN_EXPIRATION
+    value: '900'
+  - key: REFRESH_TOKEN_EXPIRATION
+    value: '2592000'
+  - key: access_token
+    value: ''
+  - key: refresh_token
+    value: ''
+  - key: LIVEKIT_ENABLED
+    value: 'false'
+  - key: LIVEKIT_URL
+    value: ''
+  - key: LIVEKIT_API_KEY
+    value: ''
+  - key: LIVEKIT_API_SECRET
+    value: ''
+  - key: PUSH_ENABLED
+    value: 'false'
+  - key: FIREBASE_PROJECT_ID
+    value: ''
+  - key: SMTP_HOST
+    value: localhost
+  - key: SMTP_PORT
+    value: '1025'
+  - key: SMTP_USER
+    value: ''
+  - key: SMTP_PASSWORD
+    value: ''
+  - key: SMTP_FROM
+    value: noreply@localhost
+  - key: STORAGE_ENABLED
+    value: 'false'
+  - key: STORAGE_ENDPOINT
+    value: ''
+  - key: STORAGE_ACCESS_KEY
+    value: ''
+  - key: STORAGE_SECRET_KEY
+    value: ''
+  - key: STORAGE_BUCKET
+    value: ''
+  - key: STORAGE_REGION
+    value: us-east-1
+  - key: GOOGLE_ENABLED
+    value: 'false'
+  - key: GOOGLE_CLIENT_ID
+    value: ''
+  - key: GOOGLE_CLIENT_SECRET
+    value: ''
+  - key: GOOGLE_REDIRECT_URI
+    value: 'http://localhost:3000/auth/google/callback'
+  - key: METRICS_TOKEN
+    value: dev-metrics-token
+  - key: user_id
+    value: ''
+  - key: user_email
+    value: ''

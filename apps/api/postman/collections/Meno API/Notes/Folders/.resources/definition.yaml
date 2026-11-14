@@ -1,0 +1,12 @@
+$kind: collection
+name: Folders
+description: |-
+  Note folders — create, rename, and delete containers for notes.
+
+  Folders use the same client-chosen UUID pattern as notes: supply your own `id` on
+  creation so an offline-created folder keeps its identity on sync. Optimistic
+  concurrency is enforced via `baseVersion` on every mutating request.
+
+  Deleting a folder accepts a `disposition` field:
+    - `"unfiled"` (default) — notes in the folder are moved to the root
+    - `"delete"` — notes in the folder are also deleted

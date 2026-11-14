@@ -1,0 +1,64 @@
+name: meno_ui
+description: "The UI package for the Meno app."
+homepage:
+publish_to: none
+version: 0.0.1
+
+environment:
+  sdk: ^3.13.5
+  flutter: ">=1.17.0"
+
+dependencies:
+  cached_network_image: ^4.0.4
+  flutter:
+    sdk: flutter
+  flutter_gen: ^5.13.0+1
+  flutter_svg: ^2.3.0
+  intl: ^0.20.3
+  material_ui: ^1.9.0
+  pinput: ^7.0.0
+  skeletonizer: ^3.0.0
+  timeago: ^3.7.1
+
+dev_dependencies:
+  build_runner: ^2.16.2
+  flutter_gen_runner: ^5.13.0+1
+  flutter_test:
+    sdk: flutter
+  very_good_analysis: ^11.0.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/images/
+
+  fonts:
+    - family: MIcons
+      fonts:
+        - asset: assets/fonts/MIcons.ttf
+    - family: SFProDisplay
+      fonts:
+        - asset: assets/fonts/SFProDisplay_Thin.ttf
+          weight: 100
+        - asset: assets/fonts/SFProDisplay_UltraLight.ttf
+          weight: 200
+        - asset: assets/fonts/SFProDisplay_Light.ttf
+          weight: 300
+        - asset: assets/fonts/SFProDisplay_Regular.ttf
+          weight: 400
+        - asset: assets/fonts/SFProDisplay_Medium.ttf
+          weight: 500
+        - asset: assets/fonts/SFProDisplay_SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/SFProDisplay_Bold.ttf
+          weight: 700
+        - asset: assets/fonts/SFProDisplay_Black.ttf
+          weight: 800
+        - asset: assets/fonts/SFProDisplay_Heavy.ttf
+          weight: 900
+
+flutter_gen:
+  output: lib/src/gen/
+
+  integrations:
+    flutter_svg: true

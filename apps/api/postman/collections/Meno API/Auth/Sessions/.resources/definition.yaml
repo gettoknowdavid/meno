@@ -1,0 +1,9 @@
+$kind: collection
+name: Sessions
+description: 'Session listing and revocation. Requires Bearer auth.'
+order: 4000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'

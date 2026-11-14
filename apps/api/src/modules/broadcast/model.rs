@@ -1,309 +1,760 @@
-use serde::{Deserialize, Serialize};
-use sqlx::error::BoxDynError;
-use sqlx::{Database, Decode, Encode, FromRow, Postgres, Type};
-use std::fmt::Display;
+//! Broadcast rows, and the four words the domain uses to describe one.
+//!
+//! Ported from `master`'s `modules/broadcast/model.rs`, with the changes the monorepo
+//! requires:
+//!
+//! - **`EndReason` and `ParticipantRole` encode/decode through one place.** `master`
+//!   hand-wrote `Type`/`Decode`/`Encode` for `EndReason` and gave `ParticipantRole` a
+//!   `From<String>`, so the two directions of the same mapping existed twice and could
+//!   disagree — `From<String> for EndReason` mapped `"anything else"` to `Normal`.
+//!   Every variant is now a `const` string, so the wire value and the SQL value are
+//!   the same constant.
+//! - **Every enum variant is documented**, because the workspace `missing_docs` lint is
+//!   a warning and this file is the reference for what a `status` column may hold.
+//! - **`Broadcast::state()` is a pure function of the row** (§7.6's neighbourhood): the
+//!   status column and the timestamps are the only inputs, and a client that disagrees
+//!   about "is this live" is the bug the `state` field on the response exists to
+//!   prevent.
+//!
+//! # `status` versus `state`
+//!
+//! `status` is the database column: `inactive` or `active`, and nothing else — it is
+//! constrained by `broadcasts_status_check` in migration 0004. `state` is what a client
+//! renders, and it is derived: a broadcast with no `end_time` and a future `start_time`
+//! is *scheduled* even though its status is `inactive`. The column is the source of
+//! truth and the derived value is never written back, so the two cannot drift.
+
+use sqlx::{FromRow, Type};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
+use crate::infrastructure::livekit::dto::LivekitRole;
+
+/// A `broadcasts` row, as the module reads it.
 #[derive(Debug, Clone, FromRow)]
 pub struct Broadcast {
+    /// Primary key.
     pub id: Uuid,
+    /// What the broadcast is called.
     pub title: String,
+    /// Optional description, capped at 244 characters by the column.
     pub description: Option<String>,
+    /// `inactive` or `active` — the database column.
     pub status: BroadcastStatus,
+    /// Who owns it, and who alone may end it.
     pub creator_id: Uuid,
+    /// IANA zone the creator picked, e.g. `Africa/Lagos`.
     pub time_zone: Option<String>,
+    /// Resolved image URL.
     pub image_url: Option<String>,
+    /// Storage key of the image.
     pub image_id: Option<String>,
+    /// Token the media server last issued for the host, if any.
     pub broadcast_token: Option<String>,
-    pub total_participants: Option<i64>,
+    /// All-time join count. §7.6's drifting counter — see the repository.
+    pub total_participants: i64,
+    /// When it was scheduled to start.
     pub start_time: Option<OffsetDateTime>,
+    /// When it actually ended.
     pub end_time: Option<OffsetDateTime>,
+    /// Whether a recording may be kept.
     pub recording_enabled: bool,
+    /// Storage key of the recording.
     pub recording_key: Option<String>,
+    /// Resolved recording URL.
     pub recording_url: Option<String>,
+    /// When it went live.
     pub published_at: Option<OffsetDateTime>,
-    pub end_reason: EndReason,
+    /// When nobody who can run it was left in the room, or `None` while healthy.
+    ///
+    /// Written by the reaper, never by a request. A live row with this set is inside its
+    /// grace window, which is why [`Self::state`] can answer `reconnecting` from the row
+    /// alone on every read.
+    pub abandoned_since: Option<OffsetDateTime>,
+    /// Why it ended. Null while it never has.
+    pub end_reason: Option<EndReason>,
+    /// Row creation time.
     pub created_at: OffsetDateTime,
+    /// Last modification time.
     pub updated_at: OffsetDateTime,
+    /// Soft-delete marker; every read filters on it.
     pub deleted_at: Option<OffsetDateTime>,
 }
+
 impl Broadcast {
-    pub fn can_be_scheduled(&self) -> bool {
-        match self.start_time {
-            Some(st) => st > OffsetDateTime::now_utc(),
-            None => false,
+    /// Whether the broadcast is live right now.
+    #[must_use]
+    pub fn is_live(&self) -> bool {
+        self.status == BroadcastStatus::Active && self.end_time.is_none()
+    }
+
+    /// What a client renders, derived from the row alone.
+    ///
+    /// `Reconnecting` is a property of the row, not of a process: the reaper writes
+    /// `abandoned_since` the first time it finds the room unhealthy and clears it when it
+    /// is healthy again, so every read — detail, list, session — answers from the same
+    /// fact and a restart mid-grace cannot lose the window.
+    #[must_use]
+    pub fn state(&self) -> BroadcastState {
+        if self.is_live() {
+            return if self.abandoned_since.is_some() {
+                BroadcastState::Reconnecting
+            } else {
+                BroadcastState::Live
+            };
+        }
+        if self.end_time.is_some() || self.status == BroadcastStatus::Ended {
+            return BroadcastState::Ended;
+        }
+        if self.start_time.is_some_and(|start| start > now()) {
+            return BroadcastState::Scheduled;
+        }
+        BroadcastState::Draft
+    }
+
+    /// Whether `start_time` is still in the future.
+    ///
+    /// Separate from [`Self::state`] because this is a *rule* — "cannot schedule into
+    /// the past" — and it is checked at creation and at update, not on every read.
+    #[must_use]
+    pub fn is_scheduled_for_the_future(&self) -> bool {
+        self.start_time.is_some_and(|start| start > now())
+    }
+}
+
+/// Where a cohost invitation is in its lifecycle.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, sqlx::Type, serde::Serialize, serde::Deserialize)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
+#[serde(rename_all = "snake_case")]
+pub enum InvitationStatus {
+    /// Waiting for the invitee.
+    Pending,
+    /// The invitee joined the cohost list.
+    Accepted,
+    /// The invitee refused.
+    Declined,
+    /// The invitation passed its useful life.
+    Expired,
+}
+
+impl InvitationStatus {
+    /// The value stored in the `status` column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Pending => "pending",
+            Self::Accepted => "accepted",
+            Self::Declined => "declined",
+            Self::Expired => "expired",
         }
     }
-    pub fn get_partial_state(&self) -> BroadcastState {
-        match self.status {
-            BroadcastStatus::Active => BroadcastState::Live,
-            BroadcastStatus::Inactive => {
-                if self.end_time.is_some() {
-                    BroadcastState::Ended
-                } else if self
-                    .start_time
-                    .is_some_and(|st| st > OffsetDateTime::now_utc())
-                {
-                    BroadcastState::Scheduled
-                } else {
-                    BroadcastState::Draft
-                }
-            }
-        }
-    }
-    pub fn is_active(&self) -> bool {
-        self.status == BroadcastStatus::Active
-    }
-    pub fn is_not_active(&self) -> bool {
-        self.status != BroadcastStatus::Active
-    }
 }
 
-/// A broadcast row joined with its creator + cohosts in one query.
-/// Used by the `broadcast_to_response()` helper to avoid N+1 fetches.
-#[derive(Debug, Clone, FromRow)]
-pub struct BroadcastWithRelations {
-    #[sqlx(flatten)]
-    pub broadcast: Broadcast,
-    pub creator_id_: Uuid,
-    pub creator_full_name: String,
-    pub creator_avatar_id: Option<String>,
-    pub creator_avatar_url: Option<String>,
-}
-
-#[derive(Debug, Clone, FromRow)]
-pub struct BroadcastParticipant {
-    pub broadcast_id: Uuid,
-    pub participant_id: Uuid,
-    pub role: ParticipantRole,
-    pub joined_at: OffsetDateTime,
-    pub left_at: Option<OffsetDateTime>,
-    pub last_listen_position_seconds: i32,
-    pub last_listened_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Clone, FromRow)]
-pub struct BroadcastCohost {
-    pub broadcast_id: Uuid,
-    pub cohost_id: Uuid,
-    pub invited_by: Uuid,
-    pub invited_at: OffsetDateTime,
-    pub removed_at: Option<OffsetDateTime>,
-}
-
-#[derive(Debug, Clone, FromRow)]
+/// A `cohost_invitations` row.
+///
+/// The two-step handshake's state. `broadcast_cohosts` is still the list of people who
+/// may publish; this row is the request that puts somebody on it, so an invitation can
+/// be pending without granting anything.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct CohostInvitation {
+    /// Primary key.
     pub id: Uuid,
+    /// Which broadcast.
     pub broadcast_id: Uuid,
+    /// Who sent it — always the creator in this module's flows.
     pub inviter_id: Uuid,
+    /// Who is being asked.
     pub invitee_id: Uuid,
+    /// Where it is in its lifecycle.
     pub status: InvitationStatus,
+    /// When it was issued (or re-issued).
     pub created_at: OffsetDateTime,
+    /// When the invitee answered.
     pub responded_at: Option<OffsetDateTime>,
 }
 
-#[derive(Debug, Clone, FromRow)]
-pub struct BroadcastBookmark {
-    pub user_id: Uuid,
-    pub broadcast_id: Uuid,
-    pub saved_at: OffsetDateTime,
+/// The clock, as one call site.
+///
+/// Every "is this in the past" decision goes through here so a test can reason about
+/// the boundary without constructing a timestamp by hand, and so the comparison is
+/// always against UTC — a local-time comparison would make "in the past" mean something
+/// different on two replicas.
+#[must_use]
+pub fn now() -> OffsetDateTime {
+    OffsetDateTime::now_utc()
 }
 
-/// Context passed into `broadcast_to_response()` from the service layer.
-/// Bundles all the participant-specific and Redis-sourced data that cannot be
-/// derived from the DB row alone.
-#[derive(Debug, Default)]
-pub struct BroadcastContext {
-    /// The authenticated participant's ID, if present.
-    pub participant_id: Option<Uuid>,
-
-    /// Whether the Redis host_grace key exists (broadcast is reconnecting).
-    pub is_reconnecting: bool,
-
-    /// Live participant count from Redis (0 if not live).
-    pub live_count: i64,
-
-    /// All-time participant count from the DB (total joins ever).
-    pub total_count: i64,
-
-    /// The participant's role in this broadcast.
-    pub participant_role: ParticipantRole,
-
-    /// Whether the participant is currently joined as a participant.
-    pub participant_is_in_room: bool,
-
-    /// Whether the participant subscribes to the creator.
-    pub is_subscribed_to_creator: bool,
-
-    /// Whether the participant has bookmarked this broadcast.
-    pub is_bookmarked: bool,
-
-    /// Populated only in the /continue-listening context.
-    pub time_remaining_seconds: Option<i64>,
-
-    /// When the participant last joined this broadcast.
-    pub last_listened_at: Option<OffsetDateTime>,
-}
-
-// ==================== ENUMS ====================
-// #[derive(Clone, Debug, Serialize, Deserialize, Type, strum::Display, AsRefStr, EnumString)]
-#[derive(Debug, Clone, PartialEq, Type, Serialize, Deserialize)]
+/// The live/inactive column, exactly as `broadcasts_status_check` allows it.
+///
+/// Three variants because the constraint has three values. This module only ever
+/// *writes* `inactive` and `active` — "ended" is expressed by `end_time`, which is the
+/// column a cursor on the ended feed can sort by — but a row may legally carry `ended`
+/// from another writer, and an enum that cannot decode a row the database accepts turns
+/// that into a 500 on a read path.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Type, serde::Serialize, serde::Deserialize)]
 #[sqlx(type_name = "text", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum BroadcastStatus {
-    Active,
+    /// Not live.
     Inactive,
+    /// Live.
+    Active,
+    /// Finished. Carried for decoding; this module writes `inactive` + `end_time`.
+    Ended,
 }
-impl From<String> for BroadcastStatus {
-    fn from(s: String) -> Self {
-        match s.to_lowercase().as_str() {
-            "active" => BroadcastStatus::Active,
-            _ => BroadcastStatus::Inactive,
+
+impl BroadcastStatus {
+    /// The value stored in the column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Inactive => "inactive",
+            Self::Active => "active",
+            Self::Ended => "ended",
         }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Default, Type, Serialize, Deserialize)]
+impl std::fmt::Display for BroadcastStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// What a participant may do in a room.
+///
+/// Ordered by privilege and serialised in the lowercase spelling the `role` column and
+/// the client both use. `None` is "not in this broadcast", which is a real state and not
+/// a missing value: a detail response carries it so the client does not have to infer
+/// it from the absence of a cohost entry.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Default,
+    Type,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 #[sqlx(type_name = "text", rename_all = "lowercase")]
 #[serde(rename_all = "lowercase")]
 pub enum ParticipantRole {
-    Host,
+    /// May publish and moderate, but cannot end the broadcast.
     Cohost,
+    /// Owns the broadcast. Full room admin.
+    Host,
+    /// May subscribe only.
     Participant,
+    /// Not in this broadcast.
     #[default]
     None,
 }
+
 impl ParticipantRole {
-    pub fn priority(&self) -> i64 {
+    /// The value stored in the column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
         match self {
-            ParticipantRole::Host => 0,
-            ParticipantRole::Cohost => 1,
-            ParticipantRole::Participant => 2,
-            ParticipantRole::None => 3,
+            Self::Host => "host",
+            Self::Cohost => "cohost",
+            Self::Participant => "participant",
+            Self::None => "none",
         }
     }
-}
-impl From<String> for ParticipantRole {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "host" => ParticipantRole::Host,
-            "cohost" => ParticipantRole::Cohost,
-            "participant" => ParticipantRole::Participant,
-            _ => ParticipantRole::None,
-        }
-    }
-}
-impl From<ParticipantRole> for String {
-    fn from(value: ParticipantRole) -> Self {
+
+    /// Parse a stored value.
+    ///
+    /// Returns `None` for anything unrecognised rather than defaulting to
+    /// [`Self::Participant`]: `master`'s `From<String>` mapped an unknown string to
+    /// `Participant`, which silently downgraded an unknown host into a listener and made
+    /// a permission bug look like a data bug.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Self {
         match value {
-            ParticipantRole::Host => "host".to_string(),
-            ParticipantRole::Cohost => "cohost".to_string(),
-            ParticipantRole::Participant => "participant".to_string(),
-            ParticipantRole::None => "none".to_string(),
+            "host" => Self::Host,
+            "cohost" => Self::Cohost,
+            "participant" => Self::Participant,
+            _ => Self::None,
         }
     }
-}
-impl Display for ParticipantRole {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match self {
-            ParticipantRole::Host => "host".to_string(),
-            ParticipantRole::Cohost => "cohost".to_string(),
-            ParticipantRole::Participant => "participant".to_string(),
-            ParticipantRole::None => "none".to_string(),
-        };
-        write!(f, "{}", str)
+
+    /// The role the media server is told about.
+    ///
+    /// `None` is not a media role, so it maps to `Participant` — the least-privileged
+    /// grant. That mapping is deliberate and is the reason the cast is explicit rather
+    /// than a `match` with an `unreachable!()` arm: a value that reaches the media server
+    /// must have a defined permission, and the defined permission for "we do not know"
+    /// is the one that can listen and nothing more.
+    #[must_use]
+    pub const fn to_livekit(self) -> LivekitRole {
+        match self {
+            Self::Host => LivekitRole::Host,
+            Self::Cohost => LivekitRole::Cohost,
+            Self::Participant | Self::None => LivekitRole::Participant,
+        }
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum InvitationStatus {
-    Pending,
-    Accepted,
-    Declined,
+impl std::fmt::Display for ParticipantRole {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
 }
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+
+/// Why a broadcast ended, exactly as `broadcasts_end_reason_check` allows it.
+/// `#[derive(Type)]` rather than hand-written `Decode`/`Encode` for the same reason
+/// [`ParticipantRole`] has one: the derive generates them from the *same* `rename_all`
+/// as the serde attribute, so the SQL value and the wire value cannot drift. A hand-
+/// written pair is two more copies of the mapping — which is how `master` ended up
+/// mapping an unknown string to `Normal`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Type, serde::Serialize, serde::Deserialize,
+)]
+#[sqlx(type_name = "text", rename_all = "snake_case")]
 #[serde(rename_all = "snake_case")]
 pub enum EndReason {
-    Normal,
-    HostDisconnected,
-    AdminForced,
-    QuotaExceeded,
+    /// The host ended it.
     #[default]
-    None,
+    Normal,
+    /// The host's socket dropped past the grace period.
+    HostDisconnected,
+    /// An administrator ended it.
+    AdminForced,
+    /// The recording or participant quota was reached.
+    QuotaExceeded,
 }
 
-impl From<String> for EndReason {
-    fn from(s: String) -> Self {
-        match s.as_str() {
-            "normal" => EndReason::Normal,
-            "host_disconnected" => EndReason::HostDisconnected,
-            "admin_forced" => EndReason::AdminForced,
-            "quota_exceeded" => EndReason::QuotaExceeded,
-            _ => EndReason::Normal,
+impl EndReason {
+    /// The value stored in the column.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Normal => "normal",
+            Self::HostDisconnected => "host_disconnected",
+            Self::AdminForced => "admin_forced",
+            Self::QuotaExceeded => "quota_exceeded",
         }
     }
-}
-impl Display for EndReason {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let str = match &self {
-            EndReason::Normal => "normal".to_string(),
-            EndReason::HostDisconnected => "host_disconnected".to_string(),
-            EndReason::AdminForced => "admin_forced".to_string(),
-            EndReason::QuotaExceeded => "quota_exceeded".to_string(),
-            EndReason::None => "none".to_string(),
-        };
-        write!(f, "{}", str)
-    }
-}
-impl From<EndReason> for String {
-    fn from(value: EndReason) -> Self {
+
+    /// Parse a stored value.
+    ///
+    /// `None` for an unrecognised string, because the column is nullable and `NULL`
+    /// means "has not ended"; inventing a reason for a row that has not ended would put
+    /// a false statement in a client's summary.
+    #[must_use]
+    pub fn from_wire(value: &str) -> Option<Self> {
         match value {
-            EndReason::Normal => "normal".to_string(),
-            EndReason::HostDisconnected => "host_disconnected".to_string(),
-            EndReason::AdminForced => "admin_forced".to_string(),
-            EndReason::QuotaExceeded => "quota_exceeded".to_string(),
-            EndReason::None => "none".to_string(),
+            "normal" => Some(Self::Normal),
+            "host_disconnected" => Some(Self::HostDisconnected),
+            "admin_forced" => Some(Self::AdminForced),
+            "quota_exceeded" => Some(Self::QuotaExceeded),
+            _ => None,
         }
     }
 }
-impl Type<Postgres> for EndReason {
-    fn type_info() -> <Postgres as Database>::TypeInfo {
-        <String as Type<Postgres>>::type_info()
-    }
-}
-impl<'r> Decode<'r, Postgres> for EndReason {
-    fn decode(value: <Postgres as Database>::ValueRef<'r>) -> Result<Self, BoxDynError> {
-        let s: String = Decode::<Postgres>::decode(value)?;
-        Ok(EndReason::from(s))
-    }
-}
-impl<'q> Encode<'q, Postgres> for EndReason {
-    fn encode_by_ref(
-        &self,
-        buf: &mut <Postgres as Database>::ArgumentBuffer<'q>,
-    ) -> Result<sqlx::encode::IsNull, BoxDynError> {
-        let s = String::from(self.clone());
-        <String as Encode<Postgres>>::encode(s, buf)
+
+impl std::fmt::Display for EndReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+/// What a client renders, derived from a row plus at most one fact from Redis.
+///
+/// Five states, because the client branches on this and a missing case is a client that
+/// shows "live" for a broadcast that ended an hour ago.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BroadcastState {
-    /// status=active, no Redis grace key
+    /// Live, with the host connected.
     Live,
-
-    /// status=active, Redis host_grace:{id} key exists
+    /// Live, with the host's socket in its grace window.
     Reconnecting,
-
-    /// status=inactive, end_time is set
+    /// Ended.
     Ended,
-
-    /// status=inactive, start_time is in the future
+    /// Scheduled for a future `start_time`.
     Scheduled,
-
-    /// status=inactive, no start_time, no end_time
+    /// Created, with nothing scheduled and no end.
     Draft,
+}
+
+impl BroadcastState {
+    /// The wire spelling.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Live => "live",
+            Self::Reconnecting => "reconnecting",
+            Self::Ended => "ended",
+            Self::Scheduled => "scheduled",
+            Self::Draft => "draft",
+        }
+    }
+}
+
+impl std::fmt::Display for BroadcastState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// A `broadcast_participants` row.
+#[derive(Debug, Clone, FromRow)]
+pub struct BroadcastParticipant {
+    /// Owning broadcast.
+    pub broadcast_id: Uuid,
+    /// The participant.
+    pub participant_id: Uuid,
+    /// What they may do. Hosts and cohosts are rows here too, so "who is in this
+    /// broadcast" is one query rather than a join of three tables.
+    pub role: ParticipantRole,
+    /// First join. The table has one row per `(broadcast, participant)` and no
+    /// "last joined" column, so a return visit updates `left_at` rather than adding a
+    /// row — which is why the all-time counter needs the explicit bump in
+    /// [`JoinOutcome::Rejoined`].
+    pub joined_at: OffsetDateTime,
+    /// When they left, if they have.
+    pub left_at: Option<OffsetDateTime>,
+    /// Resume position, in seconds, for "continue listening".
+    pub last_listen_position_seconds: i32,
+    /// When that position was last written.
+    pub last_listened_at: Option<OffsetDateTime>,
+}
+
+impl BroadcastParticipant {
+    /// Whether this row represents someone currently in the room.
+    #[must_use]
+    pub fn is_present(&self) -> bool {
+        self.left_at.is_none()
+    }
+}
+
+/// A `broadcast_cohosts` row.
+#[derive(Debug, Clone, FromRow)]
+pub struct BroadcastCohost {
+    /// Owning broadcast.
+    pub broadcast_id: Uuid,
+    /// The cohost.
+    pub cohost_id: Uuid,
+    /// Who invited them.
+    pub invited_by: Uuid,
+    /// When.
+    pub invited_at: OffsetDateTime,
+    /// When they were removed, if they were.
+    pub removed_at: Option<OffsetDateTime>,
+}
+
+impl BroadcastCohost {
+    /// Whether this row represents a current cohost.
+    #[must_use]
+    pub fn is_current(&self) -> bool {
+        self.removed_at.is_none()
+    }
+}
+
+/// A user, reduced to what a broadcast response needs.
+///
+/// Not `modules::auth::dto::UserResponse`: that is *auth's* wire contract, and a module
+/// may not reach sideways into another module (§ the layer rule in `modules/mod.rs`).
+/// This is the projection the broadcast surface needs, and it is assembled from the
+/// repository rather than from the auth module, which is also why a broadcast response
+/// cannot start leaking an auth-only field.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize, FromRow)]
+#[serde(rename_all = "camelCase")]
+pub struct UserSummary {
+    /// Account id.
+    pub id: Uuid,
+    /// Display name.
+    pub full_name: String,
+    /// Avatar storage key.
+    pub avatar_id: Option<String>,
+    /// Resolved avatar URL.
+    pub avatar_url: Option<String>,
+}
+
+/// The fields a new `broadcasts` row needs.
+#[derive(Debug, Clone)]
+pub struct NewBroadcast {
+    /// Who is creating it.
+    pub creator_id: Uuid,
+    /// Title, already validated.
+    pub title: String,
+    /// Optional description.
+    pub description: Option<String>,
+    /// Optional IANA zone.
+    pub time_zone: Option<String>,
+    /// Optional image key.
+    pub image_id: Option<String>,
+    /// Optional resolved image URL.
+    pub image_url: Option<String>,
+    /// Optional scheduled start.
+    pub start_time: Option<OffsetDateTime>,
+    /// Whether the recording may be kept.
+    pub recording_enabled: bool,
+    /// Cohosts to attach in the same transaction.
+    pub cohosts: Vec<Uuid>,
+}
+
+/// The fields an update may change.
+///
+/// A struct of `Option`s rather than a set of setters, because the repository builds one
+/// `UPDATE` with `COALESCE` from it: a field that is absent leaves the column alone, and
+/// a field present and `NULL` is the difference the repository cannot express any other
+/// way. `cohosts` is the full replacement list when present — add and remove are
+/// separate endpoints, and a "patch" that silently removes people is the wrong default.
+#[derive(Debug, Clone, Default)]
+pub struct BroadcastPatch {
+    /// New title.
+    pub title: Option<String>,
+    /// New description.
+    pub description: Option<String>,
+    /// New IANA zone.
+    pub time_zone: Option<String>,
+    /// New image key.
+    pub image_id: Option<String>,
+    /// New image URL.
+    pub image_url: Option<String>,
+    /// New scheduled start.
+    pub start_time: Option<OffsetDateTime>,
+    /// Whether the recording may be kept.
+    pub recording_enabled: Option<bool>,
+    /// The complete cohost list, when the caller is replacing it.
+    pub cohosts: Option<Vec<Uuid>>,
+}
+
+impl BroadcastPatch {
+    /// Whether the patch would change nothing.
+    ///
+    /// Checked before the write so an empty `PATCH` is a 400 rather than a round trip
+    /// that reports success for having done nothing.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.time_zone.is_none()
+            && self.image_id.is_none()
+            && self.image_url.is_none()
+            && self.start_time.is_none()
+            && self.recording_enabled.is_none()
+            && self.cohosts.is_none()
+    }
+}
+
+/// A participant joining, as the repository is told about it.
+///
+/// §7.6 in one type: the row to write and the counter to fix are the same fact, so they
+/// travel together and the repository has no way to do one without the other.
+#[derive(Debug, Clone)]
+pub struct JoinRequest {
+    /// The broadcast.
+    pub broadcast_id: Uuid,
+    /// Who is joining.
+    pub participant_id: Uuid,
+    /// What they may do — the service decides, never the caller.
+    pub role: ParticipantRole,
+}
+
+/// What a join produced.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JoinOutcome {
+    /// The participant was not in the room; the row was created.
+    Joined,
+    /// The participant was already in the room and stayed.
+    AlreadyPresent,
+    /// The participant had left and came back; the row was re-opened and the
+    /// all-time counter incremented.
+    Rejoined,
+}
+
+/// The outcome of a leave, which the service reports rather than guessing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LeaveOutcome {
+    /// A live row was closed.
+    Left,
+    /// The participant was not in the room.
+    NotPresent,
+    /// The host tried to leave their own broadcast.
+    IsHost,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(days: i64) -> OffsetDateTime {
+        now() + time::Duration::days(days)
+    }
+
+    fn broadcast() -> Broadcast {
+        Broadcast {
+            id: Uuid::from_u128(1),
+            title: "Ada's show".to_owned(),
+            description: None,
+            status: BroadcastStatus::Inactive,
+            creator_id: Uuid::from_u128(2),
+            time_zone: None,
+            image_url: None,
+            image_id: None,
+            broadcast_token: None,
+            total_participants: 0,
+            start_time: None,
+            end_time: None,
+            recording_enabled: false,
+            recording_key: None,
+            recording_url: None,
+            published_at: None,
+            abandoned_since: None,
+            end_reason: None,
+            created_at: now(),
+            updated_at: now(),
+            deleted_at: None,
+        }
+    }
+
+    #[test]
+    fn a_new_broadcast_is_a_draft() {
+        // The state a client renders before anything has happened to it.
+        assert_eq!(broadcast().state(), BroadcastState::Draft);
+    }
+
+    #[test]
+    fn a_future_start_time_makes_it_scheduled_not_draft() {
+        // The distinction the `status` column cannot express: both rows are
+        // `inactive`, and the client must still render them differently.
+        let mut row = broadcast();
+        row.start_time = Some(at(1));
+        assert_eq!(row.state(), BroadcastState::Scheduled);
+        assert_eq!(row.status, BroadcastStatus::Inactive);
+        assert!(row.is_scheduled_for_the_future());
+    }
+
+    #[test]
+    fn an_active_row_is_live_until_it_has_an_end_time() {
+        let mut row = broadcast();
+        row.status = BroadcastStatus::Active;
+        assert_eq!(row.state(), BroadcastState::Live);
+        assert!(row.is_live());
+
+        row.end_time = Some(now());
+        assert!(!row.is_live(), "an ended row is never live");
+        assert_eq!(
+            row.state(),
+            BroadcastState::Ended,
+            "status alone must not keep a finished broadcast looking live"
+        );
+    }
+
+    #[test]
+    fn a_live_row_whose_clock_is_running_reads_as_reconnecting() {
+        // The state that used to be defined and never produced: a live row with nobody
+        // running the room must say so on every read, not only on the socket.
+        let mut row = broadcast();
+        row.status = BroadcastStatus::Active;
+        row.abandoned_since = Some(now());
+
+        assert_eq!(row.state(), BroadcastState::Reconnecting);
+
+        // The host came back: the reaper cleared the clock, and the next read is live.
+        row.abandoned_since = None;
+        assert_eq!(row.state(), BroadcastState::Live);
+    }
+
+    #[test]
+    fn a_past_start_time_is_not_scheduled() {
+        let mut row = broadcast();
+        row.start_time = Some(at(-1));
+        assert_eq!(row.state(), BroadcastState::Draft);
+        assert!(!row.is_scheduled_for_the_future());
+    }
+
+    #[test]
+    fn an_unrecognised_role_reads_as_absent_not_as_a_participant() {
+        // The `master` bug: an unknown string defaulted to `Participant`, silently
+        // downgrading a host into a listener and turning a permission problem into an
+        // unexplainable data problem.
+        assert_eq!(ParticipantRole::from_wire("host"), ParticipantRole::Host);
+        assert_eq!(
+            ParticipantRole::from_wire("admin"),
+            ParticipantRole::None,
+            "an unknown role must not become a real one"
+        );
+    }
+
+    #[test]
+    fn every_role_round_trips_through_its_wire_value() {
+        for role in [
+            ParticipantRole::Host,
+            ParticipantRole::Cohost,
+            ParticipantRole::Participant,
+            ParticipantRole::None,
+        ] {
+            assert_eq!(
+                ParticipantRole::from_wire(role.as_str()),
+                role,
+                "{} must survive a database round trip",
+                role.as_str()
+            );
+        }
+    }
+
+    #[test]
+    fn an_absent_role_gets_the_least_privileged_media_grant() {
+        // A role reaching the media server must have a defined permission, and the
+        // defined permission for "we do not know" is listen-only.
+        assert!(!ParticipantRole::None.to_livekit().is_admin());
+        assert!(!ParticipantRole::None.to_livekit().can_publish());
+        assert!(ParticipantRole::Host.to_livekit().is_admin());
+        assert!(ParticipantRole::Cohost.to_livekit().can_publish());
+    }
+
+    #[test]
+    fn an_unknown_end_reason_is_absent_rather_than_normal() {
+        // Inventing `Normal` for a row that has not ended puts a false statement in a
+        // client's summary.
+        assert_eq!(EndReason::from_wire("normal"), Some(EndReason::Normal));
+        assert_eq!(
+            EndReason::from_wire("host_disconnected"),
+            Some(EndReason::HostDisconnected)
+        );
+        assert_eq!(EndReason::from_wire("whatever"), None);
+    }
+
+    #[test]
+    fn every_enum_serialises_to_the_spelling_the_column_holds() {
+        // The value on the wire and the value in the database are the same constant, so
+        // this is the test that keeps the two spellings from drifting apart.
+        for role in [
+            ParticipantRole::Host,
+            ParticipantRole::Cohost,
+            ParticipantRole::Participant,
+            ParticipantRole::None,
+        ] {
+            assert_eq!(
+                serde_json::to_value(role).expect("serialisable"),
+                serde_json::Value::String(role.as_str().to_owned())
+            );
+        }
+        assert_eq!(
+            serde_json::to_value(BroadcastState::Scheduled).expect("serialisable"),
+            "scheduled"
+        );
+    }
+
+    #[test]
+    fn an_empty_patch_is_recognised_before_it_is_written() {
+        // Checked by the service, so a `PATCH` with no fields is a 400 rather than a
+        // round trip that reports success for having done nothing.
+        assert!(BroadcastPatch::default().is_empty());
+        assert!(
+            !BroadcastPatch {
+                title: Some("New".to_owned()),
+                ..Default::default()
+            }
+            .is_empty()
+        );
+    }
 }

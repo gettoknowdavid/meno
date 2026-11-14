@@ -1,0 +1,21 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/users/{{user_id}}'
+order: 3000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+pathVariables:
+  - key: user_id
+    value: '{{user_id}}'
+    description: 'UUID of the user whose public profile to retrieve'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      console.log(`[Get Public Profile] Loaded public profile for user ${json.data.id} (${json.data.full_name}).`);

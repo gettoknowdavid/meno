@@ -1,0 +1,144 @@
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/auth/model/_model.dart';
+
+/// The auth module's endpoints, one method each.
+final class AuthHttpService {
+  /// Creates a service over [_client].
+  const new(this._client);
+
+  final HttpClient _client;
+
+  /// `POST /auth/register` — creates an account and signs it in.
+  ///
+  /// Answers 201 with a usable token pair: the API does not make a new account
+  /// sign in again after registering.
+  Future<AuthResponseDto> register({
+    required String fullName,
+    required String email,
+    required String password,
+  }) {
+    return _client.post(
+      '/auth/register',
+      authMode: AuthMode.anonymous,
+      data: {'full_name': fullName, 'email': email, 'password': password},
+      fromJson: _response,
+    );
+  }
+
+  /// `POST /auth/login` — exchanges credentials for a token pair.
+  Future<AuthResponseDto> login({
+    required String email,
+    required String password,
+  }) {
+    return _client.post(
+      '/auth/login',
+      authMode: AuthMode.anonymous,
+      data: {'email': email, 'password': password},
+      fromJson: _response,
+    );
+  }
+
+  /// `POST /auth/google/mobile` — exchanges a Google ID token for a session.
+  ///
+  /// The mobile half of the Google flow: the platform SDK produces the ID
+  /// token and the API verifies it, so there is no browser round trip and no
+  /// web `state` token involved. [deviceLabel] is what the account's device
+  /// list shows later.
+  Future<AuthResponseDto> signInWithGoogle({
+    required String idToken,
+    String? deviceLabel,
+  }) {
+    return _client.post(
+      '/auth/google/mobile',
+      authMode: AuthMode.anonymous,
+      data: {'id_token': idToken, 'device_label': ?deviceLabel},
+      fromJson: _response,
+    );
+  }
+
+  /// `POST /auth/logout` — ends one session.
+  ///
+  /// Both tokens travel in the body, so this endpoint works without a header
+  /// and without a live access token: the refresh token identifies the
+  /// session to end.
+  Future<void> logout({required String refreshToken, String? accessToken}) {
+    return _client.postUnit(
+      '/auth/logout',
+      authMode: AuthMode.anonymous,
+      data: {'refresh_token': refreshToken, 'access_token': ?accessToken},
+    );
+  }
+
+  /// `POST /auth/logout-all` — ends every session for the account.
+  ///
+  /// Guarded: it reads the caller's identity from the request, which is what
+  /// makes "all" mean "all of mine".
+  Future<void> logOutEverywhere() => _client.postUnit('/auth/logout-all');
+
+  /// `GET /auth/sessions` — the account's signed-in devices.
+  Future<List<SessionInfo>> sessions() {
+    return _client.getList(
+      '/auth/sessions',
+      fromJson: (data) =>
+          SessionInfoDto.fromJson(data as Map<String, dynamic>).toDomain,
+    );
+  }
+
+  /// `POST /auth/sessions/{id}` — ends one device's session.
+  Future<void> revokeSession(Id sessionId) =>
+      _client.postUnit('/auth/sessions/${sessionId.getOrCrash}');
+
+  /// `POST /auth/verify-email` — confirms the address with a code.
+  Future<AuthResponseDto> verifyEmail({
+    required String email,
+    required String code,
+  }) {
+    return _client.post(
+      '/auth/verify-email',
+      authMode: AuthMode.anonymous,
+      data: {'email': email, 'code': code},
+      fromJson: _response,
+    );
+  }
+
+  /// `POST /auth/resend-otp` — sends a fresh code.
+  Future<void> resendOtp({required String email, required OtpType type}) {
+    return _client.postUnit(
+      '/auth/resend-otp',
+      authMode: AuthMode.anonymous,
+      data: {'email': email, 'otp_type': type.wire},
+    );
+  }
+
+  /// `POST /auth/forgot-password` — sends a reset code.
+  ///
+  /// Answers the same way whether or not the address exists, so the app must
+  /// not treat success here as proof that an account was found.
+  Future<void> forgotPassword(String email) => _client.postUnit(
+    '/auth/forgot-password',
+    data: {'email': email},
+    authMode: AuthMode.anonymous,
+  );
+
+  /// `POST /auth/reset-password` — sets a new password with a reset code.
+  Future<void> resetPassword({
+    required String email,
+    required String code,
+    required String newPassword,
+  }) {
+    return _client.postUnit(
+      '/auth/reset-password',
+      authMode: AuthMode.anonymous,
+      data: {'email': email, 'code': code, 'new_password': newPassword},
+    );
+  }
+
+  /// Reads the payload every session-establishing call returns.
+  ///
+  /// Left as the wire's own shape: turning it into a stored record is the
+  /// vault's receipt-time conversion, which needs the app's clock and must
+  /// happen exactly once (guide Step 6).
+  static AuthResponseDto _response(dynamic data) =>
+      AuthResponseDto.fromJson(data as Map<String, dynamic>);
+}

@@ -1,0 +1,439 @@
+import 'dart:async';
+
+import 'package:flutter_it/flutter_it.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/chat/chat.dart';
+import 'package:meno_mobile/features/discover/discover.dart';
+import 'package:meno_mobile/features/notes/notes.dart';
+import 'package:meno_mobile/features/notification/notification.dart';
+import 'package:meno_mobile/features/profile/profile.dart';
+import 'package:meno_mobile/features/settings/settings.dart';
+
+/// Registers what belongs to one account, in that account's scope.
+///
+/// Everything registered here is created when the account becomes active and
+/// disposed together when it is switched or signed out, which is the whole
+/// point of the tier: the socket that is authenticated as this account, the
+/// caches that are keyed by it, the managers that write its name into what they
+/// save, and the room it may be in.
+///
+/// There is exactly one live owner — [ActiveBroadcastManager] — and its session
+/// is an ordinary object it creates and closes itself. No scope is pushed for a
+/// room, so "is it registered?" is never asked to mean "is it on air?".
+///
+/// Nothing here is reachable while nobody is signed in — the router sends every
+/// signed-out visitor to a sign-in screen — so registering it later costs a
+/// frame nothing and buys a lifetime that ends where it should.
+Future<void> registerAccountScope(
+  GetIt scope,
+  CredentialRecord credential,
+  AccountContext context,
+) async {
+  // The container disposes all of this: dropping the scope asks everything
+  // registered in it that implements `Disposable` to tear down, and the
+  // managers and services below all do. No registration here passes a
+  // `dispose:` function — get_it calls `onDispose()` on a `Disposable` itself,
+  // and providing one as well is an assertion failure when the instance is
+  // given eagerly and silently ignored when it is built lazily.
+  //
+  // The socket belongs to the account: its handshake is authenticated with the
+  // access token this credential carries, so it is created when an account
+  // becomes active and thrown away with it. Registering it in the root scope
+  // would leave one signed-in user's socket live for the next one.
+  //
+  // The token is a supplier, not a value: the client reads it on every connect
+  // and reconnect, so a reconnect after a refresh presents the new token and
+  // nothing here has to notice that it changed.
+  //
+  // The supplier is a read, not a value: it asks the connection owner, whose
+  // `accessToken` reads the committed credential at the moment of the
+  // handshake, so a reconnect after a refresh presents the new token and an
+  // account switch can never reuse the old one (audit M03).
+  //
+  // The owner is resolved lazily rather than captured — it is registered after
+  // this client, and asking for it here is only ever done at connect time.
+  Future<String?> currentAccessToken() =>
+      di<AccountConnectionOwner>().accessToken();
+
+  scope.registerLazySingleton<SocketClient>(
+    () => SocketClient(
+      uri: Uri.parse(di<Config>().webSocketUrl),
+      credentialSupplier: currentAccessToken,
+      logger: di<MenoLogger>(),
+      clock: di<Clock>(),
+    ),
+  );
+
+  scope.registerLazySingleton<BroadcastSocketService>(
+    () => BroadcastSocketService(
+      client: di<SocketClient>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // Nothing of its own: every call carries the session already. It is here
+  // because nothing that uses it is reachable without an account.
+  scope.registerLazySingleton<BroadcastHttpService>(
+    () => BroadcastHttpService(di<HttpClient>()),
+  );
+
+  // The invitee's half of the co-host handshake. It listens from the moment the
+  // account is built rather than from a page: an invitation can arrive while
+  // the reader is anywhere, and the API never lists the ones it sent, so a
+  // frame this manager was not there to hear is an invitation lost.
+  final invitations = CohostInvitationsManager(
+    http: di<BroadcastHttpService>(),
+    events: di<BroadcastSocketService>().onCohostEvent,
+    logger: di<MenoLogger>(),
+  )..init();
+  scope.registerSingleton<CohostInvitationsManager>(invitations);
+
+  scope.registerLazySingleton<CohostSearchManager>(
+    () => CohostSearchManager(profiles: di<ProfileHttpService>()),
+  );
+
+  // The chat's two ends. Both belong to the account for the same reason the
+  // broadcast adapter does: the handshake is authenticated as this account, and
+  // the history is that account's view of a room. Which room is the room
+  // managers' business, not these services'.
+  scope.registerLazySingleton<ChatHttpService>(
+    () => ChatHttpService(di<HttpClient>()),
+  );
+
+  scope.registerLazySingleton<ChatSocketService>(
+    () =>
+        ChatSocketService(client: di<SocketClient>(), logger: di<MenoLogger>()),
+  );
+
+  // Created here rather than through `dependsOn`: an account is only ever
+  // scoped after the root container is ready, so the store it needs exists, and
+  // a dependency-based registration that waits across scopes makes get_it
+  // complete its ready future twice (`Future already completed`).
+  final local = BroadcastLocalService(
+    context.accountId,
+    di<Database>(),
+    logger: di<MenoLogger>(),
+  );
+  scope.registerSingleton<BroadcastLocalService>(local);
+
+  // A database written before the unique logical keys existed can hold two rows
+  // for one draft or favourite. Clearing that up is part of becoming
+  // owner-bound (audit M06, assumption A13); it is best-effort, so a store
+  // that cannot be scanned is retried on the next launch rather than failing
+  // sign-in.
+  unawaited(
+    local.dedupe().catchError((Object error) {
+      di<MenoLogger>().w(
+        'Could not clean up duplicate local rows',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+      );
+    }),
+  );
+
+  // The account's own broadcasts. A draft carries the id that wrote it and a
+  // favourite carries the id that kept it, so both go with the account; the
+  // editor itself is created by its page, not here (Step 34).
+  scope.registerLazySingleton<FavouritesManager>(
+    () => FavouritesManager(
+      local: di<BroadcastLocalService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // The account's own record, read as soon as it becomes active and cached per
+  // account. The repository above it is shared by everything drawing the same
+  // account — a card in a broadcast list outlives the page that fetched it — so
+  // its lifetime is its holders', and the account's at the outside.
+  scope.registerLazySingleton<ProfileHttpService>(
+    () => ProfileHttpService(di<HttpClient>()),
+  );
+
+  // Discover's search. Both are this account's: the recent terms are stored
+  // under the account's id, and the search is resolved against whoever asks.
+  // Lazy, because nothing about signing in needs them — the first Visit to
+  // Discover builds them, and the account's exit disposes them with it (audit
+  // M05).
+  scope.registerLazySingleton<DiscoverLocalService>(
+    () => DiscoverLocalService(context.accountId, di<LocalStorage>()),
+  );
+
+  scope.registerLazySingleton<DiscoverSearchManager>(
+    () => DiscoverSearchManager(
+      http: di<BroadcastHttpService>(),
+      local: di<DiscoverLocalService>(),
+    ),
+  );
+
+  // The account's notes and folders. Both lists are server-held and read once
+  // per account; a folder's count comes from the notes this manager holds
+  // rather than from a second request per folder. Lazy, like Discover: nothing
+  // about signing in needs them, and the first visit to the notes tab builds
+  // them.
+  scope.registerLazySingleton<NotesHttpService>(
+    () => NotesHttpService(di<HttpClient>()),
+  );
+
+  // The device's own copy, owned by the account it belongs to — the same
+  // reasoning as the broadcast store: one store, one set of rows per account,
+  // and no box handed out.
+  scope.registerLazySingleton<NotesLocalService>(
+    () => NotesLocalService(
+      context.accountId,
+      di<Database>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // The queue between the two. Everything the screens write goes here, and it
+  // is drained when a list is opened, which is what makes a note typed offline
+  // arrive later instead of being lost.
+  scope.registerLazySingleton<NotesSyncService>(
+    () => NotesSyncService(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  scope.registerLazySingleton<FoldersManager>(
+    () => FoldersManager(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  scope.registerLazySingleton<NotesManager>(
+    () => NotesManager(
+      http: di<NotesHttpService>(),
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      folders: di<FoldersManager>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // Deleting, pinning and filing. It owns no state of its own: it writes
+  // through the store so every list showing the row is updated at once, and
+  // hands the row to the queue above.
+  scope.registerLazySingleton<NoteActionsManager>(
+    () => NoteActionsManager(
+      local: di<NotesLocalService>(),
+      sync: di<NotesSyncService>(),
+      notes: di<NotesManager>(),
+      folders: di<FoldersManager>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  scope.registerLazySingleton<ProfileCacheService>(
+    // Viewer-bound: every cached profile is keyed by who is looking, so two
+    // accounts never share what they saw of the same subject.
+    () => ProfileCacheService(context.accountId, di<LocalStorage>()),
+  );
+
+  // // Subject-only profile entries from older builds belong to no particular
+  // // viewer; they are deleted rather than read (audit H14, assumption A13).
+  // unawaited(di<ProfileCacheService>().purgeLegacyEntries());
+
+  scope.registerLazySingleton<UserProfileRepository>(UserProfileRepository.new);
+  // Awaiting the local half is what makes `ready` mean something: when the
+  // owner publishes ready, this account's cached record — or the placeholder
+  // standing in for it — is already in place, and nothing reads a manager that
+  // is still starting. The remote read behind it is started by the account
+  // subtree's first widget, not awaited here (Step 26).
+  final profile = MyProfileManager(
+    context: context,
+    http: di<ProfileHttpService>(),
+    cache: di<ProfileCacheService>(),
+    logger: di<MenoLogger>(),
+  );
+  await profile.init();
+  scope.registerSingleton<MyProfileManager>(profile);
+
+  // The account's switches, and the cache behind them — also per account, since
+  // one device holds several. The theme itself stays in the root scope, because
+  // it is the account's choice rather than the account's property.
+  scope.registerLazySingleton<SettingsHttpService>(
+    () => SettingsHttpService(di<HttpClient>()),
+  );
+
+  scope.registerLazySingleton<SettingsLocalService>(
+    () => SettingsLocalService(context.accountId, di<LocalStorage>()),
+  );
+
+  // Eager for the same reason: the account's own display choice has to reach
+  // the theme as soon as the account is active, not when somebody opens the
+  // settings screen. Awaiting its local install before returning is what puts
+  // the account's theme in place before `ready`.
+  final settings = SettingsManager(
+    context: context,
+    http: di<SettingsHttpService>(),
+    local: di<SettingsLocalService>(),
+    theme: di<ThemeManager>(),
+    logger: di<MenoLogger>(),
+  );
+  await settings.init();
+  scope.registerSingleton<SettingsManager>(settings);
+
+  // The account's inbox. The services are this account's because everything
+  // they read and write is scoped to it: the history, the token and the badge
+  // all belong to whoever is signed in, and a switch must not leave one
+  // account's socket delivering into the next one's list.
+  scope.registerLazySingleton<NotificationsHttpService>(
+    () => NotificationsHttpService(di<HttpClient>()),
+  );
+
+  // The adapter that turns the `notification` frame into a nudge the manager
+  // can act on. The frame carries no id and no type, so it is never turned into
+  // a row here — the manager re-reads the inbox instead.
+  scope.registerLazySingleton<NotificationsSocketService>(
+    () => NotificationsSocketService(
+      client: di<SocketClient>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // Started as the account's first screen asks for the badge — Home — so an
+  // account that signs in gets its inbox, its device registration and its
+  // toasts without the notifications screen ever being opened.
+  scope.registerLazySingleton<NotificationsManager>(
+    () => NotificationsManager(
+      http: di<NotificationsHttpService>(),
+      socket: di<NotificationsSocketService>(),
+      pushService: di<PushNotificationsService>(),
+      localNotifications: di<LocalNotificationsService>(),
+      settings: di<SettingsHttpService>(),
+      logger: di<MenoLogger>(),
+    ),
+    onCreated: (manager) => unawaited(manager.init()),
+  );
+
+  // Delivery starts here and nowhere else: the adapters' handlers are attached
+  // before the socket is asked to connect, and everything is stopped before the
+  // scope takes the socket away. Registered after the socket, so it is disposed
+  // before it.
+  //
+  // The session's own changes are the owner's other input: a refresh that
+  // replaces an expired access token is what lets a socket that gave up begin
+  // again, and a socket's handshake authenticates with whatever the vault holds
+  // at the moment it connects.
+  final connection = AccountConnectionOwner(
+    context: context,
+    socket: di<SocketClient>(),
+    adapters: [
+      di<BroadcastSocketService>(),
+      di<ChatSocketService>(),
+      di<NotificationsSocketService>(),
+    ],
+    credentials: di<SessionService>(),
+    credentialChanges: di<SessionService>().changes,
+    logger: di<MenoLogger>(),
+    clock: di<Clock>(),
+  );
+  scope.registerSingleton<AccountConnectionOwner>(connection);
+  connection.initialize();
+  unawaited(connection.start(verified: credential.isVerified));
+
+  // The record of the session this device was in is the account's too: it is
+  // the account that would go back to it.
+  scope.registerSingleton<LiveSessionStore>(
+    LiveSessionStore(di<LocalStorage>(), userId: credential.accountId),
+  );
+
+  // The account's one live owner. Its session is built by the factory below —
+  // an ordinary object, created and closed by the manager — so nothing about a
+  // room is registered in the container.
+  scope.registerSingleton<ActiveBroadcastManager>(
+    ActiveBroadcastManager(
+      context: context,
+      gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
+      store: di<LiveSessionStore>(),
+      logger: di<MenoLogger>(),
+      endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
+      createSession: ({required session, required exitOnServer}) {
+        final participants = ParticipantsManager(
+          http: di<BroadcastHttpService>(),
+          socket: di<BroadcastSocketService>(),
+          broadcastId: session.broadcast.id,
+        );
+        // The room's chat, built with the session and closed with it. Both
+        // managers take the room's ids rather than the session, so neither can
+        // outlive the identity it writes into a frame.
+        final chat = ChatManager(
+          socket: di<ChatSocketService>(),
+          broadcastId: session.broadcast.id,
+          userId: session.userId,
+          logger: di<MenoLogger>(),
+        );
+        final chatList = ChatListManager(
+          http: di<ChatHttpService>(),
+          socket: di<ChatSocketService>(),
+          broadcastId: session.broadcast.id,
+          userId: session.userId,
+          logger: di<MenoLogger>(),
+        );
+
+        return ActiveBroadcastSession(
+          session: session,
+          room: _createRoomTransport(session.broadcast.id, session.userId),
+          roster: ParticipantsRoster(participants),
+          participants: participants,
+          chat: chat,
+          chatList: chatList,
+          clock: di<Clock>(),
+          logger: di<MenoLogger>(),
+          exitOnServer: exitOnServer,
+        );
+      },
+    ),
+  );
+
+  // A process that died inside a room comes back to it. Queued behind nothing
+  // else yet, and refused once an account exit has begun.
+  unawaited(di<ActiveBroadcastManager>().recover());
+}
+
+/// The room transport one session opens.
+///
+/// Which server it opens, and where its token comes from, is the one difference
+/// between a development build and a release one:
+///
+/// * a release build joins [Config.menoLiveKitUrl] with the token the API
+///   minted for the session;
+/// * a development build joins the LiveKit `ops/docker-compose.yml` starts,
+///   over the loopback address `adb reverse` forwards, and signs its own
+///   token with the development key pair that server runs with — so going
+///   live on a device costs nothing and needs no internet.
+///
+/// Which transport is not guessed: the silent one is reachable only through the
+/// explicit [Config.useFakeRoomTransport] flag, which validation already
+/// refuses in production. Everything else gets the real one — an unconfigured
+/// room URL becomes a visible failure when the session opens rather than a
+/// broadcast that silently goes nowhere (M18).
+RoomTransport _createRoomTransport(Id broadcastId, Id userId) {
+  final config = di<Config>();
+  if (config.useFakeRoomTransport && !config.env.isProd) {
+    di<MenoLogger>().w(
+      'The fake room transport was selected by configuration',
+      tag: MenoLogTag.di.label,
+    );
+    return SilentRoomTransport();
+  }
+
+  return LiveKitRoomTransport(
+    url: config.liveKitUrl,
+    logger: di<MenoLogger>(),
+    devToken: config.usesLocalRoomServer
+        ? DevRoomTokenSource(
+            room: broadcastId.getOrCrash,
+            identity: userId.getOrCrash,
+          )
+        : null,
+  );
+}

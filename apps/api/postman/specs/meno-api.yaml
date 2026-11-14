@@ -1,0 +1,1525 @@
+openapi: 3.1.0
+info:
+  title: Meno API
+  version: 0.1.0
+  description: Meno HTTP API — authentication, session management, and real-time features.
+
+servers:
+  - url: http://localhost:3000
+    description: Dev
+  - url: https://api-staging.meno.app
+    description: Staging
+  - url: https://api.meno.app
+    description: Prod
+
+security: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    SettingsResponse:
+      type: object
+      required:
+        - push_notifications
+        - app_notifications
+        - email_notifications
+        - display
+        - language
+        - notification_preferences
+        - has_push_token
+      properties:
+        push_notifications:
+          type: boolean
+          description: Push (FCM) notifications on/off.
+        app_notifications:
+          type: boolean
+          description: In-app notifications on/off.
+        email_notifications:
+          type: boolean
+          description: Email notifications on/off.
+        display:
+          type: string
+          enum:
+            - system
+            - light
+            - dark
+          description: UI theme preference.
+        language:
+          type: string
+          example: en
+          description: 'BCP-47 language tag, e.g. `en` or `en-GB`.'
+        notification_preferences:
+          type: object
+          description: Free-form client notification preferences, stored verbatim.
+        has_push_token:
+          type: boolean
+          description: Whether a device push token is currently on file. The token itself is never returned.
+
+    MeResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - email
+        - email_verified
+        - providers
+        - settings
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        email:
+          type: string
+          format: email
+        email_verified:
+          type: boolean
+          description: Whether the email address has been confirmed.
+        bio:
+          type:
+            - string
+            - 'null'
+          maxLength: 244
+        avatar_id:
+          type:
+            - string
+            - 'null'
+          description: Storage key of the current avatar.
+        avatar_url:
+          type:
+            - string
+            - 'null'
+          description: CDN URL for the avatar. Null when no public base URL is configured.
+        settings:
+          $ref: '#/components/schemas/SettingsResponse'
+        providers:
+          type: array
+          items:
+            type: string
+            enum:
+              - password
+              - google
+          description: Identity providers linked to this account.
+        followers:
+          type: integer
+          description: Follower count.
+        following:
+          type: integer
+          description: Following count.
+        broadcasts:
+          type: integer
+          description: Broadcast count.
+        created_at:
+          type: string
+          format: date-time
+
+    PublicProfileResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - is_following
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        bio:
+          type:
+            - string
+            - 'null'
+        avatar_url:
+          type:
+            - string
+            - 'null'
+        is_following:
+          type: boolean
+          description: Whether the authenticated viewer follows this profile.
+        followers:
+          type: integer
+        following:
+          type: integer
+        broadcasts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    ProfileSearchResult:
+      type: object
+      required:
+        - id
+        - full_name
+        - is_following
+        - followers
+        - following
+        - broadcasts
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        bio:
+          type:
+            - string
+            - 'null'
+        avatar_url:
+          type:
+            - string
+            - 'null'
+        is_following:
+          type: boolean
+          description: Whether the authenticated viewer follows this profile.
+        followers:
+          type: integer
+        following:
+          type: integer
+        broadcasts:
+          type: integer
+        created_at:
+          type: string
+          format: date-time
+
+    ProfileSearchPage:
+      type: object
+      required:
+        - items
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/ProfileSearchResult'
+        next_cursor:
+          type:
+            - string
+            - 'null'
+          description: Opaque cursor to pass as `cursor` on the next request. Absent when there are no more pages.
+
+    UploadAvatarResponse:
+      type: object
+      required:
+        - avatar_id
+      properties:
+        avatar_id:
+          type: string
+          description: Storage key now stored in `users.avatar_id`.
+        avatar_url:
+          type:
+            - string
+            - 'null'
+          description: CDN URL now stored in `users.avatar_url`. Null when storage has no public base URL.
+
+    UserResponse:
+      type: object
+      required:
+        - id
+        - full_name
+        - email
+        - verified
+        - providers
+        - role
+        - created_at
+      properties:
+        id:
+          type: string
+          format: uuid
+        full_name:
+          type: string
+        bio:
+          type:
+            - string
+            - 'null'
+        email:
+          type: string
+          format: email
+        verified:
+          type: boolean
+        avatar_id:
+          type:
+            - string
+            - 'null'
+        avatar_url:
+          type:
+            - string
+            - 'null'
+        providers:
+          type: array
+          items:
+            type: string
+            enum:
+              - password
+              - google
+        role:
+          type: string
+          enum:
+            - user
+            - admin
+        created_at:
+          type: string
+          format: date-time
+
+    AuthResponse:
+      type: object
+      required:
+        - access_token
+        - refresh_token
+        - expires_in
+        - user
+      properties:
+        access_token:
+          type: string
+        refresh_token:
+          type: string
+        expires_in:
+          type: integer
+          example: 900
+        user:
+          $ref: '#/components/schemas/UserResponse'
+
+    SessionResponse:
+      type: object
+      required:
+        - id
+        - device_label
+        - created_at
+        - last_used_at
+        - rotations
+      properties:
+        id:
+          type: string
+          format: uuid
+        device_label:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        last_used_at:
+          type: string
+          format: date-time
+        rotations:
+          type: integer
+          example: 0
+
+    ReadinessResponse:
+      type: object
+      required:
+        - status
+        - db
+        - redis
+      properties:
+        status:
+          type: string
+          enum:
+            - ok
+            - degraded
+        db:
+          type: boolean
+        redis:
+          type: boolean
+
+    ErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+        - code
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+        code:
+          type: string
+        data:
+          type: object
+
+    ValidationErrorResponse:
+      type: object
+      required:
+        - success
+        - message
+        - code
+        - data
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Validation failed
+        code:
+          type: string
+          example: VALIDATION_FAILED
+        data:
+          type: object
+          additionalProperties:
+            type: array
+            items:
+              type: string
+          example:
+            email:
+              - Must be a valid email address
+            password:
+              - Must be at least 8 characters
+
+    MessageResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+
+paths:
+  /health:
+    get:
+      summary: Liveness probe
+      operationId: getHealth
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is alive
+          content:
+            text/plain:
+              schema:
+                type: string
+                example: ok
+
+  /health/ready:
+    get:
+      summary: Readiness probe
+      operationId: getHealthReady
+      tags:
+        - Health
+      responses:
+        '200':
+          description: Service is ready
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+        '503':
+          description: Service is degraded
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReadinessResponse'
+
+  /auth/register:
+    post:
+      summary: Register a new account
+      operationId: registerUser
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - full_name
+                - email
+                - password
+              properties:
+                full_name:
+                  type: string
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+                  minLength: 8
+      responses:
+        '201':
+          description: Account created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/login:
+    post:
+      summary: Login with email and password
+      operationId: loginUser
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - password
+              properties:
+                email:
+                  type: string
+                  format: email
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid credentials
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/google/url:
+    get:
+      summary: Get Google OAuth2 authorization URL
+      operationId: getGoogleAuthUrl
+      tags:
+        - Auth
+      responses:
+        '200':
+          description: Google OAuth2 URL
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - url
+                properties:
+                  url:
+                    type: string
+                    format: uri
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/google/callback:
+    get:
+      summary: Google OAuth2 web callback
+      operationId: googleAuthCallback
+      tags:
+        - Auth
+      parameters:
+        - name: code
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: OAuth2 login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/google/mobile:
+    post:
+      summary: Google OAuth2 mobile flow (ID token)
+      operationId: googleAuthMobile
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_token
+              properties:
+                id_token:
+                  type: string
+                device_label:
+                  type: string
+      responses:
+        '200':
+          description: OAuth2 mobile login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/refresh:
+    post:
+      summary: Rotate a refresh token
+      operationId: refreshToken
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+      responses:
+        '200':
+          description: Token rotated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Invalid or expired refresh token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout:
+    post:
+      summary: End a session
+      operationId: logoutUser
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - refresh_token
+              properties:
+                refresh_token:
+                  type: string
+                access_token:
+                  type: string
+      responses:
+        '200':
+          description: Logged out successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Logged out successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/verify-email:
+    post:
+      summary: Verify email with OTP code
+      operationId: verifyEmail
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - code
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  pattern: '^\d{6}$'
+                  description: 6-digit OTP code
+      responses:
+        '200':
+          description: Email verified successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Email verified successfully
+        '400':
+          description: Bad request or invalid code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/resend-otp:
+    post:
+      summary: Resend OTP code
+      operationId: resendOtp
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - otp_type
+              properties:
+                email:
+                  type: string
+                  format: email
+                otp_type:
+                  type: string
+                  enum:
+                    - verify_email
+                    - reset_password
+      responses:
+        '200':
+          description: OTP sent successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: OTP sent successfully
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/forgot-password:
+    post:
+      summary: Request a password reset code
+      operationId: forgotPassword
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+              properties:
+                email:
+                  type: string
+                  format: email
+      responses:
+        '200':
+          description: Password reset email sent
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Password reset email sent
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/reset-password:
+    post:
+      summary: Reset password with OTP code
+      operationId: resetPassword
+      tags:
+        - Auth
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - email
+                - code
+                - new_password
+              properties:
+                email:
+                  type: string
+                  format: email
+                code:
+                  type: string
+                  pattern: '^\d{6}$'
+                  description: 6-digit OTP code
+                new_password:
+                  type: string
+                  minLength: 8
+      responses:
+        '200':
+          description: Password reset successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Password reset successfully
+        '400':
+          description: Bad request or invalid code
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/sessions:
+    get:
+      summary: List active sessions for the authenticated user
+      operationId: listSessions
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: List of active sessions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/sessions/{id}:
+    post:
+      summary: Revoke a specific session
+      operationId: revokeSession
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: Session UUID
+      responses:
+        '200':
+          description: Session revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Session revoked
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: Session not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /auth/logout-all:
+    post:
+      summary: Revoke all sessions for the authenticated user
+      operationId: logoutAll
+      tags:
+        - Auth
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: All sessions revoked
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: All sessions revoked
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me:
+    get:
+      summary: Get the authenticated user's own profile
+      operationId: getMe
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Partially update the authenticated user's profile
+      operationId: updateMe
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                full_name:
+                  type: string
+                  minLength: 2
+                  maxLength: 100
+                  description: New display name. Omit to leave unchanged.
+                bio:
+                  type: string
+                  maxLength: 244
+                  description: 'New bio. Omit to leave unchanged; send `""` to clear it.'
+      responses:
+        '200':
+          description: Profile updated — returns the fresh record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MeResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/me/avatar:
+    post:
+      summary: Upload a new avatar for the authenticated user
+      operationId: uploadAvatar
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - file
+              properties:
+                file:
+                  type: string
+                  format: binary
+                  description: 'Image file (PNG, JPEG, or WebP). Maximum 5 MB.'
+      responses:
+        '200':
+          description: Avatar uploaded — returns the new storage key and CDN URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAvatarResponse'
+        '400':
+          description: Missing or empty file part
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '413':
+          description: File exceeds the 5 MB limit
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Unsupported file type
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users:
+    get:
+      summary: Search user profiles
+      operationId: searchProfiles
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema:
+            type: string
+            minLength: 3
+          description: 'Search term (minimum 3 characters). Matched against name and bio via full-text search.'
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Page size.
+        - name: cursor
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Opaque cursor from the previous page's `next_cursor` field.
+      responses:
+        '200':
+          description: A page of matching profiles
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProfileSearchPage'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed (e.g. query too short)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /users/{id}:
+    get:
+      summary: Get another user's public profile
+      operationId: getProfile
+      tags:
+        - Profile
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+          description: UUID of the user whose profile to retrieve.
+      responses:
+        '200':
+          description: Public profile retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PublicProfileResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /settings:
+    get:
+      summary: Get the authenticated user's settings
+      operationId: getSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Settings retrieved
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+    patch:
+      summary: Partially update the authenticated user's settings
+      operationId: updateSettings
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                push_notifications:
+                  type: boolean
+                app_notifications:
+                  type: boolean
+                email_notifications:
+                  type: boolean
+                push_notification_token:
+                  type: string
+                  maxLength: 4096
+                  description: 'FCM device token. Omit to keep the current one; use DELETE /settings/push-token to clear it.'
+                display:
+                  type: string
+                  enum:
+                    - system
+                    - light
+                    - dark
+                language:
+                  type: string
+                  pattern: '^[a-zA-Z]{2}(-[a-zA-Z]{2,4})?$'
+                  example: en
+                  description: 'BCP-47 language tag, e.g. `en` or `en-GB`.'
+                notification_preferences:
+                  type: object
+                  description: Free-form client preferences, stored and returned verbatim.
+      responses:
+        '200':
+          description: Settings updated — returns the fresh record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SettingsResponse'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '422':
+          description: Validation failed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ValidationErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /settings/push-token:
+    delete:
+      summary: Clear the authenticated user's device push token
+      operationId: clearPushToken
+      tags:
+        - Settings
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          description: Push token cleared
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MessageResponse'
+              example:
+                message: Push token cleared
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '429':
+          description: Too many requests
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+
+  /ws:
+    get:
+      summary: Upgrade to WebSocket
+      operationId: websocketUpgrade
+      tags:
+        - WebSocket
+      description: >-
+        Upgrades the connection to WebSocket. Authentication is performed via
+        the `token` query parameter (Bearer header is not supported for WS
+        handshakes).
+      parameters:
+        - name: token
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Access token (JWT)
+      responses:
+        '101':
+          description: Switching Protocols — WebSocket connection established
+        '401':
+          description: Unauthorized — invalid or missing token
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'

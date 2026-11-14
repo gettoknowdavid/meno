@@ -1,0 +1,2016 @@
+//! §10 contract tests for [`BroadcastService`], driven through the in-memory doubles.
+//!
+//! # Why this file lives in `tests/`
+//!
+//! It runs outside the crate, so every path starts at `meno_api::` — the path a
+//! consumer crate uses. A helper that was reachable by `super::` but not exported
+//! now fails to compile here instead of silently staying private. The HTTP contract
+//! (envelopes, status codes, auth gates, RFC 3339 dates) is asserted separately in
+//! [`broadcast_router.rs`]; these assert on the *service*.
+//!
+//! # What is asserted here, and why
+//!
+//! Each property below is one that can only be observed by driving the service
+//! through its real collaborators — the trait object the production wiring hands it,
+//! and the in-memory doubles. A mock would let each pass while the wiring was wrong,
+//! which is the failure the state module's trait-object arrangement exists to prevent.
+//!
+//! The flows that matter most:
+//!
+//! - Creation is a draft by default; the response names the creator and the empty
+//!   cohost list.
+//! - Only the creator may edit, delete, go live or end — one helper enforces all four.
+//! - A live broadcast is immutable.
+//! - §7.6 — `total_participants` moves with the rows: one join writes the row *and*
+//!   the counter; a rejoin increments it again; a duplicate join is refused and does
+//!   not inflate it; a leave does not reduce it.
+//! - The creator cannot join, and the host cannot leave.
+//! - A disabled media server is a 503, not a panic. Creating and scheduling still work.
+//! - Every date on the response is an RFC 3339 string, never a nine-tuple.
+//!
+//! # What this cannot prove
+//!
+//! No Postgres or LiveKit runs here. `pg.rs` is covered by the Postgres-backed suite;
+//! the media adapter's real behaviour is covered by `media.rs`'s own tests.
+
+// Panicking lints are denied workspace-wide but explicitly allowed in tests/ — see
+// clippy.toml. The allow-*-in-tests keys cover #[test] functions; the helpers below
+// are not #[test] functions, so the allowance does not reach them.
+#![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
+
+use std::sync::Arc;
+
+use uuid::Uuid;
+
+use meno_api::modules::broadcast::dto::{self, CreateBroadcastRequest, UpdateBroadcastRequest};
+use meno_api::modules::broadcast::events::{BroadcastEvents, recording::RecordingEvents};
+use meno_api::modules::broadcast::media::RecordingMedia;
+use meno_api::modules::broadcast::model::BroadcastState as ModelBroadcastState;
+use meno_api::modules::broadcast::model::{EndReason, ParticipantRole, UserSummary};
+use meno_api::modules::broadcast::repository::{BroadcastRepo, InMemoryBroadcastRepo};
+use meno_api::modules::broadcast::rooms::{BroadcastRooms, SilentRooms, recording::RecordingRooms};
+use meno_api::modules::broadcast::service::{self, BroadcastService};
+use meno_api::modules::broadcast::storage::BroadcastStorage;
+use meno_core::Error as MenoError;
+use meno_core::to_body;
+
+/// A fixture identity, reduced to what a broadcast service needs.
+fn user(id: u128, name: &str) -> UserSummary {
+    UserSummary {
+        id: Uuid::from_u128(id),
+        full_name: name.to_owned(),
+        avatar_id: None,
+        avatar_url: None,
+    }
+}
+
+/// A plain create request for the fixture user.
+fn create_request() -> CreateBroadcastRequest {
+    CreateBroadcastRequest {
+        title: "Ada's show".to_owned(),
+        description: Some("Every Thursday".to_owned()),
+        image_id: None,
+        image_url: None,
+        time_zone: Some("Africa/Lagos".to_owned()),
+        start_time: None,
+        recording_enabled: Some(true),
+        cohosts: None,
+    }
+}
+
+/// A second create request, distinct so pages are distinguishable.
+fn second_request() -> CreateBroadcastRequest {
+    CreateBroadcastRequest {
+        title: "Grace's talk".to_owned(),
+        description: None,
+        image_id: None,
+        image_url: None,
+        time_zone: None,
+        start_time: None,
+        recording_enabled: None,
+        cohosts: None,
+    }
+}
+
+/// Build a service whose repository and media double record nothing.
+fn service() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingMedia>,
+) {
+    let (svc, repo, media, _) = service_with_events();
+    (svc, repo, media)
+}
+
+/// The same, with somewhere for the lifecycle announcements to go.
+///
+/// The silence of [`service`] is the default for tests about what a flow *returns*; this
+/// is for the ones about who it *told*, which is half of what these flows are for.
+fn service_with_events() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingMedia>,
+    Arc<RecordingEvents>,
+) {
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let media = Arc::new(RecordingMedia::new());
+    let events = Arc::new(RecordingEvents::new());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
+        media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        // No bucket: the cover-upload flow is asserted in `broadcast_router`, which wires
+        // the in-memory store so it can read back what was written.
+        storage: BroadcastStorage::disabled(),
+        events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
+    });
+    (svc, repo, media, events)
+}
+
+/// The same, with a recorder for room membership.
+///
+/// Apart from [`service_with_events`] rather than folded into it: most flows here care
+/// about one half of the announcement story or the other, and a fixture that recorded
+/// both would make every assertion carry fields it does not use.
+fn service_with_rooms() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingMedia>,
+    Arc<RecordingRooms>,
+) {
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let media = Arc::new(RecordingMedia::new());
+    let rooms = Arc::new(RecordingRooms::new());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn BroadcastRepo>,
+        media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::clone(&rooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
+    });
+    (svc, repo, media, rooms)
+}
+
+// ── room membership (gap 1) ───────────────────────────────────────────────
+//
+// A message is persisted and then published to the broadcast's room channel; delivery
+// walks the membership these flows record. Before this, nothing wrote it, so every room
+// frame reached zero sockets — and no in-memory test could see it, because the double
+// recorded a publish whether or not anybody was subscribed to receive it. These assert
+// the half that was missing: who the service subscribes.
+
+#[tokio::test]
+async fn going_live_subscribes_the_host_to_the_room() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    assert_eq!(
+        rooms.joined(),
+        vec![(user(1, "Ada Lovelace").id, created.id)],
+        "the host is a member from the moment the broadcast is on air"
+    );
+}
+
+#[tokio::test]
+async fn joining_a_live_broadcast_subscribes_the_participant_to_its_room() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("joining");
+
+    assert!(
+        rooms
+            .joined()
+            .contains(&(user(2, "Grace Hopper").id, created.id)),
+        "a participant's socket has to be in the room the messages are published to"
+    );
+}
+
+#[tokio::test]
+async fn leaving_unsubscribes_the_participant() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("joining");
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leaving");
+
+    assert_eq!(
+        rooms.left(),
+        vec![(user(2, "Grace Hopper").id, created.id)],
+        "a closed roster row must stop receiving the room's frames"
+    );
+}
+
+#[tokio::test]
+async fn ending_closes_the_room_for_everybody() {
+    let (svc, repo, _, rooms) = service_with_rooms();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("going live");
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("ending");
+
+    assert_eq!(
+        rooms.closed(),
+        vec![created.id],
+        "an ended broadcast must not keep a channel open"
+    );
+}
+
+/// Seed the three fixture users so the service can resolve them.
+fn seed(repo: &InMemoryBroadcastRepo) {
+    repo.insert_user(user(1, "Ada Lovelace"));
+    repo.insert_user(user(2, "Grace Hopper"));
+    repo.insert_user(user(3, "Alan Turing"));
+}
+
+/// A timestamp well in the future, for scheduled-start tests.
+fn future() -> time::OffsetDateTime {
+    time::OffsetDateTime::now_utc() + time::Duration::hours(24)
+}
+
+// ── creation ──────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn creating_a_broadcast_returns_a_draft_with_the_creator_and_no_cohosts() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("creating a draft needs no media server");
+
+    assert_eq!(created.title, "Ada's show");
+    assert_eq!(created.creator.id, user(1, "Ada Lovelace").id);
+    assert_eq!(created.creator.full_name, "Ada Lovelace");
+    assert!(created.creator.avatar_id.is_none());
+    assert_eq!(created.cohosts.len(), 0);
+    assert_eq!(created.state, ModelBroadcastState::Draft);
+    assert_eq!(created.live_participants_count, 0);
+    assert_eq!(created.total_participants, 0);
+}
+
+#[tokio::test]
+async fn creating_with_cohosts_resolves_them_through_the_repository() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let request = CreateBroadcastRequest {
+        title: "Ada's show".to_owned(),
+        description: None,
+        image_id: None,
+        image_url: None,
+        time_zone: None,
+        start_time: None,
+        recording_enabled: None,
+        cohosts: Some(vec![user(2, "Grace Hopper").id]),
+    };
+
+    let created = svc
+        .create(request, user(1, "Ada Lovelace"))
+        .await
+        .expect("creating with a cohost");
+
+    assert_eq!(created.cohosts.len(), 1);
+    assert_eq!(created.cohosts[0].id, user(2, "Grace Hopper").id);
+    assert_eq!(created.cohosts[0].full_name, "Grace Hopper");
+}
+
+#[tokio::test]
+async fn creating_with_an_unknown_cohost_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let request = CreateBroadcastRequest {
+        title: "Ada's show".to_owned(),
+        description: None,
+        image_id: None,
+        image_url: None,
+        time_zone: None,
+        start_time: None,
+        recording_enabled: None,
+        cohosts: Some(vec![Uuid::new_v4()]),
+    };
+
+    let error = svc
+        .create(request, user(1, "Ada Lovelace"))
+        .await
+        .expect_err("refused");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn creating_with_an_invalid_time_zone_is_refused() {
+    let (svc, _, _) = service();
+
+    let request = CreateBroadcastRequest {
+        time_zone: Some("not/a/valid/zone".to_owned()),
+        ..create_request()
+    };
+
+    let error = svc
+        .create(request, user(1, "Ada Lovelace"))
+        .await
+        .expect_err("refused");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::InvalidTimeZone);
+}
+
+#[tokio::test]
+async fn creating_with_a_past_start_time_is_refused() {
+    let (svc, _, _) = service();
+
+    let request = CreateBroadcastRequest {
+        start_time: Some(future() - time::Duration::hours(48)),
+        ..create_request()
+    };
+
+    let error = svc
+        .create(request, user(1, "Ada Lovelace"))
+        .await
+        .expect_err("refused");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::StartTimeInPast);
+}
+
+// ── get / list ────────────────────────────────────────────────────────────
+
+#[tokio::test]
+async fn getting_a_broadcast_returns_the_assembled_response() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let got = svc
+        .get(created.id, Some(&user(1, "Ada Lovelace")))
+        .await
+        .expect("get");
+
+    assert_eq!(got.id, created.id);
+    assert_eq!(got.title, created.title);
+    assert_eq!(got.creator.id, created.creator.id);
+}
+
+#[tokio::test]
+async fn getting_a_nonexistent_broadcast_is_a_404() {
+    let (svc, _, _) = service();
+
+    let error = svc
+        .get(Uuid::new_v4(), Some(&user(1, "Ada Lovelace")))
+        .await
+        .expect_err("not found");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotFound);
+}
+
+#[tokio::test]
+async fn listing_returns_a_page_of_broadcasts_with_creator_names() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    svc.create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("first");
+    svc.create(second_request(), user(2, "Grace Hopper"))
+        .await
+        .expect("second");
+
+    let page = svc
+        .list(&dto::BroadcastQuery::default())
+        .await
+        .expect("listing");
+
+    assert_eq!(page.data.len(), 2);
+    assert!(!page.data.iter().all(|item| item.creator_name.is_empty()));
+}
+
+#[tokio::test]
+async fn listing_a_second_page_does_not_repeat_rows() {
+    let (svc, _, _) = service();
+    for _ in 0..4 {
+        svc.create(create_request(), user(1, "Ada Lovelace"))
+            .await
+            .expect("create");
+    }
+
+    // An explicit limit of 2: with 4 rows this forces a second page, and `limit + 1`
+    // means the service fetches 3 and keeps 2.
+    let page_of_two = dto::BroadcastQuery {
+        pagination: meno_core::CursorParams {
+            cursor: None,
+            limit: Some(2),
+        },
+        ..Default::default()
+    };
+
+    let first = svc.list(&page_of_two).await.expect("first page");
+    assert_eq!(
+        first.data.len(),
+        2,
+        "the probe row is not handed to the client"
+    );
+    assert!(first.has_next_page);
+
+    let cursor = first.next_cursor.expect("a page with more");
+    let second = svc
+        .list(&dto::BroadcastQuery {
+            pagination: meno_core::CursorParams {
+                cursor: Some(cursor),
+                limit: None,
+            },
+            ..Default::default()
+        })
+        .await
+        .expect("second page");
+
+    let first_ids: std::collections::HashSet<_> = first.data.iter().map(|item| item.id).collect();
+    for item in &second.data {
+        assert!(
+            !first_ids.contains(&item.id),
+            "page two repeated a row from page one: {}",
+            item.id
+        );
+    }
+}
+
+// ── update / delete (creator-only) ────────────────────────────────────────
+
+#[tokio::test]
+async fn searching_finds_a_broadcast_by_title_and_never_a_draft() {
+    // Discover's search box sends `?q=`; before this filter existed it had nothing to
+    // send, so typing a title that was plainly in the list found nothing. The draft is
+    // the other half: a search is a public read, and `GET /broadcasts` without a filter
+    // carries every draft of every creator.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    // Same title, never on air, and not Ada's: it must not surface in a search.
+    let mut draft_request = second_request();
+    draft_request.title = "Ada's show, still a draft".to_owned();
+    let draft = svc
+        .create(draft_request, user(2, "Grace Hopper"))
+        .await
+        .expect("create draft");
+
+    let search = |q: &str| dto::BroadcastQuery {
+        q: Some(q.to_owned()),
+        ..Default::default()
+    };
+
+    let found = svc.list(&search("ada's show")).await.expect("search");
+    assert_eq!(found.data.len(), 1, "one on-air match: {found:?}");
+    assert_eq!(found.data[0].id, live.id);
+
+    let drafts = svc.list(&search("still a draft")).await.expect("search");
+    assert!(
+        drafts.data.is_empty(),
+        "a draft reached a search: {drafts:?}"
+    );
+    assert_ne!(draft.id, live.id);
+
+    // A blank term narrows nothing: it is the list, not a search for the empty string.
+    let all = svc.list(&search("   ")).await.expect("blank search");
+    assert_eq!(all.data.len(), 2, "blank q must not filter: {all:?}");
+}
+
+#[tokio::test]
+async fn updating_as_the_creator_succeeds() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let patched = svc
+        .update(
+            created.id,
+            UpdateBroadcastRequest {
+                title: Some("A new title".to_owned()),
+                ..Default::default()
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("update");
+
+    assert_eq!(patched.title, "A new title");
+}
+
+#[tokio::test]
+async fn updating_as_a_cohost_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    // Grace is a genuine cohost: she runs the room, but editing it is still Ada's alone.
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite cohost");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept cohost");
+
+    let error = svc
+        .update(
+            created.id,
+            UpdateBroadcastRequest {
+                title: Some("A new title".to_owned()),
+                ..Default::default()
+            },
+            &user(2, "Grace Hopper"),
+        )
+        .await
+        .expect_err("refused");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotCreator);
+    assert_eq!(
+        to_body(&error).http_status,
+        403,
+        "a cohost is a 403, not a 404"
+    );
+}
+
+#[tokio::test]
+async fn deleting_as_the_creator_succeeds() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    svc.delete(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("delete");
+
+    let error = svc.get(created.id, None).await.expect_err("gone");
+    assert_eq!(error.code(), meno_core::ErrorCode::NotFound);
+}
+
+// ── go live / end / join / leave ──────────────────────────────────────────
+
+#[tokio::test]
+async fn going_live_records_the_media_call_and_returns_a_token() {
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let session = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    assert!(!session.token.is_empty());
+    assert_eq!(session.broadcast.state, ModelBroadcastState::Live);
+    assert!(session.broadcast.is_joined);
+    assert_eq!(
+        session.broadcast.participant_role,
+        ParticipantRole::Host,
+        "the creator is the host, not a participant"
+    );
+
+    let calls = media.calls();
+    assert!(
+        calls.iter().any(|c| c.starts_with("create_room:")),
+        "{calls:?}"
+    );
+    assert!(calls.iter().any(|c| c.starts_with("mint:")), "{calls:?}");
+    assert!(calls.iter().any(|c| c.contains(":host")), "{calls:?}");
+}
+
+#[tokio::test]
+async fn going_live_twice_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("first");
+
+    let error = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("second");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLive);
+}
+
+#[tokio::test]
+async fn creating_while_another_broadcast_is_live_is_refused() {
+    // The bug this records: a client whose create succeeded but whose response was lost
+    // retried, and the account ended up with several broadcasts on air at once.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect_err("one account, one broadcast on air");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLiveElsewhere);
+    assert_eq!(repo.broadcast_count(), 1, "nothing was created");
+
+    // A second account is unaffected: the rule is one per creator, not one per server.
+    let other = svc
+        .create(second_request(), user(2, "Grace Hopper"))
+        .await
+        .expect("another account may create");
+    assert_eq!(other.creator.id, user(2, "Grace Hopper").id);
+}
+
+#[tokio::test]
+async fn creating_is_allowed_again_once_the_live_broadcast_has_ended() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let live = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.end(live.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    svc.create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("the refusal is about state, not about the account");
+}
+
+#[tokio::test]
+async fn going_live_while_another_broadcast_is_live_is_refused() {
+    // Two drafts are legal — a creator may write next week's show — but only one of them
+    // may be on air, and that is decided when the second one is started.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let first = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let second = svc
+        .create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("a second draft is fine");
+
+    svc.go_live(first.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("first goes live");
+
+    let error = svc
+        .go_live(second.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("second must be refused");
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyLiveElsewhere);
+
+    let row = svc.get(second.id, None).await.expect("read");
+    assert_ne!(
+        row.state,
+        ModelBroadcastState::Live,
+        "a refused go-live must not leave a second broadcast on air"
+    );
+}
+
+#[tokio::test]
+async fn resuming_a_live_broadcast_mints_a_fresh_token_for_its_host() {
+    // What a restart needs: the token in the stored session expired with the process,
+    // and `go_live` deliberately refuses a broadcast that is already on air.
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let resumed = svc
+        .resume(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("resume");
+
+    assert!(!resumed.token.is_empty());
+    assert_eq!(resumed.broadcast.id, created.id);
+    assert_eq!(resumed.broadcast.state, ModelBroadcastState::Live);
+    assert_eq!(resumed.broadcast.participant_role, ParticipantRole::Host);
+
+    let mints = media
+        .calls()
+        .iter()
+        .filter(|call| call.starts_with("mint:"))
+        .count();
+    assert_eq!(mints, 2, "a second token was minted for the same room");
+}
+
+#[tokio::test]
+async fn resuming_reopens_a_listener_row_that_was_closed() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+    let before = repo.total_participants(created.id);
+
+    let resumed = svc
+        .resume(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("resume");
+
+    assert_eq!(
+        resumed.broadcast.participant_role,
+        ParticipantRole::Participant
+    );
+    assert!(resumed.broadcast.is_joined, "the row is open again");
+    assert_eq!(
+        repo.total_participants(created.id),
+        before + 1,
+        "a return visit is a join like any other"
+    );
+}
+
+#[tokio::test]
+async fn resuming_as_somebody_who_was_never_in_the_room_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .resume(created.id, &user(3, "Alan Turing"))
+        .await
+        .expect_err("a stranger has nothing to resume");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotParticipant);
+}
+
+#[tokio::test]
+async fn resuming_a_broadcast_that_is_not_live_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .resume(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("nothing to resume");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
+}
+
+#[tokio::test]
+async fn ending_a_live_broadcast_returns_the_duration_and_participant_count() {
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    // The duration is whole seconds between `published_at` and `ended_at`, so an
+    // instant broadcast legitimately reports 0. Let a second elapse so the assertion
+    // below tests the arithmetic rather than the clock's luck.
+    tokio::time::sleep(std::time::Duration::from_millis(1_050)).await;
+
+    let ended = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    assert_eq!(ended.broadcast_id, created.id);
+    assert!(ended.duration_secs >= 1, "{ended:?}");
+    assert_eq!(ended.total_participants, 1, "the host counts");
+    assert_eq!(ended.ended_reason, EndReason::Normal);
+
+    let calls = media.calls();
+    assert!(
+        calls.iter().any(|c| c.starts_with("end_room:")),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn ending_a_broadcast_that_is_not_live_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("not live");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
+}
+
+#[tokio::test]
+async fn joining_a_live_broadcast_returns_a_token_and_increments_the_counter() {
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let session = svc
+        .join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    assert!(!session.token.is_empty());
+    assert_eq!(
+        session.broadcast.participant_role,
+        ParticipantRole::Participant,
+        "a listener is a participant, not a cohost"
+    );
+    assert!(session.broadcast.is_joined);
+    assert_eq!(
+        session.broadcast.live_participants_count, 2,
+        "the host plus the listener"
+    );
+
+    let calls = media.calls();
+    assert!(calls.iter().any(|c| c.starts_with("mint:")), "{calls:?}");
+    assert!(
+        calls.iter().any(|c| c.contains(":participant")),
+        "{calls:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_creator_cannot_join_their_own_broadcast() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .join(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("refused");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::CreatorCannotJoin);
+}
+
+#[tokio::test]
+async fn a_host_cannot_leave_their_own_broadcast() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let error = svc
+        .leave(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("refused");
+
+    // A conflict, not a permission failure: the caller may well leave broadcasts, just
+    // not this one — they end it instead.
+    assert_eq!(error.code(), meno_core::ErrorCode::HostCannotLeave);
+    assert_eq!(to_body(&error).http_status, 409);
+}
+
+#[tokio::test]
+async fn a_listener_can_leave_and_the_counter_does_not_change() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    // §7.6: leaving is not a row — it is a close. The all-time count stays where it was.
+    let before = svc
+        .get(created.id, None)
+        .await
+        .expect("before")
+        .total_participants;
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+
+    let after = svc
+        .get(created.id, None)
+        .await
+        .expect("after")
+        .total_participants;
+
+    assert_eq!(after, before, "leaving must not reduce an all-time count");
+}
+
+#[tokio::test]
+async fn a_rejoin_increments_the_counter_again() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("first join");
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("rejoin");
+
+    // §7.6: a return visit increments the all-time counter.
+    assert_eq!(
+        svc.get(created.id, None)
+            .await
+            .expect("after")
+            .total_participants,
+        3
+    );
+}
+
+#[tokio::test]
+async fn a_duplicate_join_is_refused_and_does_not_inflate_the_counter() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    let error = svc
+        .join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect_err("already in");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::AlreadyJoined);
+    assert_eq!(
+        svc.get(created.id, None)
+            .await
+            .expect("after")
+            .total_participants,
+        2,
+        "a duplicate join must not increment the counter"
+    );
+}
+
+#[tokio::test]
+async fn a_listener_cannot_join_a_broadcast_that_is_not_live() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect_err("not live");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::NotLive);
+}
+
+// ── cohost add / remove ──────────────────────────────────────────────────
+
+#[tokio::test]
+async fn adding_a_cohost_as_the_creator_succeeds() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let response = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    assert_eq!(response.invitee.id, user(2, "Grace Hopper").id);
+    assert_eq!(response.status, "pending");
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after")
+            .cohosts
+            .is_empty(),
+        "an invitation is not yet a cohost"
+    );
+}
+
+#[tokio::test]
+async fn adding_a_cohost_that_is_already_one_is_refused() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
+
+    let error = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect_err("already a cohost");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn removing_a_cohost_as_the_creator_succeeds() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+    svc.accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
+
+    svc.remove_cohost(
+        created.id,
+        user(2, "Grace Hopper").id,
+        &user(1, "Ada Lovelace"),
+        true,
+    )
+    .await
+    .expect("remove");
+
+    let got = svc.get(created.id, None).await.expect("after");
+    assert!(
+        !got.cohosts
+            .iter()
+            .any(|c| c.id == user(2, "Grace Hopper").id)
+    );
+}
+
+#[tokio::test]
+async fn an_invitation_becomes_a_cohost_only_when_accepted() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    assert_eq!(invitation.status, "pending");
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after invite")
+            .cohosts
+            .is_empty(),
+        "§8.6: the invitation grants nothing until it is accepted"
+    );
+    assert!(
+        notices
+            .cohosts
+            .lock()
+            .expect("not poisoned")
+            .contains(&(created.id, user(2, "Grace Hopper").id)),
+        "the invitee's inbox row is created with the invitation"
+    );
+
+    let session = svc
+        .accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("accept");
+
+    assert_eq!(session.user.id, user(2, "Grace Hopper").id);
+    assert!(
+        session.livekit_token.is_none(),
+        "a draft has no room, so there is nothing to join yet"
+    );
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after accept")
+            .cohosts
+            .iter()
+            .any(|cohost| cohost.id == user(2, "Grace Hopper").id)
+    );
+}
+
+#[tokio::test]
+async fn declining_an_invitation_leaves_the_roster_alone() {
+    let (svc, repo, _events, _notices) = service_with_notices();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    svc.decline_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("decline");
+
+    assert!(
+        svc.get(created.id, None)
+            .await
+            .expect("after decline")
+            .cohosts
+            .is_empty()
+    );
+    let again = svc
+        .accept_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect_err("a declined invitation is final");
+    assert_eq!(again.code(), meno_core::ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn a_due_scheduled_broadcast_is_reminded_once_and_does_not_go_live() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+
+    let now = time::OffsetDateTime::now_utc();
+    repo.set_clock(now);
+    let start = now + time::Duration::hours(1);
+    let created = svc
+        .create(
+            CreateBroadcastRequest {
+                start_time: Some(start),
+                ..create_request()
+            },
+            user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("create");
+
+    assert_eq!(
+        svc.announce_due_scheduled(now).await.expect("before"),
+        0,
+        "a broadcast five minutes early is not due"
+    );
+
+    repo.set_clock(start);
+    assert_eq!(
+        svc.announce_due_scheduled(start).await.expect("due"),
+        1,
+        "the reminder goes out at the start time"
+    );
+    assert_eq!(
+        svc.announce_due_scheduled(start + time::Duration::minutes(1))
+            .await
+            .expect("again"),
+        0,
+        "scheduled_notified_at makes the tick once-only"
+    );
+    assert_eq!(
+        notices.scheduled.lock().expect("not poisoned").as_slice(),
+        [created.id]
+    );
+
+    let after = svc.get(created.id, None).await.expect("after");
+    assert_ne!(
+        after.state,
+        ModelBroadcastState::Live,
+        "§8.2: the job reminds, the creator still presses go-live"
+    );
+}
+
+#[tokio::test]
+async fn the_participant_roster_lists_every_role() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    // Going live already wrote the host's participant row, so the host is on the
+    // roster without joining — joining is refused for the creator.
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    let page = svc
+        .participants(created.id, &dto::ParticipantQuery::default())
+        .await
+        .expect("roster");
+
+    let ids: std::collections::HashSet<_> = page.data.iter().map(|p| p.id).collect();
+    assert!(ids.contains(&user(1, "Ada Lovelace").id));
+    assert!(ids.contains(&user(2, "Grace Hopper").id));
+}
+
+// ── §7.6: the counter moves with the rows ─────────────────────────────────
+
+#[tokio::test]
+async fn total_participants_moves_with_the_rows_and_not_with_live_presence() {
+    // Join → leave → rejoin leaves the count at 3: the leave did not reduce it, the
+    // rejoin did. Driven through the service so the *service's* decision about which
+    // path the caller takes is what is being tested, not the double's internal bump.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    assert_eq!(
+        svc.get(created.id, None)
+            .await
+            .expect("after first join")
+            .total_participants,
+        2,
+        "the host plus the listener"
+    );
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+    assert_eq!(
+        svc.get(created.id, None)
+            .await
+            .expect("after leave")
+            .total_participants,
+        2
+    );
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("rejoin");
+    assert_eq!(
+        svc.get(created.id, None)
+            .await
+            .expect("after rejoin")
+            .total_participants,
+        3
+    );
+}
+
+// ── date rendering on the response ────────────────────────────────────────
+
+#[tokio::test]
+async fn every_date_on_a_broadcast_response_is_an_rfc3339_string() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let detail = svc
+        .get(created.id, Some(&user(1, "Ada Lovelace")))
+        .await
+        .expect("detail");
+
+    let json = serde_json::to_value(&detail).expect("serialisable");
+    assert!(json["createdAt"].is_string(), "{json}");
+    assert!(json["publishedAt"].is_string(), "{json}");
+    assert!(json["endTime"].is_null(), "{json}");
+    assert!(
+        json["startTime"].is_string() || json["startTime"].is_null(),
+        "{json}"
+    );
+
+    let text = json["createdAt"].as_str().expect("asserted");
+    let parsed = time::OffsetDateTime::parse(text, &time::format_description::well_known::Rfc3339)
+        .expect("{text} must be RFC 3339");
+    assert!(parsed > time::OffsetDateTime::UNIX_EPOCH);
+}
+
+// ── lifecycle announcements (§10.3) ───────────────────────────────────────
+//
+// Every flow below has two halves: what it returns, and who it tells. The first is
+// asserted throughout this file; these assert the second, because a room page that is
+// never told a broadcast ended is a client that only finds out on its next refresh.
+
+#[tokio::test]
+async fn going_live_announces_the_broadcast_as_the_response_shape() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let announced = events.created_events();
+    assert_eq!(announced.len(), 1);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id],
+        "the creator's own devices; this module has no follow graph to fan out over"
+    );
+
+    // The frame is the endpoint's own response type, so the keys are the camelCase the
+    // client already parses for `GET /broadcasts/{id}` — not a second spelling.
+    let frame = &announced[0].broadcast;
+    assert_eq!(frame["id"], created.id.to_string());
+    assert_eq!(frame["title"], "Ada's show");
+    assert!(frame["creator"]["fullName"].is_string(), "{frame}");
+    assert!(frame.get("creator_id").is_none(), "{frame}");
+    assert_eq!(frame["state"], "live");
+}
+
+#[tokio::test]
+async fn going_live_invalidates_every_home_screen() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    assert_eq!(
+        events.home_invalidations(),
+        0,
+        "a draft is on nobody's home screen"
+    );
+
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    assert_eq!(events.home_invalidations(), 1);
+}
+
+#[tokio::test]
+async fn a_join_announces_the_participant_to_the_host_and_cohosts_only() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(
+            CreateBroadcastRequest {
+                cohosts: Some(vec![user(3, "Alan Turing").id]),
+                ..create_request()
+            },
+            user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    let announced = events.participant_events();
+    assert_eq!(announced.len(), 1);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id, user(3, "Alan Turing").id],
+        "§10.3: the host and the current cohosts, and not the joiner"
+    );
+
+    let change = &announced[0].change;
+    assert_eq!(change.broadcast_id, created.id);
+    assert_eq!(change.participant.id, user(2, "Grace Hopper").id);
+    assert_eq!(change.participant.full_name, "Grace Hopper");
+    assert_eq!(change.participant.role, ParticipantRole::Participant);
+    assert!(change.participant.is_joined);
+    assert_eq!(
+        change.count, 2,
+        "the room after the join: the host and the listener"
+    );
+}
+
+#[tokio::test]
+async fn a_leave_announces_the_participant_as_gone() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    svc.leave(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("leave");
+
+    let announced = events.participant_events();
+    assert_eq!(announced.len(), 2, "one join, one leave");
+    let leave = &announced[1].change;
+    assert_eq!(leave.participant.id, user(2, "Grace Hopper").id);
+    assert!(!leave.participant.is_joined);
+    assert_eq!(leave.count, 1, "the room after the leave: the host alone");
+    assert_eq!(
+        announced[1].recipients,
+        [user(1, "Ada Lovelace").id],
+        "the host, not the account that left"
+    );
+}
+
+#[tokio::test]
+async fn ending_announces_the_ending_and_the_home_change() {
+    let (svc, repo, media, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+    // The listener is still in the room as far as the media server knows.
+    media.set_room_participants(
+        created.id,
+        &[user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id],
+    );
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let announced = events.ended_events();
+    assert_eq!(
+        announced.len(),
+        1,
+        "the host's own End has to reach the room; the reaper's is the other path"
+    );
+    assert_eq!(announced[0].broadcast_id, created.id);
+    assert_eq!(announced[0].reason, EndReason::Normal);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id]
+    );
+
+    assert_eq!(
+        events.home_invalidations(),
+        2,
+        "one for go live, one for the end"
+    );
+}
+
+#[tokio::test]
+async fn deleting_and_editing_a_broadcast_invalidate_the_home_screens() {
+    let (svc, repo, _, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    svc.update(
+        created.id,
+        UpdateBroadcastRequest {
+            title: Some("Ada's show, renamed".to_owned()),
+            ..Default::default()
+        },
+        &user(1, "Ada Lovelace"),
+    )
+    .await
+    .expect("update");
+    assert_eq!(events.home_invalidations(), 1);
+
+    svc.delete(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("delete");
+    assert_eq!(events.home_invalidations(), 2);
+}
+
+#[tokio::test]
+async fn an_ended_broadcast_cannot_be_started_again() {
+    // The bug this records: a client retried a start against a broadcast that had already
+    // ended, `mark_live` re-opened the row, and the result was live to the catalogue and
+    // dead to `end` and `resume` — while holding the creator's one on-air slot.
+    let (svc, repo, media) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let error = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("a broadcast is one event");
+
+    assert_eq!(
+        error.code(),
+        meno_core::ErrorCode::BroadcastAlreadyEnded,
+        "a terminal row is its own refusal, not a generic conflict"
+    );
+
+    let row = repo
+        .find_by_id(created.id)
+        .await
+        .expect("read")
+        .expect("the row survives");
+    assert!(!row.is_live(), "the refusal must not have written anything");
+    assert!(row.end_time.is_some());
+    assert_eq!(
+        media
+            .calls()
+            .iter()
+            .filter(|call| call.starts_with("create_room:"))
+            .count(),
+        1,
+        "a refused start must not open a second room"
+    );
+
+    // And the slot is free: the replacement is a new broadcast, which is the honest path.
+    svc.create(second_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("a new broadcast is allowed");
+}
+
+#[tokio::test]
+async fn a_token_failure_leaves_no_live_row() {
+    // The order the service keeps: room, then token, then the commit. Minting after
+    // `mark_live` left a live broadcast that nobody had a token for, and the retry then
+    // read `already_live` for a room no client had entered.
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn meno_api::modules::broadcast::repository::BroadcastRepo>,
+        media: Arc::new(MintFails) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::new(RecordingEvents::new()) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::new(meno_api::modules::broadcast::notices::SilentNotices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
+    });
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+
+    let error = svc
+        .go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("the token could not be signed");
+
+    assert_eq!(error.code(), meno_core::ErrorCode::UpstreamUnavailable);
+
+    let row = repo
+        .find_by_id(created.id)
+        .await
+        .expect("read")
+        .expect("row");
+    assert!(
+        !row.is_live(),
+        "a start that could not hand out a token is not a start"
+    );
+    assert_eq!(
+        row.state(),
+        meno_api::modules::broadcast::model::BroadcastState::Draft
+    );
+}
+
+#[tokio::test]
+async fn ending_twice_answers_with_the_same_summary() {
+    // End is idempotent: a client whose response was lost — or whose body failed to
+    // parse — has to be able to say it twice and get the same answer.
+    let (svc, repo, _) = service();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    let first = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+    let second = svc
+        .end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("the second end is not an error");
+
+    assert_eq!(second.broadcast_id, first.broadcast_id);
+    assert_eq!(
+        second.ended_at, first.ended_at,
+        "a retry reports the moment it did end, not the moment it was asked again"
+    );
+    assert_eq!(second.duration_secs, first.duration_secs);
+    assert_eq!(second.ended_reason, first.ended_reason);
+}
+
+/// A media server that opens rooms but cannot sign a token.
+///
+/// No `RecordingMedia` mode covers this: the failure has to happen at the *one* step
+/// between the room and the commit, which is exactly the ordering this asserts.
+#[derive(Debug)]
+struct MintFails;
+
+#[async_trait::async_trait]
+impl meno_api::modules::broadcast::media::BroadcastMedia for MintFails {
+    async fn mint_join_token(
+        &self,
+        _user: &UserSummary,
+        _broadcast_id: Uuid,
+        _role: ParticipantRole,
+    ) -> Result<String, MenoError> {
+        Err(meno_api::modules::broadcast::error::media_unavailable())
+    }
+
+    async fn create_room(&self, _broadcast_id: Uuid) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn remove_participant(
+        &self,
+        _broadcast_id: Uuid,
+        _participant_id: Uuid,
+    ) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn end_room(&self, _broadcast_id: Uuid) -> Result<(), MenoError> {
+        Ok(())
+    }
+
+    async fn room_participants(&self, _broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        Ok(Vec::new())
+    }
+}
+
+// ── notification producers and host presence ──────────────────────────────
+
+/// Records the notification rows the lifecycle flows claim to have produced.
+#[derive(Debug, Default)]
+struct RecordingNotices {
+    started: std::sync::Mutex<Vec<Uuid>>,
+    ended: std::sync::Mutex<Vec<(Uuid, String, Vec<Uuid>)>>,
+    cohosts: std::sync::Mutex<Vec<(Uuid, Uuid)>>,
+    scheduled: std::sync::Mutex<Vec<Uuid>>,
+}
+
+#[async_trait::async_trait]
+impl meno_api::modules::broadcast::notices::BroadcastNotices for RecordingNotices {
+    async fn started(&self, broadcast: &meno_api::modules::broadcast::dto::BroadcastResponse) {
+        self.started
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push(broadcast.id);
+    }
+
+    async fn ended(&self, broadcast_id: Uuid, title: &str, recipients: &[Uuid]) {
+        self.ended
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, title.to_owned(), recipients.to_vec()));
+    }
+
+    async fn cohost_added(
+        &self,
+        broadcast_id: Uuid,
+        _title: &str,
+        _actor: &UserSummary,
+        cohost: Uuid,
+    ) {
+        self.cohosts
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, cohost));
+    }
+
+    async fn cohost_invited(
+        &self,
+        broadcast_id: Uuid,
+        _title: &str,
+        _inviter: &UserSummary,
+        invitee: Uuid,
+    ) {
+        self.cohosts
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push((broadcast_id, invitee));
+    }
+
+    async fn scheduled(
+        &self,
+        broadcast: &meno_api::modules::broadcast::dto::BroadcastResponse,
+    ) -> Vec<Uuid> {
+        self.scheduled
+            .lock()
+            .expect("the recording double is not poisoned")
+            .push(broadcast.id);
+        vec![user(3, "Alan Turing").id]
+    }
+}
+
+fn service_with_notices() -> (
+    BroadcastService,
+    Arc<InMemoryBroadcastRepo>,
+    Arc<RecordingEvents>,
+    Arc<RecordingNotices>,
+) {
+    let repo = Arc::new(InMemoryBroadcastRepo::new());
+    let media = Arc::new(RecordingMedia::new());
+    let events = Arc::new(RecordingEvents::new());
+    let notices = Arc::new(RecordingNotices::default());
+    let svc = BroadcastService::new(service::ServiceDeps {
+        repo: Arc::clone(&repo) as Arc<dyn BroadcastRepo>,
+        media: Arc::clone(&media) as Arc<dyn meno_api::modules::broadcast::media::BroadcastMedia>,
+        storage: BroadcastStorage::disabled(),
+        events: Arc::clone(&events) as Arc<dyn BroadcastEvents>,
+        rooms: Arc::new(SilentRooms) as Arc<dyn BroadcastRooms>,
+        notices: Arc::clone(&notices)
+            as Arc<dyn meno_api::modules::broadcast::notices::BroadcastNotices>,
+    });
+    (svc, repo, events, notices)
+}
+
+#[tokio::test]
+async fn going_live_and_ending_produce_the_two_inbox_rows() {
+    let (svc, repo, _events, notices) = service_with_notices();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    assert_eq!(
+        *notices.started.lock().expect("not poisoned"),
+        vec![created.id],
+        "a creator's followers are told once, from the response the creator received"
+    );
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let ended = notices.ended.lock().expect("not poisoned");
+    assert_eq!(ended.len(), 1);
+    assert_eq!(ended[0].0, created.id);
+    assert_eq!(ended[0].1, "Ada's show");
+    assert!(
+        ended[0].2.contains(&user(1, "Ada Lovelace").id),
+        "the host is in the room that is told"
+    );
+}
+
+#[tokio::test]
+async fn a_host_socket_dropping_starts_the_clock_and_reconnecting_clears_it() {
+    let (svc, repo, events, _notices) = service_with_notices();
+    seed(&repo);
+
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+
+    svc.host_disconnected(user(1, "Ada Lovelace").id)
+        .await
+        .expect("the clock starts");
+
+    let live = repo.list_live().await.expect("the live rows");
+    let row = live
+        .iter()
+        .find(|live| live.id == created.id)
+        .expect("the broadcast is still live");
+    assert!(
+        row.abandoned_since.is_some(),
+        "the reaper can only end what has a clock"
+    );
+    assert!(
+        matches!(
+            events.announced().last().expect("an announcement"),
+            meno_api::modules::broadcast::events::recording::RecordingEvent::HostDisconnected {
+                broadcast_id,
+                grace_secs,
+                disconnect_count,
+                ..
+            } if *broadcast_id == created.id && *grace_secs == 120 && *disconnect_count == 1
+        ),
+        "the room is told the window the first tier grants"
+    );
+
+    svc.host_reconnected(user(1, "Ada Lovelace").id)
+        .await
+        .expect("the clock clears");
+
+    let live = repo.list_live().await.expect("the live rows");
+    let row = live
+        .iter()
+        .find(|live| live.id == created.id)
+        .expect("the broadcast is still live");
+    assert!(row.abandoned_since.is_none(), "the deadline was withdrawn");
+    assert!(matches!(
+        events.announced().last().expect("an announcement"),
+        meno_api::modules::broadcast::events::recording::RecordingEvent::HostReconnected {
+            broadcast_id,
+            ..
+        } if *broadcast_id == created.id
+    ));
+}

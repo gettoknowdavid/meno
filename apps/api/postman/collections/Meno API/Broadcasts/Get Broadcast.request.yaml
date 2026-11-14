@@ -1,0 +1,20 @@
+$kind: http-request
+name: Get Broadcast
+method: GET
+url: '{{base_url}}/broadcasts/{{broadcast_id}}'
+order: 3000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has id", () => pm.expect(json.data.id).to.be.a('string'));
+      pm.test("Has camelCase fields", () => {
+        pm.expect(json.data).to.have.property('createdAt');
+        pm.expect(json.data).to.have.property('participantRole');
+        pm.expect(json.data).to.have.property('liveParticipantsCount');
+      });

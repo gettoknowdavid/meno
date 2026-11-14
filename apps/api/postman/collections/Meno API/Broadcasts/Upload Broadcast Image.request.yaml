@@ -1,0 +1,23 @@
+$kind: http-request
+name: Upload Broadcast Image
+method: POST
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/image'
+order: 10000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+body:
+  type: formdata
+  content:
+    - key: file
+      type: file
+      src: ''
+      description: 'Cover image file (JPEG/PNG, max 5 MB)'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has imageUrl", () => pm.expect(json.data.imageUrl).to.be.a('string'));
+      pm.test("Has imageId", () => pm.expect(json.data.imageId).to.be.a('string'));

@@ -1,0 +1,13 @@
+$kind: http-request
+method: POST
+url: '{{base_url}}/auth/sessions/{{session_id}}'
+order: 2000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+pathVariables:
+  - key: session_id
+    value: '00000000-0000-0000-0000-000000000000'
+    description: 'UUID of the session to revoke'

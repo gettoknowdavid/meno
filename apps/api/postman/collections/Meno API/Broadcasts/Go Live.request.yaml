@@ -1,0 +1,26 @@
+$kind: http-request
+name: Go Live
+method: POST
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/live'
+order: 5000
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: '{}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has LiveKit token", () => pm.expect(json.data.token).to.be.a('string'));
+      pm.test("Broadcast is now active", () => pm.expect(json.data.broadcast.status).to.equal('active'));
+
+      if (json.data && json.data.token) {
+        pm.environment.set('livekit_token', json.data.token);
+        console.log('[Go Live] LiveKit token stored');
+      }

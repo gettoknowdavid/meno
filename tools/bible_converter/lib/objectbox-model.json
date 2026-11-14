@@ -1,0 +1,117 @@
+{
+  "_note1": "KEEP THIS FILE! Check it into a version control system (VCS) like git.",
+  "_note2": "ObjectBox manages crucial IDs for your object model. See docs for details.",
+  "_note3": "If you have VCS merge conflicts, you must resolve them according to ObjectBox docs.",
+  "entities": [
+    {
+      "id": "1:3528982615106520633",
+      "lastPropertyId": "25:718519032442045041",
+      "name": "BibleVersion",
+      "properties": [
+        {
+          "id": "1:1552161036770165766",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:5456450387744310399",
+          "name": "name",
+          "type": 9
+        },
+        {
+          "id": "3:2281513978006015650",
+          "name": "code",
+          "type": 9
+        },
+        {
+          "id": "10:3612811721113091743",
+          "name": "copyrightStatement",
+          "type": 9
+        },
+        {
+          "id": "16:4631516577152108722",
+          "name": "copyright",
+          "type": 6
+        }
+      ],
+      "relations": []
+    },
+    {
+      "id": "2:2126000464363948638",
+      "lastPropertyId": "7:416049077915081988",
+      "name": "Verse",
+      "properties": [
+        {
+          "id": "1:8043361146398004046",
+          "name": "id",
+          "type": 6,
+          "flags": 1
+        },
+        {
+          "id": "2:4817117201024976018",
+          "name": "versionCode",
+          "type": 9
+        },
+        {
+          "id": "3:6078740984480197607",
+          "name": "book",
+          "type": 6
+        },
+        {
+          "id": "4:660295590688261743",
+          "name": "chapter",
+          "type": 6
+        },
+        {
+          "id": "5:1718298161426227015",
+          "name": "verse",
+          "type": 6
+        },
+        {
+          "id": "6:8800838131084552244",
+          "name": "text",
+          "type": 9
+        },
+        {
+          "id": "7:416049077915081988",
+          "name": "bookName",
+          "type": 9
+        }
+      ],
+      "relations": []
+    }
+  ],
+  "lastEntityId": "2:2126000464363948638",
+  "lastIndexId": "0:0",
+  "lastRelationId": "0:0",
+  "lastSequenceId": "0:0",
+  "modelVersion": 5,
+  "modelVersionParserMinimum": 5,
+  "retiredEntityUids": [],
+  "retiredIndexUids": [],
+  "retiredPropertyUids": [
+    4409575696851972504,
+    6005014186384457325,
+    3703825576909275521,
+    6343954451978534389,
+    6450026497352824995,
+    4804981434374812088,
+    8184230209760957396,
+    1150033815430791162,
+    1558170626800537806,
+    1233163769284249736,
+    3696073454886310497,
+    3895071043405139328,
+    3446769798109877279,
+    5725825338572773057,
+    2775783726470547206,
+    2506853207182880084,
+    1615129041418081094,
+    381259789050086130,
+    8879349153943814276,
+    718519032442045041
+  ],
+  "retiredRelationUids": [],
+  "version": 1
+}

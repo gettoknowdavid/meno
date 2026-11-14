@@ -1,0 +1,23 @@
+$kind: http-request
+method: GET
+url: '{{base_url}}/users/me'
+order: 1000
+auth:
+  type: bearer
+  credentials:
+    - key: token
+      value: '{{access_token}}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      if (!json || !json.status || !json.data) return;
+
+      // Keep user_id / user_email in sync in case they changed since login.
+      pm.environment.set('user_id', json.data.id);
+      pm.environment.set('user_email', json.data.email);
+      pm.collectionVariables.set('user_id', json.data.id);
+      pm.collectionVariables.set('user_email', json.data.email);
+
+      console.log(`[Get My Profile] Loaded profile for ${json.data.email} (${json.data.id}).`);

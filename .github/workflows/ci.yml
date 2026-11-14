@@ -1,0 +1,119 @@
+# The gates `docs/backend-gaps.md` gap 10 asked for: fmt, clippy and tests on
+# every push, with the infrastructure the database and Redis suites need.
+#
+# Three jobs rather than one so a formatting failure does not wait behind an
+# eight-minute compile. The `test` job runs the `#[sqlx::test]` suites against a
+# real Postgres and the socket-level realtime test against a real Redis; the
+# `redis-live` job runs the `#[ignore]`d Redis tier, which stays ignored by
+# default so a contributor with no Docker still gets a green `cargo test`.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all -- --check
+
+  clippy:
+    name: clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # No `sqlx` compile-time macros are used in this workspace, so clippy needs
+      # no database; the runtime SQL is exercised by the `test` job.
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: tests
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: meno_db
+          POSTGRES_USER: meno
+          POSTGRES_PASSWORD: password
+        ports:
+          - 5432:5432
+        # `#[sqlx::test]` creates a throwaway database per test, so the role has
+        # to be able to CREATE DATABASE — the service's superuser is.
+        options: >-
+          --health-cmd "pg_isready -U meno -d meno_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      DATABASE_URL: postgres://meno:password@localhost:5432/meno_db
+      REDIS_URL: redis://localhost:6379
+      JWT_SECRET: ci-access-secret-ci-access-secret-ci-access-secret
+      JWT_REFRESH_SECRET: ci-refresh-secret-ci-refresh-secret-ci-refresh-secret
+      CORS_ORIGINS: http://localhost:3000
+      ENV: test
+      PUSH_ENABLED: "false"
+      STORAGE_ENABLED: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # --all-targets includes the integration suites under apps/api/tests/.
+      # With DATABASE_URL and REDIS_URL set, the Postgres tiers and the realtime
+      # E2E run; without them they skip with a readable message.
+      - run: cargo test --workspace --all-targets
+
+  redis-live:
+    name: redis live tiers
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:8-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      REDIS_URL: redis://localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # The `#[ignore]`d cross-cutting tiers. Credential-only tiers (LiveKit,
+      # FCM, Google OAuth) stay excluded on purpose: they need real accounts,
+      # not an ephemeral service.
+      - run: "cargo test -p meno-api --lib -- --ignored middleware::"
+      - run: "cargo test -p meno-api --lib -- --ignored infrastructure::redis::"
+      - run: "cargo test -p meno-api --lib -- --ignored modules::auth::cache"

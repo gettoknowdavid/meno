@@ -1,629 +1,1085 @@
-use crate::modules::broadcast::model::{
-    BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
-};
-use crate::shared::pagination::{CursorParams, Order};
-use crate::shared::types::dto::UserSummary;
-use serde::{Deserialize, Deserializer, Serialize, de};
-use sqlx::FromRow;
-use time::format_description::well_known::Rfc3339;
-use time::serde::rfc3339;
-use time::{Date, OffsetDateTime, PrimitiveDateTime, Time};
-use uuid::Uuid;
-use validator::Validate;
+//! Request and response bodies for the broadcast endpoints (plan §9.5).
+//!
+//! # Validate at the boundary, in code
+//!
+//! Every request type has a `validate` method and every handler calls it as its first
+//! statement, so a handler can assume its arguments are usable. This mirrors
+//! [`crate::modules::auth::dto`] deliberately: `master` expressed the same intent with
+//! `validator`'s derive attributes, which put the field name in a string and produced a
+//! second error shape (§4.2's `data` is a `HashMap<String, Vec<String>>`, which is not
+//! what `ValidationErrors` serialises to). Hand-written `validate` returns the one shape
+//! the envelope carries, and a renamed field is a compile error instead of a silent
+//! mismatch.
+//!
+//! # What is *not* validated here
+//!
+//! Anything that needs a database or a clock. Whether a title is unique, whether the
+//! broadcast is live, whether the caller is the creator — all of that is the service's
+//! question. This file answers only "is this shape acceptable".
+//!
+//! # Dates on the wire
+//!
+//! Every field typed as a date carries `#[serde(with = "time::serde::rfc3339")]` — on
+//! an `Option<T>` it is `time::serde::rfc3339::option`, which maps `None` to `null`.
+//! `time`'s own `Serialize` emits a nine-number tuple instead, which no client can read;
+//! `apps/api/tests/wire_dates.rs` fails the suite if one appears here. The reasoning is
+//! in [`crate::modules::auth::dto`], which wrote it first.
 
-/// Maximum number of cohosts per broadcast. Defined here so it can be referenced
-/// in both the validator attribute and the error message without duplication.
+use serde::{Deserialize, Serialize};
+use time::OffsetDateTime;
+use uuid::Uuid;
+
+use super::error::FieldErrors;
+use super::model::{
+    Broadcast, BroadcastCohost, BroadcastState, BroadcastStatus, EndReason, ParticipantRole,
+    UserSummary, now,
+};
+use meno_core::Error as MenoError;
+
+/// The most cohosts one broadcast may have.
+///
+/// In `dto` rather than in the service so that the *validator* and the error message
+/// quote the same number — the two drifting apart is how a client ends up sending four
+/// cohosts and getting a message about a limit it was never told.
 pub const MAX_COHOSTS: usize = 3;
 
-// ==================== REQUESTS ====================
-#[derive(Debug, Deserialize, Validate)]
+/// The shortest acceptable title, in characters.
+const TITLE_MIN: usize = 3;
+
+/// The longest acceptable title, in characters.
+const TITLE_MAX: usize = 100;
+
+/// The longest acceptable description, in characters.
+///
+/// Matches the column's `VARCHAR(244)`, so a description that passes validation cannot
+/// be refused by the database with a 500.
+const DESCRIPTION_MAX: usize = 244;
+
+/// A request that can check itself before a handler looks at it.
+pub trait Validatable {
+    /// Run every rule, accumulating rather than short-circuiting.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::Validation`] listing every field that failed and why. Returning on
+    /// the first failure would make a client with two mistakes need two round trips.
+    fn validate(&self) -> Result<(), MenoError>;
+}
+
+/// `POST /broadcasts`.
+#[derive(Debug, Deserialize)]
 pub struct CreateBroadcastRequest {
-    #[validate(length(
-        min = 3,
-        max = 100,
-        message = "Title must be between 3 and 100 characters"
-    ))]
+    /// What the broadcast is called.
     pub title: String,
-
-    #[validate(length(max = 244, message = "Description cannot exceed 244 characters"))]
+    /// Optional description.
     pub description: Option<String>,
-
+    /// Storage key of a cover image.
     pub image_id: Option<String>,
+    /// Resolved cover image URL.
     pub image_url: Option<String>,
-
+    /// IANA zone, e.g. `Africa/Lagos`.
     pub time_zone: Option<String>,
-
+    /// When it should go live. Must be in the future.
+    #[serde(with = "time::serde::rfc3339::option", default)]
     pub start_time: Option<OffsetDateTime>,
-
+    /// Whether a recording may be kept.
     pub recording_enabled: Option<bool>,
-
+    /// Cohosts to invite at creation.
     pub cohosts: Option<Vec<Uuid>>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+impl Validatable for CreateBroadcastRequest {
+    fn validate(&self) -> Result<(), MenoError> {
+        let mut fields = FieldErrors::new();
+
+        validate_title(&self.title, &mut fields);
+        validate_description(self.description.as_deref(), &mut fields);
+        validate_cohosts(self.cohosts.as_deref(), &mut fields);
+
+        // The clock rule is a *shape* rule here and an existence rule in the service:
+        // "in the past" needs no database, so it is refused before the handler looks at
+        // anything. The service re-checks it, because a request validated at `t` and
+        // handled at `t + 1s` has moved.
+        if self.start_time.is_some_and(|start| start <= now()) {
+            fields.push("startTime", "startTime must be in the future");
+        }
+
+        fields.into_result()
+    }
+}
+
+/// `PATCH /broadcasts/{id}`.
+///
+/// Every field optional, because a patch that requires `title` is a lie about what the
+/// verb means.
+#[derive(Debug, Default, Deserialize)]
 pub struct UpdateBroadcastRequest {
-    #[validate(length(
-        min = 3,
-        max = 100,
-        message = "Title must be between 3 and 100 characters"
-    ))]
+    /// New title.
     pub title: Option<String>,
-
-    #[validate(length(max = 244, message = "Description cannot exceed 244 characters"))]
+    /// New description.
     pub description: Option<String>,
-
+    /// New cover image key.
     pub image_id: Option<String>,
+    /// New resolved cover image URL.
     pub image_url: Option<String>,
-
+    /// New scheduled start.
+    #[serde(with = "time::serde::rfc3339::option", default)]
     pub start_time: Option<OffsetDateTime>,
-
+    /// New IANA zone.
     pub time_zone: Option<String>,
-
+    /// New recording preference.
     pub recording_enabled: Option<bool>,
-
+    /// The complete cohost list. Absent means "leave the cohosts alone".
     pub cohosts: Option<Vec<Uuid>>,
 }
 
-#[derive(Debug, Deserialize, Validate)]
+impl Validatable for UpdateBroadcastRequest {
+    fn validate(&self) -> Result<(), MenoError> {
+        let mut fields = FieldErrors::new();
+
+        if let Some(title) = &self.title {
+            validate_title(title, &mut fields);
+        }
+        validate_description(self.description.as_deref(), &mut fields);
+        validate_cohosts(self.cohosts.as_deref(), &mut fields);
+
+        if self.start_time.is_some_and(|start| start <= now()) {
+            fields.push("startTime", "startTime must be in the future");
+        }
+
+        // A patch that changes nothing is a 422 rather than a round trip that reports
+        // success for having done nothing: the client sent a request with no intent, and
+        // saying so is more useful than a 200.
+        if self.is_empty() && fields.is_empty() {
+            fields.push("body", "A patch must change at least one field");
+        }
+
+        fields.into_result()
+    }
+}
+
+impl UpdateBroadcastRequest {
+    /// Whether the body carries no field at all.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.title.is_none()
+            && self.description.is_none()
+            && self.image_id.is_none()
+            && self.image_url.is_none()
+            && self.start_time.is_none()
+            && self.time_zone.is_none()
+            && self.recording_enabled.is_none()
+            && self.cohosts.is_none()
+    }
+}
+
+/// The answer to an invite: a pending handshake, not yet a cohost.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohostInvitationResponse {
+    /// The invitation to accept or decline.
+    pub id: Uuid,
+    /// Which broadcast.
+    pub broadcast_id: Uuid,
+    /// Who was invited.
+    pub invitee: UserSummary,
+    /// `pending`, `accepted`, `declined` or `expired`.
+    pub status: String,
+    /// When the invitation was issued.
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: time::OffsetDateTime,
+}
+
+/// An accepted invitation. The token is present only when the room already exists.
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohostSessionResponse {
+    /// The new cohost.
+    pub user: UserSummary,
+    /// The publish token for a live room; minted at go-live for a draft.
+    pub livekit_token: Option<String>,
+}
+
+/// `POST /broadcasts/{id}/cohosts`.
+#[derive(Debug, Deserialize)]
 pub struct AddCohostRequest {
+    /// Who to add.
     pub cohost: Uuid,
 }
 
-#[derive(Debug, Deserialize)]
+/// `DELETE /broadcasts/{id}/cohosts/{cohostId}`.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct RemoveCohostRequest {
-    pub remove_from_room: Option<bool>,
+    /// Whether to also evict them from the live room.
+    ///
+    /// Default `true` when the body is absent: leaving someone in a room they no longer
+    /// have rights in is the failure this flag exists to prevent, so the safe reading is
+    /// the default one.
+    #[serde(default = "default_true")]
+    pub remove_from_room: bool,
 }
 
-#[derive(Debug, Deserialize, Validate)]
-pub struct AddCohostsRequest {
-    pub cohosts: Vec<Uuid>,
+/// The default for [`RemoveCohostRequest::remove_from_room`].
+const fn default_true() -> bool {
+    true
 }
 
-#[derive(Debug, Deserialize)]
-pub struct AcceptCohostInvitationRequest {
-    pub invitation_id: Uuid,
+/// `GET /broadcasts` — the filter set, already decoded.
+///
+/// Deliberately small. `master` carried thirteen filters (eight time-range bounds, a
+/// keyword hash, three sort keys, two booleans) across a query struct that flattened
+/// pagination into itself, which made the *sort* of the feed depend on a field the
+/// cursor had to encode. This keeps what a keyset cursor can carry — `creator_id`,
+/// `status` and a direction — and [`Order`] decides everything else.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastQuery {
+    /// Only this creator's broadcasts.
+    pub creator_id: Option<Uuid>,
+    /// Only broadcasts in this status.
+    pub status: Option<BroadcastStatus>,
+    /// Only broadcasts whose title or description match this term.
+    ///
+    /// Matched with `plainto_tsquery` against the same expression
+    /// `idx_broadcasts_search` indexes, so a search is an index scan rather than
+    /// a filter over every row. It is a *narrowing* filter, which is what makes
+    /// it safe beside a keyset cursor: the cursor still walks `(created_at, id)`.
+    ///
+    /// A search is a public read, so drafts and broadcasts that have never been
+    /// on air are never in the results — see `BroadcastRepo::list`.
+    pub q: Option<String>,
+    /// Sort direction. Defaults to newest first.
+    pub order: Option<meno_core::Order>,
+    /// The embedded `?cursor=` / `?limit=`.
+    #[serde(flatten)]
+    pub pagination: meno_core::CursorParams,
 }
 
-#[derive(Debug, Deserialize, Validate)]
-pub struct BroadcastTokenRefreshRequest {
-    pub broadcast_id: Uuid,
+impl BroadcastQuery {
+    /// Validated page size, clamped to [1, 100].
+    #[must_use]
+    pub fn limit(&self) -> i64 {
+        self.pagination.limit()
+    }
+
+    /// `limit + 1` — the probe row that says whether another page exists.
+    #[must_use]
+    pub fn limit_plus_one(&self) -> i64 {
+        self.pagination.limit_plus_one()
+    }
+
+    /// The opaque cursor from the previous page.
+    #[must_use]
+    pub fn cursor(&self) -> Option<&meno_core::Cursor> {
+        self.pagination.cursor.as_ref()
+    }
+
+    /// The direction, defaulted to newest-first.
+    #[must_use]
+    pub fn effective_order(&self) -> meno_core::Order {
+        self.order.unwrap_or_default()
+    }
+
+    /// The keyword filter, trimmed; a blank `?q=` narrows nothing.
+    #[must_use]
+    pub fn keywords(&self) -> Option<&str> {
+        self.q
+            .as_deref()
+            .map(str::trim)
+            .filter(|term| !term.is_empty())
+    }
 }
 
-// ==================== RESPONSES ====================
-#[derive(Clone, Debug, Serialize, Deserialize)]
+/// `GET /broadcasts/{id}/participants`.
+#[derive(Debug, Default, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipantQuery {
+    /// Only participants holding this role.
+    pub role: Option<ParticipantRole>,
+    /// Sort direction. Defaults to earliest join first, which is the order a host
+    /// moderating a room wants.
+    pub order: Option<meno_core::Order>,
+    /// The embedded `?cursor=` / `?limit=`.
+    #[serde(flatten)]
+    pub pagination: meno_core::CursorParams,
+}
+
+impl ParticipantQuery {
+    /// Validated page size, clamped to [1, 100].
+    #[must_use]
+    pub fn limit(&self) -> i64 {
+        self.pagination.limit()
+    }
+
+    /// `limit + 1`.
+    #[must_use]
+    pub fn limit_plus_one(&self) -> i64 {
+        self.pagination.limit_plus_one()
+    }
+
+    /// The opaque cursor from the previous page.
+    #[must_use]
+    pub fn cursor(&self) -> Option<&meno_core::Cursor> {
+        self.pagination.cursor.as_ref()
+    }
+
+    /// The direction, defaulted to earliest-first.
+    #[must_use]
+    pub fn effective_order(&self) -> meno_core::Order {
+        // Ascending by default, and this is the one place the default is inverted
+        // relative to the rest of the API: a participant list is read as a roster, and
+        // "who arrived first" is the question, not "who arrived most recently".
+        match self.order.unwrap_or_default() {
+            meno_core::Order::Desc => meno_core::Order::Asc,
+            asc => asc,
+        }
+    }
+}
+
+/// A broadcast, as the detail endpoint returns it.
+///
+/// One shape for one purpose: a client renders a card from this and a sheet from this,
+/// and two shapes would mean the card could show a field the sheet does not.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BroadcastResponse {
-    // Identity
+    /// The broadcast id.
     pub id: Uuid,
+    /// What it is called.
     pub title: String,
+    /// Optional description.
     pub description: Option<String>,
+    /// The creator's IANA zone.
     pub time_zone: Option<String>,
+    /// Resolved cover image URL.
     pub image_url: Option<String>,
+    /// Cover image storage key.
     pub image_id: Option<String>,
 
-    // Timestamps
-    #[serde(with = "rfc3339")]
+    /// When it was created.
+    #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-    #[serde(with = "rfc3339::option")]
+    /// When it is scheduled to start.
+    #[serde(with = "time::serde::rfc3339::option")]
     pub start_time: Option<OffsetDateTime>,
-    #[serde(with = "rfc3339::option")]
+    /// When it ended.
+    #[serde(with = "time::serde::rfc3339::option")]
     pub end_time: Option<OffsetDateTime>,
-    #[serde(with = "rfc3339::option")]
+    /// When it went live.
+    #[serde(with = "time::serde::rfc3339::option")]
     pub published_at: Option<OffsetDateTime>,
+    /// How long it ran, once it has.
     pub duration_seconds: Option<i64>,
 
-    // State signals (FE switches on these)
+    /// The database column.
     pub status: BroadcastStatus,
+    /// What a client renders.
     pub state: BroadcastState,
+    /// What the caller may do here.
     pub participant_role: ParticipantRole,
-    pub is_subscribed_to_creator: bool,
+    /// Whether the caller is currently in the room.
+    pub is_joined: bool,
+    /// Whether the caller has bookmarked it.
     pub is_bookmarked: bool,
 
-    // Counts
+    /// How many people are in the room right now.
     pub live_participants_count: i64,
+    /// How many have ever joined.
     pub total_participants: i64,
 
-    // Recording
+    /// Whether a recording may be kept.
     pub recording_enabled: bool,
+    /// Resolved recording URL, once one exists.
     pub recording_url: Option<String>,
-    pub end_reason: EndReason,
+    /// Why it ended, or `null` while it has not.
+    ///
+    /// `null` rather than a `none` variant: a variant is a value a client can render, and
+    /// a live broadcast rendering "why it ended" is the reason the variant was removed.
+    pub end_reason: Option<EndReason>,
 
-    // Continue listening context
+    /// Where the caller left off, for "continue listening".
     pub time_remaining_seconds: Option<i64>,
-    #[serde(with = "rfc3339::option")]
-    pub last_listened_at: Option<OffsetDateTime>,
 
-    // Relations (conditionally populated)
+    /// Who owns it, so a list and a detail agree on the id as well as the object.
+    pub creator_id: Uuid,
+    /// Who owns it.
     pub creator: UserSummary,
+    /// The current cohosts.
     pub cohosts: Vec<UserSummary>,
 }
 
-/// Returned by go-live and join endpoints. The only place a `LiveKit` token
-/// is ever sent to the client.
-#[derive(Clone, Debug, Serialize)]
+impl BroadcastResponse {
+    /// Assemble a response from a row and the facts only the service can know.
+    ///
+    /// # Errors
+    ///
+    /// [`super::error::user_not_found`] when the caller asked for a participant's role
+    /// and that user is not a live account. It cannot be defaulted to
+    /// [`ParticipantRole::None`]: that would render "you are not in this broadcast" for
+    /// a caller who *is*.
+    pub fn new(
+        broadcast: &Broadcast,
+        creator: UserSummary,
+        cohosts: Vec<UserSummary>,
+        viewer: Option<&Viewer>,
+    ) -> Result<Self, MenoError> {
+        let duration_seconds = match (broadcast.published_at, broadcast.end_time) {
+            (Some(start), Some(end)) => Some(end.unix_timestamp() - start.unix_timestamp()),
+            _ => None,
+        };
+
+        let live_participants_count = viewer.map_or(0, |v| v.live_participants_count);
+        let total_participants = broadcast.total_participants;
+        let role = viewer.map_or(ParticipantRole::None, |v| v.role);
+
+        Ok(Self {
+            id: broadcast.id,
+            title: broadcast.title.clone(),
+            description: broadcast.description.clone(),
+            time_zone: broadcast.time_zone.clone(),
+            image_url: broadcast.image_url.clone(),
+            image_id: broadcast.image_id.clone(),
+            created_at: broadcast.created_at,
+            start_time: broadcast.start_time,
+            end_time: broadcast.end_time,
+            published_at: broadcast.published_at,
+            duration_seconds,
+            status: broadcast.status,
+            state: broadcast.state(),
+            is_joined: viewer.is_some_and(|v| v.is_joined),
+            participant_role: role,
+            is_bookmarked: viewer.is_some_and(|v| v.is_bookmarked),
+            live_participants_count,
+            total_participants,
+            recording_enabled: broadcast.recording_enabled,
+            recording_url: broadcast.recording_url.clone(),
+            end_reason: broadcast.end_reason,
+            time_remaining_seconds: viewer.and_then(|v| v.time_remaining_seconds),
+            creator_id: broadcast.creator_id,
+            creator,
+            cohosts,
+        })
+    }
+}
+
+/// What only the service knows about the *caller's* view of a broadcast.
+///
+/// Not optional and not defaulted: each field is a fact that costs a query, and a caller
+/// who is not in the room has none of them. `Option<&Viewer>` says exactly that, so a
+/// response for a signed-out reader is `participantRole: "none"` rather than a set of
+/// zeros that look like measurements.
+#[derive(Debug, Clone, Copy)]
+pub struct Viewer {
+    /// What the caller may do.
+    pub role: ParticipantRole,
+    /// Whether they are in the room now.
+    pub is_joined: bool,
+    /// Whether they bookmarked it.
+    pub is_bookmarked: bool,
+    /// How many are in the room.
+    pub live_participants_count: i64,
+    /// Their resume position, in seconds.
+    pub time_remaining_seconds: Option<i64>,
+}
+
+/// One row in `GET /broadcasts`.
+///
+/// A projection, not a [`BroadcastResponse`]: the list has to render fifty cards
+/// without fifty creator joins, so the creator's name comes along in the same row and
+/// nothing else does.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BroadcastListItem {
+    /// The broadcast id.
+    pub id: Uuid,
+    /// What it is called.
+    pub title: String,
+    /// Optional description.
+    pub description: Option<String>,
+    /// The creator's IANA zone.
+    pub time_zone: Option<String>,
+    /// Resolved cover image URL.
+    pub image_url: Option<String>,
+    /// Cover image storage key.
+    pub image_id: Option<String>,
+    /// The database column.
+    pub status: BroadcastStatus,
+    /// What a client renders.
+    pub state: BroadcastState,
+    /// When it was created.
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: OffsetDateTime,
+    /// When it is scheduled to start.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub start_time: Option<OffsetDateTime>,
+    /// When it ended.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub end_time: Option<OffsetDateTime>,
+    /// How many have ever joined.
+    pub total_participants: i64,
+    /// Who owns it.
+    pub creator_id: Uuid,
+    /// The creator's display name.
+    pub creator_name: String,
+    /// The creator's avatar key.
+    pub creator_avatar_id: Option<String>,
+    /// The creator's resolved avatar URL.
+    pub creator_avatar_url: Option<String>,
+}
+
+/// One row in `GET /broadcasts/{id}/participants`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParticipantListItem {
+    /// The user id.
+    pub id: Uuid,
+    /// Display name.
+    pub full_name: String,
+    /// Avatar key.
+    pub avatar_id: Option<String>,
+    /// Resolved avatar URL.
+    pub avatar_url: Option<String>,
+    /// What they may do.
+    pub role: ParticipantRole,
+    /// When they joined.
+    #[serde(with = "time::serde::rfc3339")]
+    pub joined_at: OffsetDateTime,
+    /// Whether they are still in the room.
+    pub is_joined: bool,
+}
+
+/// Returned by go-live and join: the broadcast plus the only token a client gets.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct BroadcastSessionResponse {
+    /// The broadcast, in the same shape `GET /broadcasts/{id}` returns.
     pub broadcast: BroadcastResponse,
-
-    /// Short-lived `LiveKit` JWT. TTL configured in constants (default 6 h).
+    /// A short-lived media-server JWT scoped to this room and role.
+    ///
+    /// The *only* place this token is ever sent. Minting it needs no database, so a
+    /// client that reconnects refreshes the token rather than re-joining.
     pub token: String,
 }
 
-/// Cohost-specific response after accepting an invitation while a broadcast
-/// is already live. Carries the token needed to join the `LiveKit` room.
-#[derive(Clone, Debug, Serialize)]
-pub struct CohostSessionResponse {
-    pub user: UserSummary,
-
-    /// `None` if the broadcast is not currently live (cohost added pre-broadcast).
-    pub token: String,
-}
-
+/// `POST /broadcasts/{id}/leave`.
 #[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LeaveBroadcastResponse {
+    /// Always `true` — the endpoint answers 200 or an error, never `false`.
     pub success: bool,
+    /// The broadcast that was left.
     pub broadcast_id: Uuid,
+    /// Who left.
     pub user_id: Uuid,
-    #[serde(with = "rfc3339")]
+    /// When.
+    #[serde(with = "time::serde::rfc3339")]
     pub left_at: OffsetDateTime,
 }
 
+/// `POST /broadcasts/{id}/end`.
 #[derive(Debug, Serialize)]
-pub struct BroadcastRefreshTokenResponse {
-    pub broadcast_id: Uuid,
-    pub token: String,
-    #[serde(with = "rfc3339")]
-    pub expires_at: OffsetDateTime,
-}
-
-#[derive(Clone, Debug, Serialize)]
-/// Payload data sent through websocket when a broadcast ends.
-pub struct BroadcastEndedPayload {
-    pub broadcast_id: Uuid,
-    pub reason: EndReason,
-}
-impl BroadcastEndedPayload {
-    #[must_use]
-    pub fn normal_for(broadcast_id: Uuid) -> Self {
-        Self {
-            broadcast_id,
-            reason: EndReason::Normal,
-        }
-    }
-}
-#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct EndBroadcastResponse {
+    /// The broadcast that ended.
     pub broadcast_id: Uuid,
+    /// Its title, so the client's summary does not need a second request.
     pub broadcast_title: String,
+    /// Its cover image URL, for the same reason.
     pub broadcast_image_url: Option<String>,
+    /// Who owned it.
     pub creator_id: Uuid,
+    /// Why it ended.
     pub ended_reason: EndReason,
-    #[serde(with = "rfc3339")]
+    /// When.
+    #[serde(with = "time::serde::rfc3339")]
     pub ended_at: OffsetDateTime,
+    /// How long it ran, in seconds.
     pub duration_secs: i64,
+    /// How many ever joined.
     pub total_participants: i64,
+    /// Whether a recording was kept.
     pub recording_enabled: bool,
-    pub recording_ready: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
-pub struct BroadcastListItem {
-    pub id: Uuid,
-    pub title: String,
-    pub description: Option<String>,
-    pub time_zone: Option<String>,
-    pub image_url: Option<String>,
-    pub image_id: Option<String>,
-
-    pub status: BroadcastStatus,
-
-    #[serde(with = "rfc3339")]
-    pub created_at: OffsetDateTime,
-    #[serde(with = "rfc3339::option")]
-    pub start_time: Option<OffsetDateTime>,
-    #[serde(with = "rfc3339::option")]
-    pub end_time: Option<OffsetDateTime>,
-
-    pub total_participants: i64,
-
-    pub creator_id: Uuid,
-    pub creator_name: String,
-    pub creator_avatar_url: Option<String>,
-    pub creator_avatar_id: Option<String>,
+/// A cohost as the add/remove endpoints report it.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CohostResponse {
+    /// Who was added or removed.
+    pub user: UserSummary,
+    /// How many cohosts the broadcast now has.
+    pub cohost_count: usize,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, FromRow)]
-pub struct ParticipantListItem {
-    pub id: Uuid,
-    pub full_name: String,
-    pub avatar_id: Option<String>,
-    pub avatar_url: Option<String>,
-    pub role: ParticipantRole,
-    #[serde(with = "rfc3339")]
-    pub joined_at: OffsetDateTime,
-}
-
-// ==================== ENUMS ====================
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum BroadcastSortBy {
-    #[default]
-    CreatedAt,
-    Title,
-    StartTime,
-    EndTime,
-    TotalParticipants,
-}
-
-#[derive(Debug, Deserialize, Clone, Copy, PartialEq, Eq, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum ParticipantSortBy {
-    #[default]
-    Role,
-    JoinedAt,
-    Name,
-}
-
-// ==================== QUERIES ====================
-#[derive(Debug, Default, Deserialize, Clone)]
-pub struct BroadcastQuery {
-    pub creator_id: Option<Uuid>,
-    pub status: Option<BroadcastStatus>,
-    pub keywords: Option<String>,
-    pub only_subscriptions: Option<bool>,
-
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub start_time_gt: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub start_time_lt: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub start_time_gte: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub start_time_lte: Option<OffsetDateTime>,
-
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub end_time_gt: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub end_time_lt: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub end_time_gte: Option<OffsetDateTime>,
-    #[serde(default, deserialize_with = "deserialize_flexible_datetime")]
-    pub end_time_lte: Option<OffsetDateTime>,
-
-    pub start_time_exists: Option<bool>,
-    pub end_time_exists: Option<bool>,
-
-    #[serde(default, deserialize_with = "deserialize_sort_by")]
-    pub sort_by: Option<BroadcastSortBy>,
-
-    #[serde(default, deserialize_with = "deserialize_order")]
-    pub order: Option<Order>,
-
-    #[serde(flatten)]
-    pub pagination: CursorParams,
-}
-impl BroadcastQuery {
-    /// Convenience: forward to the embedded `CursorParams`.
-     #[must_use]
-    pub fn limit(&self) -> i64 {
-        self.pagination.limit()
-    }
-     #[must_use]
-    pub fn limit_plus_one(&self) -> i64 {
-        self.pagination.limit_plus_one()
-    }
-     #[must_use]
-    pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
-        self.pagination.cursor.as_ref()
-    }
-     #[must_use]
-    pub fn effective_order(&self) -> Order {
-        self.order.unwrap_or_default()
-    }
-     #[must_use]
-    pub fn effective_sort(&self) -> BroadcastSortBy {
-        self.sort_by.unwrap_or_default()
+/// Shared title rule, so create and update cannot disagree about what a title is.
+fn validate_title(title: &str, fields: &mut FieldErrors) {
+    let length = title.trim().chars().count();
+    if length < TITLE_MIN {
+        fields.push(
+            "title",
+            format!("Title must be at least {TITLE_MIN} characters"),
+        );
+    } else if length > TITLE_MAX {
+        fields.push(
+            "title",
+            format!("Title must be at most {TITLE_MAX} characters"),
+        );
     }
 }
 
+/// Shared description rule.
+fn validate_description(description: Option<&str>, fields: &mut FieldErrors) {
+    if description.is_some_and(|text| text.chars().count() > DESCRIPTION_MAX) {
+        fields.push(
+            "description",
+            format!("Description must be at most {DESCRIPTION_MAX} characters"),
+        );
+    }
+}
+
+/// The cohost list rule: a limit, and no duplicates in the same call.
+///
+/// Duplicates are refused here rather than deduplicated silently, because "you invited
+/// Grace twice" is a client's bug and the response should say so rather than quietly
+/// applying it once.
+fn validate_cohosts(cohosts: Option<&[Uuid]>, fields: &mut FieldErrors) {
+    let Some(cohosts) = cohosts else {
+        return;
+    };
+
+    if cohosts.len() > MAX_COHOSTS {
+        fields.push(
+            "cohosts",
+            format!("A broadcast can have at most {MAX_COHOSTS} cohosts"),
+        );
+    }
+
+    let mut seen = std::collections::HashSet::with_capacity(cohosts.len());
+    for id in cohosts {
+        if !seen.insert(*id) {
+            fields.push("cohosts", "The same user was listed twice");
+        }
+    }
+}
+
+/// Build a [`UserSummary`] from a row's user columns.
+#[must_use]
+pub fn user_summary(
+    id: Uuid,
+    full_name: String,
+    avatar_id: Option<String>,
+    avatar_url: Option<String>,
+) -> UserSummary {
+    UserSummary {
+        id,
+        full_name,
+        avatar_id,
+        avatar_url,
+    }
+}
+
+/// Project a cohost row into a response payload, given the user it points at.
+#[must_use]
+pub fn cohost_response(
+    cohost: &BroadcastCohost,
+    user: UserSummary,
+    count: usize,
+) -> CohostResponse {
+    debug_assert_eq!(cohost.cohost_id, user.id);
+    CohostResponse {
+        user,
+        cohost_count: count,
+    }
+}
+
+/// The text fields of `POST /broadcasts/{id}/image`.
+///
+/// The upload takes a single file part named `file` and no text fields; the type exists
+/// because [`crate::middleware::extractors::MenoMultipartForm`] deserialises whatever
+/// text parts *are* sent, and `{}` is the honest shape for "there are none". The
+/// broadcast id comes from the path, so it is not a field either — and anything a client
+/// sends as a file part is the handler's business, never this type's.
 #[derive(Debug, Default, Deserialize)]
-pub struct ParticipantQuery {
-    pub keywords: Option<String>,
+pub struct UploadBroadcastImageForm {}
 
-    #[serde(default, deserialize_with = "deserialize_participant_role")]
-    pub role: Option<ParticipantRole>,
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    #[serde(default, deserialize_with = "deserialize_sort_by_participant")]
-    pub sort_by: Option<ParticipantSortBy>,
-
-    #[serde(default, deserialize_with = "deserialize_order")]
-    pub order: Option<Order>,
-
-    #[serde(flatten)]
-    pub pagination: CursorParams,
-}
-impl ParticipantQuery {
-    pub fn limit(&self) -> i64 {
-        self.pagination.limit()
+    /// A plain inactive row: created, nothing scheduled, nothing ended.
+    fn row() -> Broadcast {
+        Broadcast {
+            id: Uuid::from_u128(1),
+            title: "Ada's show".to_owned(),
+            description: None,
+            status: BroadcastStatus::Inactive,
+            creator_id: Uuid::from_u128(2),
+            time_zone: None,
+            image_url: None,
+            image_id: None,
+            broadcast_token: None,
+            total_participants: 4,
+            start_time: None,
+            end_time: None,
+            recording_enabled: false,
+            recording_key: None,
+            recording_url: None,
+            published_at: None,
+            abandoned_since: None,
+            end_reason: None,
+            created_at: now(),
+            updated_at: now(),
+            deleted_at: None,
+        }
     }
-    pub fn limit_plus_one(&self) -> i64 {
-        self.pagination.limit_plus_one()
+
+    fn valid_create() -> CreateBroadcastRequest {
+        CreateBroadcastRequest {
+            title: "Ada's show".to_owned(),
+            description: Some("Every Thursday".to_owned()),
+            image_id: None,
+            image_url: None,
+            time_zone: Some("Africa/Lagos".to_owned()),
+            start_time: None,
+            recording_enabled: Some(true),
+            cohosts: None,
+        }
     }
-    pub fn cursor(&self) -> Option<&crate::shared::pagination::Cursor> {
-        self.pagination.cursor.as_ref()
+
+    #[test]
+    fn a_well_formed_request_passes() {
+        assert!(valid_create().validate().is_ok());
     }
-}
 
-// ==================== PARAM CACHE KEYS ====================
-/// Generates a compact, deterministic Redis key from `BroadcastParams`.
-///
-/// Design goals:
-///   1. Deterministic: the same logical query always maps to the same key.
-///   2. Compact: short strings keep Redis memory low at scale.
-///   3. Namespace-prefixed: easy to scan / invalidate by pattern.
-///   4. Collision-safe: for every param that changes, the result set is included.
-///
-/// Format:
-///   `bl:{segment1}:{segment2}:...`
-///   where each segment is `{field_abbrev}={value}` for non-default values only.
-///   Segments are always emitted in a fixed alphabetical order so that two
-///   `BroadcastParams` with the same logical meaning but different field
-///   insertion orders produce identical keys.
-///
-/// Page + limit are included because they change which rows are returned.
-pub struct BroadcastListCacheKey;
-impl BroadcastListCacheKey {
-    /// Returns `None` for param combinations that should never be cached
-    /// (currently: viewer-specific `only_subscriptions=true` queries, because
-    /// the result set differs per user and caching would require per-user keys
-    /// which defeat the purpose of a shared broadcast-list cache).
-    #[must_use]
-    pub fn build(query: &BroadcastQuery) -> Option<String> {
-        // Don't cache personalized feeds — they'd need a per-user key
-        if query.only_subscriptions == Some(true) {
-            return None;
+    #[test]
+    fn every_bad_field_is_reported_in_one_pass() {
+        // Short-circuiting would make a form with three mistakes need three round trips.
+        let error = CreateBroadcastRequest {
+            title: "A".to_owned(),
+            description: Some("x".repeat(DESCRIPTION_MAX + 1)),
+            cohosts: Some(vec![Uuid::from_u128(1); MAX_COHOSTS + 1]),
+            ..valid_create()
         }
+        .validate()
+        .expect_err("refused");
 
-        let mut parts: Vec<String> = Vec::with_capacity(16);
+        let MenoError::Validation { fields } = error else {
+            panic!("expected a validation failure");
+        };
+        assert!(fields.contains_key("title"), "{fields:?}");
+        assert!(fields.contains_key("description"), "{fields:?}");
+        assert!(fields.contains_key("cohosts"), "{fields:?}");
+    }
 
-        if let Some(cid) = query.creator_id {
-            parts.push(format!("cid={}", cid));
-        }
-        if let Some(ref kw) = query.keywords {
-            // Hash the keyword to keep key short and avoid special-char issues.
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            kw.hash(&mut h);
-            parts.push(format!("kw={:x}", h.finish()));
-        }
-        if let Some(ref s) = query.status {
-            parts.push(format!("s={:?}", s));
-        }
-
-        // Time range filters — encode presence + value compactly
-        macro_rules! push_time {
-            ($field:expr, $abbrev:expr) => {
-                if let Some(t) = $field {
-                    parts.push(format!("{}={}", $abbrev, t.unix_timestamp()));
-                }
-            };
-        }
-        push_time!(query.start_time_gt, "stgt");
-        push_time!(query.start_time_gte, "stge");
-        push_time!(query.start_time_lt, "stlt");
-        push_time!(query.start_time_lte, "stle");
-        push_time!(query.end_time_gt, "etgt");
-        push_time!(query.end_time_gte, "etge");
-        push_time!(query.end_time_lt, "etlt");
-        push_time!(query.end_time_lte, "etle");
-
-        if let Some(e) = query.start_time_exists {
-            parts.push(format!("ste={}", e as u8));
-        }
-        if let Some(e) = query.end_time_exists {
-            parts.push(format!("ete={}", e as u8));
-        }
-
-        // Sort / order — only when non-default
-        parts.push(format!("sb={:?}", query.sort_by.unwrap_or_default()));
-        parts.push(format!("ord={:?}", query.order.unwrap_or_default()));
-
-        let cursor_str = query.cursor().map(|c| c.0.clone()).unwrap_or_default();
-        parts.push(format!("cur={}", cursor_str));
-
-        parts.push(format!("lim={:?}", query.limit()));
-
-        let key = if parts.is_empty() {
-            "bc:list:all".to_string()
-        } else {
-            format!("bc:list:{}", parts.join(":"))
+    #[test]
+    fn a_short_title_is_refused_for_both_verbs() {
+        // One shared rule, so create and update cannot drift apart.
+        let short = "ab";
+        let create = CreateBroadcastRequest {
+            title: short.to_owned(),
+            ..valid_create()
+        };
+        let update = UpdateBroadcastRequest {
+            title: Some(short.to_owned()),
+            ..Default::default()
         };
 
-        Some(key)
-    }
-}
-
-pub struct ParticipantListCacheKey;
-impl ParticipantListCacheKey {
-    fn build(prefix: &str, broadcast_id: Uuid, query: &ParticipantQuery) -> String {
-        let mut parts: Vec<String> = Vec::with_capacity(16);
-
-        if let Some(ref kw) = query.keywords {
-            // Hash the keyword to keep key short and avoid special-char issues.
-            use std::collections::hash_map::DefaultHasher;
-            use std::hash::{Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            kw.hash(&mut h);
-            parts.push(format!("kw={:x}", h.finish()));
-        }
-        if let Some(ref r) = query.role {
-            parts.push(format!("s={:?}", r));
-        }
-        match query.sort_by {
-            None | Some(ParticipantSortBy::Role) => {}
-            Some(ref s) => parts.push(format!("sb={:?}", s)),
-        }
-        match query.order {
-            None | Some(Order::Desc) => {}
-            Some(ref o) => parts.push(format!("ob={:?}", o)),
-        }
-
-        format!("bc:{}:{}:{}", prefix, broadcast_id, parts.join(":"))
+        assert!(create.validate().is_err());
+        assert!(update.validate().is_err());
     }
 
-    /// Builds the key for the main participants list
-    pub fn all(broadcast_id: Uuid, query: &ParticipantQuery) -> String {
-        Self::build("participants", broadcast_id, query)
+    #[test]
+    fn a_past_start_time_is_refused_before_the_service_runs() {
+        let error = CreateBroadcastRequest {
+            start_time: Some(now() - time::Duration::hours(1)),
+            ..valid_create()
+        }
+        .validate()
+        .expect_err("refused");
+
+        let MenoError::Validation { fields } = error else {
+            panic!("expected a validation failure");
+        };
+        assert!(fields.contains_key("startTime"), "{fields:?}");
     }
 
-    /// Builds the key for the live participants list
-    pub fn live(broadcast_id: Uuid, query: &ParticipantQuery) -> String {
-        Self::build("live_participants", broadcast_id, query)
+    #[test]
+    fn a_future_start_time_is_accepted() {
+        let request = CreateBroadcastRequest {
+            start_time: Some(now() + time::Duration::hours(1)),
+            ..valid_create()
+        };
+        assert!(request.validate().is_ok());
     }
-}
 
-// ==================== DESERIALIZERS ====================
-/// Flexible timestamp deserializer that accepts:
-///   - Full RFC 3339: "2026-05-26T21:55:37Z"
-///   - Full RFC 3339 with offset: "2026-05-26T21:55:37+01:00"
-///   - Date only: "2026-05-26" (treated as midnight UTC)
-///   - Unix timestamp (i64): 1716768000
-pub fn deserialize_flexible_datetime<'de, D>(de: D) -> Result<Option<OffsetDateTime>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    struct FlexibleVisitor;
-
-    impl<'de> de::Visitor<'de> for FlexibleVisitor {
-        type Value = Option<OffsetDateTime>;
-
-        fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-            f.write_str("a date string (YYYY-MM-DD), RFC 3339 datetime, or Unix timestamp")
+    #[test]
+    fn a_duplicate_cohost_is_refused_rather_than_silently_deduplicated() {
+        let id = Uuid::from_u128(9);
+        let error = CreateBroadcastRequest {
+            cohosts: Some(vec![id, id]),
+            ..valid_create()
         }
+        .validate()
+        .expect_err("refused");
 
-        fn visit_i64<E: de::Error>(self, v: i64) -> Result<Self::Value, E> {
-            OffsetDateTime::from_unix_timestamp(v)
-                .map(Some)
-                .map_err(|_| E::custom(format!("Unix timestamp {} is out of range", v)))
-        }
+        let MenoError::Validation { fields } = error else {
+            panic!("expected a validation failure");
+        };
+        assert!(fields.contains_key("cohosts"), "{fields:?}");
+    }
 
-        fn visit_u64<E: de::Error>(self, v: u64) -> Result<Self::Value, E> {
-            self.visit_i64(v as i64)
-        }
+    #[test]
+    fn a_patch_with_no_fields_is_refused() {
+        // Otherwise it is a round trip that answers 200 for having done nothing.
+        let error = UpdateBroadcastRequest::default()
+            .validate()
+            .expect_err("refused");
+        let MenoError::Validation { fields } = error else {
+            panic!("expected a validation failure");
+        };
+        assert!(fields.contains_key("body"), "{fields:?}");
+    }
 
-        fn visit_str<E: de::Error>(self, v: &str) -> Result<Self::Value, E> {
-            // Try RFC 3339 first (most common)
-            if let Ok(dt) = OffsetDateTime::parse(v, &Rfc3339) {
-                return Ok(Some(dt));
-            }
+    #[test]
+    fn a_patch_carrying_one_field_is_accepted() {
+        let request = UpdateBroadcastRequest {
+            title: Some("A new title".to_owned()),
+            ..Default::default()
+        };
+        assert!(request.validate().is_ok());
+        assert!(!request.is_empty());
+    }
 
-            // Try date-only (YYYY-MM-DD) → midnight UTC
-            if let Ok(date) = Date::parse(
-                v,
-                &time::format_description::parse_borrowed::<3>("[year]-[month]-[day]").unwrap(),
-            ) {
-                let dt = PrimitiveDateTime::new(date, Time::MIDNIGHT).assume_utc();
-                return Ok(Some(dt));
-            }
+    #[test]
+    fn every_response_date_is_an_rfc3339_string() {
+        // The regression this whole module's date policy exists for: a bare
+        // `OffsetDateTime` serialises as `time`'s nine-number tuple. Asserted on the
+        // rendered JSON rather than on the derive, because the derive is what is wrong.
+        let broadcast = row();
+        let response = BroadcastResponse::new(
+            &broadcast,
+            user_summary(Uuid::from_u128(2), "Ada".to_owned(), None, None),
+            Vec::new(),
+            Some(&Viewer {
+                role: ParticipantRole::Participant,
+                is_joined: true,
+                is_bookmarked: false,
+                live_participants_count: 3,
+                time_remaining_seconds: Some(12),
+            }),
+        )
+        .expect("assembling");
 
-            // Try common ISO 8601 without timezone: "2026-05-26T21:55:37"
-            if let Ok(pdt) = PrimitiveDateTime::parse(
-                v,
-                &time::format_description::parse_borrowed::<3>(
-                    "[year]-[month]-[day]T[hour]:[minute]:[second]",
+        let json = serde_json::to_value(&response).expect("serialisable");
+        assert!(json["createdAt"].is_string(), "{json}");
+        assert!(
+            json["startTime"].is_null(),
+            "an absent optional date is null: {json}"
+        );
+        assert_eq!(
+            json["createdAt"],
+            serde_json::Value::String(
+                time::OffsetDateTime::format(
+                    broadcast.created_at,
+                    &time::format_description::well_known::Rfc3339
                 )
-                .unwrap(),
-            ) {
-                return Ok(Some(pdt.assume_utc()));
-            }
+                .expect("formattable")
+            )
+        );
+    }
 
-            Err(E::custom(format!(
-                "invalid datetime '{}': expected YYYY-MM-DD, RFC 3339, or Unix timestamp",
-                v
-            )))
+    #[test]
+    fn a_viewer_with_no_facts_renders_as_absent_rather_than_zero() {
+        // `participantRole: "none"` is a statement; `liveParticipantsCount: 0` for a
+        // room with twelve people in it would be a lie, so an anonymous read reports no
+        // viewer at all.
+        let broadcast = row();
+        let response = BroadcastResponse::new(
+            &broadcast,
+            user_summary(Uuid::from_u128(2), "Ada".to_owned(), None, None),
+            Vec::new(),
+            None,
+        )
+        .expect("assembling");
+
+        assert_eq!(response.participant_role, ParticipantRole::None);
+        assert!(!response.is_joined);
+        assert_eq!(response.live_participants_count, 0);
+    }
+
+    #[test]
+    fn a_duration_only_appears_once_the_broadcast_has_ended() {
+        let mut broadcast = row();
+        let response = |b: &Broadcast| {
+            BroadcastResponse::new(
+                b,
+                user_summary(Uuid::from_u128(2), "Ada".to_owned(), None, None),
+                Vec::new(),
+                None,
+            )
+            .expect("assembling")
+            .duration_seconds
+        };
+
+        broadcast.published_at = Some(now());
+        assert_eq!(response(&broadcast), None, "live: no duration");
+
+        broadcast.end_time = Some(now() + time::Duration::minutes(90));
+        assert_eq!(response(&broadcast), Some(5400), "ended: the real length");
+    }
+
+    #[test]
+    fn removing_a_cohost_defaults_to_taking_them_out_of_the_room() {
+        // The absent body has to mean the safe thing: evict, do not leave a
+        // de-cohosted participant publishing in a live room.
+        let absent: RemoveCohostRequest = serde_json::from_str("{}").expect("decodes");
+        assert!(absent.remove_from_room);
+
+        let explicit: RemoveCohostRequest =
+            serde_json::from_str(r#"{"removeFromRoom": false}"#).expect("decodes");
+        assert!(!explicit.remove_from_room);
+    }
+
+    #[test]
+    fn a_query_defaults_to_newest_first_and_the_participants_to_oldest_first() {
+        let broadcast = BroadcastQuery::default();
+        assert_eq!(broadcast.effective_order(), meno_core::Order::Desc);
+
+        let participants = ParticipantQuery::default();
+        assert_eq!(
+            participants.effective_order(),
+            meno_core::Order::Asc,
+            "a roster reads as a queue, not as a feed"
+        );
+    }
+
+    #[test]
+    fn a_query_decodes_camel_case_and_clamps_its_limit() {
+        let query: BroadcastQuery = serde_json::from_str(
+            r#"{"creatorId":"11111111-1111-1111-1111-111111111111","order":"asc","limit":"5"}"#,
+        )
+        .expect("decodes");
+
+        assert_eq!(query.limit(), 5);
+        assert_eq!(query.effective_order(), meno_core::Order::Asc);
+
+        // `limit` is carried on the wire as a query parameter and therefore a string
+        // (the cursor module decodes it via `DisplayFromStr`), so a string is what the
+        // API accepts — and it must still be clamped to the ceiling like every other list.
+        let absurd: BroadcastQuery = serde_json::from_str(r#"{"limit":"10000"}"#).expect("decodes");
+        assert_eq!(absurd.limit(), 100, "clamped like every other list");
+    }
+
+    fn summarised() -> UserSummary {
+        UserSummary {
+            id: Uuid::from_u128(2),
+            full_name: "Ada".to_owned(),
+            avatar_id: None,
+            avatar_url: None,
+        }
+    }
+
+    #[test]
+    fn a_response_is_camel_case_with_one_name_per_field() {
+        // The contract test for §6.2's casing: every multi-word field appears under the
+        // camelCase spelling the mobile model now reads, and not under the snake_case one.
+        let mut row = row();
+        row.status = BroadcastStatus::Active;
+        row.published_at = Some(now());
+        row.time_zone = Some("Africa/Lagos".to_owned());
+        row.image_url = Some("https://cdn.test/cover.jpg".to_owned());
+
+        let json = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+
+        for snake in [
+            "time_zone",
+            "image_url",
+            "image_id",
+            "created_at",
+            "start_time",
+            "end_time",
+            "published_at",
+            "duration_seconds",
+            "participant_role",
+            "is_joined",
+            "is_bookmarked",
+            "live_participants_count",
+            "total_participants",
+            "recording_enabled",
+            "recording_url",
+            "end_reason",
+            "time_remaining_seconds",
+            "creator_id",
+        ] {
+            assert!(json.get(snake).is_none(), "{snake} is still snake_case");
         }
 
-        fn visit_none<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
+        for camel in [
+            "timeZone",
+            "imageUrl",
+            "imageId",
+            "createdAt",
+            "startTime",
+            "endTime",
+            "publishedAt",
+            "durationSeconds",
+            "participantRole",
+            "isJoined",
+            "isBookmarked",
+            "liveParticipantsCount",
+            "totalParticipants",
+            "recordingEnabled",
+            "recordingUrl",
+            "endReason",
+            "timeRemainingSeconds",
+            "creatorId",
+        ] {
+            assert!(json.get(camel).is_some(), "{camel} is missing");
         }
 
-        fn visit_unit<E: de::Error>(self) -> Result<Self::Value, E> {
-            Ok(None)
-        }
+        assert_eq!(json["creatorId"], "00000000-0000-0000-0000-000000000002");
+        assert_eq!(json["creator"]["fullName"], "Ada");
+        assert_eq!(json["status"], "active");
+        assert_eq!(json["state"], "live");
+        assert_eq!(json["participantRole"], "none");
     }
 
-    de.deserialize_any(FlexibleVisitor)
-}
+    #[test]
+    fn a_live_broadcast_has_no_end_reason_and_an_ended_one_has_its_reason() {
+        // `null`, not a `none` variant: a live broadcast that carries a reason is a
+        // client rendering "why this ended" over a room that is still running.
+        let mut row = row();
+        row.status = BroadcastStatus::Active;
 
-/// Case-insensitive deserializer for BroadcastSortBy.
-/// Accepts "title", "TITLE", "Title", "start_time", "StartTime", etc.
-/// Returns a structured BroadcastError rather than a raw serde string.
-fn deserialize_sort_by<'de, D>(de: D) -> Result<Option<BroadcastSortBy>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(de)?;
-    match s.as_deref().map(str::to_lowercase).as_deref() {
-        None | Some("") => Ok(None),
-        Some("title") => Ok(Some(BroadcastSortBy::Title)),
-        Some("start_time") => Ok(Some(BroadcastSortBy::StartTime)),
-        Some("end_time") => Ok(Some(BroadcastSortBy::EndTime)),
-        Some("created_at") => Ok(Some(BroadcastSortBy::CreatedAt)),
-        Some("total_participants") => Ok(Some(BroadcastSortBy::TotalParticipants)),
-        Some(other) => Err(de::Error::custom(format!(
-            "unknown sort_by '{}': expected one of title, start_time, end_time",
-            other
-        ))),
+        let live = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+        assert_eq!(live["endReason"], serde_json::Value::Null);
+
+        row.status = BroadcastStatus::Inactive;
+        row.end_time = Some(now());
+        row.end_reason = Some(EndReason::HostDisconnected);
+
+        let ended = serde_json::to_value(
+            BroadcastResponse::new(&row, summarised(), Vec::new(), None).expect("built"),
+        )
+        .expect("serialisable");
+        assert_eq!(ended["endReason"], "host_disconnected");
+        assert_eq!(ended["state"], "ended");
     }
-}
 
-/// Order by deserializer
-fn deserialize_order<'de, D>(de: D) -> Result<Option<Order>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(de)?;
-    match s.as_deref().map(str::to_lowercase).as_deref() {
-        None | Some("") => Ok(None),
-        Some("asc") => Ok(Some(Order::Asc)),
-        Some("desc") => Ok(Some(Order::Desc)),
-        Some(other) => Err(de::Error::custom(format!(
-            "unknown order_by '{}': expected 'asc' or 'desc'",
-            other
-        ))),
-    }
-}
+    #[test]
+    fn a_status_filter_only_accepts_a_column_value() {
+        let query: BroadcastQuery = serde_json::from_str(r#"{"status":"active"}"#).expect("ok");
+        assert_eq!(query.status, Some(BroadcastStatus::Active));
 
-/// ParticipantRole deserializer — same pattern
-fn deserialize_participant_role<'de, D>(de: D) -> Result<Option<ParticipantRole>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(de)?;
-    match s.as_deref().map(str::to_lowercase).as_deref() {
-        None | Some("") => Ok(None),
-        Some("host") => Ok(Some(ParticipantRole::Host)),
-        Some("cohost") => Ok(Some(ParticipantRole::Cohost)),
-        Some("participant") => Ok(Some(ParticipantRole::Participant)),
-        Some(other) => Err(de::Error::custom(format!(
-            "unknown role '{}': expected host, cohost, or participant",
-            other
-        ))),
-    }
-}
-
-fn deserialize_sort_by_participant<'de, D>(de: D) -> Result<Option<ParticipantSortBy>, D::Error>
-where
-    D: Deserializer<'de>,
-{
-    let s = Option::<String>::deserialize(de)?;
-    match s.as_deref().map(str::to_lowercase).as_deref() {
-        None | Some("") => Ok(None),
-        Some("role") => Ok(Some(ParticipantSortBy::Role)),
-        Some("joined_at") => Ok(Some(ParticipantSortBy::JoinedAt)),
-        Some("name") => Ok(Some(ParticipantSortBy::Name)),
-        Some(other) => Err(de::Error::custom(format!(
-            "unknown sort_by '{}': expected role, joined_at, or name",
-            other
-        ))),
+        // "live" is a `state`, not a `status`. Accepting it would mean one filter with
+        // two vocabularies and a client that cannot tell which half is wrong.
+        assert!(serde_json::from_str::<BroadcastQuery>(r#"{"status":"live"}"#).is_err());
     }
 }

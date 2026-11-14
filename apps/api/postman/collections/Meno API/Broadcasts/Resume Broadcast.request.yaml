@@ -1,0 +1,20 @@
+$kind: http-request
+name: Resume Broadcast
+method: POST
+url: '{{base_url}}/broadcasts/{{broadcast_id}}/resume'
+order: 7500
+headers:
+  - key: Authorization
+    value: 'Bearer {{access_token}}'
+  - key: Content-Type
+    value: application/json
+body:
+  type: json
+  content: '{}'
+scripts:
+  - type: afterResponse
+    language: text/javascript
+    code: |-
+      const json = pm.response.json();
+      pm.test("Status 200", () => pm.response.to.have.status(200));
+      pm.test("Has LiveKit token", () => pm.expect(json.data.token).to.be.a('string'));
