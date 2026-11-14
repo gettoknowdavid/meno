@@ -44,6 +44,7 @@ final class NotificationProxy extends ChangeNotifier {
           _syncBadge();
           notifyListeners();
         },
+        errorFilter: null,
         errorFilterFn: menoExceptionFilter,
         debugName: 'notification.markAsRead',
       );
@@ -59,6 +60,7 @@ final class NotificationProxy extends ChangeNotifier {
           await di<NotificationsHttpService>().deleteNotification(id);
         },
         undo: (stack, _) => stack.pop(),
+        errorFilter: null,
         errorFilterFn: menoExceptionFilter,
         debugName: 'notification.delete',
       );
