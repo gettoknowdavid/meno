@@ -257,6 +257,26 @@ void main() {
       },
     );
 
+    test('forgetting a deleted account also drops its greeting', () async {
+      await service.adoptCandidate(_record());
+      await service.activate(_idA);
+      await service.updateRememberedIdentity(
+        RememberedIdentity(
+          accountId: _idA,
+          displayName: 'Alice',
+          lastUsedAt: DateTime.utc(2025),
+          requiresAuthentication: false,
+        ),
+      );
+
+      expect(await service.forgetAccount(_idA), isA<MutationCommitted>());
+
+      final snapshot = service.readSnapshot();
+      expect(snapshot.credentials, isEmpty);
+      expect(snapshot.remembered, isEmpty);
+      expect(snapshot.activeAccountId, isNull);
+    });
+
     test('a logout for a replaced epoch writes nothing', () async {
       await service.adoptCandidate(_record(epoch: 'epoch-new'));
 

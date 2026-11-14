@@ -316,6 +316,36 @@ final class SessionService implements Disposable, ConnectionCredentials {
     });
   }
 
+  /// Removes an account that no longer exists.
+  ///
+  /// Unlike [removeCredentials], the greeting identity goes too: a deleted
+  /// account must not be offered as somebody to sign back in as. The removal is
+  /// by account id, not epoch, because a delete answered by the API is final —
+  /// a newer local session for the same deleted account is not one to preserve.
+  Future<MutationResult> forgetAccount(Id accountId) {
+    return _enqueue(() {
+      final guard = _guard();
+      if (guard != null) return guard;
+      if (!accountId.isValid) {
+        return const MutationRejected(MutationRejection.invalidEnvelope);
+      }
+
+      final current = _envelope!;
+      if (!current.credentials.containsKey(accountId) &&
+          !current.remembered.containsKey(accountId)) {
+        return MutationCommitted(current.revision);
+      }
+
+      final without = _withoutCredential(current, accountId);
+      return _commit(
+        current,
+        without.copyWith(
+          remembered: {...without.remembered}..remove(accountId),
+        ),
+      );
+    });
+  }
+
   /// Updates greeting metadata. Never accepts or writes a token.
   Future<MutationResult> updateRememberedIdentity(RememberedIdentity identity) {
     return _enqueue(() {

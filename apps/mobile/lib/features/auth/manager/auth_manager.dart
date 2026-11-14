@@ -25,6 +25,7 @@ final class AuthManager implements Disposable {
     required this._logger,
     this.beginAttempt,
     this.adoptCandidate,
+    this.clearLocalData,
   }) {
     login = .createAsync<LoginArgs, UserCredential>(
       (args) => _accept(
@@ -73,6 +74,12 @@ final class AuthManager implements Disposable {
       _logOutEverywhere,
       errorFilterFn: menoExceptionFilter,
       debugName: 'auth.logOutEverywhere',
+    );
+
+    deleteAccount = .createAsyncNoParamNoResult(
+      _deleteAccount,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'auth.deleteAccount',
     );
 
     switchAccount = .createAsyncNoResult<Id>(
@@ -148,6 +155,12 @@ final class AuthManager implements Disposable {
   })?
   adoptCandidate;
 
+  /// Removes the deleted account's preference keys and local rows.
+  ///
+  /// Absent in a unit test that wires the auth stack alone; the vault teardown
+  /// below still runs, so the account cannot remain signed in.
+  final Future<void> Function(Id accountId)? clearLocalData;
+
   final _active = ValueNotifier<UserCredential>(UserCredential.empty);
   final _accounts = ValueNotifier<Map<Id, UserCredential>>({});
   final _lastKnown = ValueNotifier<User>(User.empty);
@@ -176,6 +189,11 @@ final class AuthManager implements Disposable {
 
   /// Ends every session the active account has.
   late final Command<void, void> logOutEverywhere;
+
+  /// Permanently deletes the active account.
+  ///
+  /// The API call comes first: only a confirmed deletion clears local state.
+  late final Command<void, void> deleteAccount;
 
   /// Makes another account in the vault the active one.
   late final Command<Id, void> switchAccount;
@@ -269,6 +287,7 @@ final class AuthManager implements Disposable {
     signInWithGoogle.dispose();
     logout.dispose();
     logOutEverywhere.dispose();
+    deleteAccount.dispose();
     switchAccount.dispose();
     addAccount.dispose();
     verifyEmail.dispose();
@@ -430,6 +449,46 @@ final class AuthManager implements Disposable {
     }
 
     await signOut();
+  }
+
+  /// Deletes the active account on the server, then clears it from the device.
+  ///
+  /// The ordering is the point: a failed request leaves the account exactly as
+  /// it was, while a successful one has already revoked every token, so keeping
+  /// the local session would only preserve a credential that cannot work. The
+  /// local cache sweep is best-effort — a device that cannot clear a preference
+  /// must still stop presenting a deleted account — but the vault removal is
+  /// not: if it cannot be written, the account stays signed in and the call
+  /// fails visibly, which the next launch will agree with.
+  Future<void> _deleteAccount() async {
+    final record = _record.value;
+    if (record == null) {
+      throw const UnauthenticatedException(message: 'No account is signed in.');
+    }
+
+    await _http.deleteAccount();
+
+    try {
+      await clearLocalData?.call(record.accountId);
+    } on Object catch (error, stackTrace) {
+      _logger.w(
+        'The deleted account left local cache data behind',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final result = await _store.forgetAccount(record.accountId);
+    if (result is MutationStorageFailed || result is MutationRejected) {
+      throw const StorageException(
+        message: 'The account could not be removed from this device.',
+      );
+    }
+
+    // The greeting is gone with the account, so the sign-in form starts empty
+    // rather than offering an identity that no longer exists.
+    _formMode.value = LoginFormMode.fullEmail;
   }
 
   /// Applies the committed vault to everything the UI reads.

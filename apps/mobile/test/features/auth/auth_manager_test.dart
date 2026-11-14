@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_it/flutter_it.dart' show Command;
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -130,6 +131,7 @@ void main() {
   Future<AuthManager> createManager({
     List<CredentialRecord> seeded = const [],
     StubApi? api,
+    Future<void> Function(Id accountId)? clearLocalData,
   }) async {
     store = SessionService(SecureStorage(platform));
     addTearDown(store.onDispose);
@@ -145,6 +147,7 @@ void main() {
       store: store,
       clock: clock,
       logger: MockMenoLogger(),
+      clearLocalData: clearLocalData,
     ).init();
     addTearDown(manager.onDispose);
     return manager;
@@ -165,6 +168,64 @@ void main() {
       expect(manager.activeCredential.value.isEmpty, isTrue);
     },
   );
+
+  test('delete account calls the API before clearing local state', () async {
+    var stillSignedInWhenCalled = false;
+    final api = StubApi([
+      () async {
+        stillSignedInWhenCalled = store.readSnapshot().credentials.isNotEmpty;
+        return envelope();
+      },
+    ]);
+    final manager = await createManager(seeded: [_account()], api: api);
+
+    await manager.deleteAccount.runAsync();
+
+    expect(api.requests.single.method, 'DELETE');
+    expect(api.requests.single.path, '/users/me');
+    expect(stillSignedInWhenCalled, isTrue);
+    expect(store.readSnapshot().credentials, isEmpty);
+    expect(store.readSnapshot().remembered, isEmpty);
+    expect(store.readSnapshot().activeAccountId, isNull);
+    expect(manager.activeCredential.value.isEmpty, isTrue);
+    expect(manager.loginFormMode.value, LoginFormMode.fullEmail);
+  });
+
+  test(
+    'delete account purges this account only after the server confirms',
+    () async {
+      final purged = <Id>[];
+      final manager = await createManager(
+        seeded: [_account()],
+        clearLocalData: (accountId) async => purged.add(accountId),
+      );
+
+      await manager.deleteAccount.runAsync();
+
+      expect(purged, [Id.fromWire(_jim)]);
+    },
+  );
+
+  test('a refused delete keeps the account and its cached data', () async {
+    Command.globalExceptionHandler = (_, _) {};
+    addTearDown(() => Command.globalExceptionHandler = null);
+
+    final purged = <Id>[];
+    final manager = await createManager(
+      seeded: [_account()],
+      api: StubApi([() async => envelope(status: 400)]),
+      clearLocalData: (accountId) async => purged.add(accountId),
+    );
+
+    await expectLater(
+      manager.deleteAccount.runAsync(),
+      throwsA(isA<BadRequestException>()),
+    );
+
+    expect(purged, isEmpty);
+    expect(store.readSnapshot().credentials, contains(Id.fromWire(_jim)));
+    expect(manager.activeCredential.value.isEmpty, isFalse);
+  });
 
   test('a late renewal cannot recreate a logged-out account', () async {
     final manager = await createManager(seeded: [_account()]);

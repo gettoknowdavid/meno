@@ -76,6 +76,13 @@ final class AuthHttpService {
   /// makes "all" mean "all of mine".
   Future<void> logOutEverywhere() => _client.postUnit('/auth/logout-all');
 
+  /// `DELETE /users/me` — closes every session and soft-deletes the account.
+  ///
+  /// Guarded, and mounted at the root rather than under `/auth`: the caller's
+  /// identity is the account being deleted. Success means every token the
+  /// account held has been revoked, so there is nothing left to sign out of.
+  Future<void> deleteAccount() => _client.deleteUnit('/users/me');
+
   /// `GET /auth/sessions` — the account's signed-in devices.
   Future<List<SessionInfo>> sessions() {
     return _client.getList(

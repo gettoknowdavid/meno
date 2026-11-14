@@ -110,6 +110,11 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   di.registerSingletonAsync<LocalStorage>(
     () async => LocalStorage(await di.getAsync<SharedPreferences>()),
   );
+  // One device holds several accounts, so deleting one removes only the keys
+  // and rows that name it.
+  di.registerLazySingleton<AccountDataPurger>(
+    () => AccountDataPurger(di<LocalStorage>(), di<Database>()),
+  );
   if (httpClient != null) {
     di.registerSingleton<HttpClient>(httpClient);
   } else {
@@ -177,6 +182,7 @@ void _registerAuth() {
             credential,
             ticket: ticket,
           ),
+      clearLocalData: (accountId) => di<AccountDataPurger>().purge(accountId),
     ).init(),
   );
   di.registerLazySingleton<UserManager>(() => UserManager(di<AuthManager>()));

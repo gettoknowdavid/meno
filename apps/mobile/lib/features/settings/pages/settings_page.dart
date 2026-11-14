@@ -2,6 +2,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
+import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
@@ -20,6 +21,22 @@ class SettingsPage extends WatchingWidget {
     );
     final profile = watchValue<MyProfileManager, MyProfile>(
       (manager) => manager.profile,
+    );
+    final isDeleting = watchValue<AuthManager, bool>(
+      (manager) => manager.deleteAccount.isRunning,
+    );
+
+    // The account subtree is torn down once the vault forgets the account, so
+    // the router — which outlives it — is what takes the user to the intro
+    // rather than a page that is already disappearing.
+    registerHandler<AuthManager, void>(
+      select: (manager) => manager.deleteAccount,
+      handler: (context, _, _) => _showOnboardingAfterDelete(),
+    );
+    registerHandler<AuthManager, CommandError<void>?>(
+      select: (manager) => manager.deleteAccount.errors,
+      handler: (context, error, _) =>
+          context.showErrorToast(errorMessage(error?.error)),
     );
 
     return MScaffold(
@@ -112,7 +129,10 @@ class SettingsPage extends WatchingWidget {
                 MSettingsListTile(
                   title: 'Delete Account',
                   leadingIcon: MIcons.trash,
-                  onTap: () {},
+                  isDisabled: isDeleting,
+                  onTap: isDeleting
+                      ? null
+                      : () => _onDeleteAccount(context, profile),
                   titleColor: colors.error,
                   iconColor: colors.error,
                   showDivider: false,
@@ -136,5 +156,32 @@ class SettingsPage extends WatchingWidget {
       description: 'You are about to log out from $fullName',
     );
     if (confirmed) di<AuthManager>().logout.run();
+  }
+
+  /// Waits for the deleted account's scope to come down, then shows the intro.
+  ///
+  /// Going to onboarding while the account is still `ready` would be undone by
+  /// the router guard, which sends every public route home in that phase. Once
+  /// the transition publishes `signedOut`, onboarding is a valid destination
+  /// and stays there.
+  Future<void> _showOnboardingAfterDelete() async {
+    await di<AccountTransitionOwner>().ready;
+    di<GoRouter>().go(MRoutes.onboarding);
+  }
+
+  Future<void> _onDeleteAccount(BuildContext context, MyProfile profile) async {
+    final fullName = profile.isEmpty
+        ? 'this account'
+        : profile.fullName.orEmpty;
+    final confirmed = await MConfirmationDialog.show(
+      context,
+      title: 'Delete account?',
+      description:
+          'This permanently deletes $fullName, revokes every session, and '
+          'removes this account from the device. This cannot be undone.',
+      confirmLabel: 'Delete',
+      variant: MConfirmationDialogVariant.danger,
+    );
+    if (confirmed) di<AuthManager>().deleteAccount.run();
   }
 }
