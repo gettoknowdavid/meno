@@ -38,7 +38,7 @@ class ChatWelcomeWidget extends WatchingWidget {
               color: colors.onPrimaryContainer,
               borderRadius: .circular(Insets.md),
             ),
-            child: Assets.images.logoLight.svg(),
+            child: Assets.images.logoLight.svg(package: 'meno_ui'),
           ),
           Spaces.horizontalLarge,
           Expanded(

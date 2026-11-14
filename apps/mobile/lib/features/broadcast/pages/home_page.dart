@@ -4,6 +4,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
+import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -72,11 +73,9 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
     // "Hello," trailing off: the name is on its way.
     final isGreetingPending = isLoading && profile.fullName.orEmpty.isEmpty;
 
-    const unreadCount = 0;
-
-    // final unreadCount = watchValue<NotificationsManager, int>(
-    //   (manager) => manager.unreadCount,
-    // );
+    final unreadCount = watchValue<NotificationsManager, int>(
+      (manager) => manager.unreadCount,
+    );
 
     final textTheme = MTextTheme.of(context);
     final colors = MColorScheme.of(context);
@@ -111,7 +110,7 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
                 children: [
                   Badge(
                     isLabelVisible: unreadCount > 0,
-                    label: const Text('$unreadCount'),
+                    label: Text('$unreadCount'),
                     backgroundColor: colors.error,
                     textColor: colors.onError,
                     child: MIconButton(

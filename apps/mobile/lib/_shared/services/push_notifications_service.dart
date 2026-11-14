@@ -14,6 +14,13 @@ final class PushNotificationsService implements Disposable {
   Stream<RemoteMessage> get onMessage => FirebaseMessaging.onMessage;
 
   /// A new device token, whenever FCM rotates it.
+  ///
+  /// The v17 replacement ([FirebaseMessaging.onRegistered]) hands out a
+  /// Firebase Installation ID, which is a direct-send target of its own. The
+  /// API stores an FCM token in `push_notification_token` and sends to it, so
+  /// the token APIs stay the ones this app needs until the backend moves to
+  /// FID.
+  // ignore: deprecated_member_use
   Stream<String> get onTokenRefresh => _fcm.onTokenRefresh;
 
   /// Messages the user tapped while the app was backgrounded.
@@ -33,6 +40,9 @@ final class PushNotificationsService implements Disposable {
   /// leak.
   Future<String?> getToken() async {
     try {
+      // The FID registration the deprecation points at is not an FCM send
+      // target; see [onTokenRefresh].
+      // ignore: deprecated_member_use
       return await _fcm.getToken();
     } on Exception catch (error, stackTrace) {
       _logger.e(

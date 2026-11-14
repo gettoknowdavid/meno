@@ -1,6 +1,8 @@
+import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/services/permission_prompts.dart';
+import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
@@ -85,7 +87,21 @@ class RootShell extends StatelessWidget {
 
     return MScaffold(
       padding: .zero,
-      body: body,
+      // The toast stack is app chrome, not a page's: a notification that
+      // arrives while the reader is in Discover belongs above Discover too. It
+      // is only mounted once the account scope that owns the manager exists.
+      body: Stack(
+        children: [
+          Positioned.fill(child: body),
+          if (di.isRegistered<NotificationsManager>())
+            const Positioned(
+              top: Insets.xxl,
+              left: Insets.lg,
+              right: Insets.lg,
+              child: NotificationToastStack(),
+            ),
+        ],
+      ),
       bottomNavigationBar: bottomNavigationBar,
     );
   }

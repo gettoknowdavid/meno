@@ -17,23 +17,27 @@ class MenoReaction {
 final reactions = <MenoReaction>[
   MenoReaction(
     ReactionType.clap,
-    Assets.images.clappingHands.image(height: 20, width: 20),
+    Assets.images.clappingHands.image(
+      package: 'meno_ui',
+      height: 20,
+      width: 20,
+    ),
   ),
   MenoReaction(
     ReactionType.flame,
-    Assets.images.flame.image(height: 20, width: 20),
+    Assets.images.flame.image(package: 'meno_ui', height: 20, width: 20),
   ),
   MenoReaction(
     ReactionType.like,
-    Assets.images.redHeart.image(height: 20, width: 20),
+    Assets.images.redHeart.image(package: 'meno_ui', height: 20, width: 20),
   ),
   MenoReaction(
     ReactionType.raise,
-    Assets.images.raisingHands.image(height: 20, width: 20),
+    Assets.images.raisingHands.image(package: 'meno_ui', height: 20, width: 20),
   ),
   MenoReaction(
     ReactionType.snap,
-    Assets.images.fingerSnap.image(height: 20, width: 20),
+    Assets.images.fingerSnap.image(package: 'meno_ui', height: 20, width: 20),
   ),
 ];
 
@@ -41,22 +45,38 @@ final reactions = <MenoReaction>[
 final mainReactions = <Reaction<ReactionType>>[
   Reaction(
     value: ReactionType.clap,
-    icon: Assets.images.clappingHands.image(height: 20, width: 20),
+    icon: Assets.images.clappingHands.image(
+      package: 'meno_ui',
+      height: 20,
+      width: 20,
+    ),
   ),
   Reaction(
     value: ReactionType.flame,
-    icon: Assets.images.flame.image(height: 20, width: 20),
+    icon: Assets.images.flame.image(package: 'meno_ui', height: 20, width: 20),
   ),
   Reaction(
     value: ReactionType.like,
-    icon: Assets.images.redHeart.image(height: 20, width: 20),
+    icon: Assets.images.redHeart.image(
+      package: 'meno_ui',
+      height: 20,
+      width: 20,
+    ),
   ),
   Reaction(
     value: ReactionType.raise,
-    icon: Assets.images.raisingHands.image(height: 20, width: 20),
+    icon: Assets.images.raisingHands.image(
+      package: 'meno_ui',
+      height: 20,
+      width: 20,
+    ),
   ),
   Reaction(
     value: ReactionType.snap,
-    icon: Assets.images.fingerSnap.image(height: 20, width: 20),
+    icon: Assets.images.fingerSnap.image(
+      package: 'meno_ui',
+      height: 20,
+      width: 20,
+    ),
   ),
 ];

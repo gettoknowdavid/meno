@@ -206,8 +206,8 @@ class PreStreamArtwork extends StatelessWidget {
         child: SizedBox(
           height: 142 * 0.4,
           child: switch (colors.brightness) {
-            .dark => Assets.images.logoLight.svg(),
-            _ => Assets.images.logoDark.svg(),
+            .dark => Assets.images.logoLight.svg(package: 'meno_ui'),
+            _ => Assets.images.logoDark.svg(package: 'meno_ui'),
           },
         ),
       ),

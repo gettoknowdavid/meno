@@ -15,6 +15,7 @@ import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/chat/widgets/live_chat_tab.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
 import 'package:meno_mobile/features/notes/notes.dart';
+import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
 import 'package:meno_mobile/features/onboarding/pages/onboarding_page.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -388,7 +389,7 @@ List<RouteBase> get _standaloneRoutes => [
   ),
   GoRoute(
     path: MRoutes.notifications,
-    builder: (_, _) => const StubPage('Notifications'),
+    builder: (_, _) => const NotificationsPage(),
   ),
   GoRoute(path: MRoutes.nowLive, builder: (_, _) => const StubPage('Now Live')),
   GoRoute(

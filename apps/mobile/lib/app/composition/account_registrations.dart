@@ -8,6 +8,7 @@ import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/chat/chat.dart';
 import 'package:meno_mobile/features/discover/discover.dart';
 import 'package:meno_mobile/features/notes/notes.dart';
+import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 
@@ -88,10 +89,8 @@ Future<void> registerAccountScope(
   );
 
   scope.registerLazySingleton<ChatSocketService>(
-    () => ChatSocketService(
-      client: di<SocketClient>(),
-      logger: di<MenoLogger>(),
-    ),
+    () =>
+        ChatSocketService(client: di<SocketClient>(), logger: di<MenoLogger>()),
   );
 
   // Created here rather than through `dependsOn`: an account is only ever
@@ -265,8 +264,39 @@ Future<void> registerAccountScope(
     logger: di<MenoLogger>(),
   );
   await settings.init();
-  scope.registerSingleton<SettingsManager>(
-    settings,
+  scope.registerSingleton<SettingsManager>(settings);
+
+  // The account's inbox. The services are this account's because everything
+  // they read and write is scoped to it: the history, the token and the badge
+  // all belong to whoever is signed in, and a switch must not leave one
+  // account's socket delivering into the next one's list.
+  scope.registerLazySingleton<NotificationsHttpService>(
+    () => NotificationsHttpService(di<HttpClient>()),
+  );
+
+  // The adapter that turns the `notification` frame into a nudge the manager
+  // can act on. The frame carries no id and no type, so it is never turned into
+  // a row here — the manager re-reads the inbox instead.
+  scope.registerLazySingleton<NotificationsSocketService>(
+    () => NotificationsSocketService(
+      client: di<SocketClient>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
+
+  // Started as the account's first screen asks for the badge — Home — so an
+  // account that signs in gets its inbox, its device registration and its
+  // toasts without the notifications screen ever being opened.
+  scope.registerLazySingleton<NotificationsManager>(
+    () => NotificationsManager(
+      http: di<NotificationsHttpService>(),
+      socket: di<NotificationsSocketService>(),
+      pushService: di<PushNotificationsService>(),
+      localNotifications: di<LocalNotificationsService>(),
+      settings: di<SettingsHttpService>(),
+      logger: di<MenoLogger>(),
+    ),
+    onCreated: (manager) => unawaited(manager.init()),
   );
 
   // Delivery starts here and nowhere else: the adapters' handlers are attached
@@ -281,15 +311,17 @@ Future<void> registerAccountScope(
   final connection = AccountConnectionOwner(
     context: context,
     socket: di<SocketClient>(),
-    adapters: [di<BroadcastSocketService>(), di<ChatSocketService>()],
+    adapters: [
+      di<BroadcastSocketService>(),
+      di<ChatSocketService>(),
+      di<NotificationsSocketService>(),
+    ],
     credentials: di<SessionService>(),
     credentialChanges: di<SessionService>().changes,
     logger: di<MenoLogger>(),
     clock: di<Clock>(),
   );
-  scope.registerSingleton<AccountConnectionOwner>(
-    connection,
-  );
+  scope.registerSingleton<AccountConnectionOwner>(connection);
   connection.initialize();
   unawaited(connection.start(verified: credential.isVerified));
 
