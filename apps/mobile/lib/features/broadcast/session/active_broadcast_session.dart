@@ -130,6 +130,7 @@ final class ActiveBroadcastSession {
     this.participants,
     this.chat,
     this.chatList,
+    this.cohostEvents,
     this._exitOnServer,
     Duration? initialElapsed,
   }) : _session = session,
@@ -145,13 +146,30 @@ final class ActiveBroadcastSession {
     // Installed here rather than in start(), so no state the transport reports
     // is missed between construction and connecting.
     _roomStateSubscription = _room.connectionState.listen(_onRoomState);
+
+    // A role change can arrive while the room is still being entered: the
+    // accept that produced this session is what the host's `newCohost` frame
+    // answers. Listening from construction keeps that frame instead of losing
+    // it between the API call and `start()`.
+    _cohostSubscription = cohostEvents?.listen(_onCohostEvent);
   }
 
-  final BroadcastSession _session;
+  /// This session's current credential and role.
+  ///
+  /// Replaced when a cohost frame re-authorises the account. Everything that
+  /// reads the session goes through this field rather than a separate role
+  /// flag, so the token and [canPublish] can never disagree.
+  BroadcastSession _session;
   final RoomTransport _room;
   final LiveRoster _roster;
   final MenoLogger _logger;
   final LiveServerExit? _exitOnServer;
+
+  /// The account's cohost frames, when the session is wired to the socket.
+  ///
+  /// The invitee's `newCohost` and `cohostDemotion` carry the token that
+  /// re-authorises them; `removedCohost` says the publishing role is gone.
+  final Stream<CohostEvent>? cohostEvents;
 
   /// The roster the room's screens read, when there is one.
   ///
@@ -172,9 +190,26 @@ final class ActiveBroadcastSession {
   late final BroadcastTimerManager timer;
 
   StreamSubscription<RoomConnectionState>? _roomStateSubscription;
+  StreamSubscription<CohostEvent>? _cohostSubscription;
+
+  /// Emits after a cohost frame changed this session's role or token.
+  ///
+  /// The owner republishes its one [LiveSnapshot] from this, so the microphone
+  /// and end controls follow the server's role rather than the role the room
+  /// was first entered with.
+  Stream<void> get roleChanges => _roleChanges.stream;
+
+  final _roleChanges = StreamController<void>.broadcast();
+
+  /// Serialises role changes, so two frames cannot reconnect the room twice at
+  /// once or apply their tokens out of order.
+  Future<void> _roleUpdates = Future<void>.value();
 
   bool _closed = false;
   bool _started = false;
+  Future<void>? _starting;
+  String? _joinedToken;
+  bool? _joinedCanPublish;
   Future<LiveServerOutcome>? _closeResult;
 
   /// The broadcast this session is in.
@@ -209,11 +244,18 @@ final class ActiveBroadcastSession {
   ///
   /// Listeners first, connect second: a transport that reports its state
   /// before anyone listens leaves the session blind until the next change.
-  Future<void> start() async {
-    if (_started || _closed) return;
+  Future<void> start() {
+    if (_started || _closed) return Future<void>.value();
     _started = true;
+    return _starting = _start();
+  }
 
-    await _room.connect(_session.token, canPublish: _session.canPublish);
+  Future<void> _start() async {
+    final token = _session.token;
+    final canPublish = _session.canPublish;
+    await _room.connect(token, canPublish: canPublish);
+    _joinedToken = token;
+    _joinedCanPublish = canPublish;
     await _roster.attach();
 
     // Subscribes to the room's chat frames and reads the history once. Run
@@ -225,6 +267,153 @@ final class ActiveBroadcastSession {
   /// Mutes or unmutes the local microphone.
   Future<void> setMicrophoneEnabled(bool enabled) =>
       _room.setMicrophoneEnabled(enabled);
+
+  /// Applies the publish token from an invitation this account just accepted.
+  ///
+  /// The in-room card is the one caller: the account is already in the room as
+  /// a listener, so accepting must upgrade that room rather than open a second
+  /// one. The manager's snapshot is refreshed by [roleChanges].
+  Future<void> promoteToCohost(String token) {
+    if (token.isEmpty) return Future<void>.value();
+    return _changeRole(
+      role: ParticipantRole.cohost,
+      token: token,
+      canPublish: true,
+    );
+  }
+
+  /// Follows one cohost frame, if it is about this room and this account.
+  void _onCohostEvent(CohostEvent event) {
+    if (_closed || event.broadcastId != broadcast.id) return;
+
+    switch (event) {
+      case NewCohostEvent(:final userId, :final livekitToken)
+          when userId == this.userId && livekitToken.isNotEmpty:
+        unawaited(
+          _changeRole(
+            role: ParticipantRole.cohost,
+            token: livekitToken,
+            canPublish: true,
+          ),
+        );
+      case CohostDemotionEvent(:final livekitToken)
+          when livekitToken.isNotEmpty:
+        unawaited(
+          _changeRole(
+            role: ParticipantRole.listener,
+            token: livekitToken,
+            canPublish: false,
+          ),
+        );
+      case RemovedCohostEvent(:final userId) when userId == this.userId:
+        unawaited(_dropPublishRole());
+      case CohostEvent():
+        // The host sees other accounts' changes; they do not affect this
+        // session's microphone or token.
+        break;
+    }
+  }
+
+  /// Re-authorises the room under [role], and publishes the new capability.
+  Future<void> _changeRole({
+    required ParticipantRole role,
+    required String token,
+    required bool canPublish,
+  }) {
+    return _queueRoleUpdate(() async {
+      if (_closed) return;
+
+      // The accept answer and the matching `newCohost` frame can arrive in
+      // either order. Applying the same grant twice would reconnect twice for
+      // no change.
+      if (_session.canPublish == canPublish &&
+          _session.token == token &&
+          _session.broadcast.participantRole == role) {
+        return;
+      }
+
+      _session = _session.copyWith(
+        broadcast: _session.broadcast.copyWith(participantRole: role),
+        token: token,
+        canPublish: canPublish,
+      );
+
+      // The controls change before the transport settles: a demoted cohost
+      // must not keep a microphone button while the old room is torn down.
+      _emitRoleChange();
+
+      if (!_started || _closed) return;
+
+      // A promotion can arrive while the first join is still running. Waiting
+      // for it keeps one connect at a time. If that join already used this
+      // grant, there is nothing to reconnect for.
+      await _starting;
+      if (_closed) return;
+      if (_joinedToken == token && _joinedCanPublish == canPublish) return;
+
+      // The transport takes the room down and joins it again with the new
+      // grant; a listener token cannot publish and a cohost token can.
+      await _room.connect(token, canPublish: canPublish);
+      _joinedToken = token;
+      _joinedCanPublish = canPublish;
+      if (!canPublish) await _muteQuietly();
+    });
+  }
+
+  /// Drops publishing immediately when the cohost is removed.
+  ///
+  /// A removal carries no listener token, so the room is left as it is: the
+  /// server either evicts the account (which ends the session through the
+  /// transport) or keeps it listening. Only this client's capability changes.
+  Future<void> _dropPublishRole() {
+    return _queueRoleUpdate(() async {
+      if (_closed || !_session.canPublish) return;
+
+      _session = _session.copyWith(
+        broadcast: _session.broadcast.copyWith(
+          participantRole: ParticipantRole.listener,
+        ),
+        canPublish: false,
+      );
+      _emitRoleChange();
+      await _muteQuietly();
+    });
+  }
+
+  Future<void> _queueRoleUpdate(Future<void> Function() update) {
+    final next = _roleUpdates.then((_) async {
+      try {
+        await update();
+      } on Object catch (error, stackTrace) {
+        _logger.w(
+          'The live session could not apply a cohost role change',
+          tag: MenoLogTag.lifecycle.label,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    });
+    _roleUpdates = next;
+    return next;
+  }
+
+  void _emitRoleChange() {
+    if (!_roleChanges.isClosed) _roleChanges.add(null);
+  }
+
+  Future<void> _muteQuietly() async {
+    if (!_room.isConnected) return;
+    try {
+      await _room.setMicrophoneEnabled(false);
+    } on Object catch (error, stackTrace) {
+      _logger.w(
+        'The live session could not mute the microphone after a role change',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
 
   /// Whether this client is publishing its microphone.
   bool get isMicrophoneEnabled => _room.isMicrophoneEnabled;
@@ -262,6 +451,11 @@ final class ActiveBroadcastSession {
 
       await _roomStateSubscription?.cancel();
       _roomStateSubscription = null;
+
+      await _cohostSubscription?.cancel();
+      _cohostSubscription = null;
+
+      await _roleChanges.close();
 
       await _quietly(_roster.detach, 'detaching the roster');
       await _quietly(_detachChat, 'detaching the chat');

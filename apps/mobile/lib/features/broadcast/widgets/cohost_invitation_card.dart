@@ -1,5 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -7,9 +9,9 @@ import 'package:meno_ui/meno_ui.dart';
 ///
 /// The card is the same wherever an invitation can arrive — the inbox and the
 /// room — because the handshake has one shape: the accept answers with a
-/// session, and the caller decides what to do with it. Here that is the lobby:
-/// accepting from the inbox is the start of joining the broadcast, not a
-/// change to a list.
+/// session, and the caller decides what to do with it. Accepting enters with
+/// the token the answer carries: a live broadcast opens its room, and a draft
+/// opens its details until the host goes live.
 class CohostInvitationCard extends WatchingWidget {
   const new({required this.invitation, super.key});
 
@@ -53,18 +55,7 @@ class CohostInvitationCard extends WatchingWidget {
                 child: MPrimaryButton(
                   label: 'Accept',
                   loading: isAccepting,
-                  onPressed: isBusy
-                      ? null
-                      : () async {
-                          final session = await manager.accept.runAsync(
-                            invitation,
-                          );
-                          if (session == null || !context.mounted) return;
-                          await PreStreamModal.show(
-                            context,
-                            invitation.broadcastId,
-                          );
-                        },
+                  onPressed: isBusy ? null : () => _accept(context, manager),
                 ),
               ),
               Spaces.horizontalSmall,
@@ -82,6 +73,60 @@ class CohostInvitationCard extends WatchingWidget {
         ],
       ),
     );
+  }
+
+  /// Answers the invitation, then enters with the session it produced.
+  ///
+  /// The live endpoint has already joined the invitee's socket and inserted
+  /// their participant row, so a second `/join` would answer `ALREADY_JOINED`.
+  /// The returned token is therefore the entry credential, used directly by
+  /// the live manager (M2). A draft has no room and no token; it opens the
+  /// broadcast instead, where the account can wait for go-live.
+  Future<void> _accept(
+    BuildContext context,
+    CohostInvitationsManager manager,
+  ) async {
+    final accepted = await manager.accept.runAsync(invitation);
+    if (accepted == null || !context.mounted) return;
+
+    final token = accepted.livekitToken;
+    if (token == null || token.isEmpty) {
+      context.showInfoToast('You can co-host once the broadcast goes live.');
+      await context.push(MRoutes.broadcastRoute(invitation.broadcastId));
+      return;
+    }
+
+    try {
+      final live = di<ActiveBroadcastManager>();
+      final current = live.session;
+
+      // Accepting from the in-room card upgrades the room already open; it
+      // must not be closed and replaced by a second one.
+      if (current != null && current.broadcast.id == invitation.broadcastId) {
+        await current.promoteToCohost(token);
+        return;
+      }
+
+      final broadcast = await di<BroadcastHttpService>().getBroadcast(
+        invitation.broadcastId,
+      );
+      if (!context.mounted) return;
+
+      final result = await live.enter(
+        LiveEnterRequest(
+          broadcastId: invitation.broadcastId,
+          mode: LiveEnterMode.listen,
+          session: accepted.toBroadcastSession(broadcast),
+        ),
+      );
+      if (!context.mounted || result.outcome == EnterOutcome.rejected) return;
+
+      // A failed entry lands on the transition page's failure view, where the
+      // attached session can be retried without another `/join`.
+      await context.push(MRoutes.liveSessionInit);
+    } on Object catch (error) {
+      if (context.mounted) context.showErrorToast(errorMessage(error));
+    }
   }
 }
 

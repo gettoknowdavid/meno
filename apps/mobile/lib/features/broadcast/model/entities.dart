@@ -709,3 +709,19 @@ final class CohostSession {
   /// go-live, for the room that does not exist yet.
   final String? livekitToken;
 }
+
+/// The room session an accepted invitation enters with.
+extension CohostSessionEntry on CohostSession {
+  /// Builds the entry credential the accept endpoint already produced.
+  ///
+  /// The endpoint has added the account to the room and joined its socket, so
+  /// asking `/join` again would answer `ALREADY_JOINED`. This keeps that
+  /// token, and marks the broadcast with the role the acceptance granted.
+  BroadcastSession toBroadcastSession(Broadcast broadcast) => BroadcastSession(
+    userId: user.id,
+    broadcast: broadcast.copyWith(participantRole: .cohost),
+    token: livekitToken ?? '',
+    canPublish: true,
+    timestamp: DateTime.now(),
+  );
+}

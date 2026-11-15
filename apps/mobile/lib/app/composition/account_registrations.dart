@@ -386,6 +386,7 @@ Future<void> registerAccountScope(
           participants: participants,
           chat: chat,
           chatList: chatList,
+          cohostEvents: di<BroadcastSocketService>().onCohostEvent,
           clock: di<Clock>(),
           logger: di<MenoLogger>(),
           exitOnServer: exitOnServer,

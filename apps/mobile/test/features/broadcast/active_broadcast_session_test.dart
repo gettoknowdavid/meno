@@ -10,10 +10,12 @@ import '../../_support/fake_clock.dart';
 import '../../_support/stub_api.dart';
 
 const _viewer = 'c0ffee00-1111-4222-8333-444455556666';
+const _other = 'c0ffee00-2222-4222-8333-444455556666';
 
 BroadcastSession _session({
   String creatorId = _viewer,
   bool canPublish = true,
+  ParticipantRole role = .host,
 }) => BroadcastSession(
   userId: Id.fromString(_viewer),
   broadcast: Broadcast(
@@ -21,6 +23,7 @@ BroadcastSession _session({
     title: SingleLineString('Morning show'),
     state: .live,
     status: .active,
+    participantRole: role,
     creator: Participant(
       id: Id.fromString(creatorId),
       fullName: SingleLineString('Ada'),
@@ -38,6 +41,8 @@ final class _FakeRoom implements RoomTransport {
   bool failConnect = false;
   bool connected = false;
   bool mic = false;
+  String? lastToken;
+  bool? lastCanPublish;
 
   @override
   Stream<RoomConnectionState> get connectionState => _states.stream;
@@ -54,8 +59,11 @@ final class _FakeRoom implements RoomTransport {
   @override
   Future<void> connect(String token, {required bool canPublish}) async {
     connects++;
+    lastToken = token;
+    lastCanPublish = canPublish;
     if (failConnect) throw const LiveKitConnectionFailed('refused');
     connected = true;
+    mic = canPublish;
     _states.add(.connected);
   }
 
@@ -88,21 +96,27 @@ void main() {
   late FakeClock clock;
   late _FakeRoom room;
   late _FakeRoster roster;
+  late StreamController<CohostEvent> events;
 
   setUp(() {
     clock = FakeClock(DateTime.utc(2026, 10, 28, 9));
     room = _FakeRoom();
     roster = _FakeRoster();
+    events = StreamController<CohostEvent>.broadcast();
+    addTearDown(events.close);
   });
 
   ActiveBroadcastSession newSession({
     String creatorId = _viewer,
+    bool canPublish = true,
+    ParticipantRole role = .host,
     LiveServerExit? exitOnServer,
     Duration? initialElapsed,
   }) => ActiveBroadcastSession(
-    session: _session(creatorId: creatorId),
+    session: _session(creatorId: creatorId, canPublish: canPublish, role: role),
     room: room,
     roster: roster,
+    cohostEvents: events.stream,
     clock: clock,
     logger: MockMenoLogger(),
     exitOnServer: exitOnServer,
@@ -158,6 +172,99 @@ void main() {
     expect(room.disposals, 1);
     expect(roster.detaches, 1);
     expect(session.isClosed, isTrue);
+  });
+
+  test('a promotion frame re-authorises the room as a publisher', () async {
+    final session = newSession(
+      creatorId: _other,
+      canPublish: false,
+      role: .listener,
+    );
+    await session.start();
+    expect(session.canPublish, isFalse);
+
+    events.add(
+      NewCohostEvent(
+        broadcastId: session.broadcast.id,
+        userId: Id.fromString(_viewer),
+        userName: 'Ada',
+        livekitToken: 'cohost-token',
+      ),
+    );
+    await pumpEventQueue();
+
+    expect(session.canPublish, isTrue);
+    expect(session.details.token, 'cohost-token');
+    expect(session.broadcast.participantRole, ParticipantRole.cohost);
+    expect(room.connects, 2, reason: 'the room re-joins with the new grant');
+    expect(room.lastToken, 'cohost-token');
+    expect(room.lastCanPublish, isTrue);
+    expect(room.mic, isTrue);
+  });
+
+  test(
+    'a demotion frame drops publishing and applies the listener token',
+    () async {
+      final session = newSession(creatorId: _other, role: .cohost);
+      await session.start();
+
+      events.add(
+        CohostDemotionEvent(
+          broadcastId: session.broadcast.id,
+          livekitToken: 'listener-token',
+        ),
+      );
+      await pumpEventQueue();
+
+      expect(session.canPublish, isFalse);
+      expect(session.details.token, 'listener-token');
+      expect(session.broadcast.participantRole, ParticipantRole.listener);
+      expect(room.lastToken, 'listener-token');
+      expect(room.lastCanPublish, isFalse);
+      expect(room.mic, isFalse);
+    },
+  );
+
+  test('a removal drops publishing without replacing the room token', () async {
+    final session = newSession(creatorId: _other, role: .cohost);
+    await session.start();
+
+    events.add(
+      RemovedCohostEvent(
+        broadcastId: session.broadcast.id,
+        userId: Id.fromString(_viewer),
+      ),
+    );
+    await pumpEventQueue();
+
+    expect(session.canPublish, isFalse);
+    expect(session.broadcast.participantRole, ParticipantRole.listener);
+    expect(session.details.token, 'room-token');
+    expect(room.connects, 1, reason: 'a removal carries no listener token');
+    expect(room.mic, isFalse);
+  });
+
+  test("another account's promotion leaves this session alone", () async {
+    final session = newSession(
+      creatorId: _other,
+      canPublish: false,
+      role: .listener,
+    );
+    await session.start();
+
+    events.add(
+      NewCohostEvent(
+        broadcastId: session.broadcast.id,
+        userId: Id.fromString(_other),
+        userName: 'Ada',
+        livekitToken: 'someone-elses-token',
+      ),
+    );
+    await pumpEventQueue();
+
+    expect(session.canPublish, isFalse);
+    expect(session.details.token, 'room-token');
+    expect(room.connects, 1);
   });
 
   test('the ending summary is carried out of the close', () async {

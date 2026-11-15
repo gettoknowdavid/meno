@@ -92,6 +92,8 @@ final class _FakeGateway implements LiveGateway {
   Completer<BroadcastSession>? holdNextEnter;
   bool failEnd = false;
   bool failEnter = false;
+  bool canPublish = true;
+  String creatorId = _viewer;
   MenoException? enterError;
 
   @override
@@ -108,7 +110,7 @@ final class _FakeGateway implements LiveGateway {
       holdNextEnter = null;
       return await held.future;
     }
-    return _details();
+    return _details(creatorId: creatorId, canPublish: canPublish);
   }
 
   @override
@@ -136,6 +138,7 @@ void main() {
   late LiveSessionStore store;
   late List<_FakeRoom> rooms;
   late ActiveBroadcastManager manager;
+  late StreamController<CohostEvent> cohostEvents;
   var failRooms = false;
 
   setUp(() async {
@@ -144,6 +147,8 @@ void main() {
     clock = FakeClock(DateTime.utc(2026, 10, 28, 9));
     gateway = _FakeGateway();
     rooms = [];
+    cohostEvents = StreamController<CohostEvent>.broadcast();
+    addTearDown(cohostEvents.close);
     store = LiveSessionStore(
       LocalStorage(await SharedPreferences.getInstance()),
       userId: Id.fromString(_viewer),
@@ -161,6 +166,7 @@ void main() {
           session: session,
           room: room,
           roster: _FakeRoster(),
+          cohostEvents: cohostEvents.stream,
           clock: clock,
           logger: MockMenoLogger(),
           exitOnServer: exitOnServer,
@@ -266,20 +272,22 @@ void main() {
     expect(store.read(), isNull);
   });
 
-  test('a recovery that failed for a passing reason keeps its record',
-      () async {
-    await store.save(_details());
-    gateway.enterError = const NetworkException(
-      message: 'the connection dropped',
-    );
+  test(
+    'a recovery that failed for a passing reason keeps its record',
+    () async {
+      await store.save(_details());
+      gateway.enterError = const NetworkException(
+        message: 'the connection dropped',
+      );
 
-    await manager.recover();
+      await manager.recover();
 
-    expect(manager.snapshot.value.phase, LivePhase.failed);
-    expect(manager.recovery.value, isNull);
-    // Still worth trying on the next launch.
-    expect(store.read()?.broadcastId.getOrNull, _broadcastId);
-  });
+      expect(manager.snapshot.value.phase, LivePhase.failed);
+      expect(manager.recovery.value, isNull);
+      // Still worth trying on the next launch.
+      expect(store.read()?.broadcastId.getOrNull, _broadcastId);
+    },
+  );
 
   test('a session whose start throws is closed, not leaked', () async {
     failRooms = true;
@@ -292,6 +300,63 @@ void main() {
     expect(manager.snapshot.value.phase, LivePhase.failed);
     expect(manager.hasSession, isFalse);
     expect(rooms.single.disposals, 1);
+  });
+
+  test(
+    'an accepted cohost session enters without asking the gateway',
+    () async {
+      final details = _details(canPublish: false);
+      final accepted = CohostSession(
+        user: Participant(
+          id: Id.fromString(_viewer),
+          fullName: SingleLineString('Ada'),
+        ),
+        livekitToken: 'cohost-token',
+      ).toBroadcastSession(details.broadcast);
+
+      final result = await manager.enter(
+        LiveEnterRequest(
+          broadcastId: details.broadcast.id,
+          mode: LiveEnterMode.listen,
+          session: accepted,
+        ),
+      );
+
+      expect(result.isEntered, isTrue);
+      expect(
+        gateway.enterCalls,
+        0,
+        reason:
+            'accept already joined the room; /join would say ALREADY_JOINED',
+      );
+      expect(manager.snapshot.value.canPublish, isTrue);
+      expect(manager.snapshot.value.role, ParticipantRole.cohost);
+      expect(manager.session?.details.token, 'cohost-token');
+    },
+  );
+
+  test('a live promotion updates the snapshot publishing controls', () async {
+    gateway
+      ..creatorId = _other
+      ..canPublish = false;
+
+    await manager.enter(request);
+    expect(manager.snapshot.value.canPublish, isFalse);
+    expect(manager.snapshot.value.role, ParticipantRole.listener);
+
+    cohostEvents.add(
+      NewCohostEvent(
+        broadcastId: Id.fromString(_broadcastId),
+        userId: Id.fromString(_viewer),
+        userName: 'Ada',
+        livekitToken: 'cohost-token',
+      ),
+    );
+    await pumpUntil(() => manager.snapshot.value.canPublish);
+
+    expect(manager.snapshot.value.canPublish, isTrue);
+    expect(manager.snapshot.value.role, ParticipantRole.cohost);
+    expect(manager.session?.details.token, 'cohost-token');
   });
 
   test('a cohost exits by leaving, never by ending', () async {

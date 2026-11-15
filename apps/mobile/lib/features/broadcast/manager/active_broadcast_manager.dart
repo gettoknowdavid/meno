@@ -267,6 +267,7 @@ final class ActiveBroadcastManager implements Disposable {
 
   /// The open session's room subscription, and the outage budget.
   StreamSubscription<RoomConnectionState>? _roomSubscription;
+  StreamSubscription<void>? _roleSubscription;
   Timer? _outage;
   StreamSubscription<EndedSignal>? _endedSubscription;
 
@@ -434,6 +435,7 @@ final class ActiveBroadcastManager implements Disposable {
       // is watched before connecting, so no event of the join is missed.
       _session = session;
       _watchRoom(session);
+      _watchRole(session);
       await session.start();
 
       if (generation != _operationGeneration) {
@@ -503,9 +505,32 @@ final class ActiveBroadcastManager implements Disposable {
     );
   }
 
+  /// Follows the cohost frames that change this session's publishing role.
+  ///
+  /// The session owns the token and capability; the manager owns the one
+  /// snapshot. This is how a promotion or demotion reaches the microphone and
+  /// end controls without a second role flag of its own.
+  void _watchRole(ActiveBroadcastSession session) {
+    unawaited(_roleSubscription?.cancel() ?? Future<void>.value());
+    _roleSubscription = session.roleChanges.listen((_) {
+      if (!identical(_session, session) || _closingRoom) return;
+      final phase = snapshot.value.phase;
+      if (phase != LivePhase.live && phase != LivePhase.reconnecting) return;
+
+      snapshot.value = LiveSnapshot.room(
+        phase: phase,
+        broadcast: session.broadcast,
+        accountId: _context.accountId,
+        canPublish: session.canPublish,
+      );
+    });
+  }
+
   void _cancelRoomWatch() {
     unawaited(_roomSubscription?.cancel() ?? Future<void>.value());
     _roomSubscription = null;
+    unawaited(_roleSubscription?.cancel() ?? Future<void>.value());
+    _roleSubscription = null;
     _outage?.cancel();
     _outage = null;
   }

@@ -59,6 +59,33 @@ void main() {
     });
   });
 
+  group('accepted cohost session', () {
+    test('turns the returned token into a publishing room session', () {
+      final accepted = CohostSession(
+        user: Participant(
+          id: Id.fromString(inviteeId),
+          fullName: SingleLineString('Ada'),
+        ),
+        livekitToken: 'cohost-token',
+      );
+      final broadcast = Broadcast(
+        id: Id.fromString(broadcastId),
+        title: SingleLineString('Sunday live'),
+        state: .live,
+        status: .active,
+        participantRole: .listener,
+      );
+
+      final session = accepted.toBroadcastSession(broadcast);
+
+      expect(session.userId.getOrCrash, inviteeId);
+      expect(session.token, 'cohost-token');
+      expect(session.canPublish, isTrue);
+      expect(session.broadcast.participantRole, ParticipantRole.cohost);
+      expect(session.broadcast.id.getOrCrash, broadcastId);
+    });
+  });
+
   group('BroadcastHttpService co-host handshake', () {
     test('invites on the co-hosts path and reads the invitation', () async {
       final api = StubApi([
