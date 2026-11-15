@@ -30,6 +30,10 @@ final class ParticipantsManager implements Disposable {
       _onParticipantJoined = _socket.onParticipantJoined.listen(_handleJoined);
       _onParticipantLeft = _socket.onParticipantLeft.listen(_handleLeft);
 
+      // The server also states the count directly, which is the only source
+      // that can move it without naming a participant (a poll, for example).
+      _onLiveCount = _socket.onLiveParticipantCount.listen(_handleLiveCount);
+
       // A cohost's role changes without a join or leave frame. Refetching the
       // roster is how the host's participant sheet learns that an invitee
       // accepted, or that a cohost was demoted or removed.
@@ -103,8 +107,16 @@ final class ParticipantsManager implements Disposable {
   StreamSubscription<BroadcastParticipantEvent>? _onParticipantJoined;
   StreamSubscription<BroadcastParticipantEvent>? _onParticipantLeft;
   StreamSubscription<CohostEvent>? _onCohostChanged;
+  StreamSubscription<LiveParticipantCountEvent>? _onLiveCount;
 
   bool _isInitialized = false;
+
+  /// Whether a count has already come from the socket.
+  ///
+  /// The first roster page only seeds [liveCount] while this is false: a count
+  /// or join frame that arrived while the page was in flight is newer than the
+  /// page, and must not be replaced by its length.
+  bool _hasLiveCount = false;
 
   /// Every account currently in the room, by id — the O(1) half of `left`.
   final _participantsMap = <Id, Participant>{};
@@ -155,10 +167,12 @@ final class ParticipantsManager implements Disposable {
   late final ValueListenable<bool> isLoading = refresh.isRunning;
 
   /// How many accounts are in the room right now.
-  late final ValueListenable<int> totalCount =
-      (_sortedParticipants as ValueListenable<List<Participant>>).map(
-        (list) => list.length,
-      );
+  ///
+  /// The server's count, not the length of the loaded page: a count frame can
+  /// report a room larger than the rows a client has fetched, and that is what
+  /// the room's header is about. Until the server states one, [liveCount] is
+  /// seeded from the first page.
+  ValueListenable<int> get totalCount => liveCount;
 
   /// The host, when the room lists one.
   late final ValueListenable<Participant?> host =
@@ -204,18 +218,26 @@ final class ParticipantsManager implements Disposable {
           .debounce(const Duration(milliseconds: _searchDebounceMs));
 
   /// Whether there are more loaded participants below the fold.
+  ///
+  /// This is about the rows this client holds, not [totalCount]: only loaded
+  /// rows can be revealed, so a server count larger than the page must not
+  /// leave a "Load more" control that has nothing to add.
   late final ValueListenable<bool> hasMore = displayedCount.combineLatest(
-    totalCount,
-    (displayed, total) => displayed < total && displayed < _maxWithoutViewAll,
+    _sortedParticipants as ValueListenable<List<Participant>>,
+    (displayed, participants) =>
+        displayed < participants.length && displayed < _maxWithoutViewAll,
   );
 
   /// Whether the list is already showing everything loaded.
   late final ValueListenable<bool> isShowingAll = displayedCount.combineLatest(
-    totalCount,
-    (displayed, total) => displayed >= total,
+    _sortedParticipants as ValueListenable<List<Participant>>,
+    (displayed, participants) => displayed >= participants.length,
   );
 
   void _handleJoined(BroadcastParticipantEvent event) {
+    if (event.broadcastId != _broadcastId) return;
+
+    _hasLiveCount = true;
     liveCount.value = event.count;
     final participant = event.participant;
     if (participant == null || participant.id.isEmpty) return;
@@ -227,12 +249,22 @@ final class ParticipantsManager implements Disposable {
   }
 
   void _handleLeft(BroadcastParticipantEvent event) {
+    if (event.broadcastId != _broadcastId) return;
+
+    _hasLiveCount = true;
     liveCount.value = event.count;
     final participant = event.participant;
     if (participant == null) return;
 
     if (_participantsMap.remove(participant.id) == null) return;
     _sortedParticipants.removeWhere((item) => item.id == participant.id);
+  }
+
+  /// Applies the server's count for this room, and ignores another room's.
+  void _handleLiveCount(LiveParticipantCountEvent event) {
+    if (event.broadcastId != _broadcastId) return;
+    _hasLiveCount = true;
+    liveCount.value = event.count;
   }
 
   /// Refetches the roster when a cohost's role changes.
@@ -268,7 +300,7 @@ final class ParticipantsManager implements Disposable {
       _rememberJoin(participant);
     }
     _sortedParticipants.endTransAction();
-    liveCount.value = _sortedParticipants.length;
+    if (!_hasLiveCount) liveCount.value = _sortedParticipants.length;
   }
 
   /// Counts a unique joiner, and keeps them in the recent-joiners stack.
@@ -318,10 +350,12 @@ final class ParticipantsManager implements Disposable {
     await _onParticipantJoined?.cancel();
     await _onParticipantLeft?.cancel();
     await _onCohostChanged?.cancel();
+    await _onLiveCount?.cancel();
 
     _onParticipantJoined = null;
     _onParticipantLeft = null;
     _onCohostChanged = null;
+    _onLiveCount = null;
 
     _sortedParticipants.dispose();
     recentParticipants.dispose();

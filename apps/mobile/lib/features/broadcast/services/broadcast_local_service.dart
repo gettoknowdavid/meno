@@ -129,13 +129,8 @@ final class BroadcastLocalService {
     Broadcast broadcast, {
     required bool isFavourite,
   }) async {
-    final broadcastId = broadcast.id.getOrCrash;
-
     if (!isFavourite) {
-      final stored = _firstFavourite(broadcastId);
-      if (stored != null) {
-        await _database.favouriteBroadcastBox.removeAsync(stored.id);
-      }
+      await forgetFavourite(broadcast.id);
       return;
     }
 
@@ -149,6 +144,20 @@ final class BroadcastLocalService {
         savedAt: DateTime.now(),
       ).toRow,
     );
+  }
+
+  /// Forgets [broadcastId] when this account keeps it.
+  ///
+  /// Returns whether a row was removed. Unlike [setFavourite], this needs no
+  /// broadcast: a deletion frame carries only the id, and the stored row is
+  /// enough to find and remove.
+  Future<bool> forgetFavourite(core.Id broadcastId) async {
+    final stored = _firstFavourite(broadcastId.getOrCrash);
+    if (stored == null) return false;
+
+    _requireOwner(stored.ownerId);
+    await _database.favouriteBroadcastBox.removeAsync(stored.id);
+    return true;
   }
 
   /// The account id as every row stores it.
@@ -239,8 +248,15 @@ final class BroadcastLocalService {
   }
 
   FavouriteBroadcastRow? _firstFavourite(String broadcastId) {
+    // The owner is part of the lookup, not checked afterwards: another
+    // account's row for the same broadcast must never be returned, and must
+    // never be the row a delete removes.
     final query = _database.favouriteBroadcastBox
-        .query(FavouriteBroadcastRow_.broadcastId.equals(broadcastId))
+        .query(
+          FavouriteBroadcastRow_.broadcastId
+              .equals(broadcastId)
+              .and(FavouriteBroadcastRow_.ownerId.equals(_ownerKey)),
+        )
         .build();
     try {
       return query.findFirst();

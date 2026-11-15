@@ -299,6 +299,27 @@ void main() {
     });
   });
 
+  group('a deletion (M6)', () {
+    test('removes the card the list is already drawing', () async {
+      await startFeed(const BroadcastQuery.nowLive());
+      await server.send(_frame('newBroadcast', _broadcastJson()));
+      await pumpUntil(() => feed.items.isNotEmpty);
+      final reads = api.requests.length;
+
+      await server.send(
+        _frame('broadcastDeleted', {'broadcastId': _broadcastId}),
+      );
+
+      await pumpUntil(() => feed.items.isEmpty);
+      expect(feed.items, isEmpty);
+      expect(
+        api.requests,
+        hasLength(reads),
+        reason: 'the frame named the row; there is nothing to ask for',
+      );
+    });
+  });
+
   group('a predicate on the query (Step 63)', () {
     test("a creator's feed ignores another creator's broadcast", () async {
       await startFeed(const BroadcastQuery.byCreator(_creator));

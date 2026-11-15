@@ -137,10 +137,15 @@ Future<void> registerAccountScope(
   // The account's own broadcasts. A draft carries the id that wrote it and a
   // favourite carries the id that kept it, so both go with the account; the
   // editor itself is created by its page, not here (Step 34).
-  scope.registerLazySingleton<FavouritesManager>(
-    () => FavouritesManager(
+  //
+  // Eager, unlike the screens that read it: it listens for deleted broadcasts
+  // from the moment the account exists, so a favourite is purged even if the
+  // favourites tab is never opened.
+  scope.registerSingleton<FavouritesManager>(
+    FavouritesManager(
       local: di<BroadcastLocalService>(),
       logger: di<MenoLogger>(),
+      deletedBroadcasts: di<BroadcastSocketService>().onBroadcastDeleted,
     ),
   );
 

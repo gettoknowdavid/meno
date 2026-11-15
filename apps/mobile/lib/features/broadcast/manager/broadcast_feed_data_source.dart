@@ -156,6 +156,9 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     if (service != null) {
       _handles = [
         service.onHomeInvalidated.listen((_) => _refreshOnce()),
+        // Deletion is not section-specific: a soft-deleted broadcast is gone
+        // from every list, including one already on screen.
+        service.onBroadcastDeleted.listen(_onBroadcastDeleted),
         ..._handlesFor(service, _query.type),
       ];
     }
@@ -255,6 +258,18 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     removeObject(current);
     items.insert(index, event.broadcast);
     refreshItemCount();
+  }
+
+  /// Drops a broadcast the server soft-deleted.
+  ///
+  /// The frame carries only the id, and every list that already holds that
+  /// row must stop drawing it. A list that never held it has nothing to do,
+  /// so there is no refetch: deletion cannot add a row.
+  void _onBroadcastDeleted(BroadcastDeletedEvent event) {
+    final index = items.indexWhere((item) => item.id == event.broadcastId);
+    if (index == -1) return;
+
+    removeObject(items[index]);
   }
 
   void _onEndedBroadcast(EndedSignal ended) {
