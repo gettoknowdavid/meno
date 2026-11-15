@@ -9,16 +9,17 @@ import 'package:meno_ui/meno_ui.dart';
 /// The account search that adds a co-host.
 ///
 /// Two callers, one sheet. The editor has no broadcast yet, so picking an
-/// account puts it in the draft and the API learns about it at creation. A
-/// broadcast that exists gets the handshake instead: picking an account invites
-/// it, and nothing is added until the invitee says yes.
+/// account puts it in the draft and creation turns that pick into an invitation
+/// as soon as the row exists. A broadcast that already exists gets the
+/// handshake immediately: picking an account invites it, and nothing is added
+/// until the invitee says yes.
 class AddCohostModal extends WatchingWidget {
   const new _({this.broadcastId});
 
   /// The broadcast to invite into, when there is one.
   ///
-  /// Null in the editor: a draft's co-hosts are part of the creation payload,
-  /// not invitations to answer.
+  /// Null in the editor: the broadcast does not exist yet, so the pick is kept
+  /// in the draft and invited once creation has made the row.
   final Id? broadcastId;
 
   /// Opens the sheet, either to pick a draft's co-hosts or to invite into

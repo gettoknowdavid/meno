@@ -12,10 +12,11 @@ import 'package:uuid/uuid.dart';
 
 /// The form that writes a broadcast, and the draft behind it.
 ///
-/// Creating a broadcast is four steps the API has no single call for — create
-/// the row, store its cover, go live for a token, hand the session to the live
-/// owner — and the draft records how far it got, so a creation interrupted
-/// between two of them is resumed rather than started again. A draft is written
+/// Creating a broadcast is several steps the API has no single call for —
+/// create the row, store its cover, invite the co-hosts picked here, then go
+/// live for a token and hand the session to the live owner — and the draft
+/// records how far it got, so a creation interrupted between two of them is
+/// resumed rather than started again. A draft is written
 /// on every edit for the
 /// same reason: the form is the only place the user's work lives until the API
 /// has it.
@@ -39,10 +40,12 @@ final class BroadcastEditorManager implements Disposable {
         try {
           if (_createdBroadcastId != null &&
               step.value.index >= BroadcastCreationStep.created.index) {
-            // The row exists but its cover may not: an earlier press can have
-            // stopped between the two, and going live now would leave the
-            // picture the user picked on this device alone.
+            // The row exists but its cover or invitations may not: an earlier
+            // press can have stopped between them, and going live now would
+            // leave the picture the user picked on this device alone or the
+            // picked accounts never invited.
             await _uploadArtwork();
+            await _inviteCohosts(draft);
             return;
           }
 
@@ -60,7 +63,6 @@ final class BroadcastEditorManager implements Disposable {
             imageId: draft.imageId,
             timeZone: draft.timeZone,
             startTime: draft.startTime,
-            cohosts: [for (final id in draft.cohosts) id.getOrCrash],
             recordingEnabled: draft.record,
           );
           _createdBroadcastId = created.id;
@@ -71,6 +73,12 @@ final class BroadcastEditorManager implements Disposable {
           // under the broadcast's id, and the API refuses to change the cover
           // of a row that is already on air.
           await _uploadArtwork();
+
+          // The row exists, so the co-hosts picked in the editor can be invited
+          // through the same handshake every other invite uses. A failure here
+          // keeps the draft at `.created`, so the next press resumes with the
+          // invitations rather than creating a second broadcast.
+          await _inviteCohosts(draft);
         } on Object {
           // A creation that did not finish is the one time a draft is kept
           // without being asked for.
@@ -173,6 +181,10 @@ final class BroadcastEditorManager implements Disposable {
       // The stored draft kept the ids and nothing else, so a reopened form
       // shows its chips without names.
       pickedCohosts.value = [];
+      // A reopened draft may already have invited them on the press that
+      // stopped. The API upserts an outstanding invitation anyway, so the
+      // worst case after a restart is one repeated frame, never a lost invite.
+      _invitedCohosts.clear();
 
       _createdBroadcastId = draft.createdBroadcastId;
       step.value = draft.creationStep;
@@ -234,6 +246,15 @@ final class BroadcastEditorManager implements Disposable {
 
   /// The key the API stored the chosen cover under, as the draft last knew it.
   String? _uploadedImageId;
+
+  /// The co-hosts already invited for the row this draft created.
+  ///
+  /// A creation that stopped after some invitations must not re-send them on
+  /// the retry: the invitee would get one frame per press for the same
+  /// invitation. The ids are in memory only; a draft reopened after a restart
+  /// starts empty, which is safe because the API upserts an outstanding
+  /// invitation instead of refusing the repeat.
+  final Set<String> _invitedCohosts = {};
 
   /// The local path whose bytes that key holds.
   ///
@@ -332,7 +353,8 @@ final class BroadcastEditorManager implements Disposable {
   /// Adds [cohostId] to the form, or removes it.
   ///
   /// Capped at [maxCohosts], which is the API's own limit: an invitation past
-  /// it would be refused at creation, so the form stops where the API does.
+  /// it would be refused once the broadcast exists, so the form stops where the
+  /// API does.
   void toggleCohost(Id cohostId, {Profile? profile}) {
     hasUnsavedChanges.value = true;
     if (cohosts.contains(cohostId)) {
@@ -366,7 +388,8 @@ final class BroadcastEditorManager implements Disposable {
   /// Loads the account's drafts.
   late final Command<void, void> loadDrafts;
 
-  /// `POST /broadcasts`, resuming a half-made one when there is one.
+  /// `POST /broadcasts`, then its cover and co-host invitations, resuming a
+  /// half-made one when there is one.
   late final Command<BroadcastDraft, void> createBroadcast;
 
   /// `POST /broadcasts/{id}/live`, then the entry that opens the room.
@@ -507,6 +530,7 @@ final class BroadcastEditorManager implements Disposable {
   void _resetCreationState() {
     _uploadedImageId = null;
     _uploadedImagePath = null;
+    _invitedCohosts.clear();
     // The next creation is a different broadcast, so it must not be able to
     // replay this one's stored outcome.
     _liveKey = null;
@@ -562,6 +586,37 @@ final class BroadcastEditorManager implements Disposable {
 
     await _local.deleteDraft(draftId);
     _loadDrafts();
+  }
+
+  /// Invites the accounts picked in the editor, now that the row exists.
+  ///
+  /// A pick in the editor is not a co-host: it is somebody this host wants to
+  /// ask. Sending the ids on creation used to insert them as co-hosts without
+  /// their answer (backend gap 22); this is the same handshake the room's
+  /// invite sheet uses, so the invitee gets the notification and the
+  /// invitation card, and joins only by accepting.
+  ///
+  /// Each successful id is remembered, so a retry after a later invitation
+  /// failed asks only the rest. Nothing is cleared here: the draft is forgotten
+  /// by the page once the creation — and for an immediate broadcast the room —
+  /// has succeeded.
+  Future<void> _inviteCohosts(BroadcastDraft draft) async {
+    final broadcastId = _createdBroadcastId;
+    if (broadcastId == null) return;
+
+    for (final cohostId in draft.cohosts) {
+      final key = cohostId.getOrCrash;
+      if (!_invitedCohosts.add(key)) continue;
+
+      try {
+        await _http.inviteCohost(broadcastId, cohostId);
+      } on Object {
+        // Not invited, so the retry must ask again. Earlier ids stay marked:
+        // they already have their invitation.
+        _invitedCohosts.remove(key);
+        rethrow;
+      }
+    }
   }
 
   /// Sends the picked picture to the API, once.
