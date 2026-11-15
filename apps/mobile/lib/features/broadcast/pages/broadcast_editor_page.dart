@@ -1,6 +1,8 @@
 import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
@@ -83,7 +85,28 @@ class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
     // failure, so a chain that stops half-way leaves the form on screen.
     registerHandler<BroadcastEditorManager, void>(
       select: (manager) => manager.createBroadcast,
-      handler: (context, _, _) => manager.startBroadcast.run(),
+      handler: (context, _, _) async {
+        if (!manager.isScheduled) {
+          manager.startBroadcast.run();
+          return;
+        }
+
+        // A scheduled creation stops after the row and the cover exist. The
+        // host starts the room themselves when the time comes, so going live
+        // here would defeat the schedule.
+        final broadcastId = manager.createdBroadcastId;
+        await manager.finishScheduledCreation();
+        if (!context.mounted) return;
+
+        manager.resetForm.run();
+        context.showSuccessToast('Broadcast scheduled');
+
+        if (broadcastId != null && broadcastId.isValid) {
+          context.replace(MRoutes.preStreamRoute(broadcastId));
+        } else {
+          context.pop();
+        }
+      },
     );
 
     registerHandler<BroadcastEditorManager, void>(
@@ -311,6 +334,8 @@ class _EditorFormWidget extends WatchingWidget {
           Spaces.verticalXLarge,
           const CoHostSection(),
           Spaces.verticalXLarge,
+          const ScheduleField(key: Key('broadcastForm_scheduleField')),
+          Spaces.verticalXLarge,
           _BroadcastEditorListTile(
             leadingText: 'Remaining time today',
             subtitleText: 'Your daily broadcast time will reset in 24hrs',
@@ -522,6 +547,125 @@ class _CohostChip extends StatelessWidget {
   }
 }
 
+/// Chooses an optional future start for this broadcast.
+///
+/// Off means the form goes live on the next press. On asks for a date and then
+/// a time, and the two pickers are separate because that is the platform's own
+/// interaction: one control for both would be a custom calendar to maintain.
+class ScheduleField extends WatchingWidget {
+  const new({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    final manager = di<BroadcastEditorManager>();
+
+    final start = watchValue<BroadcastEditorManager, DateTime?>(
+      (m) => m.startTime,
+    );
+    final zone = watchValue<BroadcastEditorManager, String?>((m) => m.timeZone);
+    final isLoading = watchValue<BroadcastEditorManager, bool>(
+      (m) => m.isRunning,
+    );
+
+    final local = start?.toLocal();
+    final when = local == null
+        ? 'Go live now, or choose a later time'
+        : '${DateFormat("EEE, MMM d 'at' h:mm a").format(local)}'
+              '${zone == null ? '' : ' · $zone'}';
+
+    return _BroadcastEditorListTile(
+      leadingText: 'Schedule for later',
+      subtitleText: when,
+      trailing: SizedBox(
+        width: 48,
+        child: Switch(
+          value: local != null,
+          onChanged: isLoading
+              ? null
+              : (enabled) {
+                  if (!enabled) {
+                    manager.clearSchedule();
+                    return;
+                  }
+                  unawaited(_pick(context, manager));
+                },
+        ),
+      ),
+    );
+  }
+
+  /// Asks for a date, then a time, then records the instant in UTC.
+  Future<void> _pick(
+    BuildContext context,
+    BroadcastEditorManager manager,
+  ) async {
+    final now = DateTime.now();
+    final firstDate = DateUtils.dateOnly(now);
+    final lastDate = DateUtils.dateOnly(now.add(const Duration(days: 365)));
+    final previous = manager.startTime.value?.toLocal();
+    final initial = previous ?? now.add(const Duration(hours: 1));
+    final initialDate = DateUtils.dateOnly(initial);
+
+    final date = await showDatePicker(
+      context: context,
+      initialDate: initialDate.isBefore(firstDate)
+          ? firstDate
+          : initialDate.isAfter(lastDate)
+          ? lastDate
+          : initialDate,
+      firstDate: firstDate,
+      lastDate: lastDate,
+    );
+    if (date == null || !context.mounted) return;
+
+    final time = await showTimePicker(
+      context: context,
+      initialTime: TimeOfDay.fromDateTime(initial),
+    );
+    if (time == null || !context.mounted) return;
+
+    final chosen = DateTime(
+      date.year,
+      date.month,
+      date.day,
+      time.hour,
+      time.minute,
+    );
+    if (!chosen.isAfter(DateTime.now())) {
+      context.showErrorToast('Choose a start time in the future.');
+      return;
+    }
+
+    // The API stores an IANA zone. The plugin is the only source of the
+    // device's real identifier; a failure here leaves the instant exact and
+    // merely omits the display zone rather than inventing an abbreviation.
+    String? zone;
+    try {
+      final identifier = (await FlutterTimezone.getLocalTimezone()).identifier;
+      zone = _ianaIdentifier(identifier);
+    } on Object {
+      zone = null;
+    }
+
+    manager.scheduleAt(chosen, zone: zone);
+  }
+
+  /// The API requires an IANA name with a region segment.
+  ///
+  /// The platform may answer `UTC` or a bare abbreviation. The instant is
+  /// already exact, so an unusable name is omitted rather than sent to be
+  /// refused; the two no-slash names that are genuinely IANA are folded into
+  /// their `Etc/` spelling.
+  static String? _ianaIdentifier(String raw) {
+    return switch (raw) {
+      'UTC' => 'Etc/UTC',
+      'GMT' => 'Etc/GMT',
+      _ when raw.contains('/') => raw,
+      _ => null,
+    };
+  }
+}
+
 class RecordToggleSwitchField extends WatchingWidget {
   const new({super.key});
 
@@ -566,12 +710,23 @@ class StartBroadcastButton extends WatchingWidget {
       (m) => m.step,
     );
 
-    final buttonLabel = switch (step) {
-      .none => 'Start Broadcast',
-      .created => 'Continue & Start',
-      .started => 'Finalize Broadcast',
-      .saved => 'Start Broadcast',
-    };
+    final selectedStart = watchValue<BroadcastEditorManager, DateTime?>(
+      (m) => m.startTime,
+    );
+    final isScheduled = selectedStart != null;
+
+    final buttonLabel = isScheduled
+        ? switch (step) {
+            .none => 'Schedule Broadcast',
+            .created || .saved => 'Continue & Schedule',
+            .started => 'Finalize Schedule',
+          }
+        : switch (step) {
+            .none => 'Start Broadcast',
+            .created => 'Continue & Start',
+            .started => 'Finalize Broadcast',
+            .saved => 'Start Broadcast',
+          };
 
     return Container(
       height: 77,
@@ -589,10 +744,17 @@ class StartBroadcastButton extends WatchingWidget {
             // that did not finish — the manager writes it in exactly those two
             // cases, so a broadcast that goes live leaves no copy behind.
             onPressed: () async {
-              // The room is entered speaking: a host whose microphone was
-              // refused would go live silent, so it is asked for before the
-              // broadcast exists at all.
-              if (!await PermissionPrompts.broadcast(context)) return;
+              if (!manager.hasFutureStart) {
+                context.showErrorToast('Choose a start time in the future.');
+                return;
+              }
+
+              // A scheduled broadcast does not enter the room now, so it does
+              // not need the microphone yet. An immediate one does: asking
+              // before the row exists is what stops a silent host.
+              if (!isScheduled && !await PermissionPrompts.broadcast(context)) {
+                return;
+              }
               manager.createBroadcast.run(manager.buildDraft());
             },
           ),

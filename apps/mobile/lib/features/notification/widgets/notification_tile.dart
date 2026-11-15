@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cached_network_image/cached_network_image.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart' hide Notification;
+import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/notification/model/_model.dart';
 import 'package:meno_mobile/features/notification/widgets/notification_options_modal.dart';
@@ -40,6 +41,20 @@ class NotificationCard extends WatchingWidget {
           if (effectiveBroadcastId == null) return;
           unawaited(
             PreStreamModal.show(context, .fromString(effectiveBroadcastId)),
+          );
+          proxy.markAsRead.run();
+        },
+      ),
+      NotificationType.scheduledBroadcast => _LiveBroadcastNotificationTile(
+        notification: notification,
+        isRead: isRead,
+        onOptionsPressed: onOptionsPressed,
+        onPressed: () {
+          final broadcastId =
+              notification.content?.broadcastId ?? notification.content?.id;
+          if (broadcastId == null) return;
+          unawaited(
+            context.push(MRoutes.broadcastRoute(.fromString(broadcastId))),
           );
           proxy.markAsRead.run();
         },

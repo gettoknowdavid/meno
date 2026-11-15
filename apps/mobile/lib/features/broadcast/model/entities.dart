@@ -263,6 +263,16 @@ abstract class BroadcastDraft with _$BroadcastDraft {
     @Default(Id.empty) Id ownerId,
     @Default('') String title,
     String? description,
+
+    /// When a scheduled broadcast should start, in UTC.
+    ///
+    /// Null means "go live now". A value makes this a scheduled creation: the
+    /// row is written with the time but the room is not entered until the host
+    /// presses go live.
+    DateTime? startTime,
+
+    /// The IANA zone the start time was chosen in, when the device named one.
+    String? timeZone,
     @Default(false) bool record,
     @Default(<Id>[]) List<Id> cohosts,
     ImageInput? imagePath,

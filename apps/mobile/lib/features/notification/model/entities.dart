@@ -3,7 +3,7 @@ import 'package:meno_mobile/features/notification/model/proxies/notification_pro
 /// The kinds of notification this build can draw a card for.
 ///
 /// The API's `typeCode` is the snake_case wire name; [value] is the camelCase
-/// spelling the payload carried before. A code outside these three is refused
+/// spelling the payload carried before. A code outside these four is refused
 /// by `fromJson`, so the decoder skips that row instead of drawing a card with
 /// no copy and nothing to open.
 enum NotificationType {
@@ -14,7 +14,10 @@ enum NotificationType {
   addedAsCoHost('addedAsCoHost'),
 
   /// A followee went live.
-  liveBroadcastStarted('liveBroadcastStarted');
+  liveBroadcastStarted('liveBroadcastStarted'),
+
+  /// A followee's scheduled broadcast has reached its start time.
+  scheduledBroadcast('scheduledBroadcast');
 
   /// Creates a type with the spelling it is stored under.
   new(this.value);
@@ -31,6 +34,7 @@ enum NotificationType {
       'added_as_co_host' || 'addedAsCoHost' => addedAsCoHost,
       'live_broadcast_started' ||
       'liveBroadcastStarted' => liveBroadcastStarted,
+      'scheduled_broadcast' || 'scheduledBroadcast' => scheduledBroadcast,
       _ => throw FormatException('Unknown notification type: $json'),
     };
   }

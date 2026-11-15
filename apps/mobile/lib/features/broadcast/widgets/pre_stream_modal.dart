@@ -4,6 +4,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/_shared/services/permission_prompts.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -250,20 +251,35 @@ class PreStreamActionButtons extends WatchingWidget {
     // can only fail is not an action.
     final isHost = broadcast.isHostedBy(di<ActiveBroadcastManager>().accountId);
 
+    // A schedule is a promise the host still has to keep: the API writes the
+    // start time but deliberately does not open the room. This is the one
+    // place a host reaches their own inactive broadcast, so it is where the
+    // manual go-live belongs.
+    final startsHere = isHost && broadcast.isScheduled;
+
     return SizedBox(
       height: 32,
       child: Row(
         children: [
           Expanded(
             child: MPrimaryButton(
-              label: 'Join',
+              label: startsHere ? 'Go Live' : 'Join',
               loading: isJoining,
-              onPressed: () => live.join.run(
-                LiveEnterRequest(
-                  broadcastId: broadcast.id,
-                  mode: LiveEnterMode.listen,
-                ),
-              ),
+              onPressed: () async {
+                // Opening the room is the host speaking, so the microphone is
+                // asked for here just as it is in the immediate-start editor.
+                if (startsHere && !await PermissionPrompts.broadcast(context)) {
+                  return;
+                }
+                live.join.run(
+                  LiveEnterRequest(
+                    broadcastId: broadcast.id,
+                    mode: startsHere
+                        ? LiveEnterMode.host
+                        : LiveEnterMode.listen,
+                  ),
+                );
+              },
             ),
           ),
           Spaces.horizontalSmall,

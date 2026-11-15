@@ -26,7 +26,6 @@ final class CohostSearchManager implements Disposable {
         return results.value;
       },
       initialValue: const <Profile>[],
-      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'cohost.search',
     );

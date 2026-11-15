@@ -132,6 +132,11 @@ class _ToastCard extends StatelessWidget {
         content?.cohostFullName ?? '',
         'added you as co-host',
       ),
+      NotificationType.scheduledBroadcast => (
+        content?.broadcastImageUrl,
+        content?.broadcastCreator ?? '',
+        'is starting soon: "${content?.broadcastTitle ?? ''}"',
+      ),
       _ => (null, '', ''),
     };
 

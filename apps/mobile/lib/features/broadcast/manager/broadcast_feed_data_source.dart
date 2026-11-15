@@ -181,6 +181,7 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     BroadcastsType.nowLive => [
       service.onNewBroadcast.listen(_onNewBroadcast),
       service.onEndedBroadcast.listen(_onEndedBroadcast),
+      service.onScheduledBroadcast.listen(_onScheduledBroadcast),
     ],
 
     BroadcastsType.recentlyLive => [
@@ -189,11 +190,13 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
       // title and no host (audit §3 M10). The ended broadcast reaches this list
       // by refetching, which is also where its real summary comes from.
       service.onEndedBroadcast.listen((_) => _refreshOnce()),
+      service.onScheduledBroadcast.listen(_onScheduledBroadcast),
     ],
 
     null => [
       service.onNewBroadcast.listen(_onNewBroadcast),
       service.onEndedBroadcast.listen(_onEndedBroadcast),
+      service.onScheduledBroadcast.listen(_onScheduledBroadcast),
     ],
   };
 
@@ -227,6 +230,31 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     if (!_matches(broadcast)) return;
 
     addItemAtStart(broadcast);
+  }
+
+  /// Replaces a scheduled broadcast's card with the frame's full answer.
+  ///
+  /// The reminder is sent when the start time arrives, not when the host has
+  /// gone live, so this must not insert the row into a live section. A feed
+  /// already holding the card gets the fresh start time and cover; one that
+  /// does not asks once for its first page, which is also how a newly scheduled
+  /// row reaches a creator's list.
+  void _onScheduledBroadcast(ScheduledBroadcastEvent event) {
+    final index = items.indexWhere(
+      (item) => itemsAreEqual(item, event.broadcast),
+    );
+    if (index == -1) {
+      _refreshOnce();
+      return;
+    }
+
+    // Remove and reinsert through the counted mutations: assigning in place
+    // leaves the count unchanged, so the list would never be told to repaint.
+    // Both calls happen before the next frame, so the card keeps its position.
+    final current = items[index];
+    removeObject(current);
+    items.insert(index, event.broadcast);
+    refreshItemCount();
   }
 
   void _onEndedBroadcast(EndedSignal ended) {

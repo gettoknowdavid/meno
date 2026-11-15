@@ -64,6 +64,25 @@ void main() {
       expect(sentKey(api, 1), draftKey);
     });
 
+    test('a scheduled create sends its instant and zone', () async {
+      final api = StubApi([() async => envelope(status: 400)]);
+      final http = BroadcastHttpService(stubClient(api));
+
+      await expectLater(
+        http.create(
+          title: 'Sunday Service',
+          idempotencyKey: draftKey,
+          startTime: DateTime.utc(2026, 11, 20, 18, 30),
+          timeZone: 'Africa/Lagos',
+        ),
+        throwsA(isA<MenoException>()),
+      );
+
+      final body = api.requests.single.data as Map<String, dynamic>;
+      expect(body['start_time'], '2026-11-20T18:30:00.000Z');
+      expect(body['time_zone'], 'Africa/Lagos');
+    });
+
     test('a second, distinct draft carries a different key', () async {
       final api = StubApi([
         () async => envelope(status: 400),
@@ -150,6 +169,22 @@ void main() {
 
       expect(restored.idempotencyKey, draftKey);
       expect(restored.title, 'Sunday Service');
+    });
+
+    test('a schedule survives the storage row as the same instant', () {
+      final start = DateTime.utc(2026, 11, 20, 18, 30);
+      final draft = BroadcastDraft(
+        id: Id.fromString('018f2b1e-0000-7000-8000-0000000000dd'),
+        ownerId: Id.fromString('018f2b1e-0000-7000-8000-000000000040'),
+        title: 'Sunday Service',
+        startTime: start,
+        timeZone: 'Africa/Lagos',
+      );
+
+      final restored = draft.toRow.toDomain();
+
+      expect(restored.startTime, start);
+      expect(restored.timeZone, 'Africa/Lagos');
     });
 
     test('a draft written before the field existed reads as "no key yet"', () {

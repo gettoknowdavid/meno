@@ -40,7 +40,6 @@ final class CohostInvitationsManager implements Disposable {
         return invitation;
       },
       initialValue: null,
-      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'cohost.invite',
     );
@@ -55,7 +54,6 @@ final class CohostInvitationsManager implements Disposable {
         return session;
       },
       initialValue: null,
-      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'cohost.accept',
     );
@@ -68,7 +66,6 @@ final class CohostInvitationsManager implements Disposable {
         );
         _remove(invitation.id);
       },
-      errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'cohost.decline',
     );

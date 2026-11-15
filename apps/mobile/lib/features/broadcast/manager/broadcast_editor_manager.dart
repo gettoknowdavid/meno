@@ -58,6 +58,8 @@ final class BroadcastEditorManager implements Disposable {
                 ? null
                 : draft.description,
             imageId: draft.imageId,
+            timeZone: draft.timeZone,
+            startTime: draft.startTime,
             cohosts: [for (final id in draft.cohosts) id.getOrCrash],
             recordingEnabled: draft.record,
           );
@@ -123,7 +125,7 @@ final class BroadcastEditorManager implements Disposable {
           }
 
           session.value = committed ?? _active.session?.details;
-          await _forgetStartedDraft();
+          await _forgetConsumedDraft();
         } on Object {
           await _keepFailedStart();
           rethrow;
@@ -139,6 +141,8 @@ final class BroadcastEditorManager implements Disposable {
       hasUnsavedChanges.value = false;
       title.value = '';
       description.value = '';
+      startTime.value = null;
+      timeZone.value = null;
       imagePath.value = null;
       cohosts.startTransAction();
       cohosts.clear();
@@ -158,6 +162,8 @@ final class BroadcastEditorManager implements Disposable {
       _draftId = draft.id;
       title.value = draft.title;
       description.value = draft.description;
+      startTime.value = draft.startTime;
+      timeZone.value = draft.timeZone;
       imagePath.value = draft.imagePath;
       record.value = draft.record;
       cohosts.startTransAction();
@@ -247,6 +253,12 @@ final class BroadcastEditorManager implements Disposable {
   /// The description as typed, for the same reason.
   final ValueNotifier<String?> description = ValueNotifier('');
 
+  /// When this broadcast should start, in UTC. Null means go live now.
+  final ValueNotifier<DateTime?> startTime = ValueNotifier(null);
+
+  /// The IANA zone the start time was chosen in, when the device named one.
+  final ValueNotifier<String?> timeZone = ValueNotifier(null);
+
   /// The locally picked image, until the API has one.
   final imagePath = ValueNotifier<ImageInput?>(null);
 
@@ -265,10 +277,42 @@ final class BroadcastEditorManager implements Disposable {
   /// Whether the form can be submitted.
   ///
   /// A title and a description are what the API requires; the cohost limit is
-  /// the editor's own rule and is enforced by [toggleCohost].
-  late final ValueListenable<bool> canSubmit = title.map(
-    (value) => SingleLineString(value).isValid,
+  /// the editor's own rule and is enforced by [toggleCohost]. A chosen start
+  /// must still be in the future when the form is read.
+  late final ValueListenable<bool> canSubmit = title.combineLatest(
+    startTime,
+    (value, start) =>
+        SingleLineString(value).isValid &&
+        (start == null || start.isAfter(DateTime.now().toUtc())),
   );
+
+  /// Whether this form creates a scheduled broadcast rather than going live.
+  bool get isScheduled => startTime.value != null;
+
+  /// Whether the chosen start, if any, has not passed.
+  bool get hasFutureStart {
+    final start = startTime.value;
+    return start == null || start.isAfter(DateTime.now().toUtc());
+  }
+
+  /// The broadcast this form created, once a creation succeeded.
+  ///
+  /// Used by the page to open a scheduled broadcast's lobby after creation.
+  Id? get createdBroadcastId => _createdBroadcastId;
+
+  /// Chooses [start] (converted to UTC) and the zone it was chosen in.
+  void scheduleAt(DateTime start, {String? zone}) {
+    hasUnsavedChanges.value = true;
+    startTime.value = start.toUtc();
+    timeZone.value = (zone?.trim().isEmpty ?? true) ? null : zone!.trim();
+  }
+
+  /// Turns the form back into an immediate broadcast.
+  void clearSchedule() {
+    hasUnsavedChanges.value = true;
+    startTime.value = null;
+    timeZone.value = null;
+  }
 
   void onTitleChanged(String input) {
     hasUnsavedChanges.value = true;
@@ -354,6 +398,8 @@ final class BroadcastEditorManager implements Disposable {
     ownerId: _userId,
     title: title.value,
     description: description.value,
+    startTime: startTime.value,
+    timeZone: timeZone.value,
     record: record.value,
     cohosts: cohosts.toList(),
     imagePath: imagePath.value,
@@ -432,6 +478,8 @@ final class BroadcastEditorManager implements Disposable {
     drafts.dispose();
     title.dispose();
     description.dispose();
+    startTime.dispose();
+    timeZone.dispose();
     imagePath.dispose();
     cohosts.dispose();
     pickedCohosts.dispose();
@@ -493,14 +541,20 @@ final class BroadcastEditorManager implements Disposable {
     }
   }
 
-  /// Forgets the draft a started broadcast came from.
+  /// Forgets the draft a scheduled creation consumed.
+  ///
+  /// The page calls this only after `createBroadcast` succeeded, so a creation
+  /// interrupted before the API answered still keeps its draft and can resume.
+  Future<void> finishScheduledCreation() => _forgetConsumedDraft();
+
+  /// Forgets the draft a finished creation came from.
   ///
   /// A draft that outlives its broadcast is a button that restarts an ended
   /// one: its `createdBroadcastId` names a terminal row, so every later press
   /// is refused and the user is held on a form they already finished. The
   /// broadcast itself lives on in the catalogue and the ended page; the
   /// draft's job is done.
-  Future<void> _forgetStartedDraft() async {
+  Future<void> _forgetConsumedDraft() async {
     final draftId = _draftId;
     // Cleared first, so nothing written after this point re-creates the row.
     _draftId = null;

@@ -78,6 +78,23 @@ void main() {
     );
   });
 
+  test('a scheduled-broadcast reminder reaches the inbox', () async {
+    final api = StubApi([
+      () async => envelope(
+        data: _page([_item(id: _todayId, typeCode: 'scheduled_broadcast')]),
+      ),
+    ]);
+    final feed = _feed(api);
+    addTearDown(feed.onDispose);
+
+    await feed.refresh();
+
+    expect(
+      feed.items.single.notification.type,
+      NotificationType.scheduledBroadcast,
+    );
+  });
+
   test('a row the decoder cannot read does not sink the page', () async {
     final api = StubApi([
       () async => envelope(

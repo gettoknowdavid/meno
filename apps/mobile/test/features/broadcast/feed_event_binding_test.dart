@@ -118,11 +118,15 @@ Map<String, dynamic> _broadcastJson({
   String id = _broadcastId,
   String creator = _creator,
   bool withCreator = true,
+  String state = 'live',
+  String title = 'Morning show',
+  String? startTime,
 }) => {
   'id': id,
-  'title': 'Morning show',
-  'state': 'live',
-  'status': 'active',
+  'title': title,
+  'state': state,
+  'status': state == 'live' ? 'active' : 'inactive',
+  'startTime': ?startTime,
   // `participantRole` is not optional: a frame without it does not decode, and
   // an undecodable frame is indistinguishable from one that never arrived.
   'participantRole': 'viewer',
@@ -258,6 +262,40 @@ void main() {
       await Future<void>.delayed(const Duration(milliseconds: 60));
 
       expect(api.requests, hasLength(before));
+    });
+  });
+
+  group('a scheduled start (M4)', () {
+    test('refreshes the card the list already holds', () async {
+      await startFeed(const BroadcastQuery.byCreator(_creator));
+
+      // The creator's list can already hold the scheduled row. The frame's
+      // full response is newer than that card, so it replaces it in place.
+      final listed = BroadcastDto.fromJson(_broadcastJson(state: 'scheduled'))
+          .toDomain;
+      feed.addItemAtStart(listed);
+      final reads = api.requests.length;
+
+      await server.send(
+        _frame(
+          'scheduledBroadcast',
+          _broadcastJson(
+            state: 'scheduled',
+            title: 'Morning show, starting now',
+            startTime: '2026-11-15T09:00:00Z',
+          ),
+        ),
+      );
+
+      await pumpUntil(
+        () => feed.items.single.title.getOrNull == 'Morning show, starting now',
+      );
+      expect(feed.items.single.startTime, DateTime.utc(2026, 11, 15, 9));
+      expect(
+        api.requests,
+        hasLength(reads),
+        reason: 'the frame already carried the card',
+      );
     });
   });
 

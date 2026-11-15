@@ -22,6 +22,8 @@ class BroadcastDraftRow {
     required this.ownerId,
     this.title = '',
     this.description = '',
+    this.startTimeMillis,
+    this.timeZone,
     this.record = false,
     this.cohostIds = '',
     this.imagePath,
@@ -54,6 +56,13 @@ class BroadcastDraftRow {
   String title;
 
   String? description;
+
+  /// The scheduled start as a UTC epoch, so the stored instant cannot acquire
+  /// the device's zone on the way through ObjectBox.
+  int? startTimeMillis;
+
+  /// The IANA zone the start time was chosen in.
+  String? timeZone;
 
   bool record;
 
@@ -126,6 +135,10 @@ extension BroadcastDraftRowX on BroadcastDraftRow {
     ownerId: core.Id.fromString(ownerId),
     title: title,
     description: description,
+    startTime: startTimeMillis == null
+        ? null
+        : DateTime.fromMillisecondsSinceEpoch(startTimeMillis!, isUtc: true),
+    timeZone: timeZone,
     record: record,
     cohosts: _cohostIds(logger),
     imagePath: core.ImageInput.fromStored(imagePath),
@@ -173,6 +186,8 @@ extension BroadcastDraftX on BroadcastDraft {
     ownerId: ownerId.getOrCrash,
     title: title,
     description: description,
+    startTimeMillis: startTime?.millisecondsSinceEpoch,
+    timeZone: timeZone,
     record: record,
     cohostIds: [for (final id in cohosts) id.getOrCrash].join(','),
     imagePath: imagePath?.toUrlOrFilePathOrNull,
