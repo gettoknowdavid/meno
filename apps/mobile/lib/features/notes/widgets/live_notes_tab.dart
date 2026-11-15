@@ -7,12 +7,17 @@ import 'package:meno_mobile/features/notes/widgets/_widgets.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 class LiveNotesTab extends WatchingWidget {
-  const new({super.key});
+  const new({this.initialIndex = 0, super.key});
+
+  /// Which half opens first: notes at 0, folders at 1.
+  final int initialIndex;
 
   @override
   Widget build(BuildContext ctx) {
-    final controller = createOnce(PageController.new);
-    final index = createOnce(() => ValueNotifier<int>(0));
+    final controller = createOnce(
+      () => PageController(initialPage: initialIndex),
+    );
+    final index = createOnce(() => ValueNotifier<int>(initialIndex));
 
     callAfterEveryBuild((context, cancel) {
       if (controller.hasClients && controller.page?.round() != index.value) {

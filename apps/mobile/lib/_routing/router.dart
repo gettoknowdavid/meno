@@ -10,6 +10,7 @@ import 'package:meno_mobile/app/layouts/root_shell.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/features/broadcast/layouts/live_session_shell.dart';
+import 'package:meno_mobile/features/broadcast/model/broadcast_query.dart';
 import 'package:meno_mobile/features/broadcast/pages/_pages.dart';
 import 'package:meno_mobile/features/broadcast/widgets/pre_stream_modal.dart';
 import 'package:meno_mobile/features/chat/widgets/live_chat_tab.dart';
@@ -278,7 +279,7 @@ List<RouteBase> get _liveSessionRoutes => [
           ),
           GoRoute(
             path: MRoutes.liveFolders,
-            builder: (_, _) => const StubPage('Folders'),
+            builder: (_, _) => const LiveNotesTab(initialIndex: 1),
             routes: [
               GoRoute(
                 path: ':folderId',
@@ -391,22 +392,29 @@ List<RouteBase> get _standaloneRoutes => [
     path: MRoutes.notifications,
     builder: (_, _) => const NotificationsPage(),
   ),
-  GoRoute(path: MRoutes.nowLive, builder: (_, _) => const StubPage('Now Live')),
+  GoRoute(
+    path: MRoutes.nowLive,
+    builder: (_, _) => BroadcastsPage(
+      queryParameters: _sectionParameters(const BroadcastQuery.nowLive()),
+    ),
+  ),
   GoRoute(
     path: MRoutes.recentlyLive,
-    builder: (_, _) => const StubPage('Recently Live'),
+    builder: (_, _) => BroadcastsPage(
+      queryParameters: _sectionParameters(const BroadcastQuery.recentlyLive()),
+    ),
   ),
   GoRoute(path: MRoutes.bible, builder: (_, _) => const BiblePage()),
-  GoRoute(
-    path: MRoutes.profiles,
-    builder: (_, _) => const StubPage('Profiles'),
-  ),
+  // There is no directory of profiles in this product yet: a profile is found
+  // through Discover or opened from a broadcast. The plural address lands on
+  // the viewer's own profile rather than on a placeholder.
+  GoRoute(path: MRoutes.profiles, redirect: (_, _) => MRoutes.myProfile),
   GoRoute(
     path: MRoutes.userProfilePattern,
     builder: (_, state) {
       final userId = _pathId(state, 'userId');
       if (userId == null) return const StubPage(_notFound);
-      return StubPage('User Profile ${userId.getOrCrash}');
+      return UserProfilePage(userId: userId);
     },
   ),
   GoRoute(
@@ -414,12 +422,15 @@ List<RouteBase> get _standaloneRoutes => [
     builder: (_, state) {
       final userId = _pathId(state, 'userId');
       if (userId == null) return const StubPage(_notFound);
-      return StubPage('Switch Account ${userId.getOrCrash}');
+      return SwitchAccountPage(userId: userId);
     },
   ),
+  // There is no web editor in this build. The mobile editor is the supported
+  // creation flow, so the web address hands the person to it rather than to a
+  // placeholder.
   GoRoute(
     path: MRoutes.webCreateBroadcast,
-    builder: (_, _) => const StubPage('Create Broadcast (Web)'),
+    redirect: (_, _) => MRoutes.broadcastEditor,
   ),
   GoRoute(
     path: MRoutes.liveSessionInit,
@@ -507,6 +518,17 @@ Iterable<String> _declaredNamesIn(RouteBase route) sync* {
     yield* _declaredNamesIn(child);
   }
 }
+
+/// The parameters a named broadcast section sends to [BroadcastsPage].
+///
+/// A section is more than its `type`: the type tells the screen which heading
+/// and card to draw, while `status` is what narrows the rows. The filters are
+/// taken from the query object rather than spelled again here, so a deep link
+/// and the section's own "See all" link cannot drift apart.
+Map<String, String> _sectionParameters(BroadcastQuery query) => {
+  for (final entry in query.toQueryParameters().entries)
+    entry.key: '${entry.value}',
+};
 
 /// The id [state]'s parameter [name] carries, or null when it is not a UUID.
 ///

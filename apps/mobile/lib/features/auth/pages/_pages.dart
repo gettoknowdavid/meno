@@ -5,3 +5,4 @@ export 'register_page.dart';
 export 'reset_password_otp_page.dart';
 export 'reset_password_page.dart';
 export 'reset_password_success_page.dart';
+export 'switch_account_page.dart';
