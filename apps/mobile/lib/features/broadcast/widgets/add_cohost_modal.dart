@@ -41,10 +41,17 @@ class AddCohostModal extends WatchingWidget {
     // which would otherwise still be there when the editor is reopened.
     callOnce((_) => search.clear());
 
-    final editor = di<BroadcastEditorManager>();
-    final cohostsIds = watchValue<BroadcastEditorManager, List<Id>>(
-      (manager) => manager.cohosts,
-    );
+    final isInviting = broadcastId != null;
+
+    // The editor manager exists only while the editor is on screen. Inviting
+    // into a live broadcast is opened from the room, where there is no draft
+    // and therefore no editor manager to resolve.
+    final editor = isInviting ? null : di<BroadcastEditorManager>();
+    final cohostsIds = isInviting
+        ? const <Id>[]
+        : watchValue<BroadcastEditorManager, List<Id>>(
+            (manager) => manager.cohosts,
+          );
     final results = watchValue<CohostSearchManager, List<Profile>>(
       (manager) => manager.results,
     );
@@ -54,8 +61,6 @@ class AddCohostModal extends WatchingWidget {
     final isSearching = watchValue<CohostSearchManager, bool>(
       (manager) => manager.search.isRunning,
     );
-
-    final isInviting = broadcastId != null;
 
     return MModal(
       title: isInviting ? 'Invite Co-host' : 'Add Co-host',
@@ -126,7 +131,7 @@ class AddCohostModal extends WatchingWidget {
                         : 'Add as Co-host',
                     onSelect: (id) async {
                       if (!isInviting) {
-                        editor.toggleCohost(id, profile: profile);
+                        editor!.toggleCohost(id, profile: profile);
                         return;
                       }
                       final invitation = await di<CohostInvitationsManager>()

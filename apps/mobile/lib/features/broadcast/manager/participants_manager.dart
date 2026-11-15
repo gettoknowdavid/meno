@@ -30,6 +30,11 @@ final class ParticipantsManager implements Disposable {
       _onParticipantJoined = _socket.onParticipantJoined.listen(_handleJoined);
       _onParticipantLeft = _socket.onParticipantLeft.listen(_handleLeft);
 
+      // A cohost's role changes without a join or leave frame. Refetching the
+      // roster is how the host's participant sheet learns that an invitee
+      // accepted, or that a cohost was demoted or removed.
+      _onCohostChanged = _socket.onCohostEvent.listen(_handleCohostChanged);
+
       searchQuery
           .debounce(const Duration(milliseconds: _searchDebounceMs))
           .listen(_handleSearchChange);
@@ -37,7 +42,7 @@ final class ParticipantsManager implements Disposable {
       _isInitialized = true;
     }, errorFilterFn: menoExceptionFilter);
 
-    _fetchParticipants = Command.createAsyncNoParamNoResult(() async {
+    refresh = Command.createAsyncNoParamNoResult(() async {
       final page = await _http.participants(_broadcastId);
       _handleInitialList(page.items);
     }, errorFilterFn: menoExceptionFilter);
@@ -48,7 +53,7 @@ final class ParticipantsManager implements Disposable {
     // constructor would throw and the live scope would never register. The
     // closures only reach for their neighbours when they *run*, so the order
     // they are created in does not matter; the order they are read does.
-    initialize.pipeToCommand(_fetchParticipants);
+    initialize.pipeToCommand(refresh);
 
     /// Shows [ _pageSize] more of the participants already loaded.
     loadMore = Command.createSyncNoParamNoResult(() {
@@ -97,6 +102,7 @@ final class ParticipantsManager implements Disposable {
 
   StreamSubscription<BroadcastParticipantEvent>? _onParticipantJoined;
   StreamSubscription<BroadcastParticipantEvent>? _onParticipantLeft;
+  StreamSubscription<CohostEvent>? _onCohostChanged;
 
   bool _isInitialized = false;
 
@@ -130,7 +136,9 @@ final class ParticipantsManager implements Disposable {
   /// every join between the response and the first listener.
   late final Command<void, void> initialize;
 
-  late final Command<void, void> _fetchParticipants;
+  /// Re-reads the room's roster, preserving the all-time and recent-joiner
+  /// history the screen already holds.
+  late final Command<void, void> refresh;
 
   /// Shows [ _pageSize] more of the participants already loaded.
   late final Command<void, void> loadMore;
@@ -144,7 +152,7 @@ final class ParticipantsManager implements Disposable {
 
   late final Command<void, void> clearSearch;
 
-  late final ValueListenable<bool> isLoading = _fetchParticipants.isRunning;
+  late final ValueListenable<bool> isLoading = refresh.isRunning;
 
   /// How many accounts are in the room right now.
   late final ValueListenable<int> totalCount =
@@ -227,6 +235,27 @@ final class ParticipantsManager implements Disposable {
     _sortedParticipants.removeWhere((item) => item.id == participant.id);
   }
 
+  /// Refetches the roster when a cohost's role changes.
+  ///
+  /// `cohostAccepted`/`newCohost`, `cohostDemotion` and `removedCohost` change
+  /// a participant's role without the join/leave frames the manager follows.
+  /// The room's own id keeps another broadcast's handshake from refreshing
+  /// this one.
+  void _handleCohostChanged(CohostEvent event) {
+    if (event.broadcastId != _broadcastId) return;
+
+    // An invitation or a refusal does not change the roster; only the frames
+    // that move an account into or out of a publishing role do.
+    if (event is! CohostAcceptedEvent &&
+        event is! NewCohostEvent &&
+        event is! CohostDemotionEvent &&
+        event is! RemovedCohostEvent) {
+      return;
+    }
+
+    refresh.run();
+  }
+
   void _handleInitialList(List<Participant> participants) {
     _sortedParticipants.startTransAction();
     _sortedParticipants.clear();
@@ -288,9 +317,11 @@ final class ParticipantsManager implements Disposable {
   FutureOr<dynamic> onDispose() async {
     await _onParticipantJoined?.cancel();
     await _onParticipantLeft?.cancel();
+    await _onCohostChanged?.cancel();
 
     _onParticipantJoined = null;
     _onParticipantLeft = null;
+    _onCohostChanged = null;
 
     _sortedParticipants.dispose();
     recentParticipants.dispose();
@@ -300,7 +331,7 @@ final class ParticipantsManager implements Disposable {
     liveCount.dispose();
     allTimeCount.dispose();
 
-    _fetchParticipants.dispose();
+    refresh.dispose();
     initialize.dispose();
     loadMore.dispose();
     showAll.dispose();

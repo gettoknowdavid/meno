@@ -1,6 +1,8 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
+import 'package:meno_mobile/features/broadcast/model/live_snapshot.dart';
+import 'package:meno_mobile/features/broadcast/widgets/add_cohost_modal.dart';
 import 'package:meno_mobile/features/broadcast/widgets/participants_grid.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -31,6 +33,11 @@ class ParticipantsModal extends WatchingWidget {
       return const SizedBox.shrink();
     }
 
+    final snapshot = watchValue<ActiveBroadcastManager, LiveSnapshot>(
+      (manager) => manager.snapshot,
+    );
+    final broadcastId = snapshot.broadcast?.id;
+
     final list = watch(manager.displayedParticipants).value;
     final totalCount = watch(manager.totalCount).value;
     final isSearching = watch(manager.isSearching).value;
@@ -54,6 +61,16 @@ class ParticipantsModal extends WatchingWidget {
               initialValue: query,
               onChanged: manager.updateSearch.run,
             ),
+            if (snapshot.canEndBroadcast &&
+                broadcastId != null &&
+                broadcastId.isValid) ...[
+              Spaces.verticalLarge,
+              MPrimaryButton(
+                label: 'Invite Co-host',
+                onPressed: () =>
+                    AddCohostModal.show(context, broadcastId: broadcastId),
+              ),
+            ],
             Spaces.verticalLarge,
             Expanded(
               child: ParticipantsGrid(

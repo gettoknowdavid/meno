@@ -132,6 +132,21 @@ void main() {
       );
     });
 
+    test('removes a cohost with the removeFromRoom choice', () async {
+      final api = StubApi();
+      final http = BroadcastHttpService(stubClient(api));
+
+      await http.removeCohost(
+        Id.fromString(broadcastId),
+        Id.fromString(inviteeId),
+        removeFromRoom: false,
+      );
+
+      final request = api.requests.single;
+      expect(request.path, '/broadcasts/$broadcastId/cohosts/$inviteeId');
+      expect(request.data, {'removeFromRoom': false});
+    });
+
     test('declines with the invitation id in the path', () async {
       final api = StubApi();
       final http = BroadcastHttpService(stubClient(api));
