@@ -256,8 +256,6 @@ class _MTextFormFieldState extends State<MTextFormField> {
     setState(() => _hasFocus = _focus.hasFocus);
   }
 
-  //
-  // ignore: avoid_positional_boolean_parameters
   T resolveBorder<T>(bool isBoxed, T boxedValue, T underlinedValue) {
     return isBoxed ? boxedValue : underlinedValue;
   }
