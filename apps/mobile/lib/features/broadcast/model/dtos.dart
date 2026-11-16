@@ -399,6 +399,8 @@ final class CohostInvitationDto {
     required this.broadcastId,
     required this.status,
     this.invitee,
+    this.inviterName,
+    this.broadcastTitle,
     this.createdAt,
   });
 
@@ -412,6 +414,8 @@ final class CohostInvitationDto {
       invitee: invitee is Map<String, dynamic>
           ? UserSummaryDto.fromJson(invitee)
           : null,
+      inviterName: json['inviterName'] as String?,
+      broadcastTitle: json['broadcastTitle'] as String?,
       createdAt: DateTime.tryParse(json['createdAt'] as String? ?? ''),
     );
   }
@@ -427,6 +431,12 @@ final class CohostInvitationDto {
 
   /// Who was invited.
   final UserSummaryDto? invitee;
+
+  /// Who sent it, on the read that lists the caller's pending invitations.
+  final String? inviterName;
+
+  /// The broadcast's title, on that same read.
+  final String? broadcastTitle;
 
   /// When it was issued.
   final DateTime? createdAt;
@@ -462,6 +472,8 @@ extension CohostInvitationDtoX on CohostInvitationDto {
   CohostInvitation get toDomain => CohostInvitation(
     id: _wireId(id),
     broadcastId: _wireId(broadcastId),
+    inviterName: inviterName,
+    broadcastTitle: broadcastTitle,
     status: InvitationStatus.fromWire(status),
     createdAt: createdAt,
   );

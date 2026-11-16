@@ -260,6 +260,21 @@ final class BroadcastHttpService {
     );
   }
 
+  /// `GET /broadcasts/co-host-invitations` — this account's invitations.
+  ///
+  /// The read is scoped to the caller, so it takes no id. It exists because
+  /// the socket frame is the only other source: an invitation delivered while
+  /// the app was closed would otherwise be a pending row nobody could see.
+  Future<List<CohostInvitation>> pendingCohostInvitations({
+    CancelToken? cancelToken,
+  }) {
+    return _client.getList(
+      '/broadcasts/co-host-invitations',
+      cancelToken: cancelToken,
+      fromJson: (data) => CohostInvitationDto.fromJson(_map(data)).toDomain,
+    );
+  }
+
   /// `POST /broadcasts/{id}/co-hosts/{invitationId}/accept` — the invitee's
   /// yes.
   ///

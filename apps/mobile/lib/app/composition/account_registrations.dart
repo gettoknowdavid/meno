@@ -82,14 +82,17 @@ Future<void> registerAccountScope(
 
   // The invitee's half of the co-host handshake. It listens from the moment the
   // account is built rather than from a page: an invitation can arrive while
-  // the reader is anywhere, and the API never lists the ones it sent, so a
-  // frame this manager was not there to hear is an invitation lost.
+  // the reader is anywhere, and a frame this manager was not there to hear is
+  // only recovered by the API's pending list. Seeding that list here means an
+  // invitation sent while the app was closed is on screen before the inbox is
+  // opened.
   final invitations = CohostInvitationsManager(
     http: di<BroadcastHttpService>(),
     events: di<BroadcastSocketService>().onCohostEvent,
     logger: di<MenoLogger>(),
   )..init();
   scope.registerSingleton<CohostInvitationsManager>(invitations);
+  invitations.loadPending.run();
 
   scope.registerLazySingleton<CohostSearchManager>(
     () => CohostSearchManager(profiles: di<ProfileHttpService>()),

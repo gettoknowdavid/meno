@@ -8,12 +8,12 @@ import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
 /// The co-host handshake, from the invitee's side.
 ///
-/// The API has no endpoint that lists an account's invitations: the invitee
-/// learns about one from the `cohostInvitation` frame, and answers it with the
-/// invitation id the frame carried. That makes this manager the client's only
-/// record of them — it keeps the frames it has seen in [pending] so the inbox
-/// and the room can both draw the same list, and forgets an invitation as soon
-/// as the API says the handshake moved on.
+/// An invitation reaches this manager two ways: the `cohostInvitation` frame,
+/// and [loadPending], which reads the API's list of the account's pending
+/// invitations. The read is what makes an invitation delivered while the app
+/// was closed recoverable — the frame was never heard, but the row is still
+/// there. Both feed [pending], and an invitation is forgotten as soon as the
+/// API says the handshake moved on.
 ///
 /// The frames also travel the other way: a host is told when an invitation is
 /// accepted, and an invitee's own acceptance answers with a `newCohost` frame.
@@ -42,6 +42,12 @@ final class CohostInvitationsManager implements Disposable {
       initialValue: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'cohost.invite',
+    );
+
+    loadPending = .createAsyncNoParamNoResult(
+      _loadPending,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'cohost.loadPending',
     );
 
     accept = .createAsync<CohostInvitation, CohostSession?>(
@@ -84,6 +90,9 @@ final class CohostInvitationsManager implements Disposable {
   /// Asks the account and the broadcast the request names to meet.
   late final Command<({Id broadcastId, Id userId}), CohostInvitation?> invite;
 
+  /// Reads the API's pending list and makes it the truth for this account.
+  late final Command<void, void> loadPending;
+
   /// Says yes to an invitation, answering with the session it produces.
   late final Command<CohostInvitation, CohostSession?> accept;
 
@@ -91,6 +100,13 @@ final class CohostInvitationsManager implements Disposable {
   late final Command<CohostInvitation, void> decline;
 
   StreamSubscription<CohostEvent>? _subscription;
+
+  /// Invitations this session has already answered or seen resolved.
+  ///
+  /// A list read that started before an answer can finish after it, and
+  /// reinstating an invitation the account just declined is worse than a stale
+  /// card. The ids are kept here so the response cannot bring one back.
+  final Set<Id> _resolved = {};
 
   /// Starts listening to the account's socket frames.
   ///
@@ -131,6 +147,9 @@ final class CohostInvitationsManager implements Disposable {
 
   void _upsert(CohostInvitation invitation) {
     if (!invitation.isPending) return;
+    // A re-invite reuses the row id, so a new frame makes the id answerable
+    // again even if this session saw its previous round resolved.
+    _resolved.remove(invitation.id);
     final existing = {
       for (final item in pending.value) item.id: item,
     }[invitation.id];
@@ -143,6 +162,7 @@ final class CohostInvitationsManager implements Disposable {
   }
 
   void _remove(Id invitationId) {
+    _resolved.add(invitationId);
     pending.value = [
       for (final item in pending.value)
         if (item.id != invitationId) item,
@@ -155,7 +175,46 @@ final class CohostInvitationsManager implements Disposable {
         if (item.broadcastId != broadcastId) item,
     ];
     if (next.length == pending.value.length) return;
+    for (final item in pending.value) {
+      if (item.broadcastId == broadcastId) _resolved.add(item.id);
+    }
     pending.value = next;
+  }
+
+  /// Replaces [pending] with the API's list, keeping frames that arrived while
+  /// the request was in flight.
+  ///
+  /// The server list is authoritative for what is still pending, but it is a
+  /// snapshot: a `cohostInvitation` that arrived after the request started is
+  /// newer and must survive the replace. If the response omits a name the
+  /// frame carried, the merge keeps the frame's name.
+  Future<void> _loadPending() async {
+    final known = {for (final item in pending.value) item.id};
+    final current = {for (final item in pending.value) item.id: item};
+    final fetched = await _http.pendingCohostInvitations();
+    final next = <Id, CohostInvitation>{};
+
+    for (final invitation in fetched) {
+      if (_resolved.contains(invitation.id)) continue;
+      final existing = current[invitation.id];
+      next[invitation.id] = existing?.merge(invitation) ?? invitation;
+    }
+
+    for (final item in pending.value) {
+      if (!known.contains(item.id)) next.putIfAbsent(item.id, () => item);
+    }
+
+    pending.value = next.values.toList()..sort(_newestFirst);
+  }
+
+  /// Newest invitation first, with an undated one last.
+  static int _newestFirst(CohostInvitation a, CohostInvitation b) {
+    final left = a.createdAt;
+    final right = b.createdAt;
+    if (left == null && right == null) return 0;
+    if (left == null) return 1;
+    if (right == null) return -1;
+    return right.compareTo(left);
   }
 
   @override
@@ -164,6 +223,7 @@ final class CohostInvitationsManager implements Disposable {
     _subscription = null;
     pending.dispose();
     invite.dispose();
+    loadPending.dispose();
     accept.dispose();
     decline.dispose();
   }

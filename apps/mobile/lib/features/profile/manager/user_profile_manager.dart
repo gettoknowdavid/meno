@@ -1,8 +1,6 @@
 import 'dart:async';
 
-import 'package:flutter/cupertino.dart' show ChangeNotifier;
 import 'package:flutter/foundation.dart' show ChangeNotifier;
-import 'package:flutter/material.dart' show ChangeNotifier;
 import 'package:flutter/widgets.dart' show ChangeNotifier;
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart' show ChangeNotifier;

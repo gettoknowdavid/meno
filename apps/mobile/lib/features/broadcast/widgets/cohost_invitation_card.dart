@@ -143,6 +143,10 @@ class CohostInvitationList extends WatchingWidget {
       return const SizedBox.shrink();
     }
 
+    // The account seeds this list at start; opening the inbox is the second
+    // chance for a read that failed then, without a socket frame to rely on.
+    callOnce((_) => di<CohostInvitationsManager>().loadPending.run());
+
     final invitations =
         watchValue<CohostInvitationsManager, List<CohostInvitation>>(
           (manager) => manager.pending,
