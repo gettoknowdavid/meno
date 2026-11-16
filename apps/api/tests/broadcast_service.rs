@@ -1304,6 +1304,56 @@ async fn declining_an_invitation_leaves_the_roster_alone() {
 }
 
 #[tokio::test]
+async fn pending_invitations_are_listed_only_for_their_invitee() {
+    let (svc, repo, _events, _notices) = service_with_notices();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    let invitation = svc
+        .add_cohost(
+            created.id,
+            dto::AddCohostRequest {
+                cohost: user(2, "Grace Hopper").id,
+            },
+            &user(1, "Ada Lovelace"),
+        )
+        .await
+        .expect("invite");
+
+    let pending = svc
+        .pending_cohost_invitations(&user(2, "Grace Hopper"))
+        .await
+        .expect("the read runs");
+
+    assert_eq!(pending.len(), 1);
+    assert_eq!(pending[0].id, invitation.id);
+    assert_eq!(pending[0].broadcast_id, created.id);
+    assert_eq!(pending[0].broadcast_title, "Ada's show");
+    assert_eq!(pending[0].inviter_name, "Ada Lovelace");
+    assert_eq!(pending[0].status, "pending");
+    assert!(
+        svc.pending_cohost_invitations(&user(3, "Adam Smith"))
+            .await
+            .expect("the read runs")
+            .is_empty(),
+        "an invitation names one invitee"
+    );
+
+    svc.decline_cohost_invitation(created.id, invitation.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("decline");
+    assert!(
+        svc.pending_cohost_invitations(&user(2, "Grace Hopper"))
+            .await
+            .expect("after decline")
+            .is_empty(),
+        "an answered invitation is no longer pending"
+    );
+}
+
+#[tokio::test]
 async fn a_due_scheduled_broadcast_is_reminded_once_and_does_not_go_live() {
     let (svc, repo, _events, notices) = service_with_notices();
     seed(&repo);

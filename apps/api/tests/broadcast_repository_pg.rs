@@ -635,12 +635,35 @@ async fn an_invitation_is_reissued_pending_and_only_a_pending_row_can_answer(
         assert_eq!(reissued.status, InvitationStatus::Pending);
         assert_eq!(reissued.responded_at, None);
 
+        let pending = repo
+            .list_pending_invitations(grace())
+            .await
+            .expect("the list read runs");
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].id, reissued.id);
+        assert_eq!(pending[0].broadcast_title, "Room");
+        assert_eq!(pending[0].inviter_name, "Ada Lovelace");
+        assert!(
+            repo.list_pending_invitations(adam())
+                .await
+                .expect("the list read runs")
+                .is_empty(),
+            "the read is scoped to the invitee"
+        );
+
         let declined = repo
             .respond_invitation(reissued.id, InvitationStatus::Declined, at(40))
             .await
             .expect("the answer runs")
             .expect("the reissued row is pending");
         assert_eq!(declined.status, InvitationStatus::Declined);
+        assert!(
+            repo.list_pending_invitations(grace())
+                .await
+                .expect("the list read runs")
+                .is_empty(),
+            "an answered invitation is no longer pending"
+        );
 
         assert!(
             repo.find_invitation(uuid::Uuid::new_v4())

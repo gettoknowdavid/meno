@@ -318,6 +318,23 @@ pub async fn add_cohost(
     Ok(MenoResponse::ok("Cohost invited successfully", invitation))
 }
 
+/// `GET /broadcasts/co-host-invitations` — the caller's pending invitations.
+///
+/// Only the caller's own invitations are returned; the account comes from the auth
+/// guard, never from a parameter.
+pub async fn pending_cohost_invitations(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+) -> Outcome<Vec<super::dto::PendingCohostInvitationResponse>> {
+    let actor = summary_of(&auth);
+
+    let invitations = handlers.service.pending_cohost_invitations(&actor).await?;
+    Ok(MenoResponse::ok(
+        "Cohost invitations retrieved",
+        invitations,
+    ))
+}
+
 /// `POST /broadcasts/{id}/cohosts/{invitationId}/accept` — the invitee accepts.
 ///
 /// # Errors

@@ -965,6 +965,34 @@ impl BroadcastService {
         })
     }
 
+    /// `GET /broadcasts/co-host-invitations` — the invitations this account can answer.
+    ///
+    /// Scoped to the caller: an account can read only the invitations addressed to it,
+    /// which is why the method takes no id. An invitation to a broadcast that has ended
+    /// or been deleted is omitted by the repository — there is nothing left to co-host.
+    ///
+    /// # Errors
+    ///
+    /// A repository failure.
+    #[tracing::instrument(skip_all, fields(actor = %actor.id))]
+    pub async fn pending_cohost_invitations(
+        &self,
+        actor: &UserSummary,
+    ) -> Result<Vec<super::dto::PendingCohostInvitationResponse>, MenoError> {
+        let rows = self.repo.list_pending_invitations(actor.id).await?;
+        Ok(rows
+            .into_iter()
+            .map(|row| super::dto::PendingCohostInvitationResponse {
+                id: row.id,
+                broadcast_id: row.broadcast_id,
+                broadcast_title: row.broadcast_title,
+                inviter_name: row.inviter_name,
+                status: row.status.as_str().to_owned(),
+                created_at: row.created_at,
+            })
+            .collect())
+    }
+
     /// `POST /broadcasts/{id}/cohosts/{invitationId}/accept` — the invitee's yes.
     ///
     /// Accepting into a live room also mints the cohost's publish token and sends it on

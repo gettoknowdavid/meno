@@ -28,7 +28,7 @@ use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter};
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus,
     CohostInvitation, EndReason, InvitationStatus, JoinOutcome, JoinRequest, LeaveOutcome,
-    NewBroadcast, ParticipantRole, UserSummary, now,
+    NewBroadcast, ParticipantRole, PendingCohostInvitation, UserSummary, now,
 };
 use meno_core::Error as MenoError;
 
@@ -674,6 +674,34 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             .iter()
             .find(|row| row.id == id)
             .cloned())
+    }
+
+    async fn list_pending_invitations(
+        &self,
+        invitee_id: Uuid,
+    ) -> Result<Vec<PendingCohostInvitation>, MenoError> {
+        let state = self.lock();
+        let mut pending: Vec<PendingCohostInvitation> = state
+            .invitations
+            .iter()
+            .filter(|row| row.invitee_id == invitee_id && row.status == InvitationStatus::Pending)
+            .filter_map(|row| {
+                let broadcast = state.broadcasts.iter().find(|b| {
+                    b.id == row.broadcast_id && b.deleted_at.is_none() && b.end_time.is_none()
+                })?;
+                let inviter = state.users.iter().find(|u| u.id == row.inviter_id)?;
+                Some(PendingCohostInvitation {
+                    id: row.id,
+                    broadcast_id: row.broadcast_id,
+                    status: row.status,
+                    created_at: row.created_at,
+                    broadcast_title: broadcast.title.clone(),
+                    inviter_name: inviter.full_name.clone(),
+                })
+            })
+            .collect();
+        pending.sort_by_key(|a| std::cmp::Reverse(a.created_at));
+        Ok(pending)
     }
 
     async fn respond_invitation(

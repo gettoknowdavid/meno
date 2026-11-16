@@ -190,6 +190,30 @@ pub struct CohostInvitationResponse {
     pub created_at: time::OffsetDateTime,
 }
 
+/// One of the caller's pending invitations, as `GET /broadcasts/co-host-invitations`
+/// answers it.
+///
+/// The invitee is the caller by construction, so the read carries the two names the
+/// card shows instead: who invited them and which broadcast they are being asked to
+/// co-host.
+#[derive(Debug, Clone, Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PendingCohostInvitationResponse {
+    /// The invitation to accept or decline.
+    pub id: Uuid,
+    /// Which broadcast.
+    pub broadcast_id: Uuid,
+    /// The broadcast's title, for the card.
+    pub broadcast_title: String,
+    /// Who sent the invitation.
+    pub inviter_name: String,
+    /// Always `pending`: this read exists for the invitations still to answer.
+    pub status: String,
+    /// When the invitation was issued.
+    #[serde(with = "time::serde::rfc3339")]
+    pub created_at: time::OffsetDateTime,
+}
+
 /// An accepted invitation. The token is present only when the room already exists.
 #[derive(Debug, Clone, serde::Serialize)]
 #[serde(rename_all = "camelCase")]

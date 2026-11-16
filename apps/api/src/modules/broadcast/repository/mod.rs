@@ -47,7 +47,7 @@ use uuid::Uuid;
 use super::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus,
     CohostInvitation, EndReason, InvitationStatus, JoinOutcome, JoinRequest, LeaveOutcome,
-    NewBroadcast, ParticipantRole, UserSummary,
+    NewBroadcast, ParticipantRole, PendingCohostInvitation, UserSummary,
 };
 
 /// Postgres-backed storage for the broadcast module.
@@ -201,6 +201,16 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
 
     /// An invitation by id, whatever its status.
     async fn find_invitation(&self, id: Uuid) -> Result<Option<CohostInvitation>, MenoError>;
+
+    /// The pending invitations `invitee_id` can still answer, newest first.
+    ///
+    /// Joined to the broadcast and the inviter because the card is shown from this read
+    /// alone; an invitation whose broadcast has ended or been deleted is omitted, since
+    /// there is nothing left to co-host.
+    async fn list_pending_invitations(
+        &self,
+        invitee_id: Uuid,
+    ) -> Result<Vec<PendingCohostInvitation>, MenoError>;
 
     /// Record the invitee's answer; `None` when the row does not exist.
     async fn respond_invitation(

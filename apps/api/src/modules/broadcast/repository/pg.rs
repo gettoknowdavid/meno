@@ -60,7 +60,7 @@ use crate::infrastructure::query::{ColumnName, push_cursor_condition, push_order
 use crate::modules::broadcast::error;
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, EndReason, JoinOutcome,
-    JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, UserSummary,
+    JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole, PendingCohostInvitation, UserSummary,
 };
 use crate::modules::broadcast::model::{CohostInvitation, InvitationStatus};
 use meno_core::Error as MenoError;
@@ -367,6 +367,26 @@ impl BroadcastRepo for PgBroadcastRepo {
         .fetch_optional(&self.pool)
         .await
         .map_err(|e| database("find_invitation", e))
+    }
+
+    async fn list_pending_invitations(
+        &self,
+        invitee_id: Uuid,
+    ) -> Result<Vec<PendingCohostInvitation>, MenoError> {
+        sqlx::query_as::<_, PendingCohostInvitation>(
+            "SELECT i.id, i.broadcast_id, i.status, i.created_at, \
+                    b.title AS broadcast_title, u.full_name AS inviter_name \
+             FROM cohost_invitations i \
+             JOIN broadcasts b ON b.id = i.broadcast_id \
+             JOIN users u ON u.id = i.inviter_id \
+             WHERE i.invitee_id = $1 AND i.status = 'pending' \
+               AND b.deleted_at IS NULL AND b.end_time IS NULL \
+             ORDER BY i.created_at DESC",
+        )
+        .bind(invitee_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| database("list_pending_invitations", e))
     }
 
     async fn respond_invitation(

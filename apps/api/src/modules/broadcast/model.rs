@@ -173,6 +173,27 @@ pub struct CohostInvitation {
     pub responded_at: Option<OffsetDateTime>,
 }
 
+/// A pending invitation as its invitee sees it.
+///
+/// The handshake row names ids; a card that appears after a restart needs the two
+/// sentences it shows, so the list read joins the broadcast and the inviter in the same
+/// query. It is a read projection, not a stored row: nothing writes it back.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct PendingCohostInvitation {
+    /// Primary key of the invitation.
+    pub id: Uuid,
+    /// Which broadcast.
+    pub broadcast_id: Uuid,
+    /// Where it is in its lifecycle; the read only returns `pending`.
+    pub status: InvitationStatus,
+    /// When it was issued (or re-issued).
+    pub created_at: OffsetDateTime,
+    /// The broadcast's title, for the invitation card.
+    pub broadcast_title: String,
+    /// The inviter's display name, for the invitation card.
+    pub inviter_name: String,
+}
+
 /// The clock, as one call site.
 ///
 /// Every "is this in the past" decision goes through here so a test can reason about

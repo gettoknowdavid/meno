@@ -48,6 +48,7 @@ use crate::modules::broadcast::storage::MAX_BROADCAST_IMAGE_BYTES;
 /// thing it is meant to check cannot fail. [`crate::routes::tests`] asserts against it.
 pub const BROADCAST_PATHS: &[&str] = &[
     "/broadcasts",
+    "/broadcasts/co-host-invitations",
     "/broadcasts/00000000-0000-0000-0000-000000000000",
     "/broadcasts/00000000-0000-0000-0000-000000000000/live",
     "/broadcasts/00000000-0000-0000-0000-000000000000/end",
@@ -75,6 +76,12 @@ pub fn routes(
     // one on a GET would cache a response nobody asked to cache.
     let reads = Router::new()
         .route("/broadcasts", get(handlers::list))
+        // Static before the `{id}` sibling: this is the invitee's own list, not a
+        // broadcast whose id happens to spell the word.
+        .route(
+            "/broadcasts/co-host-invitations",
+            get(handlers::pending_cohost_invitations),
+        )
         .route("/broadcasts/{id}", get(handlers::get))
         .route("/broadcasts/{id}/participants", get(handlers::participants))
         .layer(from_fn_with_state(
