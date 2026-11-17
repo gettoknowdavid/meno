@@ -16,7 +16,11 @@ class BookWidget extends WatchingWidget {
     final manager = di<BibleManager>();
 
     final currentBookIdx = watchValue<BibleManager, int>((m) => m.book);
-    final isExpanded = manager.bookName(currentBookIdx) == bookName;
+    final isCollapsed = watchValue<BibleManager, bool>(
+      (m) => m.booksCollapsed,
+    );
+    final isActiveBook = manager.bookName(currentBookIdx) == bookName;
+    final isExpanded = isActiveBook && !isCollapsed;
 
     return Column(
       crossAxisAlignment: .stretch,
@@ -26,14 +30,19 @@ class BookWidget extends WatchingWidget {
           bookName: bookName,
           isExpanded: isExpanded,
           onTap: () {
-            if (isExpanded) return;
+            if (!isActiveBook) {
+              final names = manager.bookNames;
+              final idx = names.indexOf(bookName);
+              if (idx == -1) return;
+              manager.getVerses.run(
+                BibleArgs(book: idx, translation: manager.translation.value),
+              );
+              return;
+            }
 
-            final names = manager.bookNames;
-            final idx = names.indexOf(bookName);
-            if (idx == -1) return;
-            manager.getVerses.run(
-              BibleArgs(book: idx, translation: manager.translation.value),
-            );
+            // Tapping the open book's name again closes its chapters grid;
+            // tapping once more reopens it without reloading the chapter.
+            manager.booksCollapsed.value = !isCollapsed;
           },
         ),
         AnimatedSize(

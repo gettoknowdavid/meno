@@ -29,6 +29,12 @@ final class BibleManager implements Disposable {
   /// Index into the book list (0 = Genesis).
   final book = ValueNotifier<int>(0);
 
+  /// True while the user has collapsed the open book in the book list.
+  ///
+  /// The book stays active — the reader keeps showing it — only its chapter
+  /// grid is hidden, so tapping the book's name again closes and reopens it.
+  final booksCollapsed = ValueNotifier<bool>(false);
+
   /// 1-based chapter number.
   final chapter = ValueNotifier<int>(1);
 
@@ -144,6 +150,8 @@ final class BibleManager implements Disposable {
           book.value = args.book;
           chapter.value = args.chapter;
           verse.value = args.verse;
+          // Navigating always reopens the book's grid.
+          booksCollapsed.value = false;
 
           // Prefer the args translation; fall back to the manager's active one.
           final trans = args.translation.isNotEmpty
@@ -302,6 +310,7 @@ final class BibleManager implements Disposable {
     _logger.i('BibleManager: Disposing…', tag: MenoLogTag.lifecycle.label);
 
     book.dispose();
+    booksCollapsed.dispose();
     chapter.dispose();
     verse.dispose();
     translation.dispose();

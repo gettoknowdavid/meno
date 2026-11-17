@@ -12,6 +12,9 @@ class BibleBooksModal extends WatchingWidget {
   const new _() : super(key: null);
 
   static Future<void> show(BuildContext context) {
+    // Always open with the active book's grid showing.
+    di<BibleManager>().booksCollapsed.value = false;
+
     final size = MediaQuery.sizeOf(context);
     return showModalBottomSheet<void>(
       context: context,
