@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/locator.dart';
 
 void main() {
@@ -27,4 +28,7 @@ void main() {
     ..event('app_start', {'env': config.env.name});
 
   runApp(const MenoApp());
+
+  // Same start as `main()`: after the frame is requested, not before it.
+  startBibleSeeding();
 }

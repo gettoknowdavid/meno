@@ -8,9 +8,16 @@ record carrying the translation's full metadata, plus one `Verse` row per
 verse. The converter is a build step — it is not part of the app bundle.
 
 With `--seed-output` it also emits the gzipped payload the mobile app seeds
-its own store from (`apps/mobile/assets/bible/<code>.json.gz`). The app cannot
+its own store from (`apps/mobile/assets/bible/<code>.seed`). The app cannot
 import a compiled `.mdb` — ObjectBox has no merge or import API — so it parses
 this payload and writes the rows through its own entities.
+
+The payload is gzipped JSON under a `.seed` name, **not** `.json.gz`. Android's
+asset packaging (aapt) strips a trailing `.gz` and inflates the stream, so a
+file named `kjv.json.gz` reaches the APK as `kjv.json` while the app's asset
+manifest still asks for `kjv.json.gz`, and the load fails on the device. The
+extension is what the app declares in `bundledTranslations`; keep the two in
+step.
 
 The long-form explanation (data model, design decisions, app-side bundling) is
 in [`docs/bible_objectbox_converter.md`](../../docs/bible_objectbox_converter.md).
@@ -85,7 +92,7 @@ for t in kjv web asv; do
     --input input/$t.json \
     --output outputs/$t.mdb \
     --code $t \
-    --seed-output ../../apps/mobile/assets/bible/$t.json.gz || exit 1
+    --seed-output ../../apps/mobile/assets/bible/$t.seed || exit 1
 done
 ```
 
@@ -99,9 +106,10 @@ values like `1.0` produce rows nothing can look up.
   `outputs/asv.mdb` (~9 MB), `outputs/web.mdb` (~9 MB).
 - The `.mdb` is the store's `data.mdb`, copied out of a temp store after the
   store is closed.
-- With `--seed-output`, one `.json.gz` per translation next to the app's other
-  assets: `assets/bible/kjv.json.gz` (1.29 MB), `web.json.gz` (1.25 MB),
-  `asv.json.gz` (1.27 MB).
+- With `--seed-output`, one `.seed` per translation next to the app's other
+  assets: `assets/bible/kjv.seed` (1.29 MB), `web.seed` (1.25 MB),
+  `asv.seed` (1.27 MB). Gzipped JSON, titled so Android keeps the name (see
+  above).
 - Expected verse counts: KJV 31,102, ASV 31,102, WEB 31,103. Each payload
   carries 66 books and only the version's `code`, `name`,
   `copyrightStatement` and `copyright`.

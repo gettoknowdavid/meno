@@ -1,7 +1,7 @@
 //! `publish-bible` — upload one Bible seed payload to the CDN.
 //!
 //! ```text
-//! cargo run --bin publish-bible -- --code asv --payload ../mobile/assets/bible/asv.json.gz
+//! cargo run --bin publish-bible -- --code asv --payload ../mobile/assets/bible/asv.seed
 //! ```
 //!
 //! # What it uploads, and where
@@ -182,7 +182,7 @@ fn usage() -> String {
          Usage:\n  \
          cargo run --bin publish-bible -- --code <code> --payload <path.json.gz>\n\n\
          Codes:  {}\n\
-         Paths:  apps/mobile/assets/bible/<code>.json.gz (written by the converter's \
+         Paths:  apps/mobile/assets/bible/<code>.seed (written by the converter's \
          --seed-output)\n\
          Env:    STORAGE_ENDPOINT, STORAGE_ACCESS_KEY, STORAGE_SECRET_KEY, STORAGE_BUCKET, \
          STORAGE_REGION, STORAGE_PUBLIC_URL",

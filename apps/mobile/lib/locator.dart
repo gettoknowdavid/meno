@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -76,13 +74,13 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   // The bundled translations are device data, not an account's, so the seeder
   // belongs here rather than in the account scope.
   //
-  // Registration owns the run: `onCreated` starts it the first time anything
-  // resolves the seeder — the reader, the translations list — so neither
-  // `main()` nor `main_dev()` has to start it, and a retry gets it again
-  // through `di.reset()` + registration. It is not awaited there: `allReady()`
-  // must not wait for a multi-second insert, and everything that reads
-  // scripture awaits `ensureSeeded`, which hands back this same run. The
-  // store's seed ledger means an interrupted run resumes on the next launch.
+  // `main()` starts the run — `startBibleSeeding()` right after `runApp` — so a
+  // cold start seeds whether or not anybody signs in, and the first frame is
+  // never behind a multi-second insert (`allReady()` does not wait for it).
+  // Everything that reads scripture awaits `ensureSeeded`, which hands back
+  // that same run instead of starting another, and a retry gets a fresh one
+  // through `di.reset()` + `configureDependencies`. The store's seed ledger
+  // means an interrupted run resumes on the next launch.
   //
   // No `dependsOn: [Database]`. A dependency-based registration needs the
   // store to be a *waitable* registration (`isAsync`, `signalsReady`, or a
@@ -90,10 +88,7 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   // registers a synchronous in-memory store — so `dependsOn` makes
   // `configureDependencies` throw `Dependent Type Database is not an async
   // Singleton` in every widget test. The seeder waits for the store itself.
-  di.registerLazySingleton<BibleSeedService>(
-    BibleSeedService.new,
-    onCreated: (service) => unawaited(service.ensureSeeded()),
-  );
+  di.registerLazySingleton<BibleSeedService>(BibleSeedService.new);
   // Same scope: what the reader reads is device data too.
   di.registerLazySingleton<BibleLocalService>(
     () => BibleLocalService(di<Database>()),

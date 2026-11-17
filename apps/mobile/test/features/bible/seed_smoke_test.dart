@@ -39,7 +39,7 @@ Uint8List _payloadBytes(List<List<Object>> verses, {int copyright = 0}) {
 
 const _translation = BundledTranslation(
   code: 'tst',
-  asset: 'assets/bible/tst.json.gz',
+  asset: 'assets/bible/tst.seed',
   version: 1,
 );
 
@@ -66,6 +66,12 @@ void main() {
 
     await service.ensureSeeded();
 
+    // A run that wrote rows is the one the home page's notice reports; it is
+    // cleared once shown, so a later visit does not repeat it.
+    expect(service.freshlySeeded.value, isTrue);
+    service.acknowledgeDownloaded();
+    expect(service.freshlySeeded.value, isFalse);
+
     expect(database.bibleVerseBox.count(), 3);
     expect(
       database.bibleVersionBox.query().build().findFirst()!.name,
@@ -76,10 +82,12 @@ void main() {
     expect(ledger.seedVersion, 1);
     expect(ledger.verseCount, 3);
 
-    // A second run has nothing to do.
+    // A second run has nothing to do — and announces nothing: the device did
+    // not download anything.
     await service.ensureSeeded();
     expect(database.bibleVerseBox.count(), 3);
     expect(database.bibleSeedBox.count(), 1);
+    expect(service.freshlySeeded.value, isFalse);
 
     // A bumped version replaces the rows instead of duplicating them.
     final bumped = BibleSeedService(
@@ -91,7 +99,7 @@ void main() {
       translations: const [
         BundledTranslation(
           code: 'tst',
-          asset: 'assets/bible/tst.json.gz',
+          asset: 'assets/bible/tst.seed',
           version: 2,
         ),
       ],

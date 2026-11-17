@@ -4,6 +4,7 @@ import 'dart:io';
 import 'dart:isolate';
 import 'dart:math';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -45,20 +46,28 @@ final class BundledTranslation {
 }
 
 /// What this build bundles, in the order seeding runs.
+///
+/// The payloads are named `.seed`, not `.json.gz`, and that is not cosmetic:
+/// Android's asset packaging (aapt) strips a trailing `.gz` and inflates the
+/// stream, so an asset declared as `kjv.json.gz` lands in the APK as
+/// `kjv.json` while `AssetManifest.bin` — and this app — still asks for the
+/// `.gz` name. The load then fails on the device with "Unable to load asset".
+/// A name aapt leaves alone keeps the file and the manifest in agreement; the
+/// bytes themselves stay gzip-compressed, which [decodeSeedPayload] inflates.
 const List<BundledTranslation> bundledTranslations = [
   BundledTranslation(
     code: 'kjv',
-    asset: 'assets/bible/kjv.json.gz',
+    asset: 'assets/bible/kjv.seed',
     version: 1,
   ),
   BundledTranslation(
     code: 'web',
-    asset: 'assets/bible/web.json.gz',
+    asset: 'assets/bible/web.seed',
     version: 1,
   ),
   BundledTranslation(
     code: 'asv',
-    asset: 'assets/bible/asv.json.gz',
+    asset: 'assets/bible/asv.seed',
     version: 1,
   ),
 ];
@@ -82,16 +91,16 @@ const List<BundledTranslation> bundledTranslations = [
 /// * It is device data, not account data — a verse carries no owner — so it
 ///   lives outside the account scope and is not repeated per account.
 /// * It never blocks startup. `app.dart` waits on `di.allReady()` before the
-///   first frame and this is deliberately not part of that chain; the service's
-///   registration in `locator.dart` starts the run from its `onCreated`
-///   callback, and nobody awaits it there.
+///   first frame and this is deliberately not part of that chain; `main.dart`
+///   starts the run from [startBibleSeeding] immediately after `runApp`, and
+///   nobody awaits it there.
 /// * It is idempotent. [BibleSeedRow] says what is already there, the verse key
 ///   makes every write a replace, and a crash or a container reset simply means
 ///   the next call finishes the job.
 ///
 /// [ensureSeeded] is also the await point for anything that needs the verses:
 /// it returns immediately when the device is already current.
-final class BibleSeedService {
+final class BibleSeedService implements Disposable {
   new({AssetBundle? bundle, List<BundledTranslation>? translations})
     : _bundle = bundle ?? rootBundle,
       _translations = translations ?? bundledTranslations;
@@ -106,6 +115,21 @@ final class BibleSeedService {
 
   /// The run in flight, so two callers do one seed rather than two.
   Future<void>? _running;
+
+  /// Whether this launch wrote scripture the device did not already hold.
+  ///
+  /// One shot, and only ever set for a run that actually seeded: the home page
+  /// turns it into its "downloaded" notice and clears it through
+  /// [acknowledgeDownloaded]. Keeping it a flag rather than an event is what
+  /// lets a notice still appear when the run finished while the sign-in screen
+  /// was up, and never appear twice.
+  final ValueNotifier<bool> freshlySeeded = ValueNotifier<bool>(false);
+
+  /// Marks the notice as shown, so it is not repeated.
+  void acknowledgeDownloaded() => freshlySeeded.value = false;
+
+  @override
+  void onDispose() => freshlySeeded.dispose();
 
   /// Brings the store up to date with the bundled translations.
   ///
@@ -138,9 +162,13 @@ final class BibleSeedService {
       return;
     }
 
+    var wroteAnything = false;
+
     for (final translation in _translations) {
       try {
-        await _seedTranslation(database, translation, logger);
+        if (await _seedTranslation(database, translation, logger)) {
+          wroteAnything = true;
+        }
       } on Object catch (error, stackTrace) {
         // One bad translation does not stop the others, and a store that was
         // closed underneath this run (a container reset) is retried
@@ -153,9 +181,15 @@ final class BibleSeedService {
         );
       }
     }
+
+    if (wroteAnything) freshlySeeded.value = true;
   }
 
-  Future<void> _seedTranslation(
+  /// Writes one translation when the store is not already current.
+  ///
+  /// Returns whether rows were written, which is what tells the app that this
+  /// launch has scripture worth announcing.
+  Future<bool> _seedTranslation(
     Database database,
     BundledTranslation translation,
     MenoLogger logger,
@@ -166,7 +200,7 @@ final class BibleSeedService {
     if (ledger != null &&
         ledger.seedVersion >= translation.version &&
         ledger.verseCount == _storedVerseCount(database, code)) {
-      return;
+      return false;
     }
 
     final payload = await _loadPayload(translation.asset);
@@ -178,7 +212,7 @@ final class BibleSeedService {
         '$_supportedSeedFormat',
         tag: MenoLogTag.lifecycle.label,
       );
-      return;
+      return false;
     }
 
     final assetCode = payload['code'] as String?;
@@ -187,7 +221,7 @@ final class BibleSeedService {
         'Skipped ${translation.code}: the asset names itself "$assetCode"',
         tag: MenoLogTag.lifecycle.label,
       );
-      return;
+      return false;
     }
 
     final verses = payload['verses'] as List<dynamic>;
@@ -196,7 +230,7 @@ final class BibleSeedService {
         'Skipped $code: the asset holds no verses',
         tag: MenoLogTag.lifecycle.label,
       );
-      return;
+      return false;
     }
 
     final bookNames = _bookNames(payload);
@@ -236,6 +270,7 @@ final class BibleSeedService {
     }
 
     logger.i('Seeded $code ($written verses)', tag: MenoLogTag.lifecycle.label);
+    return true;
   }
 
   /// The store to seed into.
@@ -392,3 +427,15 @@ void _writeSeedBatch(Store store, _SeedBatch batch) {
 /// Top-level and synchronous so it can be handed to [Isolate.run].
 Map<String, dynamic> decodeSeedPayload(Uint8List bytes) =>
     jsonDecode(utf8.decode(gzip.decode(bytes))) as Map<String, dynamic>;
+
+/// Starts this launch's seed run without waiting for it.
+///
+/// Called from `main()` and `main_dev()` right after `runApp`, for two reasons:
+/// the first frame is requested before several megabytes are parsed and ~93k
+/// rows are written, and the run happens on a cold start whether or not anybody
+/// signs in — the seeding is the device's, not an account's. Resolving the
+/// service creates it; [BibleSeedService.ensureSeeded] is idempotent, so the
+/// reader and the translations list asking later join this same run.
+void startBibleSeeding() {
+  unawaited(di<BibleSeedService>().ensureSeeded());
+}

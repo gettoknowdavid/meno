@@ -55,48 +55,56 @@ List<RouteBase> get _bottomNavShell => [
         ],
       ),
       StatefulShellBranch(
-        navigatorKey: discoverBranchKey,
-        initialLocation: MRoutes.discoverAllTab,
         routes: [
           GoRoute(
-            path: MRoutes.discover,
-            // Discover has no screen of its own: it is its first tab. A link to
-            // the bare path is a link to "all", not a fourth page.
-            redirect: (_, _) => MRoutes.discoverAllTab,
-          ),
-          StatefulShellRoute(
-            parentNavigatorKey: discoverBranchKey,
-            builder: (_, _, navigationShell) => navigationShell,
-            navigatorContainerBuilder: DiscoverShell.builder,
-            branches: [
-              StatefulShellBranch(
-                routes: [
-                  GoRoute(
-                    path: MRoutes.discoverAllTab,
-                    builder: (_, _) => const AllBroadcastsWidget(),
-                  ),
-                ],
-              ),
-              StatefulShellBranch(
-                routes: [
-                  GoRoute(
-                    path: MRoutes.discoverNowLiveTab,
-                    builder: (_, _) => const NowLiveBroadcastsWidget(),
-                  ),
-                ],
-              ),
-              StatefulShellBranch(
-                routes: [
-                  GoRoute(
-                    path: MRoutes.discoverRecentlyLiveTab,
-                    builder: (_, _) => const RecentlyLiveBroadcastsWidget(),
-                  ),
-                ],
-              ),
-            ],
+            path: MRoutes.bible,
+            builder: (context, state) => const BiblePage(),
           ),
         ],
       ),
+      // StatefulShellBranch(
+      //   navigatorKey: discoverBranchKey,
+      //   initialLocation: MRoutes.discoverAllTab,
+      //   routes: [
+      //     GoRoute(
+      //       path: MRoutes.discover,
+      //       // Discover has no screen of its own: it is its first tab. A link to
+      //       // the bare path is a link to "all", not a fourth page.
+      //       redirect: (_, _) => MRoutes.discoverAllTab,
+      //     ),
+      //     StatefulShellRoute(
+      //       parentNavigatorKey: discoverBranchKey,
+      //       builder: (_, _, navigationShell) => navigationShell,
+      //       navigatorContainerBuilder: DiscoverShell.builder,
+      //       branches: [
+      //         StatefulShellBranch(
+      //           routes: [
+      //             GoRoute(
+      //               path: MRoutes.discoverAllTab,
+      //               builder: (_, _) => const AllBroadcastsWidget(),
+      //             ),
+      //           ],
+      //         ),
+      //         StatefulShellBranch(
+      //           routes: [
+      //             GoRoute(
+      //               path: MRoutes.discoverNowLiveTab,
+      //               builder: (_, _) => const NowLiveBroadcastsWidget(),
+      //             ),
+      //           ],
+      //         ),
+      //         StatefulShellBranch(
+      //           routes: [
+      //             GoRoute(
+      //               path: MRoutes.discoverRecentlyLiveTab,
+      //               builder: (_, _) => const RecentlyLiveBroadcastsWidget(),
+      //             ),
+      //           ],
+      //         ),
+      //       ],
+      //     ),
+      //   ],
+      // ),
       StatefulShellBranch(
         routes: [
           GoRoute(

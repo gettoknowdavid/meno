@@ -3,6 +3,7 @@ import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
@@ -13,6 +14,28 @@ class HomePage extends WatchingWidget {
 
   @override
   Widget build(BuildContext context) {
+    // The seed runs from `main()`, so it can finish long before this page is
+    // ever built — while the sign-in screen was still up. `executeImmediately`
+    // calls the handler with the value the flag already holds, so the notice
+    // lands on the first home frame either way; `acknowledgeDownloaded` clears
+    // it, so returning to this tab does not repeat it.
+    registerHandler<BibleSeedService, bool>(
+      select: (seed) => seed.freshlySeeded,
+      executeImmediately: true,
+      handler: (context, freshlySeeded, cancel) {
+        if (!freshlySeeded) return;
+        // Showing a snackbar mutates the messenger's own state, which must not
+        // happen during this build: the notice is queued for the end of it.
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!context.mounted) return;
+          di<BibleSeedService>().acknowledgeDownloaded();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text(_kBibleSeededNotice)),
+          );
+        });
+      },
+    );
+
     final profile = watchValue<MyProfileManager, MyProfile>(
       (manager) => manager.profile,
     );
@@ -49,6 +72,14 @@ class HomePage extends WatchingWidget {
     );
   }
 }
+
+/// What the one-shot notice says once this launch has put the bundled
+/// translations in the store.
+///
+/// The KJV is named because it is the translation the reader opens on and the
+/// one a first run always writes; the run seeds every bundled translation.
+const String _kBibleSeededNotice =
+    'King James Version Bible downloaded successfully';
 
 class _AppBar extends WatchingWidget implements PreferredSizeWidget {
   const new();

@@ -1,6 +1,7 @@
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/locator.dart';
 
 /// The only retry guard in the app: a second tap while a retry is running is
@@ -52,6 +53,13 @@ Future<void> bootstrap() async {
       ..event('app_start', {'env': config.env.name});
 
     runApp(const MenoApp(onRetryBootstrap: bootstrap));
+
+    // After `runApp`, so the first frame is already requested: seeding parses
+    // the bundled payloads and writes ~93k verse rows, which must never sit in
+    // front of it. Starting it here rather than from a screen is what makes it
+    // run on a cold start whether or not anybody signs in; a retry reaches this
+    // line again, and a device that is already current finds nothing to do.
+    startBibleSeeding();
   } finally {
     _running = false;
   }
