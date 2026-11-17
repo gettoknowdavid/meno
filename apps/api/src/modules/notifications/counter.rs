@@ -22,7 +22,11 @@
 //! A Lua script keeps decrement-and-clamp atomic, so two concurrent deletes cannot
 //! both observe the same value.
 
+// The in-memory double below is the only user of these, and it exists in test builds
+// and with `test-support` only — an unconditional import would warn in a deployment build.
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::{Mutex, MutexGuard};
 
 use async_trait::async_trait;
