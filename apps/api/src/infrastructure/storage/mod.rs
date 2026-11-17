@@ -58,7 +58,7 @@ pub mod store;
 pub use error::StorageError;
 pub use image::sniff_image_extension;
 pub use memory::InMemoryObjectStore;
-pub use store::{ObjectKey, ObjectStore};
+pub use store::{IMMUTABLE_CACHE_CONTROL, ObjectKey, ObjectMetadata, ObjectStore};
 
 /// The no-op [`ObjectStore`] used when `STORAGE_ENABLED` is not true (§4.6).
 ///
@@ -74,7 +74,12 @@ pub struct NoopObjectStore;
 
 #[async_trait]
 impl ObjectStore for NoopObjectStore {
-    async fn put(&self, _key: &ObjectKey, _bytes: Bytes) -> Result<(), StorageError> {
+    async fn put_with_metadata(
+        &self,
+        _key: &ObjectKey,
+        _bytes: Bytes,
+        _metadata: &ObjectMetadata,
+    ) -> Result<(), StorageError> {
         Err(StorageError::Disabled)
     }
 
@@ -105,14 +110,30 @@ impl ObjectStore for NoopObjectStore {
 /// a client.
 pub fn store_from_config(config: &Config) -> Result<Arc<dyn ObjectStore>, StorageError> {
     match &config.storage {
-        // `S3ObjectStore::new` already hands back an `Arc`, so this is an unsizing
-        // coercion rather than a second allocation.
-        Some(settings) => Ok(S3ObjectStore::new(flavor_for(settings), settings)?),
+        Some(settings) => store_from_settings(settings),
         None => {
             tracing::info!("object storage is disabled (STORAGE_ENABLED is not true)");
             Ok(Arc::new(NoopObjectStore))
         }
     }
+}
+
+/// A store built from storage settings alone.
+///
+/// Split out for the `publish-bible` tool, which uploads a payload from a developer's
+/// machine: publishing a file needs the six `STORAGE_*` variables and has no business
+/// requiring a database URL or a JWT secret to be present.
+///
+/// # Errors
+///
+/// The same [`StorageError::Config`] [`store_from_config`] reports when the endpoint or
+/// credentials do not build a client.
+pub fn store_from_settings(
+    settings: &StorageSettings,
+) -> Result<Arc<dyn ObjectStore>, StorageError> {
+    // `S3ObjectStore::new` already hands back an `Arc`, so this is an unsizing coercion
+    // rather than a second allocation.
+    Ok(S3ObjectStore::new(flavor_for(settings), settings)?)
 }
 
 /// Which service a set of settings describes.
@@ -288,6 +309,26 @@ mod tests {
         assert!(
             matches!(error, StorageError::Config(_)),
             "expected a config error, got {error:?}"
+        );
+    }
+
+    #[test]
+    fn settings_alone_build_the_same_store_the_config_does() {
+        // The seam `publish-bible` uses: the same settings, no database, no JWT.
+        let settings = StorageSettings {
+            endpoint: "http://localhost:9000".to_owned(),
+            access_key: "k".to_owned(),
+            secret_key: crate::config::Secret::new("s"),
+            bucket: "meno-uploads".to_owned(),
+            region: "us-east-1".to_owned(),
+            public_url: "https://cdn.test".to_owned(),
+        };
+
+        let store = store_from_settings(&settings).expect("a configured store must build");
+
+        assert_eq!(
+            store.public_url(&key()),
+            Some(format!("https://cdn.test/{}", key()))
         );
     }
 

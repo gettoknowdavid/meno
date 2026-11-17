@@ -58,6 +58,7 @@ use crate::infrastructure::redis::Redis;
 use crate::infrastructure::storage::ObjectStore;
 use crate::modules::auth::mailer::AuthMailer;
 use crate::modules::auth::state::AuthState;
+use crate::modules::bible::state::BibleState;
 use crate::modules::broadcast::state::BroadcastState;
 use crate::modules::chat::state::ChatState;
 use crate::modules::notes::state::NotesState;
@@ -80,6 +81,14 @@ pub struct MenoState {
     pub redis: Redis,
     /// Authentication (§4.7).
     pub auth: AuthState,
+    /// The Bible catalogue: which payloads this deployment publishes, and the CDN base
+    /// their URLs are built from.
+    ///
+    /// One optional string and a `const` table — no pool and no repository, because a
+    /// payload is an immutable object rather than a row. `None` means this deployment has
+    /// no public URL configured, and the endpoint answers 503 instead of advertising URLs
+    /// that would 404.
+    pub bible: BibleState,
     /// Broadcasts — create, schedule, go live, join, participants (§2's tree).
     ///
     /// The second module to land, and the one that shows why a module carries its own
@@ -187,6 +196,14 @@ impl axum::extract::FromRef<MenoState> for AuthState {
 /// their own state. The alternative — a sub-router taking `MenoState` — would hand every
 /// handler the whole application, which §9.3 calls a god object and §2's tree is built
 /// to avoid.
+/// The same projection for the Bible catalogue — its state is a URL base and a `const`
+/// table, so nothing else is needed for the mount.
+impl axum::extract::FromRef<MenoState> for BibleState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.bible.clone()
+    }
+}
+
 impl axum::extract::FromRef<MenoState> for BroadcastState {
     fn from_ref(state: &MenoState) -> Self {
         state.broadcast.clone()
@@ -254,6 +271,7 @@ impl std::fmt::Debug for MenoState {
             .field("redis", &"[redacted]")
             .field("auth", &self.auth)
             .field("auth_guard", &self.auth_guard)
+            .field("bible", &self.bible)
             .field("broadcast", &self.broadcast)
             .field("profile", &self.profile)
             .field("settings", &self.settings)
@@ -433,11 +451,23 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         }),
     });
 
+    // The catalogue's CDN base, taken from the same `STORAGE_PUBLIC_URL` the object store
+    // serves from. Absent storage is not a boot failure here: §4.6 makes the adapter
+    // optional, and the endpoint refuses honestly when there is no base to build from.
+    let bible = BibleState::new(
+        parts
+            .config
+            .storage
+            .as_ref()
+            .map(|settings| settings.public_url.clone()),
+    );
+
     Ok(MenoState {
         config: parts.config,
         db: parts.db,
         redis: parts.redis,
         auth,
+        bible,
         // Broadcasts (§2's tree). The media server is optional — §4.6 — so `Wiring`
         // chose an adapter from configuration rather than this file demanding one, and a
         // deployment without LiveKit still gets drafts, schedules and the catalogue.

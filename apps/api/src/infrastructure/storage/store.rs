@@ -38,6 +38,49 @@ use uuid::Uuid;
 
 use crate::infrastructure::storage::error::StorageError;
 
+/// Response metadata an upload carries besides its bytes.
+///
+/// # Why this exists
+///
+/// [`ObjectStore::put`] was enough while every object was an avatar or a cover image:
+/// the CDN guesses an image's type from its extension and a short cache lifetime is
+/// harmless because the key is replaced on every upload. A published Bible payload is
+/// the opposite case — gzip bytes at a version-keyed path, which a browser must not
+/// mistake for JSON and which may be cached forever exactly because the key never
+/// changes — so the upload has to say so.
+///
+/// Kept as an optional pair rather than as a growing header map: these are the two
+/// headers a public asset needs, and an open map would invite per-call-site caching
+/// policies that disagree.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ObjectMetadata {
+    /// The `Content-Type` the CDN serves the object with. `None` leaves the store's own
+    /// default in place, which is what every image upload wants.
+    pub content_type: Option<String>,
+
+    /// The `Cache-Control` the CDN serves the object with. `None` leaves the default.
+    pub cache_control: Option<String>,
+}
+
+/// How long a version-keyed object may be cached: one year, and `immutable`.
+///
+/// The keys this is used on (today `bible/<code>/<version>.json.gz`) name their content's
+/// version, so they are published once and never rewritten — which is what makes
+/// `immutable` honest rather than a cache-poisoning hazard. A corrected payload is a new
+/// version, and therefore a new key.
+pub const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
+
+impl ObjectMetadata {
+    /// An upload the CDN may cache forever, served as `content_type`.
+    #[must_use]
+    pub fn immutable(content_type: impl Into<String>) -> Self {
+        Self {
+            content_type: Some(content_type.into()),
+            cache_control: Some(IMMUTABLE_CACHE_CONTROL.to_owned()),
+        }
+    }
+}
+
 /// Everything the application needs from object storage.
 ///
 /// Object-safe and `async_trait`, so callers hold `Arc<dyn ObjectStore>` and the
@@ -54,7 +97,27 @@ pub trait ObjectStore: Send + Sync {
     ///
     /// Returns [`StorageError::InvalidKey`] for a key [`ObjectKey`] rejects, and
     /// [`StorageError::Upstream`] for a store-side failure.
-    async fn put(&self, key: &ObjectKey, bytes: Bytes) -> Result<(), StorageError>;
+    async fn put(&self, key: &ObjectKey, bytes: Bytes) -> Result<(), StorageError> {
+        self.put_with_metadata(key, bytes, &ObjectMetadata::default())
+            .await
+    }
+
+    /// Store `bytes` at `key`, with the response metadata a public asset needs.
+    ///
+    /// The same upsert as [`Self::put`], plus the `Content-Type` and `Cache-Control` the
+    /// CDN should serve the object with. That pair is part of the upload rather than a
+    /// separate bucket-policy change because it is per object: a payload is immutable and
+    /// gzip, an avatar is neither.
+    ///
+    /// # Errors
+    ///
+    /// The same two failures as [`Self::put`].
+    async fn put_with_metadata(
+        &self,
+        key: &ObjectKey,
+        bytes: Bytes,
+        metadata: &ObjectMetadata,
+    ) -> Result<(), StorageError>;
 
     /// Whether an object exists at `key`.
     ///
@@ -114,6 +177,14 @@ impl ObjectKey {
     /// leaving the old one behind under a filename the client chose.
     pub const BROADCAST_IMAGE_PREFIX: &'static str = "broadcasts/";
 
+    /// The collection under which published Bible seed payloads live.
+    ///
+    /// Two levels deep — `bible/<code>/<version>.json.gz` — because a translation has
+    /// versions, and immutable keys are what let the CDN cache a payload forever. The
+    /// version is in the leaf rather than the prefix so a `bible/asv/` listing shows every
+    /// version this translation ever had.
+    pub const BIBLE_PREFIX: &'static str = "bible";
+
     /// Build a key under a named prefix, e.g. `avatars`.
     ///
     /// # Errors
@@ -161,6 +232,42 @@ impl ObjectKey {
             Self::BROADCAST_IMAGE_PREFIX.trim_end_matches('/'),
             &format!("{broadcast_id}.{extension}"),
         )
+    }
+
+    /// The key for one version of a translation's seed payload.
+    ///
+    /// `bible/<code>/<version>.json.gz`, the layout the mobile client's catalogue entries
+    /// point at. Built here rather than by the caller so the one place that knows the
+    /// shape is the one place that validates it.
+    ///
+    /// # Errors
+    ///
+    /// [`StorageError::InvalidKey`] when `code` is not two to eight ASCII lowercase
+    /// letters or digits (the codes the catalogue uses — `kjv`, `web`, `asv`), or when
+    /// `version` is zero: a payload version starts at one, and `0.json.gz` would be a key
+    /// nothing in the app can describe.
+    pub fn bible_payload(code: &str, version: u32) -> Result<Self, StorageError> {
+        let code_ok = (2..=8).contains(&code.len())
+            && code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit());
+        if !code_ok {
+            return Err(StorageError::InvalidKey(format!(
+                "`{code}` is not a translation code (two to eight lowercase letters or digits)"
+            )));
+        }
+        if version == 0 {
+            return Err(StorageError::InvalidKey(
+                "a payload version starts at 1".to_owned(),
+            ));
+        }
+
+        Ok(Self(format!(
+            "{}/{}/{}.json.gz",
+            Self::BIBLE_PREFIX,
+            code,
+            version
+        )))
     }
 
     /// The key as a plain string.
@@ -335,6 +442,34 @@ mod tests {
             ObjectKey::avatar(user_id, "png").expect("png"),
             ObjectKey::avatar(user_id, "jpg").expect("jpg")
         );
+    }
+
+    #[test]
+    fn a_bible_payload_key_is_collection_code_version_and_extension() {
+        // The path the mobile catalogue points at. Pinned as a whole string because
+        // changing any part of it silently turns every published payload into a 404.
+        let key = ObjectKey::bible_payload("asv", 2).expect("a valid key");
+
+        assert_eq!(key.as_str(), "bible/asv/2.json.gz");
+    }
+
+    #[test]
+    fn a_translation_code_that_is_not_a_code_is_rejected() {
+        // The code reaches a URL path segment and an object key. Rejecting it here is
+        // what keeps a catalogue typo from publishing somewhere nobody looks.
+        for code in ["", "A", "ASV", "a", "../etc", "as v", "asv.json", "asv-1"] {
+            assert!(
+                ObjectKey::bible_payload(code, 1).is_err(),
+                "{code:?} must not become a key"
+            );
+        }
+    }
+
+    #[test]
+    fn a_zero_version_is_rejected() {
+        // A payload version starts at one: `0.json.gz` is a key the app's ledger can
+        // never describe, so publishing it would be invisible.
+        assert!(ObjectKey::bible_payload("kjv", 0).is_err());
     }
 
     #[test]

@@ -38,6 +38,7 @@
 //! [`auth::routes`] for the reasoning.
 
 mod auth;
+mod bible;
 mod broadcasts;
 mod chat;
 mod health;
@@ -64,6 +65,7 @@ use crate::state::MenoState;
 // Every module's path list, so one test can assert the whole table. Re-exported rather
 // than re-declared: a list written twice is a list that will disagree with the router.
 pub use auth::{AUTH_PATHS, PROTECTED_PATHS};
+pub use bible::BIBLE_PATHS;
 pub use broadcasts::BROADCAST_PATHS;
 pub use chat::CHAT_PATHS;
 pub use health::HEALTH_PATHS;
@@ -91,6 +93,7 @@ pub fn build_routes(state: MenoState) -> Router {
     // Sharing one `Arc` keeps a single connection pool behind all of them.
     let redis = Arc::new(state.redis.clone());
     let idempotency_for_auth = Arc::clone(&redis);
+    let redis_for_bible = Arc::clone(&redis);
     let redis_for_broadcasts = Arc::clone(&redis);
     let redis_for_chat = Arc::clone(&redis);
     let redis_for_notes = Arc::clone(&redis);
@@ -112,6 +115,10 @@ pub fn build_routes(state: MenoState) -> Router {
         // the auth middleware runs — and it completes *before* `on_upgrade`, so a
         // refused handshake is an HTTP status, not a socket that opens and closes.
         .route("/ws", get(ws::upgrade))
+        // The Bible catalogue: public, rate-limited, and merged at the root because its
+        // path is written `/bible/translations` in full inside its own table (the
+        // broadcast/notes pattern — `nest("/")` is refused by axum 0.8).
+        .merge(bible::routes(redis_for_bible).with_state(state.bible.clone()))
         // The auth handlers take [`AuthState`], not `MenoState`, so the sub-router is
         // built against its own state and then lifted to the application's with
         // `with_state`. That call is what `FromRef` is for: it projects the one field
@@ -211,6 +218,7 @@ mod tests {
     fn every_path() -> Vec<&'static str> {
         AUTH_PATHS
             .iter()
+            .chain(BIBLE_PATHS)
             .chain(BROADCAST_PATHS)
             .chain(CHAT_PATHS)
             .chain(HEALTH_PATHS)
@@ -259,9 +267,10 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            51,
-            "fourteen auth endpoints, twelve broadcast ones, one chat, six notes/folders, \
-             five notifications, five subscribers, four profile, two settings and two probes"
+            52,
+            "fourteen auth endpoints, one bible catalogue, twelve broadcast ones, one chat, \
+             six notes/folders, five notifications, five subscribers, four profile, two \
+             settings and two probes"
         );
     }
 
@@ -275,6 +284,7 @@ mod tests {
         // one that carries the weight there.
         for (paths, prefix) in [
             (AUTH_PATHS, "/auth"),
+            (BIBLE_PATHS, "/"),
             (BROADCAST_PATHS, "/"),
             (CHAT_PATHS, "/"),
             (HEALTH_PATHS, "/health"),

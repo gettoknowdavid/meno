@@ -13,7 +13,18 @@ use async_trait::async_trait;
 use bytes::Bytes;
 
 use crate::infrastructure::storage::error::StorageError;
-use crate::infrastructure::storage::store::{ObjectKey, ObjectStore};
+use crate::infrastructure::storage::store::{ObjectKey, ObjectMetadata, ObjectStore};
+
+/// One stored object: what was uploaded, and the metadata it was uploaded with.
+///
+/// The metadata is kept because it is the thing a test needs to see: that a published
+/// payload asked the CDN to cache it forever is a property of the upload, and a real S3
+/// store cannot be asked what it stored without listing the bucket.
+#[derive(Clone, Debug)]
+struct StoredObject {
+    bytes: Bytes,
+    metadata: ObjectMetadata,
+}
 
 /// Backs the three operations with a `Mutex<HashMap>`, which is enough to assert the
 /// real behaviours: that a second `put` replaces rather than duplicates, that `exists`
@@ -24,7 +35,7 @@ use crate::infrastructure::storage::store::{ObjectKey, ObjectStore};
 /// in one sitting. `lock()`'s poison handling is explicit rather than `.expect`-ed because
 /// §9.1 forbids panicking in request-serving code.
 pub struct InMemoryObjectStore {
-    objects: Mutex<HashMap<String, Bytes>>,
+    objects: Mutex<HashMap<String, StoredObject>>,
     public_url: String,
 
     /// Set by [`Self::fail_next_put`]; taken by the next `put`.
@@ -53,7 +64,20 @@ impl InMemoryObjectStore {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .get(key.as_str())
-            .cloned()
+            .map(|object| object.bytes.clone())
+    }
+
+    /// The metadata `key` was uploaded with, if it is stored.
+    ///
+    /// The other half of [`Self::contents`]: an assertion about a cache header is about
+    /// the upload, not about the object.
+    #[must_use]
+    pub fn metadata(&self, key: &ObjectKey) -> Option<ObjectMetadata> {
+        self.objects
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(key.as_str())
+            .map(|object| object.metadata.clone())
     }
 
     /// How many objects are stored.
@@ -84,7 +108,12 @@ impl InMemoryObjectStore {
 
 #[async_trait]
 impl ObjectStore for InMemoryObjectStore {
-    async fn put(&self, key: &ObjectKey, bytes: Bytes) -> Result<(), StorageError> {
+    async fn put_with_metadata(
+        &self,
+        key: &ObjectKey,
+        bytes: Bytes,
+        metadata: &ObjectMetadata,
+    ) -> Result<(), StorageError> {
         if let Some(error) = self
             .failures
             .lock()
@@ -97,7 +126,13 @@ impl ObjectStore for InMemoryObjectStore {
         self.objects
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
-            .insert(key.as_str().to_owned(), bytes);
+            .insert(
+                key.as_str().to_owned(),
+                StoredObject {
+                    bytes,
+                    metadata: metadata.clone(),
+                },
+            );
 
         Ok(())
     }
@@ -236,6 +271,38 @@ mod tests {
             .put(&key(), Bytes::from_static(b"x"))
             .await
             .expect("the second put must succeed");
+    }
+
+    #[tokio::test]
+    async fn a_put_keeps_the_metadata_it_was_given() {
+        // What the publish path is asserted against: the CDN serves these headers
+        // because they were on the upload, and this is the only place that can be seen
+        // without a bucket.
+        let store = store();
+        let key = ObjectKey::bible_payload("asv", 1).expect("a valid key");
+        let metadata = ObjectMetadata::immutable("application/gzip");
+
+        store
+            .put_with_metadata(&key, Bytes::from_static(b"gz"), &metadata)
+            .await
+            .expect("a put");
+
+        assert_eq!(store.metadata(&key), Some(metadata));
+        assert_eq!(store.contents(&key), Some(Bytes::from_static(b"gz")));
+    }
+
+    #[tokio::test]
+    async fn a_plain_put_carries_no_metadata() {
+        // The image path: an upload that says nothing about caching must not invent a
+        // policy, or every avatar would become immutable for a year.
+        let store = store();
+
+        store
+            .put(&key(), Bytes::from_static(b"x"))
+            .await
+            .expect("a put");
+
+        assert_eq!(store.metadata(&key()), Some(ObjectMetadata::default()));
     }
 
     #[tokio::test]

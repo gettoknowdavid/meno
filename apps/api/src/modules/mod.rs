@@ -68,6 +68,10 @@
 //! service or handler cannot accidentally depend on Postgres rather than on `AuthRepo`.
 
 pub mod auth;
+// Not part of §2's tree: the Bible catalogue is a download index for static payloads, with
+// no repository, no service and no account. It is a module because it has an endpoint,
+// a wire shape and tests of its own — see `bible`'s own docs.
+pub mod bible;
 pub mod broadcast;
 pub mod chat;
 pub mod notes;

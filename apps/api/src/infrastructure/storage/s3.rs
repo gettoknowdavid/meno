@@ -26,11 +26,15 @@ use async_trait::async_trait;
 use bytes::Bytes;
 use object_store::aws::{AmazonS3, AmazonS3Builder};
 use object_store::path::Path;
-use object_store::{ObjectStoreExt, PutPayload};
+// `ObjectStore as _` brings `put_opts` into scope without colliding with this module's
+// own `ObjectStore` trait, which is the one callers see.
+use object_store::{
+    Attribute, Attributes, ObjectStore as _, ObjectStoreExt, PutOptions, PutPayload,
+};
 
 use crate::config::StorageSettings;
 use crate::infrastructure::storage::error::StorageError;
-use crate::infrastructure::storage::store::{ObjectKey, ObjectStore};
+use crate::infrastructure::storage::store::{ObjectKey, ObjectMetadata, ObjectStore};
 
 /// Which S3-compatible service is on the other end.
 ///
@@ -160,12 +164,38 @@ impl std::fmt::Debug for S3ObjectStore {
 
 #[async_trait]
 impl ObjectStore for S3ObjectStore {
-    async fn put(&self, key: &ObjectKey, bytes: Bytes) -> Result<(), StorageError> {
+    async fn put_with_metadata(
+        &self,
+        key: &ObjectKey,
+        bytes: Bytes,
+        metadata: &ObjectMetadata,
+    ) -> Result<(), StorageError> {
         let path = Path::from(key.as_str());
+
+        // `Content-Type` and `Cache-Control` travel as object attributes; the AWS
+        // adapter turns each into the header of the same name on the PUT, which is what
+        // the CDN then serves. An empty set is exactly `put`'s old behaviour, so every
+        // existing caller is unchanged.
+        let mut attributes = Attributes::new();
+        if let Some(content_type) = &metadata.content_type {
+            attributes.insert(Attribute::ContentType, content_type.clone().into());
+        }
+        if let Some(cache_control) = &metadata.cache_control {
+            attributes.insert(Attribute::CacheControl, cache_control.clone().into());
+        }
+
         // Overwrite unconditionally: every caller upserts. `PutPayload::from(Bytes)`
-        // keeps the body a single chunk, which is right for avatars and images.
+        // keeps the body a single chunk, which is right for avatars, images and a
+        // ~1.3 MB seed payload alike.
         self.store
-            .put(&path, PutPayload::from(bytes))
+            .put_opts(
+                &path,
+                PutPayload::from(bytes),
+                PutOptions {
+                    attributes,
+                    ..PutOptions::default()
+                },
+            )
             .await
             .map_err(StorageError::from)
             .map(|_| ())
