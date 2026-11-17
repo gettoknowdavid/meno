@@ -40,17 +40,22 @@ final class NotificationsManager implements Disposable {
   new({
     required NotificationsHttpService http,
     required this._socket,
-    required this._pushService,
-    required this._localNotifications,
     required this._settings,
     required this._logger,
+    this._pushService,
+    this._localNotifications,
   }) : _http = http,
        feed = NotificationsFeedSource(http);
 
   final NotificationsHttpService _http;
   final NotificationsSocketService _socket;
-  final PushNotificationsService _pushService;
-  final LocalNotificationsService _localNotifications;
+
+  /// The device's push channel, or null while this project has no Firebase app.
+  ///
+  // TODO(firebase): required again once `Firebase.initializeApp()` runs; the
+  // registrations are commented out in `locator.dart` until then.
+  final PushNotificationsService? _pushService;
+  final LocalNotificationsService? _localNotifications;
   final SettingsHttpService _settings;
   final MenoLogger _logger;
 
@@ -160,27 +165,33 @@ final class NotificationsManager implements Disposable {
 
   /// Wires the device's push channel: reads only, nothing is prompted for.
   Future<void> _wirePush() async {
+    final push = _pushService;
+    final localNotifications = _localNotifications;
+    // No Firebase app in this build, so there is no push channel to wire. The
+    // inbox and the socket carry on without one.
+    if (push == null || localNotifications == null) return;
+
     try {
-      fcmToken.value = await _pushService.getToken();
+      fcmToken.value = await push.getToken();
       unawaited(_registerToken(fcmToken.value));
 
-      _tokenRefreshSubscription = _pushService.onTokenRefresh.listen((token) {
+      _tokenRefreshSubscription = push.onTokenRefresh.listen((token) {
         fcmToken.value = token;
         unawaited(_registerToken(token));
       });
 
-      await _localNotifications.initialize();
+      await localNotifications.initialize();
 
-      _pushNotificationSubscription = _pushService.onMessage.listen(
-        _localNotifications.show,
+      _pushNotificationSubscription = push.onMessage.listen(
+        localNotifications.show,
       );
 
-      _backgroundTapSubscription = _pushService.onMessageOpenedApp.listen(
-        _localNotifications.handleMessageTap,
+      _backgroundTapSubscription = push.onMessageOpenedApp.listen(
+        localNotifications.handleMessageTap,
       );
 
-      final initial = await _pushService.getInitialMessage();
-      if (initial != null) _localNotifications.handleMessageTap(initial);
+      final initial = await push.getInitialMessage();
+      if (initial != null) localNotifications.handleMessageTap(initial);
     } on Object catch (error, stackTrace) {
       _logger.w(
         'Push notifications are unavailable on this device',

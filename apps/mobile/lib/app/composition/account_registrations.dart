@@ -308,14 +308,17 @@ Future<void> registerAccountScope(
   );
 
   // Started as the account's first screen asks for the badge — Home — so an
-  // account that signs in gets its inbox, its device registration and its
-  // toasts without the notifications screen ever being opened.
+  // account that signs in gets its inbox and its toasts without the
+  // notifications screen ever being opened.
+  //
+  // TODO(firebase): pass `pushService: di<PushNotificationsService>()` and
+  // `localNotifications: di<LocalNotificationsService>()` once Firebase is
+  // initialised. Until then the manager is built without them and runs on the
+  // socket alone.
   scope.registerLazySingleton<NotificationsManager>(
     () => NotificationsManager(
       http: di<NotificationsHttpService>(),
       socket: di<NotificationsSocketService>(),
-      pushService: di<PushNotificationsService>(),
-      localNotifications: di<LocalNotificationsService>(),
       settings: di<SettingsHttpService>(),
       logger: di<MenoLogger>(),
     ),

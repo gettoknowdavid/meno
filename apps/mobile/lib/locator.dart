@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -74,14 +76,24 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   // The bundled translations are device data, not an account's, so the seeder
   // belongs here rather than in the account scope.
   //
-  // Registered lazily and started explicitly from `bootstrap()`, not through
-  // `dependsOn: [Database]`. A dependency-based registration would need the
+  // Registration owns the run: `onCreated` starts it the first time anything
+  // resolves the seeder — the reader, the translations list — so neither
+  // `main()` nor `main_dev()` has to start it, and a retry gets it again
+  // through `di.reset()` + registration. It is not awaited there: `allReady()`
+  // must not wait for a multi-second insert, and everything that reads
+  // scripture awaits `ensureSeeded`, which hands back this same run. The
+  // store's seed ledger means an interrupted run resumes on the next launch.
+  //
+  // No `dependsOn: [Database]`. A dependency-based registration needs the
   // store to be a *waitable* registration (`isAsync`, `signalsReady`, or a
   // pending result), and `test/_support/test_database.dart` deliberately
   // registers a synchronous in-memory store — so `dependsOn` makes
   // `configureDependencies` throw `Dependent Type Database is not an async
   // Singleton` in every widget test. The seeder waits for the store itself.
-  di.registerLazySingleton<BibleSeedService>(BibleSeedService.new);
+  di.registerLazySingleton<BibleSeedService>(
+    BibleSeedService.new,
+    onCreated: (service) => unawaited(service.ensureSeeded()),
+  );
   // Same scope: what the reader reads is device data too.
   di.registerLazySingleton<BibleLocalService>(
     () => BibleLocalService(di<Database>()),
@@ -96,10 +108,10 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
       seed: di<BibleSeedService>(),
       logger: di<MenoLogger>(),
     ),
-    // The list is read as the manager is created, which can be before the
-    // launch-time seeding has finished. `initialize` waits for that same seed
-    // run and re-reads, so a translations sheet opened early fills in instead
-    // of showing an empty list until the app restarts.
+    // The list is read as the manager is created, which can be before the seed
+    // run has finished — creating the manager does not start it. `initialize`
+    // waits for that same run and re-reads, so a translations sheet opened
+    // early fills in instead of showing an empty list until the app restarts.
     onCreated: (manager) => manager.initialize.run(),
   );
   di.registerSingletonAsync<SharedPreferences>(SharedPreferences.getInstance);
@@ -146,12 +158,21 @@ void _registerPlatformServices() {
     () => PermissionsService(di<LocalStorage>(), di<MenoLogger>()),
     dependsOn: [LocalStorage],
   );
-  di.registerLazySingleton<PushNotificationsService>(
-    () => PushNotificationsService(.instance, di<MenoLogger>()),
-  );
-  di.registerLazySingleton<LocalNotificationsService>(
-    () => LocalNotificationsService(di<MenoLogger>()),
-  );
+
+  // TODO(firebase): restore once the project has a Firebase app to talk to.
+  //
+  // `FirebaseMessaging.instance` throws `[core/no-app] No Firebase App
+  // '[DEFAULT]' has been created` until `Firebase.initializeApp()` runs against
+  // a `google-services.json` / `firebase_options.dart`, and neither exists yet.
+  // Resolving either service is what reached Firebase, so both registrations
+  // are off until that initialisation is in place; the inbox itself is
+  // unaffected and `NotificationsManager` runs without push.
+  // di.registerLazySingleton<PushNotificationsService>(
+  //   () => PushNotificationsService(.instance, di<MenoLogger>()),
+  // );
+  // di.registerLazySingleton<LocalNotificationsService>(
+  //   () => LocalNotificationsService(di<MenoLogger>()),
+  // );
 }
 
 void _registerOnboarding() {

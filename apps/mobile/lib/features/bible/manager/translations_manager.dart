@@ -13,9 +13,9 @@ import 'package:meno_mobile/features/bible/services/_services.dart';
 /// "downloaded" means "already in the store" and there is nothing to fetch.
 class TranslationsManager implements Disposable {
   new({required this._local, required this._seed, required this._logger}) {
-    // Read once up front: this manager is created the first time a screen needs
-    // it, by which point the seeder has almost certainly finished. [initialize]
-    // is the explicit refresh for when it has not.
+    // Read once up front so the list has something to draw. [initialize] is
+    // the explicit refresh, and it waits for the seed run — a manager created
+    // before seeding finished fills in rather than staying empty.
     _refreshDownloaded();
 
     initialize = Command.createAsyncNoParamNoResult(

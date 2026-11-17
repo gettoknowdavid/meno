@@ -17,12 +17,12 @@ class BibleReader extends WatchingWidget {
   Widget build(BuildContext context) {
     final manager = di<BibleManager>();
 
-    // Opening the reader is what asks for the first chapter. The launch-time
-    // seeding may still be running when a route is restored straight into here,
-    // and `ensureSeeded` hands back that same run rather than starting another,
-    // so the read waits for it instead of querying an empty store. A position
-    // the reader already holds is left alone: coming back to the tab must not
-    // send the user to Genesis.
+    // Opening the reader is what asks for the first chapter. Resolving the
+    // seeder is what starts it when nothing has needed scripture yet, and
+    // `ensureSeeded` hands back that same run rather than starting another, so
+    // the read waits for it instead of querying an empty store. A position the
+    // reader already holds is left alone: coming back to the tab must not send
+    // the user to Genesis.
     callOnce((_) async {
       await di<BibleSeedService>().ensureSeeded();
       if (manager.verses.value.isEmpty) {

@@ -76,13 +76,15 @@ const List<BundledTranslation> bundledTranslations = [
 ///
 /// # When it runs
 ///
-/// On every launch, in the background, without anybody signed in:
+/// The first time anything needs scripture, in the background, without anybody
+/// signed in:
 ///
 /// * It is device data, not account data — a verse carries no owner — so it
 ///   lives outside the account scope and is not repeated per account.
 /// * It never blocks startup. `app.dart` waits on `di.allReady()` before the
-///   first frame and this is deliberately not part of that chain; it is started
-///   from `bootstrap()` and awaited by nobody.
+///   first frame and this is deliberately not part of that chain; the service's
+///   registration in `locator.dart` starts the run from its `onCreated`
+///   callback, and nobody awaits it there.
 /// * It is idempotent. [BibleSeedRow] says what is already there, the verse key
 ///   makes every write a replace, and a crash or a container reset simply means
 ///   the next call finishes the job.
