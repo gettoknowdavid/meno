@@ -8,7 +8,6 @@
 
 use serde::Serialize;
 
-use crate::infrastructure::storage::StorageError;
 use crate::modules::bible::catalogue::{self, CatalogueEntry};
 
 /// One translation a client may download.
@@ -45,21 +44,16 @@ pub struct BibleTranslationDto {
 
 impl BibleTranslationDto {
     /// The wire row for `entry`, served under `public_url`.
-    ///
-    /// # Errors
-    ///
-    /// [`StorageError::InvalidKey`] if the entry's code or version cannot become a key —
-    /// which a test pins against the real table, so this is a guard rather than a path a
-    /// request can take.
-    pub fn for_entry(entry: &CatalogueEntry, public_url: &str) -> Result<Self, StorageError> {
-        Ok(Self {
+    #[must_use]
+    pub fn for_entry(entry: &CatalogueEntry, public_url: &str) -> Self {
+        Self {
             code: entry.code,
             name: entry.name,
             version: entry.version,
             bytes: entry.bytes,
             sha256: entry.sha256,
-            payload_url: catalogue::payload_url(public_url, entry)?,
-        })
+            payload_url: catalogue::payload_url(public_url, entry),
+        }
     }
 }
 
@@ -77,7 +71,7 @@ mod tests {
     fn the_row_serialises_with_the_six_documented_keys() {
         // Exact equality, not a subset: an extra key here would be a field the Flutter and
         // Next.js clients carry around without reading.
-        let row = BibleTranslationDto::for_entry(asv(), "https://cdn.test").expect("a row");
+        let row = BibleTranslationDto::for_entry(asv(), "https://cdn.test");
 
         assert_eq!(
             serde_json::to_value(row).expect("serialisable"),
@@ -96,7 +90,7 @@ mod tests {
     fn the_payload_url_is_absolute() {
         // The client downloads this string directly, so a relative path would have to be
         // joined against the API — a different origin from the CDN.
-        let row = BibleTranslationDto::for_entry(asv(), "https://cdn.meno.app/").expect("a row");
+        let row = BibleTranslationDto::for_entry(asv(), "https://cdn.meno.app");
 
         assert_eq!(row.payload_url, "https://cdn.meno.app/bible/asv/1.json.gz");
     }

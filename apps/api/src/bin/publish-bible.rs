@@ -28,13 +28,11 @@
 //! variables (after `dotenvy`, so a repository `.env` works as it does for the server),
 //! says which one is missing by name, and builds the same `S3ObjectStore` the API builds
 //! from the same settings.
-//!
-//! # Why the output goes through the macros below
-//!
-//! The workspace denies `clippy::print_stdout`/`print_stderr` so request-serving code
-//! cannot log around `tracing`. A command-line tool's whole job is to write to the
-//! terminal, so this file writes to the same handles `println!` would, through two macros
-//! that ignore a closed pipe — rather than switching the lint off for the whole binary.
+
+// The workspace denies the print macros so request-serving code cannot log around
+// `tracing`. This binary's only job is to write to the terminal, so it opts out — the one
+// file in the crate that may.
+#![allow(clippy::print_stdout, clippy::print_stderr)]
 
 use std::process::ExitCode;
 use std::sync::Arc;
@@ -43,24 +41,7 @@ use bytes::Bytes;
 use meno_api::config::{Secret, StorageSettings};
 use meno_api::infrastructure::storage::{ObjectStore, store_from_settings};
 use meno_api::modules::bible::catalogue;
-use meno_api::modules::bible::publish::{PAYLOAD_CONTENT_TYPE, publish};
-
-/// One line on stdout — what a successful run prints.
-macro_rules! say {
-    ($($argument:tt)*) => {{
-        use std::io::Write as _;
-        // A closed pipe (`| head`) is not a failure of the publish.
-        let _ = writeln!(std::io::stdout().lock(), $($argument)*);
-    }};
-}
-
-/// One line on stderr — what a refusal prints, so a script can still read stdout.
-macro_rules! complain {
-    ($($argument:tt)*) => {{
-        use std::io::Write as _;
-        let _ = writeln!(std::io::stderr().lock(), $($argument)*);
-    }};
-}
+use meno_api::modules::bible::publish::publish;
 
 fn main() -> ExitCode {
     // A blocking `main` with one small runtime: the whole tool is one upload, and the exit
@@ -71,7 +52,7 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            complain!("publish-bible: could not start a runtime: {error}");
+            eprintln!("publish-bible: could not start a runtime: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -86,22 +67,22 @@ async fn run() -> ExitCode {
         .iter()
         .any(|argument| argument == "--help" || argument == "-h")
     {
-        say!("{}", usage());
+        println!("{}", usage());
         return ExitCode::SUCCESS;
     }
 
     let Some(code) = flag(&arguments, "code") else {
-        complain!("publish-bible: --code is required\n\n{}", usage());
+        eprintln!("publish-bible: --code is required\n\n{}", usage());
         return ExitCode::from(2);
     };
 
     let Some(payload_path) = flag(&arguments, "payload") else {
-        complain!("publish-bible: --payload is required\n\n{}", usage());
+        eprintln!("publish-bible: --payload is required\n\n{}", usage());
         return ExitCode::from(2);
     };
 
     let Some(entry) = catalogue::entry(&code) else {
-        complain!(
+        eprintln!(
             "publish-bible: `{code}` is not in the catalogue. Known codes: {}",
             catalogue::TRANSLATIONS
                 .iter()
@@ -115,7 +96,7 @@ async fn run() -> ExitCode {
     let payload = match std::fs::read(&payload_path) {
         Ok(bytes) => Bytes::from(bytes),
         Err(error) => {
-            complain!("publish-bible: could not read {payload_path}: {error}");
+            eprintln!("publish-bible: could not read {payload_path}: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -123,34 +104,27 @@ async fn run() -> ExitCode {
     let store = match storage() {
         Ok(store) => store,
         Err(message) => {
-            complain!("publish-bible: {message}");
+            eprintln!("publish-bible: {message}");
             return ExitCode::FAILURE;
         }
     };
 
     match publish(store.as_ref(), entry, payload).await {
         Ok(published) => {
-            say!(
+            println!(
                 "published {} v{} ({}) — {} bytes, sha256 {}",
-                entry.code,
-                entry.version,
-                entry.name,
-                published.bytes,
-                published.sha256
+                entry.code, entry.version, entry.name, published.bytes, published.sha256
             );
+            // `storage` requires a public URL, so this is set in practice; printed from
+            // the store rather than rebuilt here so the key is spelled in one place.
             match published.url {
-                Some(url) => {
-                    say!("{url}\n(content-type {PAYLOAD_CONTENT_TYPE}, cache-control immutable)");
-                }
-                None => say!(
-                    "no STORAGE_PUBLIC_URL, so the payload has no public URL — the catalogue \
-                     endpoint answers 503 until one is set"
-                ),
+                Some(url) => println!("{url}"),
+                None => println!("no public URL: STORAGE_PUBLIC_URL is not set"),
             }
             ExitCode::SUCCESS
         }
         Err(error) => {
-            complain!("publish-bible: {error}");
+            eprintln!("publish-bible: {error}");
             ExitCode::FAILURE
         }
     }

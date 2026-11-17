@@ -62,25 +62,6 @@ pub struct ObjectMetadata {
     pub cache_control: Option<String>,
 }
 
-/// How long a version-keyed object may be cached: one year, and `immutable`.
-///
-/// The keys this is used on (today `bible/<code>/<version>.json.gz`) name their content's
-/// version, so they are published once and never rewritten — which is what makes
-/// `immutable` honest rather than a cache-poisoning hazard. A corrected payload is a new
-/// version, and therefore a new key.
-pub const IMMUTABLE_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
-
-impl ObjectMetadata {
-    /// An upload the CDN may cache forever, served as `content_type`.
-    #[must_use]
-    pub fn immutable(content_type: impl Into<String>) -> Self {
-        Self {
-            content_type: Some(content_type.into()),
-            cache_control: Some(IMMUTABLE_CACHE_CONTROL.to_owned()),
-        }
-    }
-}
-
 /// Everything the application needs from object storage.
 ///
 /// Object-safe and `async_trait`, so callers hold `Arc<dyn ObjectStore>` and the

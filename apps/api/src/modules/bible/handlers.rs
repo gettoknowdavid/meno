@@ -37,18 +37,10 @@ pub async fn get_translations(
         .into());
     };
 
-    let mut translations = Vec::with_capacity(TRANSLATIONS.len());
-    for entry in TRANSLATIONS {
-        let row = BibleTranslationDto::for_entry(entry, public_url).map_err(|error| {
-            // Unreachable for the shipped table — a test pins every entry's key — and an
-            // internal failure rather than a client-visible one if it ever is reachable.
-            MenoError::Internal {
-                context: "bible_catalogue",
-                detail: format!("{} v{}: {error}", entry.code, entry.version),
-            }
-        })?;
-        translations.push(row);
-    }
+    let translations = TRANSLATIONS
+        .iter()
+        .map(|entry| BibleTranslationDto::for_entry(entry, public_url))
+        .collect();
 
     Ok(MenoResponse::ok(
         "Bible translations retrieved successfully",
@@ -68,7 +60,6 @@ mod tests {
     use tower::ServiceExt;
 
     use super::*;
-    use crate::modules::bible::catalogue::TRANSLATIONS;
 
     /// The handler alone, mounted the way `routes::bible` mounts it minus the limiter —
     /// the rate limit needs Redis and is covered by the middleware's own tests.

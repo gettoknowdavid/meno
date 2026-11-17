@@ -35,7 +35,14 @@ use crate::modules::bible::catalogue::CatalogueEntry;
 /// `application/gzip`, not `application/json`: the object *is* gzip, and a CDN or browser
 /// told otherwise would try to decode or decompress it a second time. The client gunzips
 /// exactly once.
-pub const PAYLOAD_CONTENT_TYPE: &str = "application/gzip";
+const PAYLOAD_CONTENT_TYPE: &str = "application/gzip";
+
+/// How long a payload may be cached: one year, and `immutable`.
+///
+/// Honest rather than a cache-poisoning hazard because the key carries the version — a
+/// corrected text is `v2`, a new key, never a rewrite of `v1`. Lives here rather than in
+/// the storage layer because it is a promise about this payload's key, not about storage.
+const PAYLOAD_CACHE_CONTROL: &str = "public, max-age=31536000, immutable";
 
 /// What one publish did.
 ///
@@ -87,8 +94,7 @@ pub enum PublishError {
 ///
 /// One definition, shared by the publish check and the tests that compute an expected
 /// digest, so the two cannot disagree about encoding.
-#[must_use]
-pub fn digest(bytes: &[u8]) -> String {
+fn digest(bytes: &[u8]) -> String {
     hex::encode(Sha256::digest(bytes))
 }
 
@@ -119,13 +125,11 @@ pub async fn publish(
     }
 
     let key = ObjectKey::bible_payload(entry.code, entry.version)?;
-    store
-        .put_with_metadata(
-            &key,
-            payload,
-            &ObjectMetadata::immutable(PAYLOAD_CONTENT_TYPE),
-        )
-        .await?;
+    let metadata = ObjectMetadata {
+        content_type: Some(PAYLOAD_CONTENT_TYPE.to_owned()),
+        cache_control: Some(PAYLOAD_CACHE_CONTROL.to_owned()),
+    };
+    store.put_with_metadata(&key, payload, &metadata).await?;
 
     Ok(Published {
         key: key.as_str().to_owned(),
@@ -140,7 +144,7 @@ mod tests {
     //! The properties a release depends on: the key, the headers, and the refusal.
 
     use super::*;
-    use crate::infrastructure::storage::{IMMUTABLE_CACHE_CONTROL, InMemoryObjectStore};
+    use crate::infrastructure::storage::InMemoryObjectStore;
 
     const PAYLOAD: &[u8] = b"\x1f\x8b\x08\x00a-seed-payload";
 
@@ -200,7 +204,7 @@ mod tests {
         );
         assert_eq!(
             metadata.cache_control.as_deref(),
-            Some(IMMUTABLE_CACHE_CONTROL)
+            Some(PAYLOAD_CACHE_CONTROL)
         );
     }
 

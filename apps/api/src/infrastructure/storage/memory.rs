@@ -280,7 +280,10 @@ mod tests {
         // without a bucket.
         let store = store();
         let key = ObjectKey::bible_payload("asv", 1).expect("a valid key");
-        let metadata = ObjectMetadata::immutable("application/gzip");
+        let metadata = ObjectMetadata {
+            content_type: Some("application/gzip".to_owned()),
+            cache_control: Some("public, max-age=31536000, immutable".to_owned()),
+        };
 
         store
             .put_with_metadata(&key, Bytes::from_static(b"gz"), &metadata)

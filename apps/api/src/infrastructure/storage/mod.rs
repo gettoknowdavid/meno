@@ -58,7 +58,7 @@ pub mod store;
 pub use error::StorageError;
 pub use image::sniff_image_extension;
 pub use memory::InMemoryObjectStore;
-pub use store::{IMMUTABLE_CACHE_CONTROL, ObjectKey, ObjectMetadata, ObjectStore};
+pub use store::{ObjectKey, ObjectMetadata, ObjectStore};
 
 /// The no-op [`ObjectStore`] used when `STORAGE_ENABLED` is not true (§4.6).
 ///

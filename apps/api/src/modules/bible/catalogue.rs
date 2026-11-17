@@ -22,8 +22,6 @@
 //! version 1. The client's seed ledger compares this number with what it holds, which is
 //! what makes "an update is available" a comparison rather than a download every launch.
 
-use crate::infrastructure::storage::{ObjectKey, StorageError};
-
 /// One translation this deployment publishes.
 ///
 /// Every field is `&'static str` or a number because the whole table is a `const`: a
@@ -47,19 +45,6 @@ pub struct CatalogueEntry {
 
     /// The payload's SHA-256, lowercase hex, so a client can verify what it downloaded.
     pub sha256: &'static str,
-}
-
-impl CatalogueEntry {
-    /// Where this entry's payload lives.
-    ///
-    /// # Errors
-    ///
-    /// [`StorageError::InvalidKey`] for a code or version
-    /// [`ObjectKey::bible_payload`] refuses. A test pins that every entry in
-    /// [`TRANSLATIONS`] builds one, so this is a guard rather than a runtime possibility.
-    pub fn payload_key(&self) -> Result<ObjectKey, StorageError> {
-        ObjectKey::bible_payload(self.code, self.version)
-    }
 }
 
 /// Every payload this deployment publishes, ordered by code.
@@ -101,21 +86,19 @@ pub fn entry(code: &str) -> Option<&'static CatalogueEntry> {
 /// The absolute URL `entry`'s payload is served from, under `public_url`.
 ///
 /// A string join, not a signature: §3.3 binds a custom domain to the bucket so public
-/// assets are read straight from the CDN. The base is trimmed of one trailing slash
-/// because `STORAGE_PUBLIC_URL` is written both ways in the wild and `//` is a different
-/// URL to a cache.
+/// assets are read straight from the CDN. `public_url` is the state's already-normalised
+/// base (see [`BibleState::new`](crate::modules::bible::state::BibleState::new)), which is
+/// what keeps a `STORAGE_PUBLIC_URL` with a trailing slash from producing `//` — a
+/// different URL to a cache.
 ///
-/// # Errors
-///
-/// Whatever [`CatalogueEntry::payload_key`] reports — see it for why that cannot happen
-/// for a table entry.
-pub fn payload_url(public_url: &str, entry: &CatalogueEntry) -> Result<String, StorageError> {
-    let key = entry.payload_key()?;
-    Ok(format!(
-        "{}/{}",
-        public_url.trim_end_matches('/'),
-        key.as_str()
-    ))
+/// Infallible on purpose: every argument is a `const` table entry, and the key shape it
+/// mirrors is pinned by `every_entry_builds_its_key` below.
+#[must_use]
+pub fn payload_url(public_url: &str, entry: &CatalogueEntry) -> String {
+    format!(
+        "{public_url}/bible/{}/{}.json.gz",
+        entry.code, entry.version
+    )
 }
 
 #[cfg(test)]
@@ -124,20 +107,25 @@ mod tests {
     //! as safe as a validated one: shape, uniqueness, order, and the URL it produces.
 
     use super::*;
+    use crate::infrastructure::storage::ObjectKey;
 
     #[test]
-    fn every_entry_builds_a_payload_key() {
-        // The guard that turns `bible_payload`'s `Result` into a compile-of-the-table
-        // property: a code with a capital or a version of zero would publish to a key the
-        // endpoint cannot describe.
+    fn every_entry_builds_its_key() {
+        // The guard that makes the table a compile-time property rather than a convention:
+        // a code with a capital or a version of zero would publish to a key the endpoint
+        // cannot describe. The URL is checked against the same key here, so the join in
+        // `payload_url` cannot drift from the layout `publish` writes to.
         for entry in TRANSLATIONS {
-            let key = entry
-                .payload_key()
+            let key = ObjectKey::bible_payload(entry.code, entry.version)
                 .unwrap_or_else(|error| panic!("{} v{}: {error}", entry.code, entry.version));
 
             assert_eq!(
                 key.as_str(),
                 format!("bible/{}/{}.json.gz", entry.code, entry.version)
+            );
+            assert_eq!(
+                payload_url("https://cdn.test", entry),
+                format!("https://cdn.test/{}", key.as_str())
             );
         }
     }
@@ -199,13 +187,7 @@ mod tests {
         let entry = entry("asv").expect("asv is catalogued");
 
         assert_eq!(
-            payload_url("https://cdn.meno.app", entry).expect("a URL"),
-            "https://cdn.meno.app/bible/asv/1.json.gz"
-        );
-        // A base written with a trailing slash must not produce `//`, which a CDN treats
-        // as a different path.
-        assert_eq!(
-            payload_url("https://cdn.meno.app/", entry).expect("a URL"),
+            payload_url("https://cdn.meno.app", entry),
             "https://cdn.meno.app/bible/asv/1.json.gz"
         );
     }
