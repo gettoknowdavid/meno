@@ -76,6 +76,12 @@ final class AuthManager implements Disposable {
       debugName: 'auth.logOutEverywhere',
     );
 
+    changePassword = .createAsyncNoResult<ChangePasswordArgs>(
+      _changePassword,
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'auth.changePassword',
+    );
+
     deleteAccount = .createAsyncNoParamNoResult(
       _deleteAccount,
       errorFilterFn: menoExceptionFilter,
@@ -190,6 +196,13 @@ final class AuthManager implements Disposable {
   /// Ends every session the active account has.
   late final Command<void, void> logOutEverywhere;
 
+  /// Rewrites the active account's password, then signs this device out.
+  ///
+  /// The API checks the current password and revokes every session as part of
+  /// the change, so the local session cannot be kept: it would only be a
+  /// credential that no longer works.
+  late final Command<ChangePasswordArgs, void> changePassword;
+
   /// Permanently deletes the active account.
   ///
   /// The API call comes first: only a confirmed deletion clears local state.
@@ -287,6 +300,7 @@ final class AuthManager implements Disposable {
     signInWithGoogle.dispose();
     logout.dispose();
     logOutEverywhere.dispose();
+    changePassword.dispose();
     deleteAccount.dispose();
     switchAccount.dispose();
     addAccount.dispose();
@@ -447,6 +461,20 @@ final class AuthManager implements Disposable {
         tag: MenoLogTag.lifecycle.label,
       );
     }
+
+    await signOut();
+  }
+
+  /// Changes the password, then ends this device's session.
+  ///
+  /// Signing out locally is not optional: the server ended every session in the
+  /// same call, so what is left on this device is a token the guard already
+  /// refuses. The door is the sign-in screen, with the new password.
+  Future<void> _changePassword(ChangePasswordArgs args) async {
+    await _http.changePassword(
+      currentPassword: args.currentPassword.getOrCrash,
+      newPassword: args.newPassword.getOrCrash,
+    );
 
     await signOut();
   }
@@ -667,6 +695,18 @@ final class ResetPasswordArgs {
 
   /// The six-digit reset code.
   final String code;
+
+  /// The replacement password.
+  final Password newPassword;
+}
+
+/// The parameters of [AuthManager.changePassword].
+final class ChangePasswordArgs {
+  /// Creates change-password arguments.
+  const new({required this.currentPassword, required this.newPassword});
+
+  /// The password the account has now.
+  final Password currentPassword;
 
   /// The replacement password.
   final Password newPassword;

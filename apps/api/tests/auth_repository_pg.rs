@@ -229,6 +229,31 @@ async fn a_password_hash_is_reachable_only_by_address(#[allow(unused_variables)]
 }
 
 #[sqlx::test(migrations = "../../crates/db/migrations")]
+async fn the_password_hash_is_also_reachable_by_account_id(
+    #[allow(unused_variables)] pool: PgPool,
+) {
+    with_pool!(|pool| {
+        let repo = PgAuthRepo::new(RepoDeps { pool });
+        let ada = user(&repo, "ada@example.com").await;
+
+        assert!(
+            repo.find_password_hash_by_id(ada.id)
+                .await
+                .expect("the lookup runs")
+                .is_some(),
+            "change-password knows the account and must still see its hash"
+        );
+        assert!(
+            repo.find_password_hash_by_id(Uuid::new_v4())
+                .await
+                .expect("the lookup runs")
+                .is_none(),
+            "an id that names no account has no credential to verify"
+        );
+    });
+}
+
+#[sqlx::test(migrations = "../../crates/db/migrations")]
 async fn setting_a_password_hash_revokes_sessions_in_the_same_call(
     #[allow(unused_variables)] pool: PgPool,
 ) {

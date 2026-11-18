@@ -70,6 +70,25 @@ final class AuthHttpService {
     );
   }
 
+  /// `POST /auth/change-password` — rewrites the password after checking the old
+  /// one.
+  ///
+  /// Guarded. Success ends every session the account has, this device
+  /// included: the API answers with no token pair, so the caller signs in again
+  /// with the new password.
+  Future<void> changePassword({
+    required String currentPassword,
+    required String newPassword,
+  }) {
+    return _client.postUnit(
+      '/auth/change-password',
+      data: {
+        'current_password': currentPassword,
+        'new_password': newPassword,
+      },
+    );
+  }
+
   /// `POST /auth/logout-all` — ends every session for the account.
   ///
   /// Guarded: it reads the caller's identity from the request, which is what
