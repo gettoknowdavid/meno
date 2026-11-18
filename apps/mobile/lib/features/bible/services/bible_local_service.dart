@@ -40,6 +40,23 @@ final class BibleLocalService {
     }
   }
 
+  /// The version this device has seeded for [code], or 0 when it has none.
+  ///
+  /// Read from the seed ledger rather than the version row: the ledger is what
+  /// the seeder writes in the same transaction as the verses, so it describes
+  /// rows that are actually there. It is what makes "an update is available" a
+  /// comparison instead of a download on every launch.
+  int seedVersion(String code) {
+    final query = _database.bibleSeedBox
+        .query(BibleSeedRow_.translationCode.equals(code))
+        .build();
+    try {
+      return query.findFirst()?.seedVersion ?? 0;
+    } finally {
+      query.close();
+    }
+  }
+
   /// The verses of one chapter, in verse order.
   List<BibleVerseRow> verses({
     required String translation,

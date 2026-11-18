@@ -93,6 +93,17 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   di.registerLazySingleton<BibleLocalService>(
     () => BibleLocalService(di<Database>()),
   );
+  // The catalogue is public and the payloads are on the CDN, so neither needs
+  // a session — a device nobody is signed into can still add a translation.
+  di.registerLazySingleton<BibleCatalogueService>(
+    () => BibleCatalogueService(di<HttpClient>()),
+  );
+  di.registerLazySingleton<BibleDownloadService>(
+    () => BibleDownloadService(
+      http: di<HttpClient>(),
+      logger: di<MenoLogger>(),
+    ),
+  );
   di.registerLazySingleton<BibleManager>(
     () =>
         BibleManager(local: di<BibleLocalService>(), logger: di<MenoLogger>()),
@@ -101,6 +112,8 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
     () => TranslationsManager(
       local: di<BibleLocalService>(),
       seed: di<BibleSeedService>(),
+      catalogue: di<BibleCatalogueService>(),
+      downloads: di<BibleDownloadService>(),
       logger: di<MenoLogger>(),
     ),
     // The list is read as the manager is created, which can be before the seed

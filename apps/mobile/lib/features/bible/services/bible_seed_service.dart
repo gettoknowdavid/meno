@@ -185,7 +185,56 @@ final class BibleSeedService implements Disposable {
     if (wroteAnything) freshlySeeded.value = true;
   }
 
-  /// Writes one translation when the store is not already current.
+  /// Seeds a translation from a payload already on the device.
+  ///
+  /// This is the offline path. `BibleDownloadService` downloads a payload,
+  /// verifies its length and SHA-256 against the catalogue and caches it, and a
+  /// device that still holds that file seeds from it without a network — after
+  /// a store reset, or on a flight. The ledger decides whether there is
+  /// anything to do, so a version the store already holds is skipped here too.
+  ///
+  /// Returns whether rows were written. A payload that cannot be read is logged
+  /// and reported as not written, never as an empty translation.
+  Future<bool> seedFromCache({
+    required String code,
+    required int version,
+    required File file,
+  }) async {
+    final logger = di<MenoLogger>();
+
+    final Database database;
+    try {
+      database = await _resolveDatabase();
+    } on Object catch (error, stackTrace) {
+      logger.w(
+        'Bible seeding skipped: the store is not available',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+
+    try {
+      return await _writeTranslation(
+        database: database,
+        code: code,
+        version: version,
+        logger: logger,
+        loadBytes: file.readAsBytes,
+      );
+    } on Object catch (error, stackTrace) {
+      logger.e(
+        'Bible seeding failed for $code',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
+  /// Seeds one bundled translation.
   ///
   /// Returns whether rows were written, which is what tells the app that this
   /// launch has scripture worth announcing.
@@ -193,32 +242,57 @@ final class BibleSeedService implements Disposable {
     Database database,
     BundledTranslation translation,
     MenoLogger logger,
-  ) async {
-    final code = translation.code;
+  ) {
+    return _writeTranslation(
+      database: database,
+      code: translation.code,
+      version: translation.version,
+      logger: logger,
+      loadBytes: () => _loadAssetBytes(translation.asset),
+    );
+  }
+
+  /// Writes one translation from payload bytes, unless the store is current.
+  ///
+  /// The bytes come from a bundled asset or from a cached download; nothing
+  /// below knows which, because the payload format is the same and the ledger
+  /// is the only thing that decides whether to write.
+  Future<bool> _writeTranslation({
+    required Database database,
+    required String code,
+    required int version,
+    required MenoLogger logger,
+    required Future<Uint8List> Function() loadBytes,
+  }) async {
     final ledger = _ledgerFor(database, code);
 
     if (ledger != null &&
-        ledger.seedVersion >= translation.version &&
+        ledger.seedVersion >= version &&
         ledger.verseCount == _storedVerseCount(database, code)) {
       return false;
     }
 
-    final payload = await _loadPayload(translation.asset);
+    final bytes = await loadBytes();
+
+    // Off the UI isolate for the same reason as the asset path: gunzipping and
+    // parsing a few megabytes of JSON is the most expensive thing here, and it
+    // happens while somebody may be signing in.
+    final payload = await Isolate.run(() => decodeSeedPayload(bytes));
 
     final format = payload['format'];
     if (format != _supportedSeedFormat) {
       logger.w(
-        'Skipped ${translation.code}: asset format $format is not '
+        'Skipped $code: payload format $format is not '
         '$_supportedSeedFormat',
         tag: MenoLogTag.lifecycle.label,
       );
       return false;
     }
 
-    final assetCode = payload['code'] as String?;
-    if (assetCode != code) {
+    final payloadCode = payload['code'] as String?;
+    if (payloadCode != code) {
       logger.w(
-        'Skipped ${translation.code}: the asset names itself "$assetCode"',
+        'Skipped $code: the payload names itself "$payloadCode"',
         tag: MenoLogTag.lifecycle.label,
       );
       return false;
@@ -227,7 +301,7 @@ final class BibleSeedService implements Disposable {
     final verses = payload['verses'] as List<dynamic>;
     if (verses.isEmpty) {
       logger.w(
-        'Skipped $code: the asset holds no verses',
+        'Skipped $code: the payload holds no verses',
         tag: MenoLogTag.lifecycle.label,
       );
       return false;
@@ -261,7 +335,7 @@ final class BibleSeedService implements Disposable {
           code: code,
           versionRow: versionRow,
           verseCount: written,
-          version: translation.version,
+          version: version,
           replaceExisting: replaceExisting,
           isLastBatch: isLastBatch,
         ),
@@ -342,18 +416,13 @@ final class BibleSeedService implements Disposable {
     };
   }
 
-  /// Loads and decodes one bundled asset.
-  Future<Map<String, dynamic>> _loadPayload(String asset) async {
+  /// The bytes of one bundled asset.
+  ///
+  /// Decoding happens in [_writeTranslation], which is where the cached path
+  /// joins this one.
+  Future<Uint8List> _loadAssetBytes(String asset) async {
     final data = await _bundle.load(asset);
-    final bytes = data.buffer.asUint8List(
-      data.offsetInBytes,
-      data.lengthInBytes,
-    );
-
-    // Off the UI isolate: gunzipping and parsing a few megabytes of JSON is the
-    // most expensive thing this service does, and it happens while somebody is
-    // signing in.
-    return await Isolate.run(() => decodeSeedPayload(bytes));
+    return data.buffer.asUint8List(data.offsetInBytes, data.lengthInBytes);
   }
 }
 

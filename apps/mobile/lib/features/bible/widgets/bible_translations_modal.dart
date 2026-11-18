@@ -1,7 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/bible/manager/_manager.dart';
-import 'package:meno_mobile/features/bible/model/bible_rows.dart';
+import 'package:meno_mobile/features/bible/model/_model.dart';
 import 'package:meno_mobile/features/bible/widgets/translation_widget.dart';
 import 'package:meno_ui/meno_ui.dart';
 
@@ -57,7 +57,8 @@ class _DownloadedList extends WatchingWidget {
         final t = translations[index];
         return TranslationWidget(
           key: ObjectKey(t.code),
-          translation: t,
+          code: t.code,
+          name: t.name,
           onSelect: () => _applyTranslation(context, t),
         );
       },
@@ -72,20 +73,20 @@ class _DownloadedList extends WatchingWidget {
   }
 }
 
-/// The translations a catalogue offers beyond the bundled ones.
+/// The translations the catalogue offers beyond what this device holds.
 ///
-/// Nothing is offered today: every translation ships in the app and is seeded
-/// on first launch, and there is no Bible endpoint to list anything else. The
-/// section is therefore drawn only when a catalogue has something in it, rather
-/// than as an "Available Online" heading over an empty list.
+/// Drawn only when there is something in it, rather than as an "Available
+/// Online" heading over an empty list — which is the normal state of a device
+/// that has bundled everything and is offline.
 class _OnlineSection extends WatchingWidget {
   const new();
 
   @override
   Widget build(BuildContext context) {
-    final translations = watchValue<TranslationsManager, List<BibleVersionRow>>(
-      (m) => m.remoteTranslations,
-    );
+    final translations =
+        watchValue<TranslationsManager, List<BibleTranslationRelease>>(
+          (m) => m.remoteTranslations,
+        );
 
     if (translations.isEmpty) return const SizedBox.shrink();
 
@@ -107,7 +108,8 @@ class _OnlineSection extends WatchingWidget {
             final t = translations[index];
             return TranslationWidget(
               key: ObjectKey(t.code),
-              translation: t,
+              code: t.code,
+              name: t.name,
               isDownloaded: false,
               onDownload: () =>
                   di<TranslationsManager>().downloadTranslation.run(t.code),

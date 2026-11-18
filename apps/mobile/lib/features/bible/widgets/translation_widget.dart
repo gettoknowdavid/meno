@@ -1,19 +1,31 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/features/bible/manager/_manager.dart';
-import 'package:meno_mobile/features/bible/model/bible_rows.dart';
 import 'package:meno_ui/meno_ui.dart';
 
+/// One translation, held or on offer.
+///
+/// Takes the code and name rather than a row because the two lists it appears
+/// in hold different types: the device's own reads come from the store
+/// (`BibleVersionRow`), the catalogue's from the API
+/// (`BibleTranslationRelease`), and what this widget draws is the same either
+/// way.
 class TranslationWidget extends WatchingWidget {
   const new({
-    required this.translation,
+    required this.code,
+    required this.name,
     super.key,
     this.isDownloaded = true,
     this.onSelect,
     this.onDownload,
   });
 
-  final BibleVersionRow translation;
+  /// The translation code, for example `kjv`.
+  final String code;
+
+  /// The name shown under the code.
+  final String name;
+
   final bool isDownloaded;
   final VoidCallback? onSelect;
   final VoidCallback? onDownload;
@@ -37,7 +49,7 @@ class TranslationWidget extends WatchingWidget {
       (m) => m.downloadingAbbreviation,
     );
 
-    final abb = translation.code;
+    final abb = code;
     final isSelected = currentTranslation == abb;
     final isThisDownloading = downloadingAbbr == abb;
 
@@ -62,7 +74,7 @@ class TranslationWidget extends WatchingWidget {
                 mainAxisAlignment: .center,
                 children: [
                   MText(abb.toUpperCase(), style: textTheme.bodyMedium),
-                  MText(translation.name, style: textTheme.microRegular),
+                  MText(name, style: textTheme.microRegular),
                 ],
               ),
             ),
