@@ -540,6 +540,13 @@ pub struct BroadcastListItem {
     /// When it ended.
     #[serde(with = "time::serde::rfc3339::option")]
     pub end_time: Option<OffsetDateTime>,
+    /// When the caller saved it — stated by the bookmarks page only.
+    ///
+    /// `null` on every other list: a feed row was not saved by anyone, and the
+    /// bookmarks page is the one page ordered by this instant, so it is the one
+    /// place the value means anything.
+    #[serde(with = "time::serde::rfc3339::option")]
+    pub saved_at: Option<OffsetDateTime>,
     /// How many have ever joined.
     pub total_participants: i64,
     /// Who owns it.

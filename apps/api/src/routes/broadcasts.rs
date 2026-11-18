@@ -34,6 +34,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 
+
 use crate::infrastructure::redis::Redis;
 use crate::middleware::auth::auth_middleware;
 use crate::middleware::idempotency::idempotency_middleware;
@@ -48,6 +49,7 @@ use crate::modules::broadcast::storage::MAX_BROADCAST_IMAGE_BYTES;
 /// thing it is meant to check cannot fail. [`crate::routes::tests`] asserts against it.
 pub const BROADCAST_PATHS: &[&str] = &[
     "/broadcasts",
+    "/broadcasts/bookmarks",
     "/broadcasts/co-host-invitations",
     "/broadcasts/00000000-0000-0000-0000-000000000000",
     "/broadcasts/00000000-0000-0000-0000-000000000000/live",
@@ -59,6 +61,7 @@ pub const BROADCAST_PATHS: &[&str] = &[
     "/broadcasts/00000000-0000-0000-0000-000000000000/cohosts/00000000-0000-0000-0000-000000000000",
     "/broadcasts/00000000-0000-0000-0000-000000000000/participants",
     "/broadcasts/00000000-0000-0000-0000-000000000000/image",
+    "/broadcasts/00000000-0000-0000-0000-000000000000/bookmark",
 ];
 
 /// Body limit for the cover route: the image itself plus a megabyte of multipart framing
@@ -82,6 +85,10 @@ pub fn routes(
             "/broadcasts/co-host-invitations",
             get(handlers::pending_cohost_invitations),
         )
+        // The caller's own saved broadcasts. Static, so it sits with the other
+        // static sibling and can never be read as a broadcast whose id spells
+        // `bookmarks`.
+        .route("/broadcasts/bookmarks", get(handlers::bookmarks))
         .route("/broadcasts/{id}", get(handlers::get))
         .route("/broadcasts/{id}/participants", get(handlers::participants))
         .layer(from_fn_with_state(
@@ -124,6 +131,13 @@ pub fn routes(
         .route("/broadcasts/{id}/live", post(handlers::go_live))
         .route("/broadcasts/{id}/end", post(handlers::end))
         .route("/broadcasts/{id}/leave", post(handlers::leave))
+        // Keeping and forgetting are writes, so they take the write limiter and
+        // the idempotency layer: a retried tap must not create a second row — the
+        // upsert already says so — and must not be a second round trip.
+        .route(
+            "/broadcasts/{id}/bookmark",
+            post(handlers::bookmark).delete(handlers::remove_bookmark),
+        )
         // The v2 endpoint table spells this resource `co-hosts`; the earlier
         // `/cohosts` spelling stays mounted so existing clients do not break.
         .route("/broadcasts/{id}/co-hosts", post(handlers::add_cohost))

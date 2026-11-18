@@ -55,7 +55,10 @@ use sqlx::{AssertSqlSafe, Postgres, QueryBuilder};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter, RepoDeps};
+use super::{
+    BookmarkFilter, BookmarkedBroadcast, BroadcastFilter, BroadcastRepo, LiveBroadcast,
+    ParticipantFilter, RepoDeps,
+};
 use crate::infrastructure::query::{ColumnName, push_cursor_condition, push_order_and_limit};
 use crate::modules::broadcast::error;
 use crate::modules::broadcast::model::{
@@ -95,6 +98,20 @@ fn statement(template: &str) -> AssertSqlSafe<String> {
             .replace("{COHOST_COLUMNS}", COHOST_COLUMNS)
             .replace("{USER_COLUMNS}", USER_COLUMNS),
     )
+}
+
+/// [`BROADCAST_COLUMNS`] with `alias.` in front of every name, for a statement
+/// that joins another table.
+///
+/// Derived from the same `const`, so a column added to the projection cannot be
+/// missing from the joined read — the failure mode a second hand-written list
+/// would eventually produce.
+fn qualified_columns(alias: &str) -> String {
+    BROADCAST_COLUMNS
+        .split(',')
+        .map(|column| format!("{alias}.{}", column.trim()))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The head of a statement a [`QueryBuilder`] then appends to.
@@ -774,6 +791,89 @@ impl BroadcastRepo for PgBroadcastRepo {
             .await
             .map_err(|e| database("commit_set_cohosts", e))?;
         Ok(rows)
+    }
+
+    async fn add_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        let result = sqlx::query(
+            "INSERT INTO broadcast_bookmarks (user_id, broadcast_id, saved_at) \
+             VALUES ($1, $2, now()) \
+             ON CONFLICT (user_id, broadcast_id) DO NOTHING",
+        )
+        .bind(user_id)
+        .bind(broadcast_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| database("add_bookmark", e))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn remove_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        let result = sqlx::query(
+            "DELETE FROM broadcast_bookmarks WHERE user_id = $1 AND broadcast_id = $2",
+        )
+        .bind(user_id)
+        .bind(broadcast_id)
+        .execute(&self.pool)
+        .await
+        .map_err(|e| database("remove_bookmark", e))?;
+
+        Ok(result.rows_affected() > 0)
+    }
+
+    async fn is_bookmarked(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (SELECT 1 FROM broadcast_bookmarks \
+             WHERE user_id = $1 AND broadcast_id = $2)",
+        )
+        .bind(user_id)
+        .bind(broadcast_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| database("is_bookmarked", e))
+    }
+
+    async fn list_bookmarks(
+        &self,
+        filter: BookmarkFilter,
+    ) -> Result<Vec<BookmarkedBroadcast>, MenoError> {
+        #[derive(sqlx::FromRow)]
+        struct Row {
+            #[sqlx(flatten)]
+            broadcast: Broadcast,
+            saved_at: OffsetDateTime,
+        }
+
+        // `$2` is the cursor's timestamp, and a null one means "first page":
+        // the row comparison then has a null operand, which is never true, so
+        // the `IS NULL` arm is what admits every row. One statement rather than
+        // two, so the page and its boundary cannot drift apart.
+        let rows = sqlx::query_as::<_, Row>(statement(&format!(
+            "SELECT {}, bm.saved_at \
+             FROM broadcast_bookmarks bm \
+             JOIN broadcasts b ON b.id = bm.broadcast_id \
+             WHERE bm.user_id = $1 AND b.deleted_at IS NULL \
+               AND ($2::timestamptz IS NULL \
+                    OR (bm.saved_at, bm.broadcast_id) < ($2, $3)) \
+             ORDER BY bm.saved_at DESC, bm.broadcast_id DESC \
+             LIMIT $4",
+            qualified_columns("b"),
+        )))
+        .bind(filter.user_id)
+        .bind(filter.cursor.map(|(saved_at, _)| saved_at))
+        .bind(filter.cursor.map(|(_, id)| id))
+        .bind(filter.limit_plus_one)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| database("list_bookmarks", e))?;
+
+        Ok(rows
+            .into_iter()
+            .map(|row| BookmarkedBroadcast {
+                broadcast: row.broadcast,
+                saved_at: row.saved_at,
+            })
+            .collect())
     }
 
     async fn find_user(&self, id: Uuid) -> Result<Option<UserSummary>, MenoError> {

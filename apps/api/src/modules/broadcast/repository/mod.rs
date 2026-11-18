@@ -220,6 +220,37 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
         at: OffsetDateTime,
     ) -> Result<Option<CohostInvitation>, MenoError>;
 
+    // ── bookmarks (migration 0007) ────────────────────────────────────────
+
+    /// Save `broadcast_id` for `user_id`.
+    ///
+    /// Idempotent: an upsert on `(user_id, broadcast_id)`, so keeping the same
+    /// broadcast twice leaves one row and answers `false` the second time. A
+    /// repeated tap is a normal thing for a star to do, not an error.
+    async fn add_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError>;
+
+    /// Forget `broadcast_id` for `user_id`; `true` when a row was removed.
+    ///
+    /// The service treats "was not kept" as success: the caller asked for it to
+    /// be gone, and it is.
+    async fn remove_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError>;
+
+    /// Whether `user_id` has kept `broadcast_id`.
+    ///
+    /// The read behind `isBookmarked` on a broadcast response, so a detail and a
+    /// list cannot disagree about the same account's standing.
+    async fn is_bookmarked(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError>;
+
+    /// One page of `user_id`'s bookmarks, newest save first.
+    ///
+    /// Joined to `broadcasts`, so a deleted broadcast is not in the answer — the
+    /// row outlives the soft delete, and a card for something that no longer
+    /// exists is worse than a shorter page.
+    async fn list_bookmarks(
+        &self,
+        filter: BookmarkFilter,
+    ) -> Result<Vec<BookmarkedBroadcast>, MenoError>;
+
     // ── scheduled reminders (§8.2's start job) ────────────────────────────
 
     /// Scheduled broadcasts whose start time has arrived and whose reminder has not
@@ -289,6 +320,34 @@ pub struct BroadcastFilter {
     pub cursor: Option<(OffsetDateTime, Uuid)>,
     /// Sort direction.
     pub order: meno_core::Order,
+}
+
+/// The filter a bookmark page is read with.
+///
+/// The cursor is `(saved_at, broadcast_id)` rather than `(created_at, id)`,
+/// because this page is ordered by when the account saved the broadcast — the
+/// index migration 0007 created. Decoded at the edge like every other cursor, so
+/// no `WHERE` clause is ever built from a string.
+#[derive(Debug, Clone, Copy)]
+pub struct BookmarkFilter {
+    /// Whose bookmarks.
+    pub user_id: Uuid,
+    /// The page size, plus the one probe row.
+    pub limit_plus_one: i64,
+    /// The exclusive keyset boundary from the previous page.
+    pub cursor: Option<(OffsetDateTime, Uuid)>,
+}
+
+/// A bookmarked broadcast with the moment it was saved.
+///
+/// The pair, not a bare [`Broadcast`]: the page is ordered by `saved_at`, and a
+/// projection that dropped it could not build the next page's cursor.
+#[derive(Debug, Clone)]
+pub struct BookmarkedBroadcast {
+    /// The broadcast itself.
+    pub broadcast: Broadcast,
+    /// When the account saved it.
+    pub saved_at: OffsetDateTime,
 }
 
 /// The filter a participant roster is read with.

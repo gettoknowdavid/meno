@@ -24,7 +24,10 @@ use std::sync::Mutex;
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::{BroadcastFilter, BroadcastRepo, LiveBroadcast, ParticipantFilter};
+use super::{
+    BookmarkFilter, BookmarkedBroadcast, BroadcastFilter, BroadcastRepo, LiveBroadcast,
+    ParticipantFilter,
+};
 use crate::modules::broadcast::model::{
     Broadcast, BroadcastCohost, BroadcastParticipant, BroadcastPatch, BroadcastStatus,
     CohostInvitation, EndReason, InvitationStatus, JoinOutcome, JoinRequest, LeaveOutcome,
@@ -43,6 +46,17 @@ pub struct InMemoryBroadcastRepo {
     state: Mutex<State>,
 }
 
+/// One saved bookmark, as the table holds it.
+#[derive(Debug, Clone, Copy)]
+struct Bookmark {
+    /// The account that saved it.
+    user_id: Uuid,
+    /// What was saved.
+    broadcast_id: Uuid,
+    /// When — the column this page is ordered by.
+    saved_at: OffsetDateTime,
+}
+
 #[derive(Debug, Default)]
 struct State {
     broadcasts: Vec<Broadcast>,
@@ -59,6 +73,8 @@ struct State {
     invitations: Vec<CohostInvitation>,
     /// Broadcasts whose scheduled reminder has already gone out.
     scheduled_notified: Vec<Uuid>,
+    /// `broadcast_bookmarks`: one row per account and broadcast.
+    bookmarks: Vec<Bookmark>,
     clock: Option<OffsetDateTime>,
 }
 
@@ -438,6 +454,91 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             meno_core::Order::Asc => a.created_at.cmp(&b.created_at).then(a.id.cmp(&b.id)),
         });
 
+        rows.truncate(filter.limit_plus_one.max(0) as usize);
+        Ok(rows)
+    }
+
+    async fn add_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        let mut state = self.lock();
+
+        // The adapter's foreign key refuses a row for a broadcast that is not
+        // there; the double says the same rather than inventing a bookmark for
+        // an id nothing can open.
+        if !state
+            .broadcasts
+            .iter()
+            .any(|b| b.id == broadcast_id && b.deleted_at.is_none())
+        {
+            return Err(crate::modules::broadcast::error::not_found());
+        }
+
+        if state
+            .bookmarks
+            .iter()
+            .any(|b| b.user_id == user_id && b.broadcast_id == broadcast_id)
+        {
+            return Ok(false);
+        }
+
+        let saved_at = Self::now(&state);
+        state.bookmarks.push(Bookmark {
+            user_id,
+            broadcast_id,
+            saved_at,
+        });
+        Ok(true)
+    }
+
+    async fn remove_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        let mut state = self.lock();
+        let before = state.bookmarks.len();
+        state
+            .bookmarks
+            .retain(|b| !(b.user_id == user_id && b.broadcast_id == broadcast_id));
+        Ok(state.bookmarks.len() != before)
+    }
+
+    async fn is_bookmarked(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
+        Ok(self
+            .lock()
+            .bookmarks
+            .iter()
+            .any(|b| b.user_id == user_id && b.broadcast_id == broadcast_id))
+    }
+
+    async fn list_bookmarks(
+        &self,
+        filter: BookmarkFilter,
+    ) -> Result<Vec<BookmarkedBroadcast>, MenoError> {
+        let state = self.lock();
+
+        let mut rows: Vec<BookmarkedBroadcast> = state
+            .bookmarks
+            .iter()
+            .filter(|bookmark| bookmark.user_id == filter.user_id)
+            .filter_map(|bookmark| {
+                state
+                    .broadcasts
+                    .iter()
+                    .find(|b| b.id == bookmark.broadcast_id && b.deleted_at.is_none())
+                    .map(|broadcast| BookmarkedBroadcast {
+                        broadcast: broadcast.clone(),
+                        saved_at: bookmark.saved_at,
+                    })
+            })
+            .collect();
+
+        // The keyset boundary, applied for real: a page that ignored it would
+        // return its first row forever and no assertion would notice.
+        if let Some((cursor_ts, cursor_id)) = filter.cursor {
+            rows.retain(|row| (row.saved_at, row.broadcast.id) < (cursor_ts, cursor_id));
+        }
+
+        rows.sort_by(|a, b| {
+            b.saved_at
+                .cmp(&a.saved_at)
+                .then(b.broadcast.id.cmp(&a.broadcast.id))
+        });
         rows.truncate(filter.limit_plus_one.max(0) as usize);
         Ok(rows)
     }

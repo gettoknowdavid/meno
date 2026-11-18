@@ -38,7 +38,7 @@ use super::model::{
     NewBroadcast, ParticipantRole, UserSummary, now,
 };
 use super::notices::BroadcastNotices;
-use super::repository::{BroadcastFilter, BroadcastRepo, ParticipantFilter};
+use super::repository::{BookmarkFilter, BroadcastFilter, BroadcastRepo, ParticipantFilter};
 use super::rooms::BroadcastRooms;
 use super::storage::BroadcastStorage;
 use crate::infrastructure::ws::model::GracePeriodConfig;
@@ -235,44 +235,106 @@ impl BroadcastService {
             })
             .await?;
 
-        // One query for every creator in the page, not one per row (§9.4).
-        let creators = self
-            .repo
-            .find_users(&rows.iter().map(|row| row.creator_id).collect::<Vec<_>>())
+        let items = self
+            .project_items(&rows.iter().collect::<Vec<_>>())
             .await?;
-        let by_id: std::collections::HashMap<Uuid, UserSummary> =
-            creators.into_iter().map(|user| (user.id, user)).collect();
 
-        Ok(CursorPage::from_rows(
-            rows.iter()
-                .map(|row| BroadcastListItem {
-                    id: row.id,
-                    title: row.title.clone(),
-                    description: row.description.clone(),
-                    time_zone: row.time_zone.clone(),
-                    image_url: row.image_url.clone(),
-                    image_id: row.image_id.clone(),
-                    status: row.status,
-                    state: row.state(),
-                    created_at: row.created_at,
-                    start_time: row.start_time,
-                    end_time: row.end_time,
-                    total_participants: row.total_participants,
-                    creator_id: row.creator_id,
-                    creator_name: by_id
-                        .get(&row.creator_id)
-                        .map_or("Unknown".to_owned(), |user| user.full_name.clone()),
-                    creator_avatar_id: by_id
-                        .get(&row.creator_id)
-                        .and_then(|user| user.avatar_id.clone()),
-                    creator_avatar_url: by_id
-                        .get(&row.creator_id)
-                        .and_then(|user| user.avatar_url.clone()),
-                })
-                .collect::<Vec<_>>(),
-            query.limit(),
-            |item| Cursor::from_timestamp_id(item.created_at, item.id),
-        ))
+        Ok(CursorPage::from_rows(items, query.limit(), |item| {
+            Cursor::from_timestamp_id(item.created_at, item.id)
+        }))
+    }
+
+    /// `GET /broadcasts/bookmarks` — the caller's kept broadcasts.
+    ///
+    /// Ordered by when the account saved each one, not by when the broadcast was
+    /// created: this is a list of decisions the account made, and the newest
+    /// decision is the one somebody is looking for.
+    ///
+    /// # Errors
+    ///
+    /// [`MenoError::BadRequest`] with [`meno_core::ErrorCode::InvalidCursor`] when
+    /// `?cursor=` cannot be decoded — the same edge check every list makes, so no
+    /// `WHERE` clause is ever built from a string.
+    #[tracing::instrument(skip_all, fields(user_id = %viewer.id))]
+    pub async fn bookmarks(
+        &self,
+        query: &BroadcastQuery,
+        viewer: &UserSummary,
+    ) -> Result<CursorPage<BroadcastListItem>, MenoError> {
+        let limit = query.limit();
+        let mut rows = self
+            .repo
+            .list_bookmarks(BookmarkFilter {
+                user_id: viewer.id,
+                limit_plus_one: query.limit_plus_one(),
+                cursor: decode_cursor(query.cursor())?,
+            })
+            .await?;
+
+        let has_next_page = rows.len() > limit as usize;
+        if has_next_page {
+            rows.truncate(limit as usize);
+        }
+
+        // The cursor walks `(saved_at, broadcast_id)` — the index migration 0007
+        // created — and is only emitted when there is a page after this one.
+        let next_cursor = if has_next_page {
+            rows.last()
+                .map(|row| Cursor::from_timestamp_id(row.saved_at, row.broadcast.id))
+        } else {
+            None
+        };
+
+        let mut data = self
+            .project_items(&rows.iter().map(|row| &row.broadcast).collect::<Vec<_>>())
+            .await?;
+        for (item, row) in data.iter_mut().zip(&rows) {
+            item.saved_at = Some(row.saved_at);
+        }
+
+        Ok(CursorPage {
+            data,
+            next_cursor,
+            has_next_page,
+        })
+    }
+
+    /// `POST /broadcasts/{id}/bookmark` — keep a broadcast for later.
+    ///
+    /// Idempotent: keeping one that is already kept answers with the same record
+    /// rather than a conflict, because a star pressed twice is not a client bug.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when no live broadcast carries that id.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn bookmark(
+        &self,
+        id: Uuid,
+        actor: &UserSummary,
+    ) -> Result<BroadcastResponse, MenoError> {
+        let row = self.require(id).await?;
+        self.repo.add_bookmark(actor.id, id).await?;
+
+        // Rendered after the write, so `isBookmarked` is read back from the
+        // table rather than asserted from what this flow thinks it did.
+        let viewer = self.viewer_for(&row, actor).await?;
+        self.render(row, None, Some(viewer)).await
+    }
+
+    /// `DELETE /broadcasts/{id}/bookmark` — forget one.
+    ///
+    /// Removing a bookmark that is not there is a success: the caller asked for
+    /// it to be gone and it is.
+    ///
+    /// # Errors
+    ///
+    /// [`error::not_found`] when no live broadcast carries that id.
+    #[tracing::instrument(skip_all, fields(broadcast_id = %id, actor = %actor.id))]
+    pub async fn remove_bookmark(&self, id: Uuid, actor: &UserSummary) -> Result<(), MenoError> {
+        self.require(id).await?;
+        self.repo.remove_bookmark(actor.id, id).await?;
+        Ok(())
     }
 
     /// `PATCH /broadcasts/{id}` — edit, as the creator.
@@ -1313,6 +1375,52 @@ impl BroadcastService {
 
     // ── internals ─────────────────────────────────────────────────────────
 
+    /// A page of broadcasts as list items, with one query for every creator.
+    ///
+    /// One query per page rather than per row (§9.4). Shared by the feed and the
+    /// bookmarks page so the two cannot describe the same broadcast differently.
+    async fn project_items(
+        &self,
+        rows: &[&Broadcast],
+    ) -> Result<Vec<BroadcastListItem>, MenoError> {
+        let creators = self
+            .repo
+            .find_users(&rows.iter().map(|row| row.creator_id).collect::<Vec<_>>())
+            .await?;
+        let by_id: std::collections::HashMap<Uuid, UserSummary> =
+            creators.into_iter().map(|user| (user.id, user)).collect();
+
+        Ok(rows
+            .iter()
+            .map(|row| BroadcastListItem {
+                id: row.id,
+                title: row.title.clone(),
+                description: row.description.clone(),
+                time_zone: row.time_zone.clone(),
+                image_url: row.image_url.clone(),
+                image_id: row.image_id.clone(),
+                status: row.status,
+                state: row.state(),
+                created_at: row.created_at,
+                start_time: row.start_time,
+                end_time: row.end_time,
+                // Stated by the bookmarks page only; a feed row has no saved-at.
+                saved_at: None,
+                total_participants: row.total_participants,
+                creator_id: row.creator_id,
+                creator_name: by_id
+                    .get(&row.creator_id)
+                    .map_or("Unknown".to_owned(), |user| user.full_name.clone()),
+                creator_avatar_id: by_id
+                    .get(&row.creator_id)
+                    .and_then(|user| user.avatar_id.clone()),
+                creator_avatar_url: by_id
+                    .get(&row.creator_id)
+                    .and_then(|user| user.avatar_url.clone()),
+            })
+            .collect())
+    }
+
     /// The row, or [`error::not_found`].
     async fn require(&self, id: Uuid) -> Result<Broadcast, MenoError> {
         self.repo.find_by_id(id).await?.ok_or_else(error::not_found)
@@ -1361,11 +1469,10 @@ impl BroadcastService {
         Ok(Viewer {
             role,
             is_joined: participant.as_ref().is_some_and(|p| p.is_present()),
-            // Bookmarks live in `broadcast_bookmarks`, which this port does not read
-            // yet; reporting `false` would be a measurement, so it is reported as the
-            // absence of a fact the module does not have. See the module docs on what
-            // this port leaves out.
-            is_bookmarked: false,
+            // Read from `broadcast_bookmarks`, not inferred: a detail and a list
+            // have to agree about the same account's standing, and the table is the
+            // only thing that knows it.
+            is_bookmarked: self.repo.is_bookmarked(user.id, row.id).await?,
             live_participants_count: self.repo.live_participant_count(row.id).await?,
             time_remaining_seconds: None,
         })

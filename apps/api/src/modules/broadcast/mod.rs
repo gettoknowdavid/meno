@@ -61,11 +61,16 @@
 //! - **Cohost *invitations* (`cohost_invitations`, migration 0008).** Add/remove works;
 //!   the invite-and-accept handshake is a separate flow with its own table, and adding
 //!   it half-way would leave a cohost list with two ways to change it.
-//! - **Bookmarks and subscriptions.** `is_bookmarked` is reported as `false` because the
-//!   module does not read `broadcast_bookmarks` yet; it is a wire field the client
-//!   already renders, and filling it wrongly would be worse than leaving it.
-//! - **Bookmark *writes*.** The read side is deferred above; there is no endpoint to add
-//!   or remove one, which is why the mobile client keeps favourites on the device.
+//! - **Follow-aware feeds.** `GET /broadcasts` filters by one `creatorId`; a
+//!   `following=true` feed needs a join against `user_subscribers` and is not here yet.
+//!
+//! # Bookmarks are *not* deferred
+//!
+//! `POST`/`DELETE /broadcasts/{id}/bookmark` write `broadcast_bookmarks` (migration
+//! 0007), `GET /broadcasts/bookmarks` pages the caller's own list newest-save-first, and
+//! `isBookmarked` on a detail response is read from that table rather than reported as
+//! `false`. The client keeps a device copy for instant rendering, but the account's list
+//! is the server's.
 //!
 //! # Cover images are *not* deferred
 //!

@@ -109,6 +109,64 @@ pub async fn list(
     Ok(MenoResponse::ok("Broadcasts retrieved", page))
 }
 
+/// `GET /broadcasts/bookmarks` — the caller's kept broadcasts.
+///
+/// Scoped to the caller, so it takes no id: the account comes from the auth guard
+/// and never from a parameter.
+///
+/// # Errors
+///
+/// 400 `INVALID_CURSOR` when `?cursor=` cannot be decoded.
+pub async fn bookmarks(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Query(query): Query<BroadcastQuery>,
+) -> Outcome<CursorPage<super::dto::BroadcastListItem>> {
+    let viewer = summary_of(&auth);
+
+    let page = handlers.service.bookmarks(&query, &viewer).await?;
+    Ok(MenoResponse::ok("Bookmarks retrieved", page))
+}
+
+/// `POST /broadcasts/{id}/bookmark` — keep it for later.
+///
+/// Answers with the broadcast, so the client that just tapped its star drops the
+/// record straight into its state instead of re-fetching it. Idempotent, so a
+/// repeated tap is answered rather than refused.
+///
+/// # Errors
+///
+/// 404 when no live broadcast carries that id.
+pub async fn bookmark(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Outcome<super::dto::BroadcastResponse> {
+    let actor = summary_of(&auth);
+
+    let broadcast = handlers.service.bookmark(id, &actor).await?;
+    Ok(MenoResponse::ok("Broadcast bookmarked", broadcast))
+}
+
+/// `DELETE /broadcasts/{id}/bookmark` — forget it.
+///
+/// Removing one that is not there is a success: the caller asked for it to be
+/// gone and it is.
+///
+/// # Errors
+///
+/// 404 when no live broadcast carries that id.
+pub async fn remove_bookmark(
+    State(handlers): State<Handlers>,
+    Extension(auth): Extension<AuthUser>,
+    Path(id): Path<Uuid>,
+) -> Outcome<()> {
+    let actor = summary_of(&auth);
+
+    handlers.service.remove_bookmark(id, &actor).await?;
+    Ok(MenoResponse::no_content("Bookmark removed"))
+}
+
 /// `GET /broadcasts/{id}` — one broadcast.
 ///
 /// # Errors
