@@ -147,6 +147,7 @@ Future<void> registerAccountScope(
   scope.registerSingleton<FavouritesManager>(
     FavouritesManager(
       local: di<BroadcastLocalService>(),
+      http: di<BroadcastHttpService>(),
       logger: di<MenoLogger>(),
       deletedBroadcasts: di<BroadcastSocketService>().onBroadcastDeleted,
     ),

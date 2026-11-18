@@ -333,6 +333,52 @@ final class BroadcastHttpService {
     );
   }
 
+  /// `POST /broadcasts/{id}/bookmark` — keeps [broadcastId] for later.
+  ///
+  /// Idempotent: keeping one that is already kept answers with the same record
+  /// rather than a conflict, so a repeated tap needs no bookkeeping. The answer
+  /// is not read — the caller already flipped its own flag optimistically, and
+  /// the next bookmarks page is what confirms it.
+  Future<void> addBookmark(Id broadcastId, {CancelToken? cancelToken}) {
+    return _client.postUnit(
+      '/broadcasts/${broadcastId.getOrCrash}/bookmark',
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// `DELETE /broadcasts/{id}/bookmark` — forgets it. No data in the answer.
+  ///
+  /// Removing one that is not kept is a success: the caller asked for it to be
+  /// gone and it is.
+  Future<void> removeBookmark(Id broadcastId, {CancelToken? cancelToken}) {
+    return _client.deleteUnit(
+      '/broadcasts/${broadcastId.getOrCrash}/bookmark',
+      cancelToken: cancelToken,
+    );
+  }
+
+  /// `GET /broadcasts/bookmarks` — one page of this account's kept broadcasts,
+  /// newest save first.
+  ///
+  /// The account comes from the token, so the read takes no id: a list keyed by
+  /// an id a client sent would be a way to ask for somebody else's bookmarks.
+  Future<CursorPage<BookmarkedBroadcast>> bookmarks({
+    String? cursor,
+    int limit = 100,
+    CancelToken? cancelToken,
+  }) {
+    return _client.get(
+      '/broadcasts/bookmarks',
+      queryParameters: {'cursor': ?cursor, 'limit': limit},
+      cancelToken: cancelToken,
+      fromJson: (data) => CursorPage.fromJson(
+        data,
+        (item) => BookmarkedBroadcast.fromJson(_map(item)),
+        logger: _client.logger,
+      ),
+    );
+  }
+
   static Map<String, dynamic> _map(dynamic data) {
     if (data is! Map<String, dynamic>) {
       throw MalformedResponseException(

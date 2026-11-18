@@ -80,6 +80,31 @@ abstract class BroadcastListItemDto with _$BroadcastListItemDto {
       _$BroadcastListItemDtoFromJson(json);
 }
 
+/// One row of `GET /broadcasts/bookmarks`.
+///
+/// The bookmarks page is ordered by when the account saved each broadcast and
+/// states that instant as `savedAt`; the ordinary feed does not. A pair rather
+/// than a second nullable field on [BroadcastSummary], because a summary that
+/// carried a save date it never has would invite code that reads it.
+final class BookmarkedBroadcast {
+  const new({required this.summary, this.savedAt});
+
+  /// Decodes one item; `savedAt` is RFC 3339 or absent.
+  factory fromJson(Map<String, dynamic> json) => BookmarkedBroadcast(
+    summary: BroadcastListItemDto.fromJson(json).toDomain,
+    savedAt: switch (json['savedAt']) {
+      final String raw => parseRfc3339(raw),
+      _ => null,
+    },
+  );
+
+  /// The broadcast, in the shape a card already draws.
+  final BroadcastSummary summary;
+
+  /// When this account saved it, when the API stated one.
+  final DateTime? savedAt;
+}
+
 /// `BroadcastSessionResponse` in `apps/api/src/modules/broadcast/dto.rs`.
 ///
 /// What `POST /broadcasts/{id}/live`, `/join`, `/resume` and `/token` answer

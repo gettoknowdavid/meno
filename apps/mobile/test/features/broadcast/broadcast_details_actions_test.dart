@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:dio/dio.dart' show ResponseBody;
 import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -13,7 +14,6 @@ import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/objectbox.g.dart' hide Id;
 import 'package:meno_ui/meno_ui.dart';
 
-import '../../_support/pump_until_found.dart';
 import '../../_support/stub_api.dart';
 
 const _viewer = '018f2b1e-0000-7000-8000-000000000001';
@@ -35,7 +35,6 @@ void main() {
   late Store store;
   late Database database;
   late BroadcastLocalService local;
-  late FavouritesManager favourites;
   late StubApi api;
 
   setUp(() async {
@@ -57,14 +56,14 @@ void main() {
     );
     di.registerSingleton<BroadcastLocalService>(local);
 
-    favourites = FavouritesManager(
-      local: local,
-      logger: di<MenoLogger>(),
-      deletedBroadcasts: const Stream<BroadcastDeletedEvent>.empty(),
-    );
-    di.registerSingleton<FavouritesManager>(favourites);
-
+    // No `FavouritesManager` here: the details sheet no longer offers "Listen
+    // Later" (recording is a later build), and the list it kept is covered by
+    // `favourites_manager_test`. Registering one would also fetch the bookmarks
+    // page on construction, which is a request these assertions do not expect.
     api = StubApi();
+    di.registerSingleton<BroadcastHttpService>(
+      BroadcastHttpService(stubClient(api)),
+    );
     di.registerSingleton<ProfileHttpService>(
       ProfileHttpService(stubClient(api)),
     );
@@ -122,19 +121,63 @@ void main() {
     expect(local.isFavourited(Id.fromString(_broadcastId)), isFalse);
   });
 
-  test('the star keeps the broadcast in the favourites list', () async {
+  // The saving is the account's, not the phone's: the star has to write the
+  // bookmark to the API, and the device copy is what keeps the next launch
+  // honest until the bookmarks page answers.
+  test('the star writes the bookmark to the API and the device', () async {
     final proxy = BroadcastProxy(_broadcast(), Id.fromString(_viewer));
+    final id = Id.fromString(_broadcastId);
 
     await proxy.toggleIsFavourite.runAsync();
 
-    await pumpUntil(
-      () => favourites.favourites.isNotEmpty,
-      step: const Duration(milliseconds: 5),
+    expect(local.isFavourited(id), isTrue);
+    await proxy.toggleIsFavourite.runAsync();
+    expect(local.isFavourited(id), isFalse);
+
+    final writes = api.requests
+        .where((request) => request.path == '/broadcasts/$_broadcastId/bookmark')
+        .toList();
+    expect(writes, hasLength(2), reason: 'one request per toggle');
+    expect(writes[0].method, 'POST');
+    expect(writes[1].method, 'DELETE');
+  });
+
+  test('the star flips before the API answers and flips back when it refuses',
+      () async {
+    Command.globalExceptionHandler = (_, _) {};
+    final id = Id.fromString(_broadcastId);
+
+    // The write stays unanswered until the test answers it, so what the star
+    // shows in the meantime is what the person sees while the request is out.
+    final answer = Completer<ResponseBody>();
+    api.answers.add(() => answer.future);
+
+    final proxy = BroadcastProxy(_broadcast(), Id.fromString(_viewer));
+    expect(proxy.isFavourited, isFalse);
+
+    final pending = proxy.toggleIsFavourite.runAsync();
+    await pumpEventQueue();
+
+    expect(
+      proxy.isFavourited,
+      isTrue,
+      reason: 'optimistic: the star fills without waiting for the write',
     );
     expect(
-      favourites.favourites.first.broadcastId,
-      Id.fromString(_broadcastId),
+      local.isFavourited(id),
+      isFalse,
+      reason: 'the device is written only once the API has agreed',
     );
+
+    answer.complete(envelope(status: 500));
+    try {
+      await pending;
+    } on Object {
+      // The refusal is reported through the command; the flag is the subject.
+    }
+
+    expect(proxy.isFavourited, isFalse, reason: 'the failed write is undone');
+    expect(local.isFavourited(id), isFalse);
   });
 
   testWidgets('the sheet opens the creator profile instead of a placeholder', (
@@ -171,32 +214,6 @@ void main() {
     expect(api.requests, hasLength(1));
     expect(api.requests.single.method, 'DELETE');
     expect(api.requests.single.path, '/subscribers/$_creator');
-  });
-
-  // "Listen Later" is part of recording, which this build does not ship, so
-  // the sheet no longer offers it. The write it used to drive is still tested
-  // through the proxy itself — hiding a row of UI is not a reason to stop
-  // covering the favourite it wrote.
-  test('a favourite written by the details proxy reaches the list and leaves '
-      'again', () async {
-    final id = Id.fromString(_broadcastId);
-    final proxy = BroadcastProxy(_broadcast(), Id.fromString(_viewer));
-
-    await proxy.toggleIsFavourite.runAsync();
-    await pumpUntil(
-      () => favourites.favourites.isNotEmpty,
-      step: const Duration(milliseconds: 5),
-    );
-    expect(local.isFavourited(id), isTrue);
-    expect(favourites.favourites.single.broadcastId, id);
-
-    await proxy.toggleIsFavourite.runAsync();
-    await pumpUntil(
-      () => favourites.favourites.isEmpty,
-      step: const Duration(milliseconds: 5),
-    );
-    expect(proxy.isFavourited, isFalse);
-    expect(local.isFavourited(id), isFalse);
   });
 
   testWidgets('the sheet omits Listen Later while recording is off', (

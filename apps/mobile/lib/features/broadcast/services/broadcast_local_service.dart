@@ -174,6 +174,38 @@ final class BroadcastLocalService implements Disposable {
     return true;
   }
 
+  /// Replaces this account's kept broadcasts with [favourites].
+  ///
+  /// A replacement rather than a merge because the API is the record: a
+  /// bookmark belongs to the account, not to this phone, so a row the server
+  /// no longer has is one this device should forget too. The caller passes the
+  /// page in the API's order, and `savedAt` is what the list is ordered by —
+  /// which is why the bookmarks page states it.
+  ///
+  /// Nothing is announced on `favouriteChanges`: this is a read of the server's
+  /// answer, and a change event here would ask the favourites manager to read
+  /// the same page again for every refresh (a loop, not a notification).
+  Future<List<FavouriteBroadcast>> replaceFavourites(
+    Iterable<FavouriteBroadcast> favourites,
+  ) async {
+    final box = _database.favouriteBroadcastBox;
+
+    final existing = box
+        .query(FavouriteBroadcastRow_.ownerId.equals(_ownerKey))
+        .build();
+    final stale = [for (final row in existing.find()) row.id];
+    existing.close();
+    if (stale.isNotEmpty) await box.removeManyAsync(stale);
+
+    final rows = [
+      for (final favourite in favourites)
+        favourite.copyWith(ownerId: _ownerId).toRow,
+    ];
+    if (rows.isNotEmpty) await box.putManyAsync(rows);
+
+    return this.favourites();
+  }
+
   /// The account id as every row stores it.
   String get _ownerKey => _ownerId.getOrCrash;
 

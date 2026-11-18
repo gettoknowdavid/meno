@@ -7,16 +7,18 @@ import 'package:meno_mobile/features/broadcast/services/_services.dart';
 
 /// The broadcasts one account keeps for later.
 ///
-/// The list is read from the device rather than the API: keeping a broadcast is
-/// a local decision until it is not — the API's `is_bookmarked` has no endpoint
-/// behind it yet — so the screen answers from the store it writes to.
+/// The API is the record: a bookmark belongs to the account, so the page
+/// `GET /broadcasts/bookmarks` answers with replaces the device copy and the
+/// list the tab draws. The device copy stays because a star has to be able to
+/// say "kept" on the frame a screen opens, before any request has landed.
 ///
-/// Which account's list this is, is the store's answer, not this manager's: the
-/// local service is created for one owner in the account scope, so nothing here
-/// can ask for somebody else's favourites (audit M05).
+/// Which account's list this is, is the local store's answer: it is created for
+/// one owner in the account scope, so nothing here can ask for somebody else's
+/// favourites (audit M05).
 final class FavouritesManager implements Disposable {
   new({
     required this._local,
+    required this._http,
     required this._logger,
     required Stream<BroadcastDeletedEvent> deletedBroadcasts,
   }) {
@@ -25,9 +27,26 @@ final class FavouritesManager implements Disposable {
     // is never purged keeps pointing at a broadcast the server has removed.
     _deleted = deletedBroadcasts.listen(_handleDeleted);
 
-    fetch = .createSyncNoParamNoResult(
-      () {
-        final stored = _local.favourites();
+    fetch = .createAsyncNoParamNoResult(
+      () async {
+        // The account's list, not this device's: whatever another phone kept
+        // has to appear here, and whatever this one kept that the server does
+        // not have is not a favourite any more.
+        // One page, not the whole history: the tab is a list somebody scrolls,
+        // and the API answers a page at a time.
+        final page = await _http.bookmarks();
+        final stored = await _local.replaceFavourites([
+          for (final bookmark in page.items)
+            FavouriteBroadcast(
+              broadcastId: bookmark.summary.id,
+              ownerId: _local.ownerId,
+              title: bookmark.summary.title,
+              creatorName: bookmark.summary.creatorName,
+              image: bookmark.summary.image,
+              savedAt: bookmark.savedAt,
+            ),
+        ]);
+
         favourites.startTransAction();
         favourites.clear();
         favourites.addAll(stored);
@@ -42,6 +61,7 @@ final class FavouritesManager implements Disposable {
     );
     remove = .createAsyncNoResult<Id>(
       (broadcastId) async {
+        await _http.removeBookmark(broadcastId);
         await _local.forgetFavourite(broadcastId);
         fetch.run();
       },
@@ -49,20 +69,22 @@ final class FavouritesManager implements Disposable {
       debugName: 'broadcast.favourites.remove',
     );
 
-    // The list is the store's answer, so it is read as soon as this manager is
-    // built: the favourites tab then paints what the account already kept
-    // instead of starting empty and waiting for a write it may never see.
+    // The device copy is read as soon as this manager is built, so the tab
+    // paints what the account kept last time instead of starting empty while
+    // the first request is on its way.
     fetch.run();
 
-    // A row written anywhere else — the star on a details screen, the menu
-    // sheet — is this same list, so the store says when it changed and the
-    // copy held here is re-read.
+    // A row written anywhere else — the star on a details screen — is this same
+    // list, so the store says when it changed and the page is read again. The
+    // writes that reach here are the ones the API already accepted, which is
+    // what keeps this read from overtaking them.
     _changes = _local.favouriteChanges.listen((_) {
       if (!_isDisposed) fetch.run();
     });
   }
 
   final BroadcastLocalService _local;
+  final BroadcastHttpService _http;
   final MenoLogger _logger;
 
   late final StreamSubscription<BroadcastDeletedEvent> _deleted;
@@ -72,10 +94,11 @@ final class FavouritesManager implements Disposable {
   /// The account's kept broadcasts, most recently saved first.
   final favourites = ListNotifier<FavouriteBroadcast>(data: []);
 
-  /// Re-reads the store.
+  /// Reads the account's bookmarks and refreshes the device copy.
   late final Command<void, void> fetch;
 
-  /// Forgets `broadcastId`, then re-reads the list.
+  /// Forgets `broadcastId` on the server and the device, then re-reads the
+  /// list.
   late final Command<Id, void> remove;
 
   /// A deletion frame names only the broadcast; the local row is the record

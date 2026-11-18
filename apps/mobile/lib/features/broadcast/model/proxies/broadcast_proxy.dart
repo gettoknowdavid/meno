@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/model/entities.dart';
+import 'package:meno_mobile/features/broadcast/services/broadcast_http_service.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_local_service.dart';
 
 /// One broadcast as a card draws it, with the viewer's own edits layered on.
@@ -13,20 +14,42 @@ import 'package:meno_mobile/features/broadcast/services/broadcast_local_service.
 /// answer feels broken.
 final class BroadcastProxy extends ChangeNotifier {
   new(this._broadcast, this._ownerId) {
-    _isFavourited = _storage.isFavourited(_broadcast.id);
+    // The server's answer wins when it says kept, the device copy otherwise:
+    // a bookmark made on another phone is a fact this one has not written yet,
+    // and a card drawn from a detail response must not show the wrong star.
+    _isFavourited =
+        _broadcast.isBookmarked || _storage.isFavourited(_broadcast.id);
 
     toggleIsFavourite = .createUndoableNoParamNoResult<bool>(
       (stack) async {
         stack.push(_isFavourited);
         _isFavourited = !_isFavourited;
+        // The flip above is the whole of the optimism: the star fills on the
+        // same frame as the tap, while the writes below take as long as they
+        // take, and a failure puts the old flag back.
         notifyListeners();
+
+        // The API goes first so the device row is only written for a state the
+        // server accepted. The favourites tab reads the server, and a row
+        // written ahead of it would be reverted by the next read.
+        if (_isFavourited) {
+          await _http.addBookmark(_broadcast.id);
+        } else {
+          await _http.removeBookmark(_broadcast.id);
+        }
+
         // The desired state that was just shown, not a toggle: if the write is
         // retried or the disk already holds it, the result is the same row.
         await _storage.setFavourite(_broadcast, isFavourite: _isFavourited);
       },
-      undo: (stack, _) {
-        _isFavourited = stack.pop();
+      undo: (stack, _) async {
+        final previous = stack.pop();
+        _isFavourited = previous;
         notifyListeners();
+        // The device copy is put back too: the request that failed never
+        // reached the API, and an undone star has to leave the list agreeing
+        // with it.
+        await _storage.setFavourite(_broadcast, isFavourite: previous);
       },
       errorFilter: null,
       errorFilterFn: menoExceptionFilter,
@@ -43,6 +66,8 @@ final class BroadcastProxy extends ChangeNotifier {
   late final Command<void, void> toggleIsFavourite;
 
   BroadcastLocalService get _storage => di<BroadcastLocalService>();
+
+  BroadcastHttpService get _http => di<BroadcastHttpService>();
 
   Broadcast get broadcast => _broadcast;
 
