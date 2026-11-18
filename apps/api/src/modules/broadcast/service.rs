@@ -235,9 +235,7 @@ impl BroadcastService {
             })
             .await?;
 
-        let items = self
-            .project_items(&rows.iter().collect::<Vec<_>>())
-            .await?;
+        let items = self.project_items(&rows.iter().collect::<Vec<_>>()).await?;
 
         Ok(CursorPage::from_rows(items, query.limit(), |item| {
             Cursor::from_timestamp_id(item.created_at, item.id)

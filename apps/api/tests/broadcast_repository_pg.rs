@@ -43,7 +43,7 @@ use meno_api::modules::broadcast::model::{
     JoinRequest, LeaveOutcome, NewBroadcast, ParticipantRole,
 };
 use meno_api::modules::broadcast::repository::{
-    BroadcastFilter, BroadcastRepo, ParticipantFilter, PgBroadcastRepo, RepoDeps,
+    BookmarkFilter, BroadcastFilter, BroadcastRepo, ParticipantFilter, PgBroadcastRepo, RepoDeps,
 };
 use meno_core::Order;
 use sqlx::PgPool;
@@ -125,6 +125,15 @@ fn at(seconds: i64) -> OffsetDateTime {
 
 fn ada() -> Uuid {
     Uuid::from_u128(1)
+}
+
+/// A bookmark page, unfiltered.
+fn bookmark_page() -> BookmarkFilter {
+    BookmarkFilter {
+        user_id: ada(),
+        limit_plus_one: 11,
+        cursor: None,
+    }
 }
 
 fn grace() -> Uuid {
@@ -209,6 +218,96 @@ async fn a_broadcast_round_trips_with_its_cohosts_and_moves_the_creator_counter(
             2,
             "one query returns both live accounts and invents nothing for the unknown one"
         );
+    });
+}
+
+// ── bookmarks (migration 0007) ─────────────────────────────────────────────
+
+#[sqlx::test(migrations = "../../crates/db/migrations")]
+async fn bookmarks_are_idempotent_paged_by_save_time_and_skip_deleted_broadcasts(
+    #[allow(unused_variables)] pool: PgPool,
+) {
+    with_pool!(|pool| {
+        accounts(&pool).await;
+        let repo = repo(&pool);
+
+        let first = repo
+            .create(new_broadcast(ada(), "First"))
+            .await
+            .expect("created");
+        let second = repo
+            .create(new_broadcast(grace(), "Second"))
+            .await
+            .expect("created");
+
+        // The upsert is what makes a repeated press harmless.
+        assert!(repo.add_bookmark(ada(), first.id).await.expect("saved"));
+        assert!(
+            !repo
+                .add_bookmark(ada(), first.id)
+                .await
+                .expect("saved twice"),
+            "keeping one that is already kept inserts nothing"
+        );
+        assert!(repo.is_bookmarked(ada(), first.id).await.expect("read"));
+        assert!(
+            !repo.is_bookmarked(grace(), first.id).await.expect("read"),
+            "a bookmark is the account's own"
+        );
+
+        // Backdated so the page's order is a fact rather than a tie.
+        sqlx::query(
+            "UPDATE broadcast_bookmarks SET saved_at = now() - interval '1 hour' \
+             WHERE user_id = $1 AND broadcast_id = $2",
+        )
+        .bind(ada())
+        .bind(first.id)
+        .execute(&pool)
+        .await
+        .expect("the fixture backdates the row");
+        assert!(repo.add_bookmark(ada(), second.id).await.expect("saved"));
+
+        let page = repo
+            .list_bookmarks(bookmark_page())
+            .await
+            .expect("the page reads");
+        assert_eq!(page.len(), 2);
+        assert_eq!(page[0].broadcast.id, second.id, "newest save first");
+        assert!(page[1].saved_at < page[0].saved_at);
+
+        // The keyset walks `(saved_at, broadcast_id)`, the index 0007 created.
+        let next = repo
+            .list_bookmarks(BookmarkFilter {
+                cursor: Some((page[0].saved_at, page[0].broadcast.id)),
+                ..bookmark_page()
+            })
+            .await
+            .expect("the page reads");
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].broadcast.id, first.id);
+
+        // A soft-deleted broadcast leaves the page while its bookmark row stays.
+        assert!(repo.soft_delete(first.id).await.expect("deleted"));
+        let page = repo
+            .list_bookmarks(bookmark_page())
+            .await
+            .expect("the page reads");
+        assert_eq!(page.len(), 1);
+        assert_eq!(page[0].broadcast.id, second.id);
+
+        assert!(
+            repo.remove_bookmark(ada(), second.id)
+                .await
+                .expect("removed")
+        );
+        assert!(
+            !repo
+                .remove_bookmark(ada(), second.id)
+                .await
+                .expect("removed twice"),
+            "removing what is not there is a no-op, not a failure"
+        );
+        assert!(!repo.is_bookmarked(ada(), second.id).await.expect("read"));
     });
 }
 

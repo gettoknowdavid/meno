@@ -2008,6 +2008,130 @@ async fn going_live_and_ending_produce_the_two_inbox_rows() {
 }
 
 #[tokio::test]
+async fn bookmarking_belongs_to_the_account_and_the_page_orders_by_save_time() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let ada = user(1, "Ada Lovelace");
+    let grace = user(2, "Grace Hopper");
+    let first = svc
+        .create(create_request(), ada.clone())
+        .await
+        .expect("create");
+    let second = svc
+        .create(second_request(), ada.clone())
+        .await
+        .expect("create");
+
+    repo.set_clock(
+        time::OffsetDateTime::from_unix_timestamp(1_700_000_000).expect("a plausible instant"),
+    );
+    svc.bookmark(first.id, &grace)
+        .await
+        .expect("bookmark first");
+    repo.set_clock(
+        time::OffsetDateTime::from_unix_timestamp(1_700_000_100).expect("a plausible instant"),
+    );
+    svc.bookmark(second.id, &grace)
+        .await
+        .expect("bookmark second");
+
+    // The table is the record: both the write's answer and the next read agree.
+    let saved = svc
+        .get(first.id, Some(&grace))
+        .await
+        .expect("the detail reads");
+    assert!(saved.is_bookmarked);
+    assert!(
+        !svc.get(first.id, Some(&ada))
+            .await
+            .expect("the detail reads")
+            .is_bookmarked,
+        "a bookmark belongs to the account, never to the creator"
+    );
+
+    let page = svc
+        .bookmarks(&dto::BroadcastQuery::default(), &grace)
+        .await
+        .expect("the page reads");
+    assert_eq!(page.data.len(), 2);
+    assert_eq!(page.data[0].id, second.id, "the newest save comes first");
+    assert!(
+        page.data[0].saved_at.is_some(),
+        "the page states when it saved"
+    );
+    assert!(!page.has_next_page);
+    assert!(
+        svc.bookmarks(&dto::BroadcastQuery::default(), &ada)
+            .await
+            .expect("the page reads")
+            .data
+            .is_empty(),
+        "another account's list is not this one"
+    );
+}
+
+#[tokio::test]
+async fn bookmarking_twice_leaves_one_row_and_removing_twice_is_a_success() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let ada = user(1, "Ada Lovelace");
+    let created = svc
+        .create(create_request(), ada.clone())
+        .await
+        .expect("create");
+
+    svc.bookmark(created.id, &ada).await.expect("bookmark");
+    let again = svc
+        .bookmark(created.id, &ada)
+        .await
+        .expect("a repeated press is answered, not refused");
+    assert!(again.is_bookmarked);
+    assert_eq!(
+        svc.bookmarks(&dto::BroadcastQuery::default(), &ada)
+            .await
+            .expect("the page reads")
+            .data
+            .len(),
+        1,
+        "the upsert leaves one row"
+    );
+
+    svc.remove_bookmark(created.id, &ada).await.expect("remove");
+    svc.remove_bookmark(created.id, &ada)
+        .await
+        .expect("removing one that is not there is a success");
+
+    assert!(
+        !svc.get(created.id, Some(&ada))
+            .await
+            .expect("the detail reads")
+            .is_bookmarked
+    );
+    assert!(
+        svc.bookmarks(&dto::BroadcastQuery::default(), &ada)
+            .await
+            .expect("the page reads")
+            .data
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn bookmarking_an_unknown_broadcast_is_a_404() {
+    let (svc, repo, _) = service();
+    seed(&repo);
+
+    let error = svc
+        .bookmark(Uuid::from_u128(0xfeed), &user(1, "Ada Lovelace"))
+        .await
+        .expect_err("there is no broadcast to keep");
+
+    assert_eq!(to_body(&error).http_status, 404);
+}
+
+#[tokio::test]
 async fn a_host_socket_dropping_starts_the_clock_and_reconnecting_clears_it() {
     let (svc, repo, events, _notices) = service_with_notices();
     seed(&repo);

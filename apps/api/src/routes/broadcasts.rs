@@ -34,7 +34,6 @@ use axum::extract::DefaultBodyLimit;
 use axum::middleware::from_fn_with_state;
 use axum::routing::{delete, get, patch, post};
 
-
 use crate::infrastructure::redis::Redis;
 use crate::middleware::auth::auth_middleware;
 use crate::middleware::idempotency::idempotency_middleware;

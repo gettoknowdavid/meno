@@ -65,6 +65,11 @@ fn router(state: BroadcastState) -> Router {
             "/broadcasts/{id}/cohosts/{cohostId}",
             delete(handlers::remove_cohost),
         )
+        .route("/broadcasts/bookmarks", get(handlers::bookmarks))
+        .route(
+            "/broadcasts/{id}/bookmark",
+            post(handlers::bookmark).delete(handlers::remove_bookmark),
+        )
         .route("/broadcasts/{id}/participants", get(handlers::participants))
         .with_state(state)
 }
@@ -114,7 +119,7 @@ async fn send(
     body: Option<String>,
 ) -> (StatusCode, serde_json::Value) {
     let request = match (method, &body) {
-        ("GET", None) | ("POST", None) => HttpRequest::builder()
+        ("GET", None) | ("POST", None) | ("DELETE", None) => HttpRequest::builder()
             .method(method)
             .uri(uri)
             .body(Body::empty())
@@ -629,6 +634,138 @@ async fn every_date_on_the_broadcast_wire_is_an_rfc3339_string() {
         detail_ts, list_ts,
         "the same row must render the same createdAt"
     );
+}
+
+#[tokio::test]
+async fn bookmarking_writes_the_row_the_page_and_the_detail_both_read() {
+    let state = fixture::state_with_user("Ada Lovelace");
+    let caller = fixture::caller("Ada Lovelace", 1);
+
+    let (status, created) = send(
+        router_as(state.clone(), caller.clone()),
+        "POST",
+        "/broadcasts",
+        Some(serde_json::json!({"title": "Ada's show", "timeZone": "Africa/Lagos"}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["data"]["id"].as_str().expect("an id").to_owned();
+
+    let (status, saved) = send(
+        router_as(state.clone(), caller.clone()),
+        "POST",
+        &format!("/broadcasts/{id}/bookmark"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{saved}");
+    assert_eq!(saved["code"], "OK");
+    assert_eq!(saved["data"]["isBookmarked"], true, "{saved}");
+
+    // The detail and the page read the same row.
+    let (status, detail) = send(
+        router_as(state.clone(), caller.clone()),
+        "GET",
+        &format!("/broadcasts/{id}"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{detail}");
+    assert_eq!(detail["data"]["isBookmarked"], true);
+
+    let (status, page) = send(
+        router_as(state.clone(), caller),
+        "GET",
+        "/broadcasts/bookmarks",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    let items = page["data"]["data"]
+        .as_array()
+        .expect("the page is nested inside the envelope");
+    assert_eq!(items.len(), 1, "{page}");
+    assert_eq!(items[0]["id"], id.as_str());
+    assert_rfc3339(&items[0]["savedAt"], "bookmarks item savedAt");
+
+    // Somebody else's list is their own.
+    let other = fixture::caller("Grace Hopper", 2);
+    let (status, theirs) = send(
+        router_as(state, other),
+        "GET",
+        "/broadcasts/bookmarks",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{theirs}");
+    assert!(
+        theirs["data"]["data"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "{theirs}"
+    );
+}
+
+#[tokio::test]
+async fn removing_a_bookmark_answers_without_a_payload_and_a_repeat_is_still_an_ok() {
+    let state = fixture::state_with_user("Ada Lovelace");
+    let caller = fixture::caller("Ada Lovelace", 1);
+
+    let (status, created) = send(
+        router_as(state.clone(), caller.clone()),
+        "POST",
+        "/broadcasts",
+        Some(serde_json::json!({"title": "Ada's show"}).to_string()),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CREATED, "{created}");
+    let id = created["data"]["id"].as_str().expect("an id").to_owned();
+
+    for _ in 0..2 {
+        let (status, removed) = send(
+            router_as(state.clone(), caller.clone()),
+            "DELETE",
+            &format!("/broadcasts/{id}/bookmark"),
+            None,
+        )
+        .await;
+        // `no_content` in this API's envelope sense: a 200 whose body carries the
+        // code the client matches on and no `data`. A 204 could not do that.
+        assert_eq!(status, StatusCode::OK, "{removed}");
+        assert_eq!(removed["code"], "OK", "{removed}");
+        assert!(removed.get("data").is_none(), "{removed}");
+    }
+
+    let (status, page) = send(
+        router_as(state, caller),
+        "GET",
+        "/broadcasts/bookmarks",
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{page}");
+    assert!(
+        page["data"]["data"]
+            .as_array()
+            .is_some_and(|items| items.is_empty()),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn bookmarking_an_unknown_broadcast_is_404() {
+    let state = fixture::state_with_user("Ada Lovelace");
+    let caller = fixture::caller("Ada Lovelace", 1);
+
+    let (status, response) = send(
+        router_as(state, caller),
+        "POST",
+        "/broadcasts/00000000-0000-0000-0000-0000000000ff/bookmark",
+        None,
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::NOT_FOUND, "{response}");
 }
 
 #[tokio::test]

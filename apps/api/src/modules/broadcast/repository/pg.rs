@@ -809,14 +809,13 @@ impl BroadcastRepo for PgBroadcastRepo {
     }
 
     async fn remove_bookmark(&self, user_id: Uuid, broadcast_id: Uuid) -> Result<bool, MenoError> {
-        let result = sqlx::query(
-            "DELETE FROM broadcast_bookmarks WHERE user_id = $1 AND broadcast_id = $2",
-        )
-        .bind(user_id)
-        .bind(broadcast_id)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| database("remove_bookmark", e))?;
+        let result =
+            sqlx::query("DELETE FROM broadcast_bookmarks WHERE user_id = $1 AND broadcast_id = $2")
+                .bind(user_id)
+                .bind(broadcast_id)
+                .execute(&self.pool)
+                .await
+                .map_err(|e| database("remove_bookmark", e))?;
 
         Ok(result.rows_affected() > 0)
     }
