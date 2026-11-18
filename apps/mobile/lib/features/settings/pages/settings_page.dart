@@ -4,6 +4,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/app/account_transition_owner.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
+import 'package:meno_mobile/features/bible/bible.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_ui/meno_ui.dart';
@@ -25,6 +26,13 @@ class SettingsPage extends WatchingWidget {
     final isDeleting = watchValue<AuthManager, bool>(
       (manager) => manager.deleteAccount.isRunning,
     );
+    final textTheme = MTextTheme.of(context);
+    // Device data, not the account's: the count is how many translations the
+    // reader has to choose from without starting a broadcast.
+    final installedTranslations =
+        watchValue<TranslationsManager, List<BibleVersionRow>>(
+          (manager) => manager.downloadedTranslations,
+        );
 
     // The account subtree is torn down once the vault forgets the account, so
     // the router — which outlives it — is what takes the user to the intro
@@ -81,6 +89,28 @@ class SettingsPage extends WatchingWidget {
                     value: settings.display == .dark,
                     onChanged: manager.toggleDarkMode.run,
                   ),
+                ),
+              ],
+            ),
+            Spaces.verticalXXLarge,
+            MSettingsSection(
+              title: 'Bible',
+              children: [
+                MSettingsListTile(
+                  title: 'Translations',
+                  leadingIcon: MIcons.translate_02,
+                  onTap: () => context.push(MRoutes.bibleTranslations),
+                  trailing: MText(
+                    '${installedTranslations.length} installed',
+                    style: textTheme.microRegular,
+                    color: colors.onBackgroundVariant,
+                  ),
+                ),
+                MSettingsListTile(
+                  title: 'Copyright & Credits',
+                  leadingIcon: MIcons.file_02,
+                  showDivider: false,
+                  onTap: () => context.push(MRoutes.bibleCredits),
                 ),
               ],
             ),

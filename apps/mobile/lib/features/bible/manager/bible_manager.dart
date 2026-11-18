@@ -226,6 +226,33 @@ final class BibleManager implements Disposable {
         debugName: 'bible.prevChapter',
       )..pipeToCommand(refreshChapter);
 
+  /// Moves the reader off a translation the device no longer holds.
+  ///
+  /// Called after a translation is removed: staying on it would leave every
+  /// chapter empty with no way back. `kjv` is preferred because it ships with
+  /// the app; otherwise the first translation still in the store is used. Does
+  /// nothing when another translation is active.
+  void fallBackFrom(String removedCode) {
+    if (translation.value != removedCode) return;
+
+    final codes = _local.versions().map((row) => row.code).toList();
+    if (codes.isEmpty) return;
+
+    translation.value = codes.contains('kjv') ? 'kjv' : codes.first;
+
+    // The translation now active may have fewer books or chapters than the
+    // position the reader was left at, so the position is pulled back into it
+    // before the chapter is read.
+    _ensureBooks();
+    if (_bookIds.isNotEmpty && book.value >= _bookIds.length) {
+      book.value = _bookIds.length - 1;
+    }
+    final chapters = chapterCount;
+    if (chapters > 0 && chapter.value > chapters) chapter.value = chapters;
+
+    refreshChapter.run();
+  }
+
   /// How many books the active translation holds.
   int get bookIdsLength {
     _ensureBooks();

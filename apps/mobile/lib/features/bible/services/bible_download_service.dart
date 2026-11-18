@@ -96,6 +96,17 @@ final class BibleDownloadService {
     return File(p.join(directory.path, '$version.json.gz'));
   }
 
+  /// Deletes every payload cached for [code].
+  ///
+  /// Removing a translation has to take its cache with it: the payload is what
+  /// the seeder reads at the next launch, so a leftover file would quietly
+  /// install the translation the user just deleted. A missing folder is not an
+  /// error — the cache is a scan, not a record.
+  Future<void> removeCached(String code) async {
+    final directory = await cacheDirectory(code);
+    if (directory.existsSync()) await directory.delete(recursive: true);
+  }
+
   /// Every cached payload, newest version per translation.
   ///
   /// One directory scan per translation and no network: this is what startup

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/features/bible/manager/bible_manager.dart';
 import 'package:meno_mobile/features/bible/model/_model.dart';
 import 'package:meno_mobile/features/bible/services/_services.dart';
 
@@ -107,6 +108,47 @@ class TranslationsManager implements Disposable {
       errorFilterFn: menoExceptionFilter,
       debugName: 'bible.translations.download',
     );
+
+    removeTranslation = Command.createAsyncNoResult<String>(
+      (code) async {
+        if (isBundled(code)) {
+          throw const ForbiddenException(
+            message: 'That translation ships with the app and cannot be '
+                'removed.',
+          );
+        }
+
+        if (downloadingAbbreviation.value == code) {
+          throw const ConflictException(
+            message: 'Stop the download before removing this translation.',
+          );
+        }
+
+        // The reader has to keep something to read: the last translation stays
+        // until another one has been downloaded.
+        if (downloadedTranslations.value.length <= 1) {
+          throw const ConflictException(
+            message: 'Keep at least one translation on this device.',
+          );
+        }
+
+        // The cache goes first. If deleting it fails, the store still holds a
+        // translation that reads fine and the ledger still matches it; the
+        // reverse order would leave the rows gone and a payload waiting to
+        // reinstall them at the next launch.
+        await _downloads.removeCached(code);
+        await _local.remove(code);
+
+        _refreshDownloaded();
+        _publishRemote();
+
+        // Staying on scripture this device no longer holds would show an empty
+        // chapter with nothing the reader could do about it.
+        di<BibleManager>().fallBackFrom(code);
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'bible.translations.remove',
+    );
   }
 
   final BibleLocalService _local;
@@ -128,6 +170,14 @@ class TranslationsManager implements Disposable {
   /// Code of the translation being downloaded, or null.
   final downloadingAbbreviation = ValueNotifier<String?>(null);
 
+  /// Whether the catalogue could not be read the last time it was tried.
+  ///
+  /// A catalogue failure is deliberately not a command failure — an offline
+  /// launch is ordinary and should not raise a toast — so this flag is the only
+  /// thing that lets the translations page offer a retry instead of an empty
+  /// "available" list that looks like there is nothing to download.
+  final catalogueUnavailable = ValueNotifier<bool>(false);
+
   /// The catalogue as it was last read, installed releases included.
   ///
   /// Kept apart from [remoteTranslations] because a download needs the row of a
@@ -140,6 +190,40 @@ class TranslationsManager implements Disposable {
 
   /// Downloads, verifies and installs one translation from the catalogue.
   late final Command<String, void> downloadTranslation;
+
+  /// Deletes one translation from the device.
+  ///
+  /// Refused for a translation the app bundles (it would seed again on the next
+  /// launch) and for the last one left (the reader would have nothing to read).
+  late final Command<String, void> removeTranslation;
+
+  /// Whether [code] ships with the app, so removing it would only bring it
+  /// back on the next launch.
+  bool isBundled(String code) => _bundledCodes.contains(code);
+
+  /// Whether [code] may be removed right now.
+  ///
+  /// The page asks this before drawing the action, so a disabled control always
+  /// has the same reason the command would refuse for.
+  bool canRemove(String code) =>
+      !isBundled(code) && downloadedTranslations.value.length > 1;
+
+  /// How many verses this device holds for [code], for the removal copy.
+  int verseTotal(String code) => _local.verseTotal(code);
+
+  /// The catalogue row that would update [code], or null when it is current.
+  BibleTranslationRelease? updateFor(String code) {
+    final installed = _local.seedVersion(code);
+    for (final release in _releases) {
+      if (release.code == code && release.version > installed) return release;
+    }
+    return null;
+  }
+
+  /// The codes this build ships, so a translated row can say "Included".
+  static final Set<String> _bundledCodes = {
+    for (final translation in bundledTranslations) translation.code,
+  };
 
   // =========================================================================
   // PRIVATE HELPERS
@@ -195,10 +279,12 @@ class TranslationsManager implements Disposable {
   Future<void> _loadCatalogue() async {
     try {
       _releases = await _catalogue.fetch();
+      catalogueUnavailable.value = false;
       _publishRemote();
     } on CancelledException {
       return;
     } on Object catch (error, stackTrace) {
+      catalogueUnavailable.value = true;
       _logger.w(
         'Bible catalogue unavailable',
         tag: MenoLogTag.lifecycle.label,
@@ -256,8 +342,10 @@ class TranslationsManager implements Disposable {
     downloadedTranslations.dispose();
     remoteTranslations.dispose();
     downloadingAbbreviation.dispose();
+    catalogueUnavailable.dispose();
 
     initialize.dispose();
     downloadTranslation.dispose();
+    removeTranslation.dispose();
   }
 }

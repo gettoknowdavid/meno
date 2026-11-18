@@ -28,6 +28,29 @@ final class BibleLocalService {
     }
   }
 
+  /// How many verses this device holds for [code].
+  int verseTotal(String code) {
+    final query = _database.bibleVerseBox
+        .query(BibleVerseRow_.translationCode.equals(code))
+        .build();
+    try {
+      return query.count();
+    } finally {
+      query.close();
+    }
+  }
+
+  /// Removes [code] from the device: its verses, its version row and its seed
+  /// ledger entry, in one transaction.
+  ///
+  /// The ledger goes with the verses on purpose. It is what `ensureSeeded` and
+  /// the translations list read, so a ledger left behind would claim scripture
+  /// that is no longer there and hide the translation from the catalogue —
+  /// leaving neither something to read nor something to download.
+  Future<void> remove(String code) async {
+    await _database.runWriteTxAsync(_removeTranslation, code);
+  }
+
   /// One translation's record, or null when it is not seeded.
   BibleVersionRow? version(String code) {
     final query = _database.bibleVersionBox
@@ -151,4 +174,41 @@ final class BibleLocalService {
 
   /// Whether the device holds no verses at all yet.
   bool get isEmpty => _database.bibleVerseBox.count() == 0;
+}
+
+/// Deletes one translation's rows.
+///
+/// Top-level and capturing nothing, so it can run on ObjectBox's background
+/// isolate. All three boxes go in one transaction: a store that lost the verses
+/// but kept the ledger would look seeded forever and never download them again.
+void _removeTranslation(Store store, String code) {
+  final verses = store
+      .box<BibleVerseRow>()
+      .query(BibleVerseRow_.translationCode.equals(code))
+      .build();
+  try {
+    verses.remove();
+  } finally {
+    verses.close();
+  }
+
+  final versions = store
+      .box<BibleVersionRow>()
+      .query(BibleVersionRow_.code.equals(code))
+      .build();
+  try {
+    versions.remove();
+  } finally {
+    versions.close();
+  }
+
+  final seeds = store
+      .box<BibleSeedRow>()
+      .query(BibleSeedRow_.translationCode.equals(code))
+      .build();
+  try {
+    seeds.remove();
+  } finally {
+    seeds.close();
+  }
 }

@@ -132,6 +132,8 @@ final class MRoutes {
   static const String notificationSettings = '/settings/notifications';
   static const String securitySettings = '/settings/security';
   static const String about = '/settings/about';
+  static const String bibleTranslations = '/settings/bible/translations';
+  static const String bibleCredits = '/settings/bible/credits';
 
   static const String broadcasts = '/broadcasts';
   static const String webCreateBroadcast = '/web/broadcast/create';

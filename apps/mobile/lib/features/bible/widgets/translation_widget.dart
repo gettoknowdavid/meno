@@ -18,6 +18,7 @@ class TranslationWidget extends WatchingWidget {
     this.isDownloaded = true,
     this.onSelect,
     this.onDownload,
+    this.trailing,
   });
 
   /// The translation code, for example `kjv`.
@@ -29,6 +30,12 @@ class TranslationWidget extends WatchingWidget {
   final bool isDownloaded;
   final VoidCallback? onSelect;
   final VoidCallback? onDownload;
+
+  /// Actions drawn after the name, replacing the built-in download button.
+  ///
+  /// The settings page passes its update and remove actions here; the reader's
+  /// bottom sheet leaves it null and keeps the plain card.
+  final Widget? trailing;
 
   @override
   Widget build(BuildContext context) {
@@ -78,7 +85,9 @@ class TranslationWidget extends WatchingWidget {
                 ],
               ),
             ),
-            if (!isDownloaded)
+            if (trailing != null)
+              trailing!
+            else if (!isDownloaded)
               _DownloadButton(
                 isDownloading: isThisDownloading,
                 progress: isThisDownloading ? downloadProgress.toInt() : null,

@@ -1,7 +1,5 @@
 // Kept private to the package: these helpers are not part of the public API.
 // `resolve` mirrors the `bool isLight` convention used by Flutter itself.
-//
-// ignore_for_file: avoid_positional_boolean_parameters
 
 import 'package:material_ui/material_ui.dart';
 
