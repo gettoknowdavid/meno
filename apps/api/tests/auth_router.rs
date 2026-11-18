@@ -78,6 +78,10 @@ fn router(state: AuthState) -> Router {
             post(meno_api::modules::auth::handlers::logout),
         )
         .route(
+            "/auth/change-password",
+            post(meno_api::modules::auth::handlers::change_password),
+        )
+        .route(
             "/auth/sessions",
             get(meno_api::modules::auth::handlers::list_sessions),
         )
@@ -534,6 +538,68 @@ async fn deleting_the_account_through_the_router_revokes_and_hides_it() {
             .await
             .expect("listing")
             .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn changing_the_password_answers_without_a_payload_and_ends_the_sessions() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+
+    let request = serde_json::json!({
+        "current_password": PASSWORD,
+        "new_password": "Another horse7!",
+    })
+    .to_string();
+
+    let (status, body) = send(
+        router_as(h.state, caller(user.id)),
+        json_post("/auth/change-password", request),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["code"], "OK");
+    assert!(
+        body.get("data").is_none(),
+        "no token pair comes back: the change revokes every session: {body}"
+    );
+    assert!(
+        h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "and the wire call really did revoke them"
+    );
+}
+
+#[tokio::test]
+async fn a_wrong_current_password_through_the_router_is_401() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+
+    let request = serde_json::json!({
+        "current_password": "not the password",
+        "new_password": "Another horse7!",
+    })
+    .to_string();
+
+    let (status, body) = send(
+        router_as(h.state, caller(user.id)),
+        json_post("/auth/change-password", request),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+    assert_eq!(body["code"], "INVALID_CREDENTIALS");
+    assert!(
+        !h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "a refused change leaves the caller signed in"
     );
 }
 

@@ -185,6 +185,20 @@ impl AuthRepo for InMemoryAuthRepo {
         Ok(state.hashes.get(&id).cloned())
     }
 
+    async fn find_password_hash_by_id(&self, user_id: Uuid) -> Result<Option<String>, MenoError> {
+        let state = State::locked(self);
+        // The live-row check the Postgres statement makes with `u.deleted_at IS NULL`:
+        // a soft-deleted account has no password to change.
+        let live = state
+            .users
+            .get(&user_id)
+            .is_some_and(|user| user.deleted_at.is_none());
+        if !live {
+            return Ok(None);
+        }
+        Ok(state.hashes.get(&user_id).cloned())
+    }
+
     async fn set_password_hash(&self, user_id: Uuid, hash: &str) -> Result<(), MenoError> {
         let mut state = State::locked(self);
 

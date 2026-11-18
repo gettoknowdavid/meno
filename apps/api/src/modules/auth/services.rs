@@ -31,9 +31,9 @@ use std::time::Instant;
 use uuid::Uuid;
 
 use super::dto::{
-    AuthResponse, DeviceHint, GoogleMobileAuthRequest, GoogleWebAuthRequest, LoginRequest,
-    LogoutRequest, RefreshTokenRequest, RegisterRequest, SessionResponse, UserResponse,
-    Validatable,
+    AuthResponse, ChangePasswordRequest, DeviceHint, GoogleMobileAuthRequest, GoogleWebAuthRequest,
+    LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest, SessionResponse,
+    UserResponse, Validatable,
 };
 use super::error;
 use super::google::{GoogleAuthorize, GoogleExchange, GoogleIdentity};
@@ -260,6 +260,51 @@ impl AuthService {
     #[tracing::instrument(skip_all, fields(user_id = %user_id))]
     pub async fn logout_everywhere(&self, user_id: Uuid) -> Result<(), MenoError> {
         self.tokens.revoke_all_for_user(user_id).await
+    }
+
+    /// `POST /auth/change-password`.
+    ///
+    /// The current password is verified before anything is written, so a stolen access
+    /// token alone cannot lock the owner out of their own account.
+    ///
+    /// Every session is ended — the same `set_password_hash` transaction a reset uses —
+    /// and the blocklist covers the access tokens the transaction cannot reach. The
+    /// caller's own session is included: the endpoint answers with no payload and no new
+    /// pair, because re-issuing a token in the same second the marker was written would
+    /// mint one the guard already treats as revoked. The client signs in again instead.
+    ///
+    /// # Errors
+    ///
+    /// [`error::wrong_password`] for a current password that does not match,
+    /// [`error::password_login_unavailable`] for an account that only signs in with a
+    /// provider, [`MenoError::Validation`] for a body that breaks the password policy,
+    /// and whatever the repository or the blocklist reports.
+    #[tracing::instrument(skip_all, fields(user_id = %user_id))]
+    pub async fn change_password(
+        &self,
+        user_id: Uuid,
+        req: &ChangePasswordRequest,
+    ) -> Result<(), MenoError> {
+        req.validate()?;
+
+        let Some(hash) = self.repo.find_password_hash_by_id(user_id).await? else {
+            return Err(error::password_login_unavailable());
+        };
+
+        if !password::verify_password_async(req.current_password.clone(), hash).await {
+            return Err(error::wrong_password());
+        }
+
+        let hash = password::hash_password(&req.new_password)?;
+
+        // Two statements in one transaction: the new hash, and `revoked_at` on every
+        // live session. A failure here cannot leave a device signed in with the old
+        // password.
+        self.repo.set_password_hash(user_id, &hash).await?;
+
+        // The transaction cannot reach Redis, and without this the access tokens minted
+        // before the change keep working until they expire on their own.
+        self.tokens.invalidate_access_tokens(user_id).await
     }
 
     /// `DELETE /users/me` — close every session and soft-delete the account.

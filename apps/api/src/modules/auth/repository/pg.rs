@@ -191,6 +191,21 @@ impl AuthRepo for PgAuthRepo {
         Ok(hash)
     }
 
+    async fn find_password_hash_by_id(&self, user_id: Uuid) -> Result<Option<String>, MenoError> {
+        let hash: Option<String> = sqlx::query_scalar(
+            "SELECT i.password_hash FROM public.user_identities i \
+             JOIN public.users u ON u.id = i.user_id \
+             WHERE i.user_id = $1 AND u.deleted_at IS NULL AND i.provider_type = $2",
+        )
+        .bind(user_id)
+        .bind(provider_db_str(AuthProvider::Password))
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| internal("find_password_hash_by_id", e))?;
+
+        Ok(hash)
+    }
+
     async fn set_password_hash(&self, user_id: Uuid, hash: &str) -> Result<(), MenoError> {
         let mut tx = self
             .pool

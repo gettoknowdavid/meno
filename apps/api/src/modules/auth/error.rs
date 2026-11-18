@@ -63,6 +63,19 @@ pub fn invalid_credentials() -> MenoError {
     }
 }
 
+/// The current password a change-password request presented is not the account's.
+///
+/// The same code as [`invalid_credentials`] because it is the same claim — a guessed
+/// credential was refused — but its own message, since this caller is signed in and
+/// "email or password is incorrect" would name a field they did not send.
+#[must_use]
+pub fn wrong_password() -> MenoError {
+    MenoError::Unauthorized {
+        code: ErrorCode::InvalidCredentials,
+        message: "The current password is not correct".to_owned(),
+    }
+}
+
 /// A token was structurally unacceptable: malformed, bad signature, or wrong algorithm.
 #[must_use]
 pub fn invalid_token() -> MenoError {

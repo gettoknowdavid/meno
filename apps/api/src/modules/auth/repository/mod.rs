@@ -103,6 +103,15 @@ pub trait AuthRepo: Send + Sync + std::fmt::Debug {
     /// cannot accidentally be given a `NULL` hash to verify against.
     async fn find_password_hash(&self, email: &str) -> Result<Option<String>, MenoError>;
 
+    /// The password hash for the account `user_id`, or `None` if it has none.
+    ///
+    /// The by-id twin of [`Self::find_password_hash`], for the flows that already know
+    /// whose credential they are holding — `POST /auth/change-password` — and must check
+    /// the old password before rewriting it. Answering `None` for a provider-only
+    /// account is what lets that endpoint say "this account signs in with Google"
+    /// instead of failing a verification against nothing.
+    async fn find_password_hash_by_id(&self, user_id: Uuid) -> Result<Option<String>, MenoError>;
+
     /// Set an account's password hash, rotating every live session.
     ///
     /// The session revocation is part of the same statement's transaction and not the

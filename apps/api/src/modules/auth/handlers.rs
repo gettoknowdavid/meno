@@ -34,9 +34,9 @@ use axum::extract::{Extension, Path, State};
 use uuid::Uuid;
 
 use super::dto::{
-    AuthResponse, ForgotPasswordRequest, GoogleMobileAuthRequest, GoogleWebAuthRequest,
-    LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest, ResendOtpRequest,
-    ResetPasswordRequest, SessionResponse, VerifyEmailRequest,
+    AuthResponse, ChangePasswordRequest, ForgotPasswordRequest, GoogleMobileAuthRequest,
+    GoogleWebAuthRequest, LoginRequest, LogoutRequest, RefreshTokenRequest, RegisterRequest,
+    ResendOtpRequest, ResetPasswordRequest, SessionResponse, VerifyEmailRequest,
 };
 use super::google::GoogleAuthorize;
 use super::state::AuthState;
@@ -134,6 +134,20 @@ pub async fn reset_password(
     state.credentials.reset_password(&body).await?;
 
     Ok(MenoResponse::no_content("Password reset successful"))
+}
+
+/// `POST /auth/change-password`.
+///
+/// 200 with no payload, like `logout`: every session is revoked, so there is no token
+/// pair to hand back and the client signs in again.
+pub async fn change_password(
+    State(state): State<AuthState>,
+    Extension(user): Extension<AuthUser>,
+    MenoBody(body): MenoBody<ChangePasswordRequest>,
+) -> Outcome<()> {
+    state.service.change_password(user.id, &body).await?;
+
+    Ok(MenoResponse::no_content("Password changed successfully"))
 }
 
 /// `GET /auth/sessions` — the device list (§4.7 item 3).

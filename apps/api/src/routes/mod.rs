@@ -267,8 +267,8 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            54,
-            "fourteen auth endpoints, one bible catalogue, fourteen broadcast ones, one chat, \
+            55,
+            "fifteen auth endpoints, one bible catalogue, fourteen broadcast ones, one chat, \
              six notes/folders, five notifications, five subscribers, four profile, two \
              settings and two probes"
         );
@@ -331,7 +331,7 @@ mod tests {
                 "{path} is protected but not in the table"
             );
         }
-        assert_eq!(PROTECTED_PATHS.len(), 3);
+        assert_eq!(PROTECTED_PATHS.len(), 4);
         // `logout` presents its tokens in the body and must NOT be gated: signing out
         // requires no live credential to have been good a moment ago.
         assert!(

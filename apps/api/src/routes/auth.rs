@@ -23,7 +23,7 @@
 //! | half | outermost → innermost |
 //! | --- | --- |
 //! | public (11 routes) | rate limit → idempotency |
-//! | protected (3 routes) | auth → rate limit → idempotency |
+//! | protected (4 routes) | auth → rate limit → idempotency |
 //!
 //! The protected order is the load-bearing one: the guard runs first so it can insert
 //! [`AuthUser`](crate::middleware::auth::AuthUser), the limiter runs second so §4.4's
@@ -70,6 +70,7 @@ pub const AUTH_PATHS: &[&str] = &[
     "/auth/resend-otp",
     "/auth/forgot-password",
     "/auth/reset-password",
+    "/auth/change-password",
 ];
 
 /// The routes that read `Extension<AuthUser>` and so must sit behind the guard.
@@ -78,6 +79,7 @@ pub const AUTH_PATHS: &[&str] = &[
 /// "is it mounted" versus "is it gated" — and a guard that quietly covers the wrong half
 /// is the failure worth pinning.
 pub const PROTECTED_PATHS: &[&str] = &[
+    "/auth/change-password",
     "/auth/sessions",
     "/auth/sessions/00000000-0000-0000-0000-000000000000",
     "/auth/logout-all",
@@ -117,6 +119,10 @@ pub fn routes(
         .layer(from_fn_with_state(limiter.clone(), rate_limit_middleware));
 
     let protected = Router::new()
+        // Authenticated by the token it is changing the password *for*: the current
+        // password is checked in the service, because the guard only proves the caller
+        // holds a session, not that they know the credential.
+        .route("/change-password", post(handlers::change_password))
         .route("/sessions", get(handlers::list_sessions))
         .route("/sessions/{id}", post(handlers::revoke_session))
         .route("/logout-all", post(handlers::logout_everywhere))

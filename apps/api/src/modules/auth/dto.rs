@@ -262,6 +262,34 @@ impl Validatable for ResetPasswordRequest {
     }
 }
 
+/// `POST /auth/change-password`.
+#[derive(Debug, Deserialize)]
+pub struct ChangePasswordRequest {
+    /// The password the account has now. Checked before anything is written.
+    pub current_password: String,
+    /// The replacement password.
+    pub new_password: String,
+}
+
+impl Validatable for ChangePasswordRequest {
+    fn validate(&self) -> Result<(), MenoError> {
+        let mut fields = FieldErrors::new();
+
+        // Presence only: a current password that fails the composition rules is still
+        // the right answer for an account created before those rules existed, and the
+        // check that matters is the one against the stored hash.
+        if self.current_password.is_empty() {
+            fields.push("current_password", "Your current password is required");
+        }
+        fields.extend(
+            validators::PASSWORD,
+            &validators::password_problems(&self.new_password),
+        );
+
+        fields.into_result()
+    }
+}
+
 /// `POST /auth/google/callback` — the web flow.
 #[derive(Debug, Deserialize)]
 pub struct GoogleWebAuthRequest {

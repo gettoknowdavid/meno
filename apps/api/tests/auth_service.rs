@@ -68,15 +68,15 @@ use meno_api::middleware::auth::AuthUser;
 use meno_api::modules::auth::cache::{AuthCache, InMemoryAuthCache};
 use meno_api::modules::auth::credentials::code_digest;
 use meno_api::modules::auth::dto::{
-    ForgotPasswordRequest, GoogleMobileAuthRequest, LoginRequest, LogoutRequest,
-    RefreshTokenRequest, RegisterRequest, ResendOtpRequest, SessionResponse, Validatable,
-    VerifyEmailRequest,
+    ChangePasswordRequest, ForgotPasswordRequest, GoogleMobileAuthRequest, LoginRequest,
+    LogoutRequest, RefreshTokenRequest, RegisterRequest, ResendOtpRequest, SessionResponse,
+    Validatable, VerifyEmailRequest,
 };
 use meno_api::modules::auth::error;
 use meno_api::modules::auth::google::{ProviderExchange, StubExchange};
 use meno_api::modules::auth::handlers;
 use meno_api::modules::auth::mailer::{AuthEmail, RecordingAuthMailer};
-use meno_api::modules::auth::model::{AuthProvider, OtpType, User, UserRole};
+use meno_api::modules::auth::model::{AuthProvider, NewUser, OtpType, User, UserRole};
 use meno_api::modules::auth::repository::{AuthRepo, InMemoryAuthRepo};
 use meno_api::modules::auth::services::{AuthDeps, AuthService, redact};
 use meno_api::modules::auth::state::AuthState;
@@ -452,6 +452,124 @@ async fn a_password_reset_request_leaves_every_session_alone() {
         h.mailer.last().expect("sent").kind,
         AuthEmail::ResetPassword
     );
+}
+
+// ── changing a password ────────────────────────────────────────────────────
+
+/// A password that satisfies the composition policy and is not [`PASSWORD`].
+const NEW_PASSWORD: &str = "Another horse7!";
+
+#[tokio::test]
+async fn a_password_change_rewrites_the_credential_and_ends_every_session() {
+    let h = harness();
+    let (user, _) = registered(&h).await;
+    second_device(&h, &user).await;
+
+    h.service
+        .change_password(
+            user.id,
+            &ChangePasswordRequest {
+                current_password: PASSWORD.to_owned(),
+                new_password: NEW_PASSWORD.to_owned(),
+            },
+        )
+        .await
+        .expect("changing the password");
+
+    assert!(
+        h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "every device has to sign in again with the new password"
+    );
+
+    assert!(
+        h.service
+            .login(&LoginRequest {
+                email: "ada@example.com".to_owned(),
+                password: PASSWORD.to_owned(),
+            })
+            .await
+            .is_err(),
+        "the old password must stop working"
+    );
+    h.service
+        .login(&LoginRequest {
+            email: "ada@example.com".to_owned(),
+            password: NEW_PASSWORD.to_owned(),
+        })
+        .await
+        .expect("the new password signs in");
+}
+
+#[tokio::test]
+async fn a_wrong_current_password_is_refused_and_changes_nothing() {
+    // A stolen access token on its own must not be enough to take the account over.
+    let h = harness();
+    let (user, _) = registered(&h).await;
+
+    let error = h
+        .service
+        .change_password(
+            user.id,
+            &ChangePasswordRequest {
+                current_password: "not the password".to_owned(),
+                new_password: NEW_PASSWORD.to_owned(),
+            },
+        )
+        .await
+        .expect_err("the guess is refused");
+
+    assert_eq!(error.code(), ErrorCode::InvalidCredentials);
+    assert!(
+        !h.repo
+            .list_sessions(user.id)
+            .await
+            .expect("listing")
+            .is_empty(),
+        "a refused change must not sign the caller out"
+    );
+    h.service
+        .login(&LoginRequest {
+            email: "ada@example.com".to_owned(),
+            password: PASSWORD.to_owned(),
+        })
+        .await
+        .expect("and the password is untouched");
+}
+
+#[tokio::test]
+async fn an_account_without_a_password_is_told_to_use_its_provider() {
+    // Verifying against nothing would report "wrong password" for an account whose
+    // password the user never set.
+    let h = harness();
+    let user = h
+        .repo
+        .create_user(NewUser {
+            full_name: "Grace Hopper".to_owned(),
+            email: "grace@example.com".to_owned(),
+            password_hash: String::new(),
+        })
+        .await
+        .expect("a provider-only account");
+
+    let error = h
+        .service
+        .change_password(
+            user.id,
+            &ChangePasswordRequest {
+                // Present so the request reaches the service: the point is that there
+                // is no stored hash to compare it against.
+                current_password: "anything".to_owned(),
+                new_password: NEW_PASSWORD.to_owned(),
+            },
+        )
+        .await
+        .expect_err("there is no password to change");
+
+    assert_eq!(error.code(), ErrorCode::Conflict);
 }
 
 // ── login ──────────────────────────────────────────────────────────────────
