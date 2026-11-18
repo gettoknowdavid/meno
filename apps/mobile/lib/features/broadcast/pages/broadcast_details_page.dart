@@ -126,19 +126,20 @@ class BroadcastDetailsView extends WatchingWidget {
             Spaces.verticalLarge,
             // Restreaming has no API: `POST /broadcasts/{id}/live` refuses a
             // broadcast that has ended, and there is no endpoint that copies a
-            // finished broadcast into a new one. The control stays visible in
-            // its designed place, disabled, rather than opening an invented
-            // flow.
-            Tooltip(
-              message: 'Restream is not available yet.',
-              child: MPrimaryButton.icon(
-                label: 'Restream',
-                icon: const Icon(MIcons.play),
-                disabled: true,
-                onPressed: () {},
+            // finished broadcast into a new one. It is hidden rather than
+            // shown disabled — a control that can never work is a dead end.
+            if (FeatureFlags.restreaming) ...[
+              Tooltip(
+                message: 'Restream is not available yet.',
+                child: MPrimaryButton.icon(
+                  label: 'Restream',
+                  icon: const Icon(MIcons.play),
+                  disabled: true,
+                  onPressed: () {},
+                ),
               ),
-            ),
-            Spaces.verticalLarge,
+              Spaces.verticalLarge,
+            ],
             const MDivider(),
             Spaces.verticalXLarge,
             _Description(description: proxy.description.orEmpty),
@@ -367,17 +368,21 @@ class _OptionsModal extends StatelessWidget {
               },
             ),
           ],
-          Spaces.verticalSmall,
-          MModalListTile(
-            leading: const Icon(MIcons.access_time),
-            title: proxy.isFavourited
-                ? 'Remove from Listen Later'
-                : 'Listen Later',
-            onTap: () async {
-              Navigator.pop(context);
-              await onListenLater();
-            },
-          ),
+          // "Listen Later" is a promise to play the broadcast back, and
+          // playback is part of recording, which this build does not have.
+          if (FeatureFlags.recording) ...[
+            Spaces.verticalSmall,
+            MModalListTile(
+              leading: const Icon(MIcons.access_time),
+              title: proxy.isFavourited
+                  ? 'Remove from Listen Later'
+                  : 'Listen Later',
+              onTap: () async {
+                Navigator.pop(context);
+                await onListenLater();
+              },
+            ),
+          ],
           Spaces.verticalSmall,
           MModalListTile(
             leading: const Icon(MIcons.share),

@@ -341,8 +341,10 @@ class _EditorFormWidget extends WatchingWidget {
             subtitleText: 'Your daily broadcast time will reset in 24hrs',
             trailing: MText('0hr 30min', style: textTheme.captionRegular),
           ),
-          Spaces.verticalXLarge,
-          const RecordToggleSwitchField(),
+          if (FeatureFlags.recording) ...[
+            Spaces.verticalXLarge,
+            const RecordToggleSwitchField(),
+          ],
           Spaces.verticalXLarge,
         ],
       ),

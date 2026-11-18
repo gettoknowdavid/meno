@@ -63,7 +63,11 @@ final class BroadcastEditorManager implements Disposable {
             imageId: draft.imageId,
             timeZone: draft.timeZone,
             startTime: draft.startTime,
-            recordingEnabled: draft.record,
+            // A build without the record switch must not create a
+            // recording-enabled broadcast: a draft saved by an older build can
+            // still carry `record: true`, and the form no longer offers a way
+            // to turn it off.
+            recordingEnabled: FeatureFlags.recording && draft.record,
           );
           _createdBroadcastId = created.id;
           step.value = .created;
@@ -423,7 +427,7 @@ final class BroadcastEditorManager implements Disposable {
     description: description.value,
     startTime: startTime.value,
     timeZone: timeZone.value,
-    record: record.value,
+    record: FeatureFlags.recording && record.value,
     cohosts: cohosts.toList(),
     imagePath: imagePath.value,
     imageId: _uploadedImageId,

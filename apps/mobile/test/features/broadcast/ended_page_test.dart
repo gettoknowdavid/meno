@@ -126,6 +126,10 @@ void main() {
     expect(find.text(_title), findsOne);
     expect(find.text('00:12:00'), findsOne);
     expect(api.requests, isEmpty, reason: 'the summary is already in memory');
+
+    // Recording is a later build: nothing here publishes or plays back.
+    expect(find.text('Publish Broadcast'), findsNothing);
+    expect(find.text('Listen Back'), findsNothing);
   });
 
   testWidgets('without a summary the page loads the broadcast by its id', (

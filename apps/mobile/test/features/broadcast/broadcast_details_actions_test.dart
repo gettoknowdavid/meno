@@ -173,45 +173,41 @@ void main() {
     expect(api.requests.single.path, '/subscribers/$_creator');
   });
 
-  testWidgets('Listen Later writes the local favourite and can remove it', (
+  // "Listen Later" is part of recording, which this build does not ship, so
+  // the sheet no longer offers it. The write it used to drive is still tested
+  // through the proxy itself — hiding a row of UI is not a reason to stop
+  // covering the favourite it wrote.
+  test('a favourite written by the details proxy reaches the list and leaves '
+      'again', () async {
+    final id = Id.fromString(_broadcastId);
+    final proxy = BroadcastProxy(_broadcast(), Id.fromString(_viewer));
+
+    await proxy.toggleIsFavourite.runAsync();
+    await pumpUntil(
+      () => favourites.favourites.isNotEmpty,
+      step: const Duration(milliseconds: 5),
+    );
+    expect(local.isFavourited(id), isTrue);
+    expect(favourites.favourites.single.broadcastId, id);
+
+    await proxy.toggleIsFavourite.runAsync();
+    await pumpUntil(
+      () => favourites.favourites.isEmpty,
+      step: const Duration(milliseconds: 5),
+    );
+    expect(proxy.isFavourited, isFalse);
+    expect(local.isFavourited(id), isFalse);
+  });
+
+  testWidgets('the sheet omits Listen Later while recording is off', (
     tester,
   ) async {
-    final id = Id.fromString(_broadcastId);
-
-    // The local write is real ObjectBox work, not a widget frame, so it gets
-    // real time to finish before the store is read back.
-    Future<void> waitForFavourite({required bool isFavourite}) async {
-      for (var attempt = 0; attempt < 25; attempt++) {
-        if (local.isFavourited(id) == isFavourite) return;
-        await tester.runAsync(
-          () => Future<void>.delayed(const Duration(milliseconds: 10)),
-        );
-        await tester.pump();
-      }
-    }
-
-    final proxy = await pumpDetails(tester, broadcast: _broadcast());
+    await pumpDetails(tester, broadcast: _broadcast());
     await openSheet(tester);
 
-    await tester.tap(find.text('Listen Later'));
-    await tester.pumpAndSettle();
-    await waitForFavourite(isFavourite: true);
-    await tester.runAsync(
-      () => Future<void>.delayed(const Duration(milliseconds: 50)),
-    );
-    await tester.pumpAndSettle();
-
-    expect(local.isFavourited(id), isTrue);
-
-    await openSheet(tester);
-    expect(find.text('Remove from Listen Later'), findsOne);
-
-    await tester.tap(find.text('Remove from Listen Later'));
-    await tester.pumpAndSettle();
-    await waitForFavourite(isFavourite: false);
-
-    expect(proxy.isFavourited, isFalse, reason: 'the proxy should toggle');
-    expect(local.isFavourited(id), isFalse);
+    expect(find.text('Listen Later'), findsNothing);
+    expect(find.text('Remove from Listen Later'), findsNothing);
+    expect(find.text('Copy Link'), findsOne);
   });
 
   testWidgets('Copy Link puts the broadcast deep link on the clipboard', (

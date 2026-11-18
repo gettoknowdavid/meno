@@ -123,12 +123,19 @@ class _PageView extends StatelessWidget {
               allTimeCount: broadcast.totalParticipants,
               recentParticipants: recentParticipants,
             ),
-            const SizedBox(height: 40),
-            MPrimaryButton(
-              label: isOwnBroadcastEnded ? 'Publish Broadcast' : 'Listen Back',
-              onPressed: () {},
-            ),
-            Spaces.verticalLarge,
+            // Recording is a later build: publishing the recording and
+            // listening back to it are what this control promises, and neither
+            // exists yet. The screen keeps the two actions it can honour.
+            if (FeatureFlags.recording) ...[
+              const SizedBox(height: 40),
+              MPrimaryButton(
+                label: isOwnBroadcastEnded
+                    ? 'Publish Broadcast'
+                    : 'Listen Back',
+                onPressed: () {},
+              ),
+              Spaces.verticalLarge,
+            ],
             const _ActionButtons(),
           ],
         ),
