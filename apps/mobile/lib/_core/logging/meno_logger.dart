@@ -160,7 +160,10 @@ final class MenoLoggerImpl implements MenoLogger {
     // at every level, so a token embedded in an exception string never lands
     // in production output (M23).
     final safeMessage = _scrub(prefix);
-    final safeError = error == null ? null : _scrub(error.toString());
+    // The error itself is kept when no credential was found in it, so a caller
+    // (and a test) can still recognise the object it threw; only an error whose
+    // text carried a secret is replaced by its scrubbed string.
+    final safeError = error == null ? null : _scrubError(error);
     if (safeError != null) {
       _backend.log(
         level,
@@ -180,7 +183,7 @@ final class MenoLoggerImpl implements MenoLogger {
   /// string (which may carry a token parameter). Exception messages and event
   /// values are plain strings, so this is the one place that sees them.
   String _scrub(String text) => text
-      .replaceAll(_bearerPattern, r'$1<redacted>')
+      .replaceAllMapped(_bearerPattern, (match) => '${match[1]}<redacted>')
       .replaceAllMapped(_assignmentPattern, (match) => '${match[1]}=<redacted>')
       .replaceAll(_urlQueryPattern, '?<redacted>');
 
@@ -196,6 +199,13 @@ final class MenoLoggerImpl implements MenoLogger {
   );
 
   static final RegExp _urlQueryPattern = RegExp(r'''\?[^\s'"]+''');
+
+  /// [error] itself when its text is already safe, its scrubbed text otherwise.
+  Object _scrubError(Object error) {
+    final text = error.toString();
+    final scrubbed = _scrub(text);
+    return scrubbed == text ? error : scrubbed;
+  }
 
   String _sanitize(Object value) {
     final string = _scrub(value.toString());

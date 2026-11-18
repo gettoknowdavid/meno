@@ -55,9 +55,15 @@ class MHeader extends StatelessWidget {
             ),
             Spaces.horizontalMicro,
           ],
-          DefaultTextStyle(
-            style: textTheme.heading3Bold.copyWith(color: colors.onBackground),
-            child: title,
+          // Flexible, so a long title shrinks (and can ellipsize) instead of
+          // pushing the action out of the row.
+          Flexible(
+            child: DefaultTextStyle(
+              style: textTheme.heading3Bold.copyWith(
+                color: colors.onBackground,
+              ),
+              child: title,
+            ),
           ),
           const Spacer(),
           if (action != null) ...[action!],

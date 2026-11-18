@@ -66,7 +66,9 @@ class MSection extends StatelessWidget {
         MHeader(
           title: Row(
             children: [
-              MText(title),
+              // The title yields to the "see all" action rather than pushing
+              // the header past the width it was given.
+              Flexible(child: MText(title, maxLines: 1, overflow: .ellipsis)),
               if (titleIcon != null) ...[Spaces.horizontalSmall, titleIcon!],
             ],
           ),

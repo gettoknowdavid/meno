@@ -9,6 +9,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/fake_path_provider.dart';
 import '../../_support/session_vault.dart';
+import '../../_support/stub_api.dart';
 import '../../_support/test_database.dart';
 
 const _config = Config(
@@ -29,7 +30,10 @@ CredentialRecord _account({required bool verified}) => testRecord(
 
 /// Boots the app as an install that finished the intro, signed in as [account].
 Future<void> bootWith(WidgetTester tester, CredentialRecord account) async {
-  configureDependencies(_config);
+  // The app's own client runs over a stub, so the reads the session starts
+  // answer instead of failing against the placeholder HTTP client.
+  configureDependencies(_config, httpClient: stubClient(StubApi()));
+  configureGlobalExceptionHandler();
   await tester.runAsync(di.allReady);
 
   await seedVault(
@@ -63,6 +67,9 @@ void main() {
 
   test('the vault keeps the verification flag', () async {
     configureDependencies(_config);
+    // Pushing the sign-in scope runs its commands; a failing one needs the
+    // handler `main()` installs, not a debug assertion.
+    configureGlobalExceptionHandler();
     await di.allReady();
 
     await seedVault(_account(verified: false));

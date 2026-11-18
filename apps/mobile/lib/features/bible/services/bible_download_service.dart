@@ -86,8 +86,12 @@ final class BibleDownloadService {
     return Directory(p.join(support.path, _cacheFolder, code));
   }
 
-  /// The file one version of [code] is cached in, whether it exists yet or not.
-  Future<File> payloadFile({required String code, required int version}) async {
+  /// The file one version of [code] is cached in, whether it exists yet or
+  /// not.
+  Future<File> _payloadFile({
+    required String code,
+    required int version,
+  }) async {
     final directory = await cacheDirectory(code);
     return File(p.join(directory.path, '$version.json.gz'));
   }
@@ -148,7 +152,7 @@ final class BibleDownloadService {
     BibleDownloadProgress? onProgress,
     ValueListenable<bool>? isCancelled,
   }) async {
-    final target = await payloadFile(
+    final target = await _payloadFile(
       code: release.code,
       version: release.version,
     );

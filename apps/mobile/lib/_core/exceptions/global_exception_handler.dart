@@ -10,9 +10,12 @@ import 'package:meno_mobile/_core/_core.dart';
 ///
 /// Call it once from `main()`, after the locator is configured.
 void configureGlobalExceptionHandler() {
+  // Captured once, not looked up per failure: a command can answer after the
+  // container that started it is gone, and reporting that must not throw.
+  final logger = di<MenoLogger>();
+
   Command.globalExceptionHandler = (commandError, stackTrace) {
     final error = commandError.error;
-    final logger = di<MenoLogger>();
 
     if (error is MenoException) {
       // A cancellation is deliberate — a debounce, a screen closing, a request

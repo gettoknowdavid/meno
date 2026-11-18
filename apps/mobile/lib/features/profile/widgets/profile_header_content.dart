@@ -137,15 +137,19 @@ class ProfileStatsRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return SizedBox(
       height: 46,
+      // Each counter takes a third, so a long label shrinks with the column
+      // instead of pushing its neighbours off the card.
       child: Row(
         children: [
-          const SizedBox(width: 2),
-          _StatItem(title: 'Broadcasts', count: stats.broadcasts),
-          const Spacer(),
-          _StatItem(title: 'Subscribers', count: stats.followers),
-          const Spacer(),
-          _StatItem(title: 'Subscriptions', count: stats.following),
-          const SizedBox(width: 2),
+          Expanded(
+            child: _StatItem(title: 'Broadcasts', count: stats.broadcasts),
+          ),
+          Expanded(
+            child: _StatItem(title: 'Subscribers', count: stats.followers),
+          ),
+          Expanded(
+            child: _StatItem(title: 'Subscriptions', count: stats.following),
+          ),
         ],
       ),
     );
@@ -172,6 +176,9 @@ class _StatItem extends StatelessWidget {
           title,
           style: textTheme.microMedium,
           color: colors.onBackgroundVariant,
+          maxLines: 1,
+          overflow: .ellipsis,
+          textAlign: .center,
         ),
       ],
     );
@@ -224,13 +231,21 @@ class AccountUpgradeSection extends StatelessWidget {
         children: [
           const MTag(title: 'FREE ACCOUNT'),
           Spaces.horizontalLarge,
-          MTextButton(
-            label: 'Upgrade to Premium',
-            onPressed: () {},
-            style: TextButton.styleFrom(
-              padding: .zero,
-              textStyle: textTheme.captionMedium.copyWith(
-                decoration: .underline,
+          // The row is one line high: the action shrinks to whatever the tag
+          // leaves rather than overflowing the card.
+          Flexible(
+            child: FittedBox(
+              fit: .scaleDown,
+              alignment: .centerLeft,
+              child: MTextButton(
+                label: 'Upgrade to Premium',
+                onPressed: () {},
+                style: TextButton.styleFrom(
+                  padding: .zero,
+                  textStyle: textTheme.captionMedium.copyWith(
+                    decoration: .underline,
+                  ),
+                ),
               ),
             ),
           ),

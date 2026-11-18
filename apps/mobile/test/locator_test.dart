@@ -144,6 +144,12 @@ void main() {
       // be a change nobody asked for.
       await vault.deactivate();
       await pumpUntil(() => di.currentScopeName == Scope.root);
+      // The scope's name changes before its registrations are gone. Waiting for
+      // the teardown itself keeps it from landing on the next test's manager.
+      await pumpUntil(
+        () => !di.isRegistered<SettingsManager>(),
+        step: const Duration(milliseconds: 10),
+      );
 
       expect(theme.themeMode.value, ThemeMode.dark);
     });
@@ -166,8 +172,13 @@ void main() {
 
       // Nothing answers the write in a test, so the command rolls the
       // optimistic change back. Waited for here, so that the failure belongs to
-      // this test rather than to whichever one runs next.
-      await pumpUntil(() => theme.themeMode.value == ThemeMode.system);
+      // this test rather than to whichever one runs next. The step lets the
+      // request's own timers run: it answers from the fake transport, not from
+      // a pump.
+      await pumpUntil(
+        () => theme.themeMode.value == ThemeMode.system,
+        step: const Duration(milliseconds: 10),
+      );
       expect(theme.themeMode.value, ThemeMode.system);
     });
 
@@ -185,8 +196,12 @@ void main() {
       await pumpUntil(() => di.currentScopeName == Scope.authenticated);
 
       // Registered and already holding the account's own state, so a screen
-      // built on this frame shows the cached record rather than nothing.
-      expect(di<MyProfileManager>().profile.value.isEmpty, isTrue);
+      // built on this frame shows the cached record rather than nothing: a
+      // cache miss installs a placeholder that carries the account id.
+      expect(
+        di<MyProfileManager>().profile.value.id,
+        Id.fromString(_accountId),
+      );
       expect(di<SettingsManager>().settings.value.display, UserDisplay.system);
       expect(di.isRegistered<ActiveBroadcastManager>(), isTrue);
       expect(di.isRegistered<LiveSessionStore>(), isTrue);

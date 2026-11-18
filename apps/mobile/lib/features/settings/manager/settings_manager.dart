@@ -285,7 +285,11 @@ final class SettingsManager implements Disposable {
   }
 
   /// Publishes [next] and writes it to the device cache.
+  ///
+  /// A command's undo runs as a callback, so it can land after the account went
+  /// away and this manager was disposed. There is nothing left to repaint then.
   void _apply(UserSettings next) {
+    if (_disposed) return;
     _settings.value = next;
     _persistLocally();
   }

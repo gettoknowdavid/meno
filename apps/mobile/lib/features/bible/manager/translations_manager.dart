@@ -60,11 +60,9 @@ class TranslationsManager implements Disposable {
           );
         }
 
-        // Equal version: nothing to fetch and nothing to write. The lists are
-        // still re-read, so a caller that asks for something it already holds
-        // sees it where it belongs instead of nothing happening.
+        // Equal version: nothing to fetch and nothing to write. The catalogue
+        // list is re-read anyway, so a row that is now installed leaves it.
         if (_local.seedVersion(code) >= release.version) {
-          _refreshDownloaded();
           _publishRemote();
           return;
         }
@@ -94,14 +92,14 @@ class TranslationsManager implements Disposable {
             file: file,
           );
 
-          _refreshDownloaded();
-          _publishRemote();
-
           if (!seeded && _local.seedVersion(code) < release.version) {
             throw StorageException(
               message: 'The ${release.name} download could not be installed.',
             );
           }
+
+          _refreshDownloaded();
+          _publishRemote();
         } finally {
           downloadingAbbreviation.value = null;
         }
@@ -230,14 +228,14 @@ class TranslationsManager implements Disposable {
   /// an unknown code is a reason to read the catalogue again rather than a
   /// reason to fail.
   Future<BibleTranslationRelease?> _releaseFor(String code) async {
-    final known = _release(code);
+    final known = _knownRelease(code);
     if (known != null) return known;
 
     await _loadCatalogue();
-    return _release(code);
+    return _knownRelease(code);
   }
 
-  BibleTranslationRelease? _release(String code) {
+  BibleTranslationRelease? _knownRelease(String code) {
     for (final release in _releases) {
       if (release.code == code) return release;
     }

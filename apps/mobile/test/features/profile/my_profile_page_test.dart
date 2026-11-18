@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
 import '../../_support/session_vault.dart';
+import '../../_support/test_database.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -50,8 +51,21 @@ void main() {
     installFakePathProvider();
     await di.reset();
     FlutterSecureStorage.setMockInitialValues({});
+    // The app opens a store as it starts; a widget test's fake-async zone never
+    // completes that, so it gets an in-memory one instead.
+    await installTestDatabase();
   });
-  tearDown(di.reset);
+  tearDown(resetTestLocator);
+
+  /// Pumps bounded frames.
+  ///
+  /// `pumpAndSettle` never returns while a read is in flight: the screen's
+  /// skeletons shimmer, so the frame loop it drives never goes quiet.
+  Future<void> settle(WidgetTester tester) async {
+    for (var frame = 0; frame < 25; frame++) {
+      await tester.pump(const Duration(milliseconds: 20));
+    }
+  }
 
   /// Boots the app signed in and past onboarding, so the router lands in the
   /// shell with an account whose id is `1`.
@@ -72,13 +86,13 @@ void main() {
     );
 
     await tester.pumpWidget(const MenoApp());
-    await tester.pumpAndSettle();
+    await settle(tester);
   }
 
   /// Opens the profile tab.
   Future<void> openProfile(WidgetTester tester) async {
     await tester.tap(find.text('Profile'));
-    await tester.pumpAndSettle();
+    await settle(tester);
   }
 
   /// Sizes the window, and generously.
@@ -142,7 +156,16 @@ void main() {
     await openProfile(tester);
 
     expect(find.byType(MyProfilePage), findsOneWidget);
-    expect(find.text('Retry'), findsNothing);
+    // The record itself is not an error page: the header offers no retry and
+    // shows its placeholder. (The tabs' feeds are their own reads, and may
+    // offer one.)
+    expect(
+      find.descendant(
+        of: find.byType(MyProfileHeaderContent),
+        matching: find.text('Retry'),
+      ),
+      findsNothing,
+    );
     expect(find.text('Recent broadcasts'), findsOneWidget);
 
     await unmountTree(tester);

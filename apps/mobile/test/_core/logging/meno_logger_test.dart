@@ -153,7 +153,9 @@ void main() {
       logger = MenoLoggerImpl(Environment.prod);
     });
 
-    test('stays completely silent', () {
+    // The policy is "signal, not noise": trace and debug never leave the app,
+    // but a production warning or failure still leaves a trace (M23).
+    test('drops the noise but keeps warnings, errors and events', () {
       logger
         ..v('trace')
         ..d('debug')
@@ -163,8 +165,24 @@ void main() {
         ..fatal('fatal')
         ..event('app_start', {'env': 'prod'});
 
-      expect(capture.events, isEmpty);
-      expect(capture.outputs, isEmpty);
+      expect(capture.events.map((e) => e.level), <Level>[
+        Level.info,
+        Level.warning,
+        Level.error,
+        Level.fatal,
+        // The structured event is written at info.
+        Level.info,
+      ]);
+      expect(
+        capture.events.map((e) => e.message),
+        containsAll(<String>['info', 'warning', 'error', 'fatal']),
+      );
+      expect(
+        capture.outputs
+            .expand((output) => output.lines)
+            .join('\n'),
+        allOf(contains('warning'), contains('error'), contains('fatal')),
+      );
     });
   });
 }

@@ -13,6 +13,8 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../../_support/fake_path_provider.dart';
 import '../../_support/pump_until_found.dart';
 import '../../_support/session_vault.dart';
+import '../../_support/stub_api.dart';
+import '../../_support/test_database.dart';
 
 const _config = Config(
   env: Environment.dev,
@@ -42,8 +44,11 @@ void main() {
     installFakePathProvider();
     await di.reset();
     FlutterSecureStorage.setMockInitialValues({});
+    // The app opens a store as it starts; a widget test's fake-async zone never
+    // completes that, so it gets an in-memory one instead.
+    await installTestDatabase();
   });
-  tearDown(di.reset);
+  tearDown(resetTestLocator);
 
   /// Boots the app signed in, past onboarding, with the record on disk.
   Future<void> boot(WidgetTester tester) async {
@@ -52,9 +57,11 @@ void main() {
       _profileKey: _cachedProfile,
     });
 
-    configureDependencies(_config);
-    // `main()` does this after the locator is up; the account's own read has
-    // nowhere to land in a widget test otherwise.
+    // The app's own client runs over a stub, so its reads answer instead of
+    // failing against the platform's placeholder HTTP client.
+    configureDependencies(_config, httpClient: stubClient(StubApi()));
+    // `main()` does this after the locator is up; a command that fails has
+    // somewhere to report otherwise.
     configureGlobalExceptionHandler();
     await di.allReady();
     await seedVault(

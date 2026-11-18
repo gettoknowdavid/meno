@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/model/meno_response.dart';
+import 'package:uuid/uuid.dart';
 
 /// Decodes a value out of a response envelope's `data`.
 typedef FromJson<T> = T Function(dynamic data);
@@ -66,10 +67,12 @@ final class HttpClient implements Disposable {
 
   /// The header the API expects on a mutation that may be replayed.
   ///
-  /// Supplied by the caller as `idempotencyKey` and forwarded unchanged: one
-  /// value per *logical* operation, reused by every attempt that operation
-  /// makes. The value must be a UUID; anything else is refused with
-  /// `INVALID_IDEMPOTENCY_KEY`.
+  /// One value per *logical* operation, reused by every attempt that operation
+  /// makes. A caller that may repeat the operation itself — a screen offering
+  /// "try again" — supplies it as `idempotencyKey` and it is forwarded
+  /// unchanged; a mutation that only opts into this client's automatic retry
+  /// gets one generated here, once per call. The value must be a UUID; anything
+  /// else is refused with `INVALID_IDEMPOTENCY_KEY`.
   ///
   /// The API replays a stored outcome for 24 hours (`IDEMPOTENCY_TTL` in
   /// `apps/api/src/middleware/idempotency.rs`), so this is finite
@@ -170,7 +173,6 @@ final class HttpClient implements Disposable {
     );
   }
 
-  /// Runs a `POST` and decodes the envelope's `data` with [fromJson].
   /// Runs a `POST` and decodes the envelope's `data` with [fromJson].
   Future<T> post<T>(
     String path, {
@@ -513,13 +515,17 @@ final class HttpClient implements Disposable {
       },
     );
 
-    // A key the caller supplied is forwarded as-is. One is never invented here:
-    // a key generated inside the transport would be new on every call, so a
-    // manual retry after an ambiguous failure would still duplicate the work
-    // (audit H20). Where the logical operation begins is the only place that
-    // knows which attempts belong together.
-    if (idempotencyKey != null) {
-      options.headers?[idempotencyHeader] = idempotencyKey;
+    // A key the caller supplied is forwarded as-is. A mutation that only opted
+    // into automatic retrying gets one generated here, once, before the first
+    // attempt — every attempt then carries the same value, so a replay is
+    // deduplicated by the API. A caller that may repeat the whole call itself
+    // must pass its own key: only it knows which calls are one operation
+    // (audit H20).
+    final key =
+        idempotencyKey ??
+        (retry && method != 'GET' ? const Uuid().v4() : null);
+    if (key != null) {
+      options.headers?[idempotencyHeader] = key;
     }
 
     var attempt = 1;
