@@ -1,3 +1,6 @@
+import 'dart:async';
+
+import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart' as core;
 import 'package:meno_mobile/_shared/services/database.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
@@ -28,7 +31,7 @@ import 'package:meno_mobile/objectbox.g.dart';
 /// concurrent saves of the same draft cannot leave two rows (audit M06).
 /// Writes are desired-state setters (`setFavourite(…, isFavourite: false)`),
 /// never toggles, so replaying one cannot flip the value.
-final class BroadcastLocalService {
+final class BroadcastLocalService implements Disposable {
   /// Creates the store for one account.
   ///
   /// An invalid owner is refused here instead of being flattened into rows that
@@ -44,6 +47,15 @@ final class BroadcastLocalService {
   final core.Id _ownerId;
   final Database _database;
   final core.MenoLogger _logger;
+
+  final StreamController<void> _favouriteChanges =
+      StreamController<void>.broadcast();
+
+  /// Emits whenever a favourite row is written or removed.
+  ///
+  /// The favourites list is a copy of this box held in memory above here, so a
+  /// write has to say so: nothing else tells that copy the store changed.
+  Stream<void> get favouriteChanges => _favouriteChanges.stream;
 
   /// The owner every row of this service belongs to.
   core.Id get ownerId => _ownerId;
@@ -144,6 +156,7 @@ final class BroadcastLocalService {
         savedAt: DateTime.now(),
       ).toRow,
     );
+    _favouriteChanges.add(null);
   }
 
   /// Forgets [broadcastId] when this account keeps it.
@@ -157,6 +170,7 @@ final class BroadcastLocalService {
 
     _requireOwner(stored.ownerId);
     await _database.favouriteBroadcastBox.removeAsync(stored.id);
+    _favouriteChanges.add(null);
     return true;
   }
 
@@ -274,4 +288,7 @@ final class BroadcastLocalService {
     );
     throw const core.OwnerViolationException();
   }
+
+  @override
+  FutureOr<dynamic> onDispose() => _favouriteChanges.close();
 }

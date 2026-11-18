@@ -90,4 +90,33 @@ void main() {
       reason: 'the store removes only the account that owns the row',
     );
   });
+
+  test('a manager built after a save already holds the list', () async {
+    // What the favourites tab sees on a fresh launch: the row is on disk and
+    // nobody has written anything since, so the read has to happen by itself.
+    await local.setFavourite(_broadcast(), isFavourite: true);
+
+    final rebuilt = FavouritesManager(
+      local: local,
+      logger: MockMenoLogger(),
+      deletedBroadcasts: deleted.stream,
+    );
+    addTearDown(rebuilt.onDispose);
+
+    expect(rebuilt.favourites, hasLength(1));
+  });
+
+  test('a save made elsewhere refreshes a manager already listening', () async {
+    expect(manager.favourites, isEmpty);
+
+    // The star on a details screen writes through this service, not through
+    // the manager: the store is what tells the manager its copy is stale.
+    await local.setFavourite(_broadcast(), isFavourite: true);
+
+    await pumpUntil(() => manager.favourites.isNotEmpty);
+    expect(
+      manager.favourites.first.broadcastId,
+      Id.fromString(_broadcastId),
+    );
+  });
 }

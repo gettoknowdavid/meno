@@ -8,6 +8,7 @@ import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/locator.dart';
+import 'package:readmore/readmore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/fake_path_provider.dart';
@@ -129,7 +130,33 @@ void main() {
     expect(find.text('FREE ACCOUNT'), findsOneWidget);
     expect(find.text('Edit profile'), findsOneWidget);
     expect(find.text('Share profile'), findsOneWidget);
-    expect(find.text('Writes the first program, most days.'), findsOneWidget);
+
+    // The plan row: the tag, then the action as a plain text button beside it.
+    // The Figma layout sizes the button itself rather than scaling it down.
+    expect(
+      find.descendant(
+        of: find.byType(AccountUpgradeSection),
+        matching: find.text('Upgrade to Premium'),
+      ),
+      findsOneWidget,
+    );
+
+    // The bio is drawn in full: the Figma layout has no read-more affordance,
+    // so nothing trims it to three lines.
+    expect(
+      find.descendant(
+        of: find.byType(ProfileBio),
+        matching: find.text('Writes the first program, most days.'),
+      ),
+      findsOneWidget,
+    );
+    expect(
+      find.descendant(
+        of: find.byType(MyProfileHeaderContent),
+        matching: find.byType(ReadMoreText),
+      ),
+      findsNothing,
+    );
 
     // The tab bar the header pins: three tabs, all feeds that belong to other
     // features.

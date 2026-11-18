@@ -48,12 +48,25 @@ final class FavouritesManager implements Disposable {
       errorFilterFn: menoExceptionFilter,
       debugName: 'broadcast.favourites.remove',
     );
+
+    // The list is the store's answer, so it is read as soon as this manager is
+    // built: the favourites tab then paints what the account already kept
+    // instead of starting empty and waiting for a write it may never see.
+    fetch.run();
+
+    // A row written anywhere else — the star on a details screen, the menu
+    // sheet — is this same list, so the store says when it changed and the
+    // copy held here is re-read.
+    _changes = _local.favouriteChanges.listen((_) {
+      if (!_isDisposed) fetch.run();
+    });
   }
 
   final BroadcastLocalService _local;
   final MenoLogger _logger;
 
   late final StreamSubscription<BroadcastDeletedEvent> _deleted;
+  late final StreamSubscription<void> _changes;
   bool _isDisposed = false;
 
   /// The account's kept broadcasts, most recently saved first.
@@ -89,6 +102,7 @@ final class FavouritesManager implements Disposable {
   FutureOr<dynamic> onDispose() async {
     _isDisposed = true;
     await _deleted.cancel();
+    await _changes.cancel();
 
     favourites.dispose();
     fetch.dispose();

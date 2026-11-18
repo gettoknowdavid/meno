@@ -3,7 +3,6 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/profile/model/_model.dart';
 import 'package:meno_mobile/features/profile/widgets/profile_buttons.dart';
 import 'package:meno_ui/meno_ui.dart';
-import 'package:readmore/readmore.dart';
 import 'package:skeletonizer/skeletonizer.dart';
 
 /// The header of the signed-in account's own profile: avatar, counters, the
@@ -195,20 +194,20 @@ class ProfileBio extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = MColorScheme.of(context);
     final textTheme = MTextTheme.of(context);
-    final style = textTheme.captionMedium.copyWith(
-      color: colors.onBackgroundVariant,
-    );
-    return ReadMoreText(
+    // final colors = MColorScheme.of(context);
+    // final style = textTheme.captionMedium.copyWith(
+    //   color: colors.onBackgroundVariant,
+    // );
+    return MText(
       bio.orEmpty,
       style: textTheme.captionRegular,
-      trimLines: 3,
-      trimMode: TrimMode.Line,
-      trimExpandedText: '\nless',
-      trimCollapsedText: '\nmore',
-      moreStyle: style,
-      lessStyle: style,
+      // trimLines: 3,
+      // trimMode: TrimMode.Line,
+      // trimExpandedText: '\nless',
+      // trimCollapsedText: '\nmore',
+      // moreStyle: style,
+      // lessStyle: style,
     );
   }
 }
@@ -234,17 +233,14 @@ class AccountUpgradeSection extends StatelessWidget {
           // The row is one line high: the action shrinks to whatever the tag
           // leaves rather than overflowing the card.
           Flexible(
-            child: FittedBox(
-              fit: .scaleDown,
-              alignment: .centerLeft,
-              child: MTextButton(
-                label: 'Upgrade to Premium',
-                onPressed: () {},
-                style: TextButton.styleFrom(
-                  padding: .zero,
-                  textStyle: textTheme.captionMedium.copyWith(
-                    decoration: .underline,
-                  ),
+            child: MTextButton(
+              label: 'Upgrade to Premium',
+              onPressed: () {},
+              style: TextButton.styleFrom(
+                padding: const .symmetric(horizontal: 8),
+                shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
+                textStyle: textTheme.captionMedium.copyWith(
+                  decoration: .underline,
                 ),
               ),
             ),

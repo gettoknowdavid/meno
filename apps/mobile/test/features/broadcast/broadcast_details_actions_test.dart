@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +13,7 @@ import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/objectbox.g.dart' hide Id;
 import 'package:meno_ui/meno_ui.dart';
 
+import '../../_support/pump_until_found.dart';
 import '../../_support/stub_api.dart';
 
 const _viewer = '018f2b1e-0000-7000-8000-000000000001';
@@ -32,6 +35,7 @@ void main() {
   late Store store;
   late Database database;
   late BroadcastLocalService local;
+  late FavouritesManager favourites;
   late StubApi api;
 
   setUp(() async {
@@ -52,6 +56,13 @@ void main() {
       logger: di<MenoLogger>(),
     );
     di.registerSingleton<BroadcastLocalService>(local);
+
+    favourites = FavouritesManager(
+      local: local,
+      logger: di<MenoLogger>(),
+      deletedBroadcasts: const Stream<BroadcastDeletedEvent>.empty(),
+    );
+    di.registerSingleton<FavouritesManager>(favourites);
 
     api = StubApi();
     di.registerSingleton<ProfileHttpService>(
@@ -109,6 +120,21 @@ void main() {
     await proxy.toggleIsFavourite.runAsync();
     expect(proxy.isFavourited, isFalse);
     expect(local.isFavourited(Id.fromString(_broadcastId)), isFalse);
+  });
+
+  test('the star keeps the broadcast in the favourites list', () async {
+    final proxy = BroadcastProxy(_broadcast(), Id.fromString(_viewer));
+
+    await proxy.toggleIsFavourite.runAsync();
+
+    await pumpUntil(
+      () => favourites.favourites.isNotEmpty,
+      step: const Duration(milliseconds: 5),
+    );
+    expect(
+      favourites.favourites.first.broadcastId,
+      Id.fromString(_broadcastId),
+    );
   });
 
   testWidgets('the sheet opens the creator profile instead of a placeholder', (

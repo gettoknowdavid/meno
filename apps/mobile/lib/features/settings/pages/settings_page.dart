@@ -15,18 +15,22 @@ class SettingsPage extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
+    final textTheme = MTextTheme.of(context);
 
     final manager = di<SettingsManager>();
+
     final settings = watchValue<SettingsManager, UserSettings>(
       (manager) => manager.settings,
     );
+
     final profile = watchValue<MyProfileManager, MyProfile>(
       (manager) => manager.profile,
     );
+
     final isDeleting = watchValue<AuthManager, bool>(
       (manager) => manager.deleteAccount.isRunning,
     );
-    final textTheme = MTextTheme.of(context);
+
     // Device data, not the account's: the count is how many translations the
     // reader has to choose from without starting a broadcast.
     final installedTranslations =
@@ -41,6 +45,7 @@ class SettingsPage extends WatchingWidget {
       select: (manager) => manager.deleteAccount,
       handler: (context, _, _) => _showOnboardingAfterDelete(),
     );
+
     registerHandler<AuthManager, CommandError<void>?>(
       select: (manager) => manager.deleteAccount.errors,
       handler: (context, error, _) =>
@@ -69,10 +74,12 @@ class SettingsPage extends WatchingWidget {
                       color: colors.onBackgroundVariant,
                     ),
                     iconPlacement: MButtonIconPlacement.right,
-                    onPressed: () {},
+                    onPressed: null,
                     style: TextButton.styleFrom(
-                      padding: EdgeInsets.zero,
+                      padding: .zero,
+                      disabledBackgroundColor: Colors.transparent,
                       foregroundColor: colors.onBackgroundVariant,
+                      disabledForegroundColor: colors.onBackgroundVariant,
                     ),
                   ),
                 ),
@@ -100,10 +107,21 @@ class SettingsPage extends WatchingWidget {
                   title: 'Translations',
                   leadingIcon: MIcons.translate_02,
                   onTap: () => context.push(MRoutes.bibleTranslations),
-                  trailing: MText(
-                    '${installedTranslations.length} installed',
-                    style: textTheme.microRegular,
-                    color: colors.onBackgroundVariant,
+                  trailing: MTextButton.icon(
+                    label: '${installedTranslations.length} installed',
+                    icon: Icon(
+                      MIcons.chevron_right,
+                      size: 18,
+                      color: colors.onBackgroundVariant,
+                    ),
+                    iconPlacement: MButtonIconPlacement.right,
+                    onPressed: null,
+                    style: TextButton.styleFrom(
+                      padding: .zero,
+                      disabledBackgroundColor: Colors.transparent,
+                      foregroundColor: colors.onBackgroundVariant,
+                      disabledForegroundColor: colors.onBackgroundVariant,
+                    ),
                   ),
                 ),
                 MSettingsListTile(
