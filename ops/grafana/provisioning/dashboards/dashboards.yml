@@ -1,0 +1,18 @@
+# Load every JSON dashboard in `ops/grafana/dashboards`.
+#
+# `allowUiUpdates: false` keeps the files the source of truth: a panel edited in the
+# browser is lost on the next restart, which is the right trade for a dashboard that is
+# committed alongside the metrics it queries.
+apiVersion: 1
+
+providers:
+  - name: meno
+    orgId: 1
+    folder: Menō
+    type: file
+    disableDeletion: false
+    allowUiUpdates: false
+    updateIntervalSeconds: 30
+    options:
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false

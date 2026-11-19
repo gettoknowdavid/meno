@@ -1,0 +1,40 @@
+# Prometheus for local development.
+#
+# Scrapes the API's private `/metrics` endpoint. The token below is a *development*
+# value: set the same string in your `.env` as `METRICS_TOKEN`, or the endpoint answers
+# 404 and this job goes red. See `docs/tracing-guide.md`.
+#
+# Production does not use this file. Grafana Cloud scrapes the deployed service over
+# HTTPS with the real token, or the collector's `prometheusreceiver` does it in-cluster.
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: dev
+
+scrape_configs:
+  # The API, running on the host (`cargo run`) rather than in compose, so this is the
+  # one target that is not a service name. `host.docker.internal` is Docker Desktop's
+  # alias; the `extra_hosts` entry on the service covers Linux as well.
+  - job_name: meno-api
+    metrics_path: /metrics
+    authorization:
+      type: Bearer
+      credentials: dev-metrics-token
+    static_configs:
+      - targets: ["host.docker.internal:8080"]
+        labels:
+          service: meno-api
+          environment: dev
+
+  # The worker's health port carries no metrics of its own, but keeping the job here
+  # documents where it would go once the job runner exports some.
+  #
+  # - job_name: meno-worker
+  #   static_configs:
+  #     - targets: ["host.docker.internal:8081"]
+
+  # Prometheus itself, so a dashboard can show whether the scraper is healthy.
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]

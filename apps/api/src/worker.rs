@@ -44,10 +44,19 @@ use meno_api::state::MenoState;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let context = bootstrap::build_context(AppRole::Worker).await?;
+    // Held across `run` for the same reason as in `meno-api`: the export guard owns the
+    // batch processors, and the job loop's last spans are worth keeping.
+    let telemetry = context.telemetry;
 
     tracing::info!(env = %context.config.env, "meno-worker ready");
 
-    run(context.config.port, context.state).await
+    run(context.config.port, context.state).await?;
+
+    if let Some(telemetry) = &telemetry {
+        telemetry.force_flush();
+    }
+
+    Ok(())
 }
 
 /// Serve the health probe and own the job runner's lifetime.

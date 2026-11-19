@@ -39,6 +39,9 @@ use meno_api::routes;
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let context = bootstrap::build_context(AppRole::Web).await?;
+    // Taken before `state` moves into the router: the guard must outlive `serve` so the
+    // batch exporters still have somewhere to send the last spans of the shutdown.
+    let telemetry = context.telemetry;
 
     let port = context.config.port;
     let address = SocketAddr::from((Ipv4Addr::UNSPECIFIED, port));
@@ -52,6 +55,12 @@ async fn main() -> anyhow::Result<()> {
         .with_graceful_shutdown(shutdown_signal())
         .await
         .context("the HTTP server exited with an error")?;
+
+    // Flush before the guard drops: spans describing the shutdown itself would
+    // otherwise be buffered and lost with the process.
+    if let Some(telemetry) = &telemetry {
+        telemetry.force_flush();
+    }
 
     tracing::info!("meno-api shut down cleanly");
     Ok(())

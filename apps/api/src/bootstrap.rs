@@ -45,7 +45,7 @@ use crate::infrastructure::database::{create_postgres_pool, log_pool_capacity, r
 use crate::infrastructure::push::sender_from_config;
 use crate::infrastructure::redis::{Redis, RedisConfig};
 use crate::infrastructure::storage::store_from_config;
-use crate::infrastructure::telemetry;
+use crate::infrastructure::telemetry::{self, TelemetryGuard};
 use crate::modules::auth::state::AuthState;
 use crate::state::{Assembly, MenoState};
 
@@ -88,6 +88,12 @@ pub struct AppContext {
     pub config: Arc<Config>,
     /// The wired application: modules plus the infrastructure they hold.
     pub state: MenoState,
+    /// The OpenTelemetry exporters, when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+    ///
+    /// Held here because a guard dropped at the end of `telemetry::init` would shut
+    /// the batch exporters down before the first request. `None` means stdout-only,
+    /// which is the development default and a supported deployment.
+    pub telemetry: Option<TelemetryGuard>,
 }
 
 /// Build the shared startup context.
@@ -113,7 +119,7 @@ pub struct AppContext {
 /// This function deliberately does not start the job monitor; see the module docs.
 pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
     let config = Arc::new(Config::load()?);
-    telemetry::init(&config);
+    let telemetry = telemetry::init(&config);
 
     tracing::info!(config = %config.summary(), role = %role, "starting");
 
@@ -173,7 +179,11 @@ pub async fn build_context(role: AppRole) -> anyhow::Result<AppContext> {
     // process serves requests and holds sockets, and a deploy that runs only it gets no
     // background sweeps.
 
-    Ok(AppContext { config, state })
+    Ok(AppContext {
+        config,
+        state,
+        telemetry,
+    })
 }
 
 #[cfg(test)]

@@ -79,6 +79,22 @@ thiserror = "2.0.21"
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", features = ["env-filter", "json"] }
 
+# Distributed tracing (§4.8): OTLP export of the spans `tracing` already creates.
+# Version-locked as a set — `tracing-opentelemetry` 0.34 is the release that tracks
+# the 0.33 OpenTelemetry API, and mixing majors compiles into a second tracer with
+# no context propagation between them.
+#
+# `opentelemetry-otlp` is declared without a transport feature here: the API crate
+# turns on `grpc-tonic`, so a workspace member that wants HTTP/protobuf instead can
+# choose it without dragging tonic into every build.
+opentelemetry = { version = "0.33.1", default-features = false, features = ["logs", "trace"] }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["grpc-tonic", "logs", "trace"] }
+opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["logs", "rt-tokio", "trace"] }
+# Logs travel over OTLP as well as to stdout: stdout is what a platform log drain
+# reads, OTLP is what lands a log line in the same backend as the trace it belongs to.
+opentelemetry-appender-tracing = "0.33.1"
+tracing-opentelemetry = "0.34.0"
+
 chrono = "0.4.45"
 time = { version = "0.3.55", features = ["serde", "serde-well-known"] }
 
@@ -122,6 +138,7 @@ livekit-protocol = "0.8.0"
 
 async-trait = "0.1.92"
 axum-prometheus = "0.10.1"
+
 
 config = { version = "0.15.27", default-features = false }
 dashmap = "7.0.0-rc2"

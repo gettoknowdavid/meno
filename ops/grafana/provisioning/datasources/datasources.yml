@@ -1,0 +1,53 @@
+# Grafana datasources for local development, provisioned so a fresh `docker compose up`
+# already has the three signals wired together.
+#
+# The uids are referenced by the dashboard and by the derived fields, so they are part
+# of the contract rather than decoration.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: true
+    jsonData:
+      timeInterval: 15s
+      # The API's metrics carry a `job` and `environment` label; keeping the
+      # exemplar setting off avoids a misleading "no exemplars" hint in the UI.
+      manageAlerts: false
+
+  - name: Loki
+    uid: loki
+    type: loki
+    access: proxy
+    url: http://loki:3100
+    jsonData:
+      # Turn a trace id into a link to the trace. Loki's OTLP ingestion promotes log
+      # record attributes to labels, so `trace_id` arrives as a *label* rather than as
+      # text inside the line — hence `matcherType: label`, not a regex over the message.
+      derivedFields:
+        - name: TraceID
+          matcherType: label
+          matcherRegex: trace_id
+          url: "$${__value.raw}"
+          datasourceUid: tempo
+
+  - name: Tempo
+    uid: tempo
+    type: tempo
+    access: proxy
+    url: http://tempo:3200
+    jsonData:
+      # The reverse jump: from a slow span to the logs emitted inside it.
+      tracesToLogsV2:
+        datasourceUid: loki
+        spanStartTimeShift: "-5m"
+        spanEndTimeShift: "5m"
+        filterByTraceID: true
+        filterBySpanID: false
+      serviceMap:
+        datasourceUid: prometheus
+      nodeGraph:
+        enabled: true

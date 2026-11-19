@@ -73,6 +73,14 @@ livekit-api = { workspace = true }
 livekit-protocol = { workspace = true }
 oauth2 = { workspace = true }
 object_store = { workspace = true }
+# Distributed tracing (§4.8): the OTLP exporter and the bridge from `tracing` spans
+# to OpenTelemetry spans. Switched off unless `OTEL_EXPORTER_OTLP_ENDPOINT` is set, so
+# a development run and a test both get the stdout subscriber and no network calls.
+opentelemetry = { workspace = true }
+opentelemetry-appender-tracing = { workspace = true }
+opentelemetry-otlp = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+tracing-opentelemetry = { workspace = true }
 # `once_cell` gives `infrastructure::http` a fallible one-time initialiser
 # (`OnceCell::get_or_try_init`), which std's `OnceLock` does not offer on this
 # toolchain — the shared HTTP client has to be able to *report* a build failure.

@@ -1,0 +1,55 @@
+# Loki for local development: one process, filesystem storage, no clustering.
+#
+# Loki 3.x ingests OTLP logs at `/otlp/v1/logs` — which is what `ops/otel-collector`
+# posts to — so no Promtail or Docker socket is involved. That is deliberate: the API
+# runs on the host, and a container-log tailer cannot see it.
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9095
+  log_level: warn
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /loki
+  storage:
+    filesystem:
+      chunks_directory: /loki/chunks
+      rules_directory: /loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+limits_config:
+  # A week of logs is plenty for a development stack, and it bounds the volume.
+  retention_period: 168h
+  # OTLP log records arrive out of order by nature; the default window rejects them
+  # with "entry too far behind", which is the most common way an OTLP setup looks
+  # broken when it is not.
+  reject_old_samples: false
+  # Dev runs are bursty — a cold compile then a thousand lines.
+  ingestion_rate_mb: 8
+  ingestion_burst_size_mb: 16
+  allow_structured_metadata: true
+
+compactor:
+  working_directory: /loki/compactor
+  delete_request_store: filesystem
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+
+analytics:
+  reporting_enabled: false

@@ -1,0 +1,61 @@
+# The OpenTelemetry Collector for local development.
+#
+# The API speaks OTLP to this process and nothing else; where traces and logs actually
+# go is decided here. That is the same topology Grafana Cloud expects in production —
+# one OTLP endpoint, routing behind it — so moving a deployment from dev to prod is a
+# change of endpoint and credentials, not a change of application code.
+#
+# Ports: 4317 gRPC (what the Rust exporter uses), 4318 HTTP.
+
+receivers:
+  otlp:
+    protocols:
+      grpc:
+        endpoint: 0.0.0.0:4317
+      http:
+        endpoint: 0.0.0.0:4318
+
+processors:
+  # A hard ceiling so a runaway exporter cannot take the dev machine's memory with it.
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+    spike_limit_mib: 64
+  # Batching is what makes an OTLP pipeline cheap: one request per signal per interval
+  # instead of one per span.
+  batch:
+    timeout: 2s
+    send_batch_size: 512
+
+exporters:
+  # `otlp_grpc` / `otlp_http` are the current names; `otlp` and `otlphttp` still work
+  # but log a deprecation warning on every start.
+  otlp_grpc/tempo:
+    endpoint: tempo:4317
+    tls:
+      insecure: true
+  # Loki 3.x accepts OTLP log records over HTTP at /otlp/v1/logs.
+  otlp_http/loki:
+    endpoint: http://loki:3100/otlp
+  # Uncomment to see what the API is actually sending, at the cost of a very noisy
+  # container log. Useful when a trace never appears in Grafana.
+  # debug:
+  #   verbosity: detailed
+
+service:
+  telemetry:
+    logs:
+      level: warn
+    metrics:
+      # The collector's own metrics, kept off the network by default. Point Prometheus
+      # at :8888/metrics if you want them.
+      level: normal
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_grpc/tempo]
+    logs:
+      receivers: [otlp]
+      processors: [memory_limiter, batch]
+      exporters: [otlp_http/loki]

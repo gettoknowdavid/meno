@@ -1,0 +1,40 @@
+# Tempo for local development: single binary, local blocks, no Kafka.
+#
+# Tempo 3.x removed the `ingester` and `compactor` blocks — in monolithic mode the
+# live-store holds recent traces in-process and flushes blocks to `storage`, and
+# compaction runs in-process through the backend scheduler. Retention therefore comes
+# from the default (14 days) or from a `backend_scheduler` block, not from `compactor`.
+server:
+  http_listen_port: 3200
+  grpc_listen_port: 9096
+  log_level: warn
+
+distributor:
+  receivers:
+    otlp:
+      protocols:
+        grpc:
+          endpoint: 0.0.0.0:4317
+        http:
+          endpoint: 0.0.0.0:4318
+
+storage:
+  trace:
+    backend: local
+    wal:
+      path: /var/tempo/wal
+    local:
+      path: /var/tempo/blocks
+
+# Kept short so a dev volume does not grow forever. Remove the block to get Tempo's
+# 14-day default.
+backend_scheduler:
+  provider:
+    compaction:
+      compaction:
+        compaction_window: 1h
+        max_block_bytes: 100_000_000
+        block_retention: 24h
+
+usage_report:
+  reporting_enabled: false

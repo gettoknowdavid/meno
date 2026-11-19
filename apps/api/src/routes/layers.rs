@@ -34,7 +34,8 @@
 use std::time::Duration;
 
 use axum::Router;
-use axum::http::{HeaderName, HeaderValue, Method, header};
+use axum::body::Body;
+use axum::http::{HeaderName, HeaderValue, Method, Request, header};
 use axum::middleware::from_fn;
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use tower_http::request_id::{MakeRequestUuid, PropagateRequestIdLayer, SetRequestIdLayer};
@@ -69,12 +70,45 @@ where
         // Innermost first — see the module docs for the resulting outermost-first list.
         .layer(crate::infrastructure::metrics::Metrics::layer())
         .layer(from_fn(timing_middleware))
-        .layer(TraceLayer::new_for_http())
+        .layer(TraceLayer::new_for_http().make_span_with(request_span))
         .layer(cors(&config.origins))
         // Propagate applied first, Set second: in axum the *last* layer applied is the
         // outermost, and Set must run before Propagate reads the header back.
         .layer(PropagateRequestIdLayer::new(request_id.clone()))
         .layer(SetRequestIdLayer::new(request_id, MakeRequestUuid))
+}
+
+/// The span one request produces.
+///
+/// # Why this is not `TraceLayer::new_for_http()` alone
+///
+/// tower-http's default span is created at `DEBUG`, and `RUST_LOG=info` — the
+/// production default — filters it out. A filtered span is never created, so the
+/// OpenTelemetry layer never sees it, no trace is exported, and every log line carries
+/// `trace_id: "-"`. The instrumentation looked wired and produced nothing.
+///
+/// An explicit `INFO` span also fixes the fields: `http.request.method` and `url.path`
+/// are the names both OTel and Grafana's trace-to-logs search expect, and `request_id`
+/// is what ties a trace to the `x-request-id` the client sees.
+///
+/// `http.route` and `http.response.status_code` stay empty here: the first is known only
+/// after routing, the second after the handler runs, and both are filled by the layers
+/// below rather than guessed at the door.
+fn request_span(request: &Request<Body>) -> tracing::Span {
+    let request_id = request
+        .headers()
+        .get(REQUEST_ID_HEADER)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("-");
+
+    tracing::info_span!(
+        "http.request",
+        http.request.method = %request.method(),
+        url.path = %request.uri().path(),
+        http.route = tracing::field::Empty,
+        http.response.status_code = tracing::field::Empty,
+        request_id = %request_id,
+    )
 }
 
 /// The CORS policy, built from `CORS_ORIGINS` (§4.6).

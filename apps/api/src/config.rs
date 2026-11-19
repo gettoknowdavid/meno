@@ -304,6 +304,37 @@ pub struct StorageSettings {
     pub public_url: String,
 }
 
+/// OTLP export settings. Present only when `OTEL_EXPORTER_OTLP_ENDPOINT` is set.
+///
+/// Deliberately opt-in. A development run with no collector should not spend its
+/// startup building a gRPC channel it never uses, and a test binary should not dial
+/// anything at all — so "unset" is the default rather than a guessed localhost.
+///
+/// The endpoint is the *collector*, not a vendor: traces and logs both go there, and the
+/// collector decides where they land. Production points this at Grafana Cloud's OTLP
+/// gateway (or an Alloy/collector instance of your own) and supplies credentials through
+/// the standard `OTEL_EXPORTER_OTLP_HEADERS` variable, which the exporter reads itself.
+#[derive(Clone, Debug)]
+pub struct OtelSettings {
+    /// Collector endpoint, e.g. `http://localhost:4317` or `https://otlp-gateway…`.
+    pub endpoint: String,
+    /// `service.name` on every span and log record, from `OTEL_SERVICE_NAME`.
+    pub service_name: String,
+    /// Fraction of root traces kept, from `OTEL_TRACES_SAMPLER_ARG` (0.0–1.0).
+    pub sample_ratio: f64,
+}
+
+impl OtelSettings {
+    /// The default service name when `OTEL_SERVICE_NAME` is unset.
+    pub const DEFAULT_SERVICE_NAME: &'static str = "meno-api";
+
+    /// The default sampling ratio: keep everything.
+    ///
+    /// Correct for a launch. Lower it when the bill, not the traffic, is the problem —
+    /// see `docs/tracing-guide.md`.
+    pub const DEFAULT_SAMPLE_RATIO: f64 = 1.0;
+}
+
 /// The validated application configuration.
 ///
 /// Built once, at startup, and passed by reference thereafter. Every field is either
@@ -358,6 +389,11 @@ pub struct Config {
     /// but a token nobody set must disable the endpoint, not leave it open. `None`
     /// is therefore the safe default, and `.env.example` says so next to the key.
     pub metrics_token: Option<Secret>,
+    /// OTLP trace and log export, from `OTEL_EXPORTER_OTLP_ENDPOINT`.
+    ///
+    /// Optional and off by default (§4.6): a deployment without a collector must behave
+    /// exactly as it did before this existed — stdout logs, no exporter, no dial.
+    pub otel: Option<OtelSettings>,
 }
 
 /// Where configuration values are read from.
@@ -604,6 +640,46 @@ impl Config {
             None
         };
 
+        // ── observability (optional) ──
+        //
+        // Off unless the endpoint is set, and validated when it is: a bare host with no
+        // scheme is the mistake worth catching here, because tonic would reject it at
+        // the first export rather than at boot, and by then the failure is a warning in
+        // a log nobody is watching.
+        let otel = match source.get("OTEL_EXPORTER_OTLP_ENDPOINT") {
+            None => None,
+            Some(endpoint) => {
+                if !(endpoint.starts_with("http://") || endpoint.starts_with("https://")) {
+                    errors.invalid(
+                        "OTEL_EXPORTER_OTLP_ENDPOINT",
+                        "must start with http:// or https://",
+                    );
+                }
+
+                let sample_ratio = match source.get("OTEL_TRACES_SAMPLER_ARG") {
+                    None => OtelSettings::DEFAULT_SAMPLE_RATIO,
+                    Some(raw) => match raw.trim().parse::<f64>() {
+                        Ok(value) if (0.0..=1.0).contains(&value) => value,
+                        Ok(_) => {
+                            errors.invalid("OTEL_TRACES_SAMPLER_ARG", "must be 0.0 to 1.0");
+                            OtelSettings::DEFAULT_SAMPLE_RATIO
+                        }
+                        Err(e) => {
+                            errors.invalid("OTEL_TRACES_SAMPLER_ARG", e);
+                            OtelSettings::DEFAULT_SAMPLE_RATIO
+                        }
+                    },
+                };
+
+                Some(OtelSettings {
+                    endpoint,
+                    service_name: optional_str(source, "OTEL_SERVICE_NAME")
+                        .unwrap_or_else(|| OtelSettings::DEFAULT_SERVICE_NAME.to_owned()),
+                    sample_ratio,
+                })
+            }
+        };
+
         if !errors.is_empty() {
             return Err(errors);
         }
@@ -630,6 +706,7 @@ impl Config {
             // Optional by design: an absent METRICS_TOKEN disables `/metrics` rather
             // than failing startup — see the field's docs.
             metrics_token: optional_str(source, "METRICS_TOKEN").map(Secret::new),
+            otel,
         })
     }
 
@@ -652,6 +729,7 @@ impl Config {
             ("email", self.email.is_some()),
             ("storage", self.storage.is_some()),
             ("google", self.google.is_some()),
+            ("otel", self.otel.is_some()),
         ]
         .into_iter()
         .map(|(name, on)| format!("{name}={}", if on { "on" } else { "off" }))

@@ -121,6 +121,52 @@ services:
     networks: [meno]
     restart: unless-stopped
 
+  # ── observability ─────────────────────────────────────────────────────────────
+  #
+  # The shape is the one production has: the API sends OTLP to a collector, the
+  # collector routes traces to Tempo and logs to Loki, and Prometheus scrapes the API's
+  # `/metrics`. Nothing here is on the request path — with all four containers down the
+  # API still serves, it just stops exporting. See `docs/tracing-guide.md`.
+
+  otel-collector:
+    image: otel/opentelemetry-collector-contrib:latest
+    container_name: meno-otel-collector
+    command: --config=/etc/otelcol-contrib/config.yml
+    volumes:
+      - ./otel-collector/config.yml:/etc/otelcol-contrib/config.yml:ro
+    ports:
+      # What the API dials (`OTEL_EXPORTER_OTLP_ENDPOINT=http://localhost:4317`).
+      - "4317:4317"
+      - "4318:4318"
+    depends_on: [tempo, loki]
+    networks: [meno]
+    restart: unless-stopped
+
+  tempo:
+    image: grafana/tempo:latest
+    container_name: meno-tempo
+    command: -config.file=/etc/tempo/tempo.yml
+    volumes:
+      - ./tempo/tempo.yml:/etc/tempo/tempo.yml:ro
+      - tempo_data:/var/tempo
+    ports:
+      # Trace search UI/API. Grafana queries it over the shared network.
+      - "3200:3200"
+    networks: [meno]
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: meno-loki
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./loki/loki.yml:/etc/loki/loki.yml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    networks: [meno]
+    restart: unless-stopped
+
   prometheus:
     image: prom/prometheus:latest
     container_name: meno-prometheus
@@ -129,28 +175,10 @@ services:
       - prom_data:/prometheus
     ports:
       - "9090:9090"
-    networks: [meno]
-    restart: unless-stopped
-
-  loki:
-    image: grafana/loki:latest
-    container_name: meno-loki
-    command: -config.file=/etc/loki/local-config.yaml
-    volumes:
-      - ./promtail/loki.yml:/etc/loki/local-config.yaml:ro
-    ports:
-      - "3100:3100"
-    networks: [meno]
-    restart: unless-stopped
-
-  promtail:
-    image: grafana/promtail:latest
-    container_name: meno-promtail
-    command: -config.file=/etc/promtail/config.yml
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-      - ./promtail/promtail.yml:/etc/promtail/config.yml:ro
-    depends_on: [loki]
+    # The API runs on the host, not in compose: this is what makes
+    # `host.docker.internal` resolve on Linux as well as Docker Desktop.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks: [meno]
     restart: unless-stopped
 
@@ -161,12 +189,17 @@ services:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD: admin
       GF_USERS_ALLOW_SIGN_UP: "false"
+      # Anonymous viewing keeps a second pair of eyes out of the login screen; remove
+      # if this machine is shared.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
     volumes:
       - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboards:/var/lib/grafana/dashboards:ro
       - grafana_data:/var/lib/grafana
     ports:
       - "3001:3000"
-    depends_on: [prometheus, loki]
+    depends_on: [prometheus, loki, tempo]
     networks: [meno]
     restart: unless-stopped
 
@@ -180,3 +213,5 @@ volumes:
   storage_data:
   grafana_data:
   prom_data:
+  loki_data:
+  tempo_data:

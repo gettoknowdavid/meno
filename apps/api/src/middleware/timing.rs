@@ -43,11 +43,17 @@ pub async fn timing_middleware(req: Request, next: Next) -> Response {
     let response = next.run(req).await;
     let duration = start.elapsed();
 
+    // `trace_id` is `-` when OTLP is off (the default in development), so the field is
+    // always present and a log search does not have to branch on its absence. When it
+    // is a real id, the log line in Loki links to the trace in Tempo.
+    let trace_id = super::super::infrastructure::telemetry::current_trace_id();
+
     tracing::info!(
         http.method = %method,
         http.path = %path,
         http.status = response.status().as_u16(),
         duration_ms = duration.as_millis() as u64,
+        trace_id = trace_id.as_deref().unwrap_or("-"),
         "request completed"
     );
 
