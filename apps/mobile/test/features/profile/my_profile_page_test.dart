@@ -129,7 +129,9 @@ void main() {
     expect(find.text('Subscriptions'), findsOneWidget);
     expect(find.text('FREE ACCOUNT'), findsOneWidget);
     expect(find.text('Edit profile'), findsOneWidget);
-    expect(find.text('Share profile'), findsOneWidget);
+    // Sharing is commented out until a share link resolves
+    // (docs/launch-readiness.md §2.2).
+    // expect(find.text('Share profile'), findsOneWidget);
 
     // The plan row: the tag, then the action as a plain text button beside it.
     // The Figma layout sizes the button itself rather than scaling it down.

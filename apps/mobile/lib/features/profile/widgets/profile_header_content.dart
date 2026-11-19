@@ -55,10 +55,12 @@ class MyProfileHeaderContent extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(child: EditProfileButton(profile: profile)),
-                    Spaces.horizontalLarge,
-                    Expanded(
-                      child: ShareProfileButton(profile: profile.asProfile),
-                    ),
+                    // Sharing is commented out until a share link resolves
+                    // (docs/launch-readiness.md §2.2).
+                    // Spaces.horizontalLarge,
+                    // Expanded(
+                    //   child: ShareProfileButton(profile: profile.asProfile),
+                    // ),
                   ],
                 ),
               ),
@@ -111,8 +113,12 @@ class UserProfileHeaderContent extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(child: SubscribeButton(profile: profile)),
-                  Spaces.horizontalLarge,
-                  Expanded(child: ShareProfileButton(profile: profile.target)),
+                  // Sharing is commented out until a share link resolves
+                  // (docs/launch-readiness.md §2.2).
+                  // Spaces.horizontalLarge,
+                  // Expanded(
+                  //   child: ShareProfileButton(profile: profile.target),
+                  // ),
                 ],
               ),
             ),

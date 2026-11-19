@@ -56,16 +56,19 @@ class BroadcastInfoModal extends WatchingWidget {
               title: 'Minimize Stream',
               onTap: () => context.go(MRoutes.home),
             ),
-          MModalListTile(
-            leading: const Icon(MIcons.share),
-            title: 'Share',
-            onTap: () {},
-          ),
-          MModalListTile(
-            leading: const Icon(MIcons.link_02),
-            title: 'Copy Link',
-            onTap: () {},
-          ),
+          // Sharing and Copy Link are commented out: they do nothing, and the
+          // link they would build has no destination yet
+          // (docs/launch-readiness.md §2.2).
+          // MModalListTile(
+          //   leading: const Icon(MIcons.share),
+          //   title: 'Share',
+          //   onTap: () {},
+          // ),
+          // MModalListTile(
+          //   leading: const Icon(MIcons.link_02),
+          //   title: 'Copy Link',
+          //   onTap: () {},
+          // ),
           Spaces.verticalXLarge,
         ],
       ),

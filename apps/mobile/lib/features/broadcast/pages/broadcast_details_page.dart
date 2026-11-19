@@ -383,24 +383,29 @@ class _OptionsModal extends StatelessWidget {
               },
             ),
           ],
-          Spaces.verticalSmall,
-          MModalListTile(
-            leading: const Icon(MIcons.share),
-            title: 'Share',
-            onTap: () async {
-              Navigator.pop(context);
-              await onShare();
-            },
-          ),
-          Spaces.verticalSmall,
-          MModalListTile(
-            leading: const Icon(MIcons.link_02),
-            title: 'Copy Link',
-            onTap: () async {
-              Navigator.pop(context);
-              await onCopyLink();
-            },
-          ),
+          // Sharing and Copy Link are commented out: the link they build is
+          // `https://meno.app/broadcasts/{id}`, and nothing serves that host
+          // yet, so a recipient gets a dead URL
+          // (docs/launch-readiness.md §2.2). The handlers stay below so the
+          // surface can be restored once the landing page exists.
+          // Spaces.verticalSmall,
+          // MModalListTile(
+          //   leading: const Icon(MIcons.share),
+          //   title: 'Share',
+          //   onTap: () async {
+          //     Navigator.pop(context);
+          //     await onShare();
+          //   },
+          // ),
+          // Spaces.verticalSmall,
+          // MModalListTile(
+          //   leading: const Icon(MIcons.link_02),
+          //   title: 'Copy Link',
+          //   onTap: () async {
+          //     Navigator.pop(context);
+          //     await onCopyLink();
+          //   },
+          // ),
           Spaces.verticalXLarge,
         ],
       ),

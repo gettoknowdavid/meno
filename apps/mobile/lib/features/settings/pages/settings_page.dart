@@ -163,11 +163,13 @@ class SettingsPage extends WatchingWidget {
                   leadingIcon: MIcons.help_circle,
                   onTap: () {},
                 ),
-                MSettingsListTile(
-                  title: 'Share with friends & family',
-                  leadingIcon: MIcons.share,
-                  onTap: () {},
-                ),
+                // Sharing is commented out until a share link resolves
+                // (docs/launch-readiness.md §2.2).
+                // MSettingsListTile(
+                //   title: 'Share with friends & family',
+                //   leadingIcon: MIcons.share,
+                //   onTap: () {},
+                // ),
                 MSettingsListTile(
                   title: 'Logout',
                   leadingIcon: MIcons.log_out,

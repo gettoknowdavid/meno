@@ -46,17 +46,20 @@ class NoteOptionsModal extends WatchingWidget {
             ),
 
           Spaces.verticalSmall,
-          MModalListTile(
-            leading: const Icon(MIcons.share),
-            title: 'Share',
-            onTap: () {},
-          ),
-          Spaces.verticalSmall,
-          MModalListTile(
-            leading: const Icon(MIcons.link_02),
-            title: 'Copy Link',
-            onTap: () {},
-          ),
+          // Sharing and Copy Link are commented out: they do nothing, and the
+          // link they would build has no destination yet
+          // (docs/launch-readiness.md §2.2).
+          // MModalListTile(
+          //   leading: const Icon(MIcons.share),
+          //   title: 'Share',
+          //   onTap: () {},
+          // ),
+          // Spaces.verticalSmall,
+          // MModalListTile(
+          //   leading: const Icon(MIcons.link_02),
+          //   title: 'Copy Link',
+          //   onTap: () {},
+          // ),
           Spaces.verticalSmall,
           MModalListTile(
             leading: Icon(MIcons.trash, color: colors.error),

@@ -1,7 +1,9 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart' show ResponseBody;
-import 'package:flutter/services.dart';
+// The platform-channel import returns with the Copy Link test below
+// (docs/launch-readiness.md §2.2).
+// import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
@@ -187,7 +189,9 @@ void main() {
     await openSheet(tester);
 
     expect(find.text('Go to Profile'), findsOne);
-    expect(find.text('Copy Link'), findsOne);
+    // Copy Link is commented out until a share link resolves
+    // (docs/launch-readiness.md §2.2).
+    // expect(find.text('Copy Link'), findsOne);
 
     await tester.tap(find.text('Go to Profile'));
     await tester.pumpAndSettle();
@@ -224,31 +228,36 @@ void main() {
 
     expect(find.text('Listen Later'), findsNothing);
     expect(find.text('Remove from Listen Later'), findsNothing);
-    expect(find.text('Copy Link'), findsOne);
+    // expect(find.text('Copy Link'), findsOne);
   });
 
-  testWidgets('Copy Link puts the broadcast deep link on the clipboard', (
-    tester,
-  ) async {
-    String? copied;
-    final messenger =
-        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
-    messenger.setMockMethodCallHandler(SystemChannels.platform, (call) async {
-      if (call.method == 'Clipboard.setData') {
-        copied = (call.arguments as Map)['text'] as String?;
-      }
-      return null;
-    });
-    addTearDown(
-      () => messenger.setMockMethodCallHandler(SystemChannels.platform, null),
-    );
-
-    await pumpDetails(tester, broadcast: _broadcast());
-    await openSheet(tester);
-
-    await tester.tap(find.text('Copy Link'));
-    await tester.pumpAndSettle();
-
-    expect(copied, 'https://meno.app/broadcasts/$_broadcastId');
-  });
+  // Copy Link is commented out until a share link resolves
+  // (docs/launch-readiness.md §2.2). Restore with the sheet row.
+  //
+  // testWidgets('Copy Link puts the broadcast deep link on the clipboard', (
+  //   tester,
+  // ) async {
+  //   String? copied;
+  //   final messenger =
+  //       TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  //   messenger.setMockMethodCallHandler(SystemChannels.platform,
+  //       (call) async {
+  //     if (call.method == 'Clipboard.setData') {
+  //       copied = (call.arguments as Map)['text'] as String?;
+  //     }
+  //     return null;
+  //   });
+  //   addTearDown(
+  //     () => messenger.setMockMethodCallHandler(SystemChannels.platform,
+  //       null),
+  //   );
+  //
+  //   await pumpDetails(tester, broadcast: _broadcast());
+  //   await openSheet(tester);
+  //
+  //   await tester.tap(find.text('Copy Link'));
+  //   await tester.pumpAndSettle();
+  //
+  //   expect(copied, 'https://meno.app/broadcasts/$_broadcastId');
+  // });
 }
