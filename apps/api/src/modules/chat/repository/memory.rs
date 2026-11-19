@@ -36,6 +36,10 @@ struct State {
     live: HashSet<Uuid>,
     /// `(broadcast, participant)` pairs currently in a room.
     participants: HashSet<(Uuid, Uuid)>,
+    /// Who created each broadcast the double knows about.
+    creators: HashMap<Uuid, Uuid>,
+    /// `(blocker, blocked)` decisions from `user_blocks`.
+    blocks: HashSet<(Uuid, Uuid)>,
     /// Every message ever written, deleted ones included — as the table has them.
     messages: Vec<ChatMessage>,
     /// Which of those are soft-deleted.
@@ -70,6 +74,19 @@ impl InMemoryChatRepo {
     /// End a broadcast, so the guarded writes start refusing.
     pub fn end_broadcast(&self, broadcast_id: Uuid) {
         self.lock().live.remove(&broadcast_id);
+    }
+
+    /// Record who created a broadcast — what `broadcasts.creator_id` answers in the SQL.
+    pub fn set_creator(&self, broadcast_id: Uuid, creator_id: Uuid) {
+        self.lock().creators.insert(broadcast_id, creator_id);
+    }
+
+    /// Record a block, bypassing every guard.
+    ///
+    /// A fixture: `user_blocks` is the moderation module's table, and this double needs to
+    /// see a decision it does not make.
+    pub fn add_block(&self, blocker: Uuid, blocked: Uuid) {
+        self.lock().blocks.insert((blocker, blocked));
     }
 
     /// Put an account in a room.
@@ -116,10 +133,20 @@ impl InMemoryChatRepo {
         self.state.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Whether the broadcast's creator has blocked this account — the guard's third
+    /// clause.
+    fn host_blocked(state: &State, broadcast_id: Uuid, user_id: Uuid) -> bool {
+        state
+            .creators
+            .get(&broadcast_id)
+            .is_some_and(|creator| state.blocks.contains(&(*creator, user_id)))
+    }
+
     /// Whether the write guard would admit a message from `sender_id` right now.
     fn admits(state: &State, broadcast_id: Uuid, sender_id: Uuid) -> bool {
         state.live.contains(&broadcast_id)
             && state.participants.contains(&(broadcast_id, sender_id))
+            && !Self::host_blocked(state, broadcast_id, sender_id)
     }
 
     /// The sender a message is joined to, or an error naming the missing row.
@@ -275,5 +302,9 @@ impl ChatRepo for InMemoryChatRepo {
 
     async fn is_participant(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
         Ok(self.lock().participants.contains(&(broadcast_id, user_id)))
+    }
+
+    async fn creator_blocked(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
+        Ok(Self::host_blocked(&self.lock(), broadcast_id, user_id))
     }
 }

@@ -333,7 +333,7 @@ impl ChatService {
 
     /// Say *why* a guarded write was refused.
     ///
-    /// The guarded statements write nothing for two reasons, and only this module knows
+    /// The guarded statements write nothing for three reasons, and only this module knows
     /// which answer to give — so this is one extra read on a path that is already an
     /// error, rather than a check on the happy path that could go stale between the read
     /// and the write.
@@ -341,6 +341,18 @@ impl ChatService {
     /// A failed check is reported as itself: the client is told the truth ("we could not
     /// tell") rather than a refusal it might act on wrongly.
     async fn refusal_for(&self, member: ChatMember) -> MenoError {
+        // The block first: it is the one refusal that still holds after a join, so
+        // answering "not a participant" would send the caller to fix the wrong thing.
+        match self
+            .repo
+            .creator_blocked(member.broadcast_id, member.user_id)
+            .await
+        {
+            Ok(true) => return error::blocked_by_creator(),
+            Ok(false) => {}
+            Err(failure) => return failure,
+        }
+
         match self.repo.is_live_broadcast(member.broadcast_id).await {
             Ok(true) => error::not_participant(),
             Ok(false) => error::broadcast_not_live(),

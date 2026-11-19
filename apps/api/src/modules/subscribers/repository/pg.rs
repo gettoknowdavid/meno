@@ -77,6 +77,17 @@ const PROFILE: &str = "\
      SELECT id, full_name, bio, avatar_id, avatar_url \
      FROM users WHERE id = $1 AND deleted_at IS NULL";
 
+/// Whether the owner has blocked the viewer — `$1` is the owner, `$2` the viewer.
+///
+/// The index migration `0020` adds is on `blocked_id`, which is the column this asks
+/// about second: Postgres uses it for the `blocked_id = $2` half and the primary key
+/// covers the pair, so the lookup is an index scan either way.
+const IS_BLOCKED_BY: &str = "\
+     SELECT EXISTS (\
+         SELECT 1 FROM user_blocks \
+         WHERE blocker_id = $1 AND blocked_id = $2\
+     )";
+
 /// Every follower of `$1` — the audience for a go-live announcement.
 const SUBSCRIBER_IDS: &str =
     "SELECT subscriber_id FROM user_subscribers WHERE subscription_id = $1";
@@ -235,6 +246,15 @@ impl SubscribersRepo for PgSubscribersRepo {
             .fetch_one(&self.pool)
             .await
             .map_err(|e| database("user_exists", e))
+    }
+
+    async fn is_blocked_by(&self, owner_id: Uuid, viewer_id: Uuid) -> Result<bool, MenoError> {
+        sqlx::query_scalar::<_, bool>(IS_BLOCKED_BY)
+            .bind(owner_id)
+            .bind(viewer_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(|e| database("is_blocked_by", e))
     }
 
     async fn find_follows(&self, filter: &FollowFilter) -> Result<Vec<SubscriberDto>, MenoError> {

@@ -111,6 +111,17 @@ pub trait ChatRepo: Send + Sync + std::fmt::Debug {
     ///
     /// Used only to explain a refused write.
     async fn is_participant(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError>;
+
+    /// Whether the broadcast's creator has blocked this account.
+    ///
+    /// A host who has blocked somebody does not hear them in their own room, so the
+    /// guarded inserts refuse this state as well as the ended and not-a-participant ones.
+    /// Read as an `EXISTS` against `user_blocks` rather than through the moderation
+    /// module's repository, because modules may not import each other (see
+    /// [`crate::modules`]).
+    ///
+    /// Used only to explain a refused write.
+    async fn creator_blocked(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError>;
 }
 
 /// The filter a page of messages is read with, already decoded.

@@ -45,6 +45,19 @@ pub fn cannot_subscribe_to_self() -> MenoError {
     }
 }
 
+/// The account being followed has blocked the caller.
+///
+/// A `403` rather than a `404`: the account exists and the caller can see it — what
+/// refuses the follow is a decision somebody made about them, and telling them "no such
+/// user" would make a block look like a deletion.
+#[must_use]
+pub fn blocked() -> MenoError {
+    MenoError::Forbidden {
+        code: ErrorCode::Forbidden,
+        message: "This account has blocked you".to_owned(),
+    }
+}
+
 /// A driver failure inside the subscribers module. Always `500`, always logged.
 ///
 /// `context` names the operation and is never user input; `detail` is the driver's own
@@ -68,12 +81,14 @@ mod tests {
     fn every_code_is_one_the_taxonomy_defines() {
         assert_eq!(user_not_found().code(), ErrorCode::NotFound);
         assert_eq!(cannot_subscribe_to_self().code(), ErrorCode::BadRequest);
+        assert_eq!(blocked().code(), ErrorCode::Forbidden);
     }
 
     #[test]
     fn a_refusal_is_a_4xx() {
         assert_eq!(to_body(&user_not_found()).http_status, 404);
         assert_eq!(to_body(&cannot_subscribe_to_self()).http_status, 400);
+        assert_eq!(to_body(&blocked()).http_status, 403);
     }
 
     #[test]

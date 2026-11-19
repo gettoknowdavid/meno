@@ -61,6 +61,7 @@ use crate::modules::auth::state::AuthState;
 use crate::modules::bible::state::BibleState;
 use crate::modules::broadcast::state::BroadcastState;
 use crate::modules::chat::state::ChatState;
+use crate::modules::moderation::state::ModerationState;
 use crate::modules::notes::state::NotesState;
 use crate::modules::notifications::state::NotificationsState;
 use crate::modules::profile::state::ProfileState;
@@ -126,6 +127,12 @@ pub struct MenoState {
     /// what subscribers needs. Built from [`SubscribersState::new`], so this file never
     /// names `PgSubscribersRepo`.
     pub subscribers: SubscribersState,
+    /// Moderation: reports, the operator queue, and the block list (§2's tree).
+    ///
+    /// A projection of one repository over one pool and nothing else. The `chat` and
+    /// `subscribers` modules enforce blocks with their own `EXISTS` against the tables this
+    /// module owns — see `modules/mod.rs` — so this state holds no handle those two need.
+    pub moderation: ModerationState,
     /// Notifications: the inbox, its templates, and the fan-out that fills it (§2's
     /// tree).
     ///
@@ -249,6 +256,14 @@ impl axum::extract::FromRef<MenoState> for SubscribersState {
     }
 }
 
+/// The same projection for moderation — merged at the root like the broadcast table,
+/// because its paths are written in full.
+impl axum::extract::FromRef<MenoState> for ModerationState {
+    fn from_ref(state: &MenoState) -> Self {
+        state.moderation.clone()
+    }
+}
+
 /// The same projection for notifications — the eighth, merged at the root like the
 /// broadcast table because its paths are written in full.
 impl axum::extract::FromRef<MenoState> for NotificationsState {
@@ -278,6 +293,7 @@ impl std::fmt::Debug for MenoState {
             .field("chat", &self.chat)
             .field("notes", &self.notes)
             .field("subscribers", &self.subscribers)
+            .field("moderation", &self.moderation)
             .field("notifications", &self.notifications)
             .field("push", &"[sender]")
             .field("storage", &"[store]")
@@ -424,6 +440,13 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         })),
     });
 
+    // Moderation: reports and blocks, over the same pool. Built before the two modules
+    // below that *honour* blocks, but it passes them nothing: they read the tables with
+    // their own `EXISTS`, which is the cross-module rule in `modules/mod.rs`.
+    let moderation = ModerationState::new(crate::modules::moderation::state::Wiring {
+        pool: parts.db.clone(),
+    });
+
     // Broadcasts (§2's tree): the media seam, the lifecycle frames, and the producers
     // that fill an inbox. Built after both modules it announces through.
     let broadcast = BroadcastState::new(crate::modules::broadcast::state::Wiring {
@@ -485,6 +508,8 @@ pub async fn build(parts: Assembly) -> Result<MenoState, meno_core::Error> {
         notes,
         // Subscribers (§2's tree). One pool.
         subscribers,
+        // Moderation (§2's tree). One pool.
+        moderation,
         // Notifications (§2's tree). The inbox, its counter, and its two delivery
         // adapters.
         notifications,

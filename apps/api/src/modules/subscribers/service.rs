@@ -85,11 +85,19 @@ impl SubscribersService {
     ///
     /// # Errors
     ///
-    /// [`error::cannot_subscribe_to_self`] as a `400`; [`error::user_not_found`] as a `404`
-    /// when no live account carries `target_id`.
+    /// [`error::cannot_subscribe_to_self`] as a `400`; [`error::blocked`] as a `403` when
+    /// the target has blocked the follower; [`error::user_not_found`] as a `404` when no
+    /// live account carries `target_id`.
     pub async fn subscribe(&self, follower_id: Uuid, target_id: Uuid) -> Result<(), MenoError> {
         if follower_id == target_id {
             return Err(error::cannot_subscribe_to_self());
+        }
+
+        // Before the insert, because the insert's `WHERE EXISTS` cannot tell a blocked
+        // follower from an already-following one: both would be a silent success, and one
+        // of them must be a refusal the caller can act on.
+        if self.repo.is_blocked_by(target_id, follower_id).await? {
+            return Err(error::blocked());
         }
 
         let created = self.repo.create(follower_id, target_id).await?;

@@ -124,11 +124,16 @@ fn database(context: &'static str, failure: sqlx::Error) -> MenoError {
     error::internal(context, failure)
 }
 
-/// The guard both chat writes share: the broadcast is live, and the sender is in it.
+/// The guard both chat writes share: the broadcast is live, the sender is in it, and its
+/// host has not blocked them.
 ///
 /// Written once and spliced into both templates, because the two must agree — a
 /// reaction that could be posted where a message could not (or the reverse) is a rule
 /// nobody could state in one sentence.
+///
+/// The block is the third clause and is `NOT EXISTS` rather than a service-level check:
+/// a check before the insert would leave a window in which a block arriving between the
+/// two still let the message land, which is the exact race the rest of this guard closes.
 const WRITE_GUARD: &str = "\
      WHERE EXISTS (\n\
              SELECT 1 FROM broadcasts b\n\
@@ -142,6 +147,13 @@ const WRITE_GUARD: &str = "\
              WHERE p.broadcast_id = $3\n\
                AND p.participant_id = $2\n\
                AND p.left_at IS NULL\n\
+         )\n\
+       AND NOT EXISTS (\n\
+             SELECT 1 FROM broadcasts b\n\
+             JOIN user_blocks ub\n\
+               ON ub.blocker_id = b.creator_id\n\
+              AND ub.blocked_id = $2\n\
+             WHERE b.id = $3\n\
          )";
 
 /// Insert a message that the guard admits, and return it with its sender.
@@ -319,6 +331,23 @@ impl ChatRepo for PgChatRepo {
         .map_err(|e| database("is_live_broadcast", e))
     }
 
+    async fn creator_blocked(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
+        // One `EXISTS` through `broadcasts` to the block table: the room tells us whose
+        // decision matters, and `user_blocks` tells us whether it was made about this
+        // caller.
+        sqlx::query_scalar::<_, bool>(
+            "SELECT EXISTS (\
+                 SELECT 1 FROM broadcasts b \
+                 JOIN user_blocks ub ON ub.blocker_id = b.creator_id AND ub.blocked_id = $2 \
+                 WHERE b.id = $1)",
+        )
+        .bind(broadcast_id)
+        .bind(user_id)
+        .fetch_one(&self.pool)
+        .await
+        .map_err(|e| database("creator_blocked", e))
+    }
+
     async fn is_participant(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
         sqlx::query_scalar::<_, bool>(
             "SELECT EXISTS (SELECT 1 FROM broadcast_participants \
@@ -395,6 +424,7 @@ mod tests {
                 "b.end_time IS NULL",
                 "b.deleted_at IS NULL",
                 "p.left_at IS NULL",
+                "ub.blocked_id = $2",
             ] {
                 assert!(
                     normalised.contains(clause),

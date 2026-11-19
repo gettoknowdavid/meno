@@ -106,6 +106,14 @@ pub trait SubscribersRepo: Send + Sync + std::fmt::Debug {
     /// keep following on behalf of a deleted account.
     async fn user_exists(&self, user_id: Uuid) -> Result<bool, MenoError>;
 
+    /// Whether `owner_id` has blocked `viewer_id`.
+    ///
+    /// The direction is the one a follow has to respect: the person being followed made
+    /// the decision, and the person trying to follow is the one it is about. Read as an
+    /// `EXISTS` against `user_blocks` rather than through the moderation module's
+    /// repository, because modules may not import each other (see [`crate::modules`]).
+    async fn is_blocked_by(&self, owner_id: Uuid, viewer_id: Uuid) -> Result<bool, MenoError>;
+
     /// A live account, for the follower a `user_subscribed` notification names.
     async fn find_profile(&self, user_id: Uuid) -> Result<Option<SubscriberProfile>, MenoError>;
 

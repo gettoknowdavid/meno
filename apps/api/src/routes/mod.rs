@@ -44,6 +44,7 @@ mod chat;
 mod health;
 mod layers;
 mod metrics;
+mod moderation;
 mod notes;
 mod notifications;
 mod profile;
@@ -69,6 +70,7 @@ pub use bible::BIBLE_PATHS;
 pub use broadcasts::BROADCAST_PATHS;
 pub use chat::CHAT_PATHS;
 pub use health::HEALTH_PATHS;
+pub use moderation::MODERATION_PATHS;
 pub use notes::NOTES_PATHS;
 pub use notifications::NOTIFICATIONS_PATHS;
 pub use profile::PROFILE_PATHS;
@@ -96,6 +98,7 @@ pub fn build_routes(state: MenoState) -> Router {
     let redis_for_bible = Arc::clone(&redis);
     let redis_for_broadcasts = Arc::clone(&redis);
     let redis_for_chat = Arc::clone(&redis);
+    let redis_for_moderation = Arc::clone(&redis);
     let redis_for_notes = Arc::clone(&redis);
     let redis_for_notifications = Arc::clone(&redis);
     let redis_for_profile = Arc::clone(&redis);
@@ -185,6 +188,12 @@ pub fn build_routes(state: MenoState) -> Router {
             subscribers::routes(state.auth_guard.clone(), redis_for_subscribers)
                 .with_state(state.subscribers.clone()),
         )
+        // Moderation is merged for the same reason subscribers is: its paths are written
+        // `/moderation/...` in full inside its own table.
+        .merge(
+            moderation::routes(state.auth_guard.clone(), redis_for_moderation)
+                .with_state(state.moderation.clone()),
+        )
         .nest(
             "/settings",
             settings::routes(state.auth_guard.clone(), redis_for_settings)
@@ -222,6 +231,7 @@ mod tests {
             .chain(BROADCAST_PATHS)
             .chain(CHAT_PATHS)
             .chain(HEALTH_PATHS)
+            .chain(MODERATION_PATHS)
             .chain(NOTES_PATHS)
             .chain(NOTIFICATIONS_PATHS)
             .chain(PROFILE_PATHS)
@@ -267,10 +277,10 @@ mod tests {
         // check by emptying its own list.
         assert_eq!(
             paths.len(),
-            55,
+            59,
             "fifteen auth endpoints, one bible catalogue, fourteen broadcast ones, one chat, \
-             six notes/folders, five notifications, five subscribers, four profile, two \
-             settings and two probes"
+             four moderation, six notes/folders, five notifications, five subscribers, four \
+             profile, two settings and two probes"
         );
     }
 
@@ -288,6 +298,7 @@ mod tests {
             (BROADCAST_PATHS, "/"),
             (CHAT_PATHS, "/"),
             (HEALTH_PATHS, "/health"),
+            (MODERATION_PATHS, "/"),
             (NOTES_PATHS, "/"),
             (NOTIFICATIONS_PATHS, "/"),
             (PROFILE_PATHS, "/users"),

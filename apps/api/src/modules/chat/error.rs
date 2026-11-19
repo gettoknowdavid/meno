@@ -54,6 +54,19 @@ pub fn not_participant() -> MenoError {
     }
 }
 
+/// The broadcast's host has blocked the caller, so the room does not hear them.
+///
+/// A `403` telling them the truth: a block is a decision somebody made about them, and
+/// reporting it as "you are not in this room" would send them looking for a join button
+/// that cannot help.
+#[must_use]
+pub fn blocked_by_creator() -> MenoError {
+    MenoError::Forbidden {
+        code: ErrorCode::Forbidden,
+        message: "The host of this broadcast has blocked you".to_owned(),
+    }
+}
+
 /// The message belongs to somebody else.
 ///
 /// Deliberately distinct from [`message_not_found`]: a client that mixes the two tells
@@ -135,6 +148,7 @@ mod tests {
         assert_eq!(message_not_found().code(), ErrorCode::NotFound);
         assert_eq!(not_participant().code(), ErrorCode::NotParticipant);
         assert_eq!(not_sender().code(), ErrorCode::Forbidden);
+        assert_eq!(blocked_by_creator().code(), ErrorCode::Forbidden);
         assert_eq!(broadcast_not_live().code(), ErrorCode::Conflict);
         assert_eq!(edit_window_expired().code(), ErrorCode::BadRequest);
     }
@@ -144,6 +158,7 @@ mod tests {
         assert_eq!(to_body(&message_not_found()).http_status, 404);
         assert_eq!(to_body(&not_participant()).http_status, 403);
         assert_eq!(to_body(&not_sender()).http_status, 403);
+        assert_eq!(to_body(&blocked_by_creator()).http_status, 403);
         assert_eq!(to_body(&broadcast_not_live()).http_status, 409);
         assert_eq!(to_body(&edit_window_expired()).http_status, 400);
     }

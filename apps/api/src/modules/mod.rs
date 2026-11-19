@@ -16,9 +16,18 @@
 //! # What has landed
 //!
 //! [`auth`], [`broadcast`], [`profile`], [`settings`], [`chat`], [`notes`],
-//! [`subscribers`] and [`notifications`] — which is §2's module tree complete. Each is
-//! declared as it was written rather than stubbed, because a `pub mod` with an empty body
-//! is a module that compiles and does nothing.
+//! [`subscribers`] and [`notifications`] — which is §2's module tree complete — and
+//! [`moderation`], the launch-readiness work that makes the tree publishable: reports, the
+//! operator queue, and the block list two other modules honour. Each is declared as it was
+//! written rather than stubbed, because a `pub mod` with an empty body is a module that
+//! compiles and does nothing.
+//!
+//! [`moderation`] is the one module whose *effect* is mostly elsewhere: it owns the tables,
+//! but `chat` refuses a message from somebody the host blocked and `subscribers` refuses a
+//! follow of an account that blocked the follower. Both do it with their own `EXISTS`
+//! against `user_blocks`, for the reason [`chat`]'s paragraph below gives about
+//! `broadcasts`: a sideways import would make one module's rules depend on another's
+//! internals.
 //!
 //! [`broadcast`] landed second and shows the pattern at its clearest: a module that
 //! needs an external dependency it may not have (LiveKit, §4.6) takes that as a
@@ -71,6 +80,7 @@ pub mod auth;
 pub mod bible;
 pub mod broadcast;
 pub mod chat;
+pub mod moderation;
 pub mod notes;
 pub mod notifications;
 pub mod profile;

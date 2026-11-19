@@ -51,6 +51,8 @@ struct State {
     users: HashMap<Uuid, User>,
     /// Every follow ever recorded.
     follows: Vec<Follow>,
+    /// `(blocker, blocked)` decisions, as `user_blocks` holds them.
+    blocks: HashSet<(Uuid, Uuid)>,
 }
 
 /// The double the subscribers suites run against.
@@ -98,6 +100,14 @@ impl InMemorySubscribersRepo {
             target_id,
             created_at,
         });
+    }
+
+    /// Record a block, bypassing every guard.
+    ///
+    /// A fixture: `user_blocks` is the moderation module's table, and this double needs to
+    /// see a decision it does not make. The direction is `blocker` → `blocked`.
+    pub fn seed_block(&self, blocker: Uuid, blocked: Uuid) {
+        self.lock().blocks.insert((blocker, blocked));
     }
 
     /// How many follow rows the double holds.
@@ -179,6 +189,10 @@ impl SubscribersRepo for InMemorySubscribersRepo {
 
     async fn user_exists(&self, user_id: Uuid) -> Result<bool, MenoError> {
         Ok(self.lock().users.contains_key(&user_id))
+    }
+
+    async fn is_blocked_by(&self, owner_id: Uuid, viewer_id: Uuid) -> Result<bool, MenoError> {
+        Ok(self.lock().blocks.contains(&(owner_id, viewer_id)))
     }
 
     async fn find_profile(&self, user_id: Uuid) -> Result<Option<SubscriberProfile>, MenoError> {
