@@ -347,7 +347,12 @@ class __ScheduledBroadcastsTabState extends State<_ScheduledBroadcastsTab>
         return BroadcastCard.rLiveTile(
           broadcast,
           key: ValueKey(broadcast.id),
-          onTap: () => PreStreamModal.show(context, broadcast.id),
+          // The row's job is to resolve the promise, not to open the lobby:
+          // once the home banner is hidden this is the only place a schedule
+          // can be cancelled, and the slot is held until it is. The same sheet
+          // the banner opens, so both surfaces offer one set of answers.
+          onTap: () =>
+              ScheduledBroadcastActionsModal.show(context, broadcast),
         );
       },
     );
