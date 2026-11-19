@@ -320,4 +320,110 @@ mod tests {
         assert!(Arc::ptr_eq(&state.service, &state.service));
         assert_eq!(format!("{first:?}"), format!("{second:?}"));
     }
+
+    #[tokio::test]
+    async fn an_account_may_hold_one_schedule_at_a_time() {
+        use crate::modules::broadcast::dto::UpdateBroadcastRequest;
+
+        let repo = Arc::new(InMemoryBroadcastRepo::new());
+        // The creator has to exist as a row: rescheduling loads the summary to
+        // render the answer, and a summary with no user is an internal error.
+        repo.insert_user(user());
+
+        let state = BroadcastState::from_parts(repo, Arc::new(RecordingMedia::new()));
+        let start = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
+
+        let first = state
+            .service
+            .create(
+                CreateBroadcastRequest {
+                    start_time: Some(start),
+                    ..request()
+                },
+                user(),
+            )
+            .await
+            .expect("scheduling the first one");
+
+        // The rule is about schedules, not about broadcasting: an ordinary broadcast
+        // can still be created (and later taken live) while the schedule waits. Only a
+        // second schedule is refused.
+        state
+            .service
+            .create(request(), user())
+            .await
+            .expect("an immediate broadcast is not a second schedule");
+
+        // A second open schedule is a 409, not a second row: two promises make "the next
+        // broadcast" ambiguous for the banner and the reminder job alike.
+        let error = state
+            .service
+            .create(
+                CreateBroadcastRequest {
+                    start_time: Some(start + time::Duration::hours(1)),
+                    ..request()
+                },
+                user(),
+            )
+            .await
+            .expect_err("refused");
+        assert_eq!(error.code(), meno_core::ErrorCode::Conflict);
+
+        // Re-stating this broadcast's own time is an edit, not a collision.
+        state
+            .service
+            .update(
+                first.id,
+                UpdateBroadcastRequest {
+                    start_time: Some(start + time::Duration::minutes(30)),
+                    ..Default::default()
+                },
+                &user(),
+            )
+            .await
+            .expect("rescheduling the only open schedule");
+
+        // Cancelling it (a soft delete, what the client's Cancel does) frees the slot.
+        state
+            .service
+            .delete(first.id, &user())
+            .await
+            .expect("cancelling");
+        let second = state
+            .service
+            .create(
+                CreateBroadcastRequest {
+                    start_time: Some(start + time::Duration::hours(2)),
+                    ..request()
+                },
+                user(),
+            )
+            .await
+            .expect("scheduling another once the first is cancelled");
+
+        // The other way the slot is freed: go live, end it. Until then the promise is
+        // open — which is the rule this test exists for, and why the start time passing
+        // is deliberately not part of it.
+        state
+            .service
+            .go_live(second.id, &user())
+            .await
+            .expect("going live on the schedule");
+        state
+            .service
+            .end(second.id, &user())
+            .await
+            .expect("ending it");
+        state
+            .service
+            .create(
+                CreateBroadcastRequest {
+                    start_time: Some(start + time::Duration::hours(3)),
+                    ..request()
+                },
+                user(),
+            )
+            .await
+            .expect("scheduling another once the broadcast has ended");
+    }
 }

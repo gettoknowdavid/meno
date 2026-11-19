@@ -130,6 +130,21 @@ pub fn already_joined() -> MenoError {
     }
 }
 
+/// The caller already has a scheduled broadcast, so they may not schedule another.
+///
+/// One schedule at a time: two open promises make the next start ambiguous, both in the
+/// client's banner and in the reminder job. A 409 because the request is well-formed and
+/// the rule is about state — cancelling the open schedule, or going live, frees it.
+#[must_use]
+pub fn already_scheduled() -> MenoError {
+    MenoError::Conflict {
+        code: ErrorCode::Conflict,
+        message: "You already have a scheduled broadcast. Cancel it or go live before \
+                  scheduling another."
+            .to_owned(),
+    }
+}
+
 /// The caller is not in the room, so there is nothing to leave.
 #[must_use]
 pub fn not_joined() -> MenoError {

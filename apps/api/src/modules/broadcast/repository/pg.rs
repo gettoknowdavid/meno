@@ -353,6 +353,51 @@ impl BroadcastRepo for PgBroadcastRepo {
         .map_err(|e| database("list_live", e))
     }
 
+    async fn find_open_scheduled_by_creator(
+        &self,
+        creator_id: Uuid,
+        exclude: Option<Uuid>,
+    ) -> Result<Option<Broadcast>, MenoError> {
+        // No clock in this filter, deliberately: the slot is held until the promise is
+        // resolved. Dropping the row once its start time passed would let a host
+        // schedule a second broadcast for 10:05 while the 10:00 one was still waiting
+        // for them to go live or cancel it. `end_time IS NULL` is what "resolved" means
+        // for the go-live path; `deleted_at IS NULL` is the cancel path.
+        //
+        // `id IS DISTINCT FROM $2` is true for every row when the exclusion is null, so
+        // a create and an edit share one statement.
+        sqlx::query_as::<_, Broadcast>(statement(
+            "SELECT {BROADCAST_COLUMNS} FROM broadcasts \
+             WHERE creator_id = $1 AND status = 'inactive' AND end_time IS NULL \
+               AND start_time IS NOT NULL AND deleted_at IS NULL \
+               AND id IS DISTINCT FROM $2 \
+             ORDER BY start_time ASC \
+             LIMIT 1",
+        ))
+        .bind(creator_id)
+        .bind(exclude)
+        .fetch_optional(&self.pool)
+        .await
+        .map_err(|e| database("find_open_scheduled_by_creator", e))
+    }
+
+    async fn set_abandoned_since(
+        &self,
+        id: Uuid,
+        since: Option<OffsetDateTime>,
+    ) -> Result<(), MenoError> {
+        sqlx::query(
+            "UPDATE broadcasts SET abandoned_since = $2 \
+             WHERE id = $1 AND status = 'active' AND deleted_at IS NULL",
+        )
+        .bind(id)
+        .bind(since)
+        .execute(&self.pool)
+        .await
+        .map(|_| ())
+        .map_err(|e| database("set_abandoned_since", e))
+    }
+
     async fn create_invitation(
         &self,
         broadcast_id: Uuid,
@@ -454,23 +499,6 @@ impl BroadcastRepo for PgBroadcastRepo {
         .map_err(|e| database("mark_scheduled_notified", e))?;
 
         Ok(result.rows_affected() > 0)
-    }
-
-    async fn set_abandoned_since(
-        &self,
-        id: Uuid,
-        since: Option<OffsetDateTime>,
-    ) -> Result<(), MenoError> {
-        sqlx::query(
-            "UPDATE broadcasts SET abandoned_since = $2 \
-             WHERE id = $1 AND status = 'active' AND deleted_at IS NULL",
-        )
-        .bind(id)
-        .bind(since)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
-        .map_err(|e| database("set_abandoned_since", e))
     }
 
     async fn mark_ended(

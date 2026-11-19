@@ -107,6 +107,23 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
     /// second attempt into a refusal before any media or row change happens.
     async fn find_live_by_creator(&self, creator_id: Uuid) -> Result<Option<Broadcast>, MenoError>;
 
+    /// The broadcast `creator_id` has scheduled and not yet resolved, or `None`.
+    ///
+    /// One account may have one scheduled broadcast at a time: a schedule is a promise
+    /// the host still has to keep, and two open promises make "which one is starting?"
+    /// a question the client cannot answer. The slot is held until the promise is
+    /// resolved — cancelled (a soft delete) or ended after going live — not merely until
+    /// its start time passes: a broadcast that is 10 AM tomorrow is still the next one
+    /// at 10:01 tomorrow if nobody has gone live or cancelled it.
+    ///
+    /// `exclude` lets an edit re-state the time it already has without colliding with
+    /// itself.
+    async fn find_open_scheduled_by_creator(
+        &self,
+        creator_id: Uuid,
+        exclude: Option<Uuid>,
+    ) -> Result<Option<Broadcast>, MenoError>;
+
     /// Every broadcast currently on air, reduced to what abandonment is decided from.
     ///
     /// The reaper asks this every tick. Deliberately not a page: a room left behind is

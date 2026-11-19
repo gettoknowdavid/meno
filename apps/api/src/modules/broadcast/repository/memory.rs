@@ -388,6 +388,26 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             .collect())
     }
 
+    async fn find_open_scheduled_by_creator(
+        &self,
+        creator_id: Uuid,
+        exclude: Option<Uuid>,
+    ) -> Result<Option<Broadcast>, MenoError> {
+        // The same rule as the SQL: a resolved promise is one with an end time or a
+        // deletion. The start time is deliberately not compared to now.
+        Ok(self
+            .lock()
+            .broadcasts
+            .iter()
+            .filter(|b| b.creator_id == creator_id)
+            .filter(|b| b.status == BroadcastStatus::Inactive)
+            .filter(|b| b.end_time.is_none() && b.deleted_at.is_none())
+            .filter(|b| exclude != Some(b.id))
+            .filter(|b| b.start_time.is_some())
+            .min_by_key(|b| b.start_time)
+            .cloned())
+    }
+
     async fn set_abandoned_since(
         &self,
         id: Uuid,

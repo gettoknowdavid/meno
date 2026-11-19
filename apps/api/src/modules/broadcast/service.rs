@@ -158,6 +158,21 @@ impl BroadcastService {
             return Err(error::already_live_elsewhere());
         }
 
+        // One open schedule per account at a time. Checked here rather than in the
+        // client: the dialog that picks the time is only one of the ways a row can be
+        // scheduled, and a client-side rule would still let a retry through. The slot is
+        // freed by cancelling the schedule or by ending the broadcast after going live —
+        // not by its start time passing.
+        if request.start_time.is_some()
+            && self
+                .repo
+                .find_open_scheduled_by_creator(creator.id, None)
+                .await?
+                .is_some()
+        {
+            return Err(error::already_scheduled());
+        }
+
         if let Some(zone) = request.time_zone.as_deref() {
             check_time_zone(zone)?;
         }
@@ -354,6 +369,18 @@ impl BroadcastService {
         require_creator(&existing, actor)?;
         if existing.is_live() {
             return Err(error::broadcast_is_live());
+        }
+
+        // Rescheduling is held to the same one-at-a-time rule as creating, with this
+        // row excluded so an edit that keeps its own time is not a collision.
+        if request.start_time.is_some()
+            && self
+                .repo
+                .find_open_scheduled_by_creator(actor.id, Some(id))
+                .await?
+                .is_some()
+        {
+            return Err(error::already_scheduled());
         }
 
         if let Some(zone) = request.time_zone.as_deref() {
