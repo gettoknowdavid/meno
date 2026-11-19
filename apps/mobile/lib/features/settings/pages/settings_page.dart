@@ -55,7 +55,7 @@ class SettingsPage extends WatchingWidget {
       appBar: MAppBar.primary(title: 'Settings'),
       body: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
             Spaces.verticalLarge,
             MSettingsSection(

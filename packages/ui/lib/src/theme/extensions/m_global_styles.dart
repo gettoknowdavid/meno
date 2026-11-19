@@ -49,7 +49,7 @@ class MGlobalStyles extends ThemeExtension<MGlobalStyles> {
       ),
       snackBarTheme: SnackBarThemeData(
         contentTextStyle: textTheme.captionRegular,
-        insetPadding: const EdgeInsets.all(Insets.lg),
+        insetPadding: const .all(Insets.lg),
         behavior: SnackBarBehavior.fixed,
         shape: const RoundedRectangleBorder(borderRadius: Corners.md),
       ),

@@ -19,7 +19,7 @@ class AllBroadcastsWidget extends StatelessWidget {
   Widget build(BuildContext context) {
     return const SingleChildScrollView(
       child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        crossAxisAlignment: .stretch,
         children: [
           Spaces.verticalXLarge,
           _NowLiveSection(key: Key('DiscoverNowLiveSection')),

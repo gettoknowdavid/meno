@@ -26,7 +26,7 @@ class EndedBroadcastParticipantsWidget extends StatelessWidget {
           MText(
             'No listeners yet',
             style: textTheme.captionRegular,
-            textAlign: TextAlign.center,
+            textAlign: .center,
             color: MColorScheme.of(context).onBackgroundVariant,
           ),
         ],
@@ -55,7 +55,7 @@ class EndedBroadcastParticipantsWidget extends StatelessWidget {
         MText(
           _getPluralText(allTimeCount),
           style: textTheme.captionRegular,
-          textAlign: TextAlign.center,
+          textAlign: .center,
         ),
       ],
     );

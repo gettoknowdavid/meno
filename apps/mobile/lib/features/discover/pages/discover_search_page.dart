@@ -111,7 +111,7 @@ class _RecentSearchesWidget extends WatchingWidget {
       slivers: [
         SliverToBoxAdapter(
           child: Padding(
-            padding: const EdgeInsets.all(16),
+            padding: const .all(16),
             child: MText('Recent searches', style: textTheme.subheadingBold),
           ),
         ),
@@ -186,7 +186,7 @@ class _SearchResults extends WatchingWidget {
     return SliverMainAxisGroup(
       slivers: [
         SliverPadding(
-          padding: const EdgeInsets.fromLTRB(16, 28, 16, 32),
+          padding: const .fromLTRB(16, 28, 16, 32),
           sliver: SliverGrid.builder(
             gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: 2,
@@ -258,7 +258,7 @@ class _NoResultsWidget extends StatelessWidget {
           MText(
             'No Results',
             style: textTheme.heading3Bold,
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
           Spaces.verticalMicro,
           MText(

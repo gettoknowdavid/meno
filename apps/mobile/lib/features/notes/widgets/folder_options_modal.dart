@@ -27,7 +27,7 @@ class FolderOptionsModal extends WatchingWidget {
 
     return MModal(
       builder: (ctx) => Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           MModalListTile(
             leading: const Icon(MIcons.file_plus_02),

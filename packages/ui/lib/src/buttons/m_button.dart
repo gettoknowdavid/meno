@@ -126,7 +126,7 @@ class _MButtonWithIcon extends StatelessWidget {
     final gap = SizedBox(width: lerpDouble(_maxGap, _minGap, growth));
 
     return Row(
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: <Widget>[
         if (iconPlacement == MButtonIconPlacement.left) ...[icon, gap],
         Flexible(child: MText(label)),

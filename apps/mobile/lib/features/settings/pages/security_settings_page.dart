@@ -55,7 +55,7 @@ class SecuritySettingsPage extends WatchingWidget {
         child: SingleChildScrollView(
           padding: const .symmetric(horizontal: Insets.lg),
           child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            crossAxisAlignment: .stretch,
             children: [
               Spaces.verticalLarge,
               MText(

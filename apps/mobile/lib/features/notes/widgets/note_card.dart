@@ -47,22 +47,22 @@ class NoteCard extends StatelessWidget {
           color: colors.surfaceTint,
           elevation: 0,
           shape: const RoundedRectangleBorder(borderRadius: Corners.lg),
-          margin: EdgeInsets.zero,
+          margin: .zero,
           child: Padding(
-            padding: const EdgeInsets.all(Insets.lg),
+            padding: const .all(Insets.lg),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
+              crossAxisAlignment: .start,
               children: [
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    crossAxisAlignment: .start,
+                    mainAxisAlignment: .spaceBetween,
                     children: [
                       MText(
                         note.title.getOrCrash,
                         style: textTheme.bodyMedium,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        overflow: .ellipsis,
                       ),
                       Spaces.verticalSmall,
                       if (note.folder != null) ...[
@@ -83,7 +83,7 @@ class NoteCard extends StatelessWidget {
                           content,
                           style: textTheme.captionRegular,
                           maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                          overflow: .ellipsis,
                         ),
                         const SizedBox(height: 14),
                       ],
@@ -124,7 +124,7 @@ class NoteCard extends StatelessWidget {
                     dimension: 16,
                     child: IconButton(
                       icon: const Icon(MIcons.dots_vertical),
-                      padding: EdgeInsets.zero,
+                      padding: .zero,
                       color: colors.onDisabledContainer,
                       iconSize: 20,
                       onPressed: onOptionsTap,

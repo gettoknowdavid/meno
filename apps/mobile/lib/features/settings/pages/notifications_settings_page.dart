@@ -21,7 +21,7 @@ class NotificationsSettingsPage extends WatchingWidget {
       appBar: MAppBar.secondary(title: 'Notifications', centerTitle: true),
       body: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
             Spaces.verticalLarge,
             MText(

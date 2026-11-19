@@ -58,7 +58,7 @@ class OnboardingPage extends WatchingWidget {
           child: SingleChildScrollView(
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: .stretch,
               children: [
                 Spaces.verticalXLarge,
                 if (Theme.of(context).brightness == Brightness.light)
@@ -91,7 +91,7 @@ class OnboardingPage extends WatchingWidget {
                 ),
                 Spaces.verticalXLarge,
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+                  padding: const .symmetric(horizontal: Insets.lg),
                   child: MPrimaryButton(
                     label: 'Get started',
                     onPressed: () => _leave(
@@ -102,7 +102,7 @@ class OnboardingPage extends WatchingWidget {
                 ),
                 Spaces.verticalLarge,
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+                  padding: const .symmetric(horizontal: Insets.lg),
                   child: MSecondaryButton(
                     label: 'Login',
                     onPressed: () =>

@@ -56,8 +56,8 @@ class MTabBarTheme extends ThemeExtension<MTabBarTheme> {
           selectedValue: iconTheme.copyWith(color: colors.primary),
         ),
       ),
-      padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
-      labelPadding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      padding: const .symmetric(horizontal: Insets.lg),
+      labelPadding: const .fromLTRB(16, 6, 16, 6),
       height: 32,
     );
   }

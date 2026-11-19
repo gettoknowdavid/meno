@@ -46,13 +46,13 @@ class MSettingsSection extends StatelessWidget {
     final textTheme = MTextTheme.of(context);
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: .stretch,
       children: [
         if (title != null)
           SizedBox(
             height: titleContainerHeight,
             child: Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
+              crossAxisAlignment: .stretch,
               children: [
                 MText(
                   title!,

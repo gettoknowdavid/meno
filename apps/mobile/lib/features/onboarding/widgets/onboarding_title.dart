@@ -20,7 +20,7 @@ class OnboardingTitle extends StatelessWidget {
             MText(
               text,
               style: MTextTheme.of(context).heading1Bold,
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
             Positioned(
               bottom: 0,

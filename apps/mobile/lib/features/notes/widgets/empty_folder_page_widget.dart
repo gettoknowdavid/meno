@@ -22,7 +22,7 @@ class EmptyFolderPageWidget extends StatelessWidget {
           MText(
             'Let’s add some notes to this folder',
             style: textTheme.bodyRegular,
-            textAlign: TextAlign.center,
+            textAlign: .center,
           ),
           Spaces.verticalXLarge,
           SizedBox(

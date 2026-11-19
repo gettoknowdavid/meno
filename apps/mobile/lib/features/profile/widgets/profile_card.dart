@@ -28,7 +28,7 @@ class ProfileCard extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.all(Insets.md),
+        padding: const .all(Insets.md),
         decoration: ShapeDecoration(
           color: styles.backgroundColor,
           shadows: Shadows.soft,
@@ -47,9 +47,9 @@ class ProfileCard extends StatelessWidget {
               profile.fullName.orEmpty,
               style: styles.titleStyle,
               color: styles.titleColor,
-              textAlign: TextAlign.center,
+              textAlign: .center,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              overflow: .ellipsis,
             ),
             Spaces.verticalMicro,
             Flexible(
@@ -57,9 +57,9 @@ class ProfileCard extends StatelessWidget {
                 profile.bio?.orEmpty ?? '',
                 style: styles.hostStyle,
                 color: styles.hostColor,
-                textAlign: TextAlign.center,
+                textAlign: .center,
                 maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+                overflow: .ellipsis,
               ),
             ),
           ],

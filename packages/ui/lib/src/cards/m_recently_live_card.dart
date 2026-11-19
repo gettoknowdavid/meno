@@ -80,7 +80,7 @@ class MRecentlyLiveCard extends StatelessWidget {
             child: Container(
               width: 148,
               height: 88,
-              padding: const EdgeInsets.symmetric(vertical: 28),
+              padding: const .symmetric(vertical: 28),
               clipBehavior: Clip.antiAlias,
               decoration: BoxDecoration(
                 color: isLight ? MColor.grey30 : MColor.grey400,
@@ -95,18 +95,18 @@ class MRecentlyLiveCard extends StatelessWidget {
             title!,
             style: styles.titleStyle,
             color: styles.titleColor,
-            textAlign: TextAlign.center,
+            textAlign: .center,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            overflow: .ellipsis,
           ),
           const SizedBox(height: 4),
           MText(
             host ?? '',
             style: styles.hostStyle,
             color: styles.hostColor,
-            textAlign: TextAlign.center,
+            textAlign: .center,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            overflow: .ellipsis,
           ),
         ],
       ),
@@ -124,14 +124,14 @@ class _Container extends StatelessWidget {
     return Container(
       width: 176,
       height: 176,
-      padding: const EdgeInsets.all(14),
+      padding: const .all(14),
       decoration: ShapeDecoration(
         color: styles.backgroundColor,
         shadows: Shadows.soft,
         shape: Corners.squircleLg,
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         mainAxisAlignment: MainAxisAlignment.center,
         children: children,
       ),

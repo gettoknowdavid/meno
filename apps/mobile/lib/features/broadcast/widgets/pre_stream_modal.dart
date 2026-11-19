@@ -169,7 +169,7 @@ class _TopSection extends StatelessWidget {
                     broadcast.title.orEmpty,
                     style: textTheme.subheadingMedium,
                     maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
+                    overflow: .ellipsis,
                   ),
                   const SizedBox(height: 6),
                   const MBadge.live(),
@@ -178,7 +178,7 @@ class _TopSection extends StatelessWidget {
                     broadcast.hostName.orEmpty,
                     style: textTheme.captionRegular,
                     maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    overflow: .ellipsis,
                   ),
                   Spaces.verticalMedium,
                   PreStreamActionButtons(broadcast: broadcast),
@@ -313,8 +313,8 @@ class PreStreamDescriptionSection extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = MTextTheme.of(context);
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisSize: MainAxisSize.min,
+      crossAxisAlignment: .start,
+      mainAxisSize: .min,
       children: [
         Row(
           children: [

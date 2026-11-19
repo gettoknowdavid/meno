@@ -98,7 +98,7 @@ class NoteListFailureWidget extends StatelessWidget {
         MText(
           'An error occurred while retrieving the notes. Please, try again?',
           style: textTheme.bodyRegular,
-          textAlign: TextAlign.center,
+          textAlign: .center,
         ),
         Spaces.verticalXLarge,
         SizedBox(

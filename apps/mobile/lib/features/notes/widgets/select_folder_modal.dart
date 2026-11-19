@@ -157,7 +157,7 @@ class _ErrorContent extends StatelessWidget {
       builder: (context) => MenoErrorWidget(
         error: error,
         showRetryButton: false,
-        margin: EdgeInsets.zero,
+        margin: .zero,
       ),
     );
   }
@@ -222,7 +222,7 @@ class _SearchBox extends WatchingWidget {
         hintText: 'Search for note',
         hintStyle: WidgetStatePropertyAll(textTheme.captionRegular),
         padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: Insets.md),
+          .symmetric(horizontal: Insets.md),
         ),
         leading: const Icon(MIcons.search, size: Insets.lg),
         trailing: [

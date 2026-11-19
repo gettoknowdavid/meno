@@ -47,7 +47,7 @@ class MScaffold extends StatelessWidget {
   final Widget? body;
 
   /// The padding to apply to the body content.
-  /// Defaults to `EdgeInsets.symmetric(horizontal: Insets.lg)`.
+  /// Defaults to `.symmetric(horizontal: Insets.lg)`.
   final EdgeInsetsGeometry padding;
 
   /// Whether the scaffold should resize to avoid the bottom inset.

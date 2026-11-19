@@ -30,7 +30,7 @@ class MCustomBackButton extends StatelessWidget {
     return InkWell(
       onTap: onTap ?? () => context.pop(),
       child: Row(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           SizedBox.square(
             dimension: 48,

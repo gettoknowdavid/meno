@@ -48,7 +48,7 @@ class ExpandButton extends StatelessWidget {
       child: Container(
         height: _kHeight,
         width: _kWidth,
-        padding: const EdgeInsets.symmetric(
+        padding: const .symmetric(
           horizontal: Insets.md,
           vertical: Insets.sm,
         ),
@@ -57,7 +57,7 @@ class ExpandButton extends StatelessWidget {
           borderRadius: Corners.circle,
         ),
         child: Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: .spaceBetween,
           children: [
             Icon(
               MIcons.expand_01,

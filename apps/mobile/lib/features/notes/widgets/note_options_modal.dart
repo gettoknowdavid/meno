@@ -30,7 +30,7 @@ class NoteOptionsModal extends WatchingWidget {
 
     return MModal(
       builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           if (note.folder == null)
             MModalListTile(

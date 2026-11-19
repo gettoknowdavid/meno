@@ -30,7 +30,7 @@ class _AboutPageState extends State<AboutPage> {
       appBar: MAppBar.secondary(title: 'About Menō', centerTitle: true),
       body: SingleChildScrollView(
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
             const SizedBox(height: Insets.lg),
             MSettingsSection(
@@ -81,15 +81,15 @@ class _AboutPageState extends State<AboutPage> {
       showDragHandle: true,
       builder: (_) => SafeArea(
         child: Padding(
-          padding: const EdgeInsets.fromLTRB(
+          padding: const .fromLTRB(
             Insets.lg,
             0,
             Insets.lg,
             Insets.lg,
           ),
           child: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: .min,
+            crossAxisAlignment: .stretch,
             children: [
               MText('Report an app problem', style: textTheme.subheadingBold),
               Spaces.verticalSmall,

@@ -60,7 +60,7 @@ class _EditorContent extends WatchingWidget {
 
     if (isLoading) {
       return const Padding(
-        padding: EdgeInsets.all(32),
+        padding: .all(32),
         child: Center(child: MLoadingIndicator.box()),
       );
     }
@@ -70,8 +70,8 @@ class _EditorContent extends WatchingWidget {
       child: MModal(
         title: isEdit ? 'Rename Your Folder' : 'Give Your Folder a Name',
         builder: (context) => const Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          mainAxisSize: .min,
+          crossAxisAlignment: .stretch,
           children: [
             SizedBox(height: 10),
             FolderFormTitleField(),
@@ -117,7 +117,7 @@ class FolderFormTitleField extends WatchingWidget {
       autofocus: true,
       style: textTheme.heading1Regular,
       controller: controller,
-      textAlign: TextAlign.center,
+      textAlign: .center,
       enabled: !watch(di<FolderEditorManager>().submit.isRunning).value,
       onChanged: manager.onTitleChanged,
       validator: (_) => folder.title.failureOrNull?.msg,

@@ -41,15 +41,15 @@ class MenoErrorWidget extends StatelessWidget {
     final textTheme = MTextTheme.of(context);
 
     return Container(
-      margin: margin ?? const EdgeInsets.all(Insets.lg),
-      padding: const EdgeInsets.all(Insets.lg),
+      margin: margin ?? const .all(Insets.lg),
+      padding: const .all(Insets.lg),
       decoration: BoxDecoration(
         color: colors.surfaceTint,
         borderRadius: Corners.lg,
       ),
       child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: .min,
+        crossAxisAlignment: .start,
         children: [
           Row(
             children: [

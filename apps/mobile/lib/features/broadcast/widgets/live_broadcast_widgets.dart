@@ -47,8 +47,8 @@ class BroadcastCreatorWidget extends StatelessWidget {
       color: colors.onDisabledContainer,
       style: textTheme.captionRegular,
       maxLines: 1,
-      overflow: TextOverflow.ellipsis,
-      textAlign: TextAlign.center,
+      overflow: .ellipsis,
+      textAlign: .center,
     );
   }
 }

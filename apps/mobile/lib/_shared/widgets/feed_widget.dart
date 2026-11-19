@@ -326,7 +326,7 @@ class _VerticalList<TItem> extends StatelessWidget {
         slivers: [
           ...?topSlivers,
           SliverPadding(
-            padding: padding ?? EdgeInsets.zero,
+            padding: padding ?? .zero,
             sliver: SliverList.separated(
               itemCount: itemCount,
               separatorBuilder: (_, _) => Spaces.verticalLarge,
@@ -404,7 +404,7 @@ class _GridList<TItem> extends StatelessWidget {
         slivers: [
           ...?topSlivers,
           SliverPadding(
-            padding: padding ?? EdgeInsets.zero,
+            padding: padding ?? .zero,
             sliver: SliverGrid(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
                 crossAxisCount: crossAxisCount,
@@ -462,7 +462,7 @@ class _FeedFooter extends StatelessWidget {
       final textTheme = MTextTheme.of(context);
 
       return Padding(
-        padding: const EdgeInsets.symmetric(
+        padding: const .symmetric(
           horizontal: Insets.lg,
           vertical: Insets.lg,
         ),
@@ -472,7 +472,7 @@ class _FeedFooter extends StatelessWidget {
               error.message,
               style: textTheme.captionRegular,
               color: colors.onBackgroundVariant,
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
             Spaces.verticalSmall,
             // Only a failure that could pass on a second attempt offers the
@@ -509,15 +509,15 @@ class _LoadMorePrompt extends StatelessWidget {
 
     return Center(
       child: Padding(
-        padding: const EdgeInsets.all(Insets.lg),
+        padding: const .all(Insets.lg),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
+          mainAxisSize: .min,
           children: [
             MText(
               'Nothing matched on this page, but there is more to read.',
               style: textTheme.bodyRegular,
               color: colors.onBackgroundVariant,
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
             Spaces.verticalSmall,
             MTextButton(

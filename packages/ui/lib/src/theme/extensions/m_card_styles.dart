@@ -71,7 +71,7 @@ class MCardStyles extends ThemeExtension<MCardStyles> {
       hostStyle: textTheme.captionRegular,
       nSubtitleColor: colors.onBackgroundVariant,
       nBackgroundColor: colors.surfaceTint,
-      nCardContentPadding: const EdgeInsets.symmetric(
+      nCardContentPadding: const .symmetric(
         horizontal: Insets.sm,
         vertical: Insets.lg,
       ),

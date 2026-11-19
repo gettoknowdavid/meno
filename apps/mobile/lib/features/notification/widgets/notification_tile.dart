@@ -104,7 +104,7 @@ class _CohostNotificationTile extends StatelessWidget {
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: .start,
                   children: [
                     MText(
                       '${notification.content?.cohostFullName} '
@@ -282,7 +282,7 @@ class _SubscribeNotificationTile extends StatelessWidget {
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  crossAxisAlignment: .start,
                   children: [
                     MText(
                       '${notification.content?.subscriberName} '

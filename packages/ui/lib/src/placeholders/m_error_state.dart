@@ -100,7 +100,7 @@ class MErrorState extends StatelessWidget {
         );
 
         return Container(
-          margin: compact ? EdgeInsets.zero : margin,
+          margin: compact ? .zero : margin,
           padding: compact
               ? const .symmetric(horizontal: Insets.lg, vertical: Insets.sm)
               : padding,

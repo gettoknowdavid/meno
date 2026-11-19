@@ -16,11 +16,11 @@ class OnboardingSubtitle extends StatelessWidget {
     return Center(
       child: Container(
         height: Insets.xxxl,
-        padding: const EdgeInsets.symmetric(horizontal: _sidePadding),
+        padding: const .symmetric(horizontal: _sidePadding),
         child: MText(
           text,
           style: textTheme.bodyRegular,
-          textAlign: TextAlign.center,
+          textAlign: .center,
           maxLines: 2,
         ),
       ),

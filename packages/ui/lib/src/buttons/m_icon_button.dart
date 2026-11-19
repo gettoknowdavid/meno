@@ -105,7 +105,7 @@ class MIconButton extends StatelessWidget {
           shape: BoxShape.circle,
           color: isFilled ? fillColor : null,
         ),
-        padding: isFilled ? padding : EdgeInsets.zero,
+        padding: isFilled ? padding : .zero,
         child: SizedBox.square(
           dimension: effectiveSize,
           child: IconTheme.merge(

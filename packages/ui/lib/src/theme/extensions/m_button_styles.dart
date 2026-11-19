@@ -12,7 +12,7 @@ ButtonStyle _baseButtonStyle(MTextTheme textTheme) {
     iconSize: MInternal.resolveWith(defaultValue: 14),
     elevation: MInternal.resolveWith(defaultValue: 0),
     fixedSize: MInternal.all(const Size.fromHeight(Insets.xxxl)),
-    padding: MInternal.all(const EdgeInsets.fromLTRB(16, 8, 16, 8)),
+    padding: MInternal.all(const .fromLTRB(16, 8, 16, 8)),
     shadowColor: MInternal.all(MColor.shadow),
     visualDensity: VisualDensity.compact,
     tapTargetSize: MaterialTapTargetSize.shrinkWrap,

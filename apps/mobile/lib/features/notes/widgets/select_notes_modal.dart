@@ -74,8 +74,8 @@ class _Content extends WatchingWidget {
     return MModal(
       title: 'Add to Folder',
       builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: .min,
+        crossAxisAlignment: .stretch,
         children: [
           _SearchBox(searchQuery: searchQuery),
           Spaces.verticalLarge,
@@ -117,7 +117,7 @@ class _ErrorContent extends StatelessWidget {
       title: 'Add to Folder',
       builder: (context) => MenoErrorWidget(
         error: error,
-        margin: EdgeInsets.zero,
+        margin: .zero,
         showRetryButton: false,
       ),
     );
@@ -176,7 +176,7 @@ class _SearchBox extends WatchingWidget {
         hintText: 'Search for note',
         hintStyle: WidgetStatePropertyAll(textTheme.captionRegular),
         padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: Insets.md),
+          .symmetric(horizontal: Insets.md),
         ),
         leading: const Icon(MIcons.search, size: Insets.lg),
         trailing: [

@@ -339,7 +339,7 @@ class _OptionsModal extends StatelessWidget {
     final broadcast = proxy.broadcast;
     return MModal(
       builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           _Artwork(imageUrl: broadcast.image?.getUrl),
           Spaces.verticalSmall,

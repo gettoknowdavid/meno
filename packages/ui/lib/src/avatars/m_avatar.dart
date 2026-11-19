@@ -112,8 +112,8 @@ class MAvatar extends StatelessWidget {
           backgroundColor: colors.outlineVariant3,
           child: Padding(
             padding: hasBorder
-                ? const EdgeInsets.all(Strokes.thin)
-                : EdgeInsets.zero,
+                ? const .all(Strokes.thin)
+                : .zero,
             child: avatar,
           ),
         ),

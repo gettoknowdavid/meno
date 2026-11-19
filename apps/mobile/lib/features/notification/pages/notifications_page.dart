@@ -19,7 +19,7 @@ class NotificationsPage extends WatchingWidget {
           // that is waiting for the reader, and they are gone once answered.
           const SliverToBoxAdapter(
             child: Padding(
-              padding: EdgeInsets.fromLTRB(Insets.lg, Insets.md, Insets.lg, 0),
+              padding: .fromLTRB(Insets.lg, Insets.md, Insets.lg, 0),
               child: CohostInvitationList(),
             ),
           ),
@@ -117,11 +117,11 @@ class _AppBar extends StatelessWidget implements PreferredSizeWidget {
         mainAxisAlignment: MainAxisAlignment.end,
         children: [
           Padding(
-            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding: .symmetric(horizontal: 12, vertical: 8),
             child: MBackButton.withText(),
           ),
           Padding(
-            padding: EdgeInsets.symmetric(vertical: 8),
+            padding: .symmetric(vertical: 8),
             child: MHeader(title: MText('Notifications')),
           ),
         ],

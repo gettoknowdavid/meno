@@ -204,12 +204,12 @@ class ConfigurationErrorApp extends StatelessWidget {
       home: Scaffold(
         body: Center(
           child: Padding(
-            padding: const EdgeInsets.all(32),
+            padding: const .all(32),
             child: Text(
               'Configuration error\n\n'
               '${failures.join('\n')}\n\n'
               'The app cannot start until this is fixed.',
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
           ),
         ),

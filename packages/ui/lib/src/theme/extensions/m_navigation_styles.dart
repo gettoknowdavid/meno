@@ -76,7 +76,7 @@ class MNavigationStyles extends ThemeExtension<MNavigationStyles> {
       tabBarTheme: TabBarThemeData(
         labelStyle: textTheme.captionMedium,
         labelColor: colors.primary,
-        labelPadding: const EdgeInsets.symmetric(horizontal: Insets.sm),
+        labelPadding: const .symmetric(horizontal: Insets.sm),
         unselectedLabelStyle: textTheme.captionMedium,
         unselectedLabelColor: colors.onBackgroundVariant,
         indicatorColor: colors.primary,

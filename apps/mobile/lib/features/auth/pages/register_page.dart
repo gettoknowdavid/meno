@@ -68,7 +68,7 @@ class RegisterPage extends WatchingWidget {
       body: SingleChildScrollView(
         padding: const .symmetric(vertical: Insets.xl),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
             const _RegisterForm(),
             Spaces.verticalXXLarge,

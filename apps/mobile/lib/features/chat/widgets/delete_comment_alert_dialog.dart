@@ -24,7 +24,7 @@ class DeleteCommentAlertDialog extends StatelessWidget {
 
     return AlertDialog(
       title: MText('Delete Comment?', style: textTheme.heading2Regular),
-      contentPadding: const EdgeInsets.all(24),
+      contentPadding: const .all(24),
       content: MText(
         'Delete your comment permanently?',
         style: textTheme.captionRegular,

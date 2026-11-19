@@ -16,7 +16,7 @@ class OnboardingBody extends StatelessWidget {
   Widget build(BuildContext context) {
     const imageDimension = 240.0;
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: Insets.lg),
+      padding: const .symmetric(horizontal: Insets.lg),
       child: Column(
         children: [
           // The illustration ships inside `meno_ui`, so the package prefix has

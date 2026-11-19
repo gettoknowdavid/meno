@@ -50,7 +50,7 @@ void main() {
                 titleTextStyle: MTextTheme.of(context).heading3Bold,
                 actions: [
                   Padding(
-                    padding: const EdgeInsets.symmetric(
+                    padding: const .symmetric(
                       horizontal: Insets.sm,
                       vertical: Insets.md,
                     ),

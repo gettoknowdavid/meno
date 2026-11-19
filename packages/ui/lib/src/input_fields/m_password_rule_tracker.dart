@@ -85,7 +85,7 @@ class MPasswordRuleTracker extends StatelessWidget {
     final label = touched ? _labelFor(strength) : '';
 
     return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+      crossAxisAlignment: .stretch,
       children: [
         TweenAnimationBuilder<double>(
           tween: Tween<double>(begin: 0, end: strength.clamp(0, 1)),
@@ -95,7 +95,7 @@ class MPasswordRuleTracker extends StatelessWidget {
         ),
         Spaces.verticalMicro,
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: .spaceBetween,
           children: [
             MText(hint, style: textTheme.nanoMedium),
             if (label.isNotEmpty)
@@ -104,7 +104,7 @@ class MPasswordRuleTracker extends StatelessWidget {
         ),
         Spaces.verticalMedium,
         Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisAlignment: .spaceBetween,
           children: [
             for (final rule in rules)
               _RuleChip(rule: rule, touched: touched),

@@ -61,7 +61,7 @@ class _LegalDocumentBody extends StatelessWidget {
     final textTheme = MTextTheme.of(context);
 
     return ListView.separated(
-      padding: const EdgeInsets.fromLTRB(
+      padding: const .fromLTRB(
         Insets.lg,
         Insets.sm,
         Insets.lg,
@@ -72,7 +72,7 @@ class _LegalDocumentBody extends StatelessWidget {
       itemBuilder: (_, index) {
         final section = document.sections[index];
         return Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
+          crossAxisAlignment: .stretch,
           children: [
             MText(section.title, style: textTheme.bodyBold),
             Spaces.verticalSmall,

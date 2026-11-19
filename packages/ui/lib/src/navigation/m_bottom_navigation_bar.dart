@@ -213,7 +213,7 @@ class MBottomNavItem extends StatelessWidget {
                 label,
                 style: labelStyle,
                 maxLines: 1,
-                overflow: TextOverflow.ellipsis,
+                overflow: .ellipsis,
               ),
             ],
           ),

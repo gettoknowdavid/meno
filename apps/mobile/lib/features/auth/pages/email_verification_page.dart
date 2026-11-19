@@ -105,7 +105,7 @@ class EmailVerificationPage extends WatchingWidget {
     return MScaffold(
       appBar: MAppBar.primary(title: 'Verify your email', implyLeading: false),
       body: SingleChildScrollView(
-        padding: const EdgeInsets.symmetric(vertical: Insets.xl),
+        padding: const .symmetric(vertical: Insets.xl),
         child: Column(
           crossAxisAlignment: .stretch,
           children: [

@@ -73,13 +73,13 @@ class _HorizontalPopupMenuState extends State<HorizontalPopupMenu> {
                 borderRadius: Corners.circle,
                 child: Container(
                   height: 56,
-                  padding: const EdgeInsets.all(Insets.sm),
+                  padding: const .all(Insets.sm),
                   decoration: BoxDecoration(
                     color: MColorScheme.of(context).background,
                     borderRadius: Corners.circle,
                   ),
                   child: Row(
-                    mainAxisSize: MainAxisSize.min,
+                    mainAxisSize: .min,
                     spacing: 4,
                     children: widget.items,
                   ),

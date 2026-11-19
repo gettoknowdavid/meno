@@ -37,7 +37,7 @@ class ChatBubble extends StatelessWidget {
         isSentByMe: isSentByMe,
       ),
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 16),
+        padding: const .symmetric(horizontal: 16),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -49,7 +49,7 @@ class ChatBubble extends StatelessWidget {
             Spaces.horizontalSmall,
             Expanded(
               child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+                crossAxisAlignment: .start,
                 children: [
                   _ChatMessageInfo(
                     key: const Key('chat-message-info'),
@@ -131,7 +131,7 @@ class _ChatMessageInfo extends StatelessWidget {
 
     return Row(
       key: key,
-      mainAxisSize: MainAxisSize.min,
+      mainAxisSize: .min,
       children: [
         InkWell(
           onTap: onShowUserInfo,
@@ -140,7 +140,7 @@ class _ChatMessageInfo extends StatelessWidget {
             style: textTheme.microMedium,
             color: colors.onBackgroundVariant,
             maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            overflow: .ellipsis,
           ),
         ),
         Spaces.horizontalMicro,
@@ -161,7 +161,7 @@ class _ChatMessageInfo extends StatelessWidget {
           style: textTheme.microMedium,
           color: colors.onBackgroundVariant,
           maxLines: 1,
-          overflow: TextOverflow.ellipsis,
+          overflow: .ellipsis,
         ),
       ],
     );
@@ -181,7 +181,7 @@ class _ChatContent extends StatelessWidget {
 
     return Container(
       key: key,
-      padding: const EdgeInsets.all(Insets.md),
+      padding: const .all(Insets.md),
       decoration: ShapeDecoration(
         color: isHost ? colors.secondaryContainer : colors.surfaceShade,
         shape: const RoundedSuperellipseBorder(

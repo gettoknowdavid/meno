@@ -23,10 +23,10 @@ Widget previewMTextScale() {
     theme: MTheme.light,
     home: const Scaffold(
       body: Padding(
-        padding: EdgeInsets.all(Insets.lg),
+        padding: .all(Insets.lg),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: .start,
+          mainAxisSize: .min,
           children: [
             MText.heading1('Heading 1'),
             MText.heading2('Heading 2'),
@@ -51,10 +51,10 @@ Widget previewMTextWeights() {
     theme: MTheme.light,
     home: const Scaffold(
       body: Padding(
-        padding: EdgeInsets.all(Insets.lg),
+        padding: .all(Insets.lg),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: .start,
+          mainAxisSize: .min,
           children: [
             MText.body('Regular', weight: MFontWeight.regular),
             MText.body('Medium', weight: MFontWeight.medium),
@@ -73,10 +73,10 @@ Widget previewMTextOverrides() {
     theme: MTheme.light,
     home: const Scaffold(
       body: Padding(
-        padding: EdgeInsets.all(Insets.lg),
+        padding: .all(Insets.lg),
         child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: .start,
+          mainAxisSize: .min,
           children: [
             MText(
               'Underlined',

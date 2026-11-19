@@ -26,10 +26,10 @@ const double _kDotSize = 6;
 const double _kCountGap = 6;
 
 /// The side padding of the rectangular badges.
-const EdgeInsets _kPadding = EdgeInsets.symmetric(horizontal: Insets.sm);
+const EdgeInsets _kPadding = .symmetric(horizontal: Insets.sm);
 
 /// The vertical padding of a badge that wraps its label.
-const EdgeInsets _kWrappingPadding = EdgeInsets.symmetric(
+const EdgeInsets _kWrappingPadding = .symmetric(
   horizontal: Insets.sm,
   vertical: Insets.xs,
 );
@@ -271,7 +271,7 @@ class MBadge extends StatelessWidget {
 
       child = Row(
         mainAxisAlignment: MainAxisAlignment.center,
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           if (showLoader)
             Assets.images.loading.image(
@@ -323,7 +323,7 @@ class MBadge extends StatelessWidget {
   }) {
     return MText(
       content,
-      textAlign: TextAlign.center,
+      textAlign: .center,
       style: style,
       color: color,
     );

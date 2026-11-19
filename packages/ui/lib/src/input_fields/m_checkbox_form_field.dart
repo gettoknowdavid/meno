@@ -96,8 +96,8 @@ class MCheckboxFormField extends StatelessWidget {
         }
 
         return Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: .min,
+          crossAxisAlignment: .start,
           children: [
             InkWell(
               onTap: enabled ? toggle : null,

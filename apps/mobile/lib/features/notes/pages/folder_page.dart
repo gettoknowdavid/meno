@@ -109,11 +109,11 @@ class _FolderWidget extends WatchingWidget {
       child: Container(
         height: 88,
         width: double.infinity,
-        padding: const EdgeInsets.fromLTRB(16, 22, 16, 16),
+        padding: const .fromLTRB(16, 22, 16, 16),
         child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          mainAxisSize: .min,
+          crossAxisAlignment: .start,
+          mainAxisAlignment: .spaceBetween,
           children: [
             MText(
               folder.title.getOrElse((_) => ''),
@@ -159,7 +159,7 @@ class _PageOptionsButton extends StatelessWidget {
         useRootNavigator: true,
         builder: (context) => MModal(
           builder: (ctx) => Column(
-            mainAxisSize: MainAxisSize.min,
+            mainAxisSize: .min,
             children: [
               MModalListTile(
                 leading: const Icon(MIcons.file_plus_02),
@@ -241,7 +241,7 @@ class _SearchBox extends WatchingWidget {
         hintText: 'Search for note',
         hintStyle: WidgetStatePropertyAll(textTheme.captionRegular),
         padding: const WidgetStatePropertyAll(
-          EdgeInsets.symmetric(horizontal: Insets.md),
+          .symmetric(horizontal: Insets.md),
         ),
         leading: const Icon(MIcons.search, size: Insets.lg),
         trailing: [
@@ -281,7 +281,7 @@ class _FolderNotesList extends WatchingWidget {
         child: MText(
           'No notes found in this folder',
           style: textTheme.bodyRegular,
-          textAlign: TextAlign.center,
+          textAlign: .center,
         ),
       );
     }
@@ -315,7 +315,7 @@ class _NoteOptionsModal extends WatchingWidget {
   Widget build(BuildContext context) {
     return MModal(
       builder: (context) => Column(
-        mainAxisSize: MainAxisSize.min,
+        mainAxisSize: .min,
         children: [
           MModalListTile(
             leading: const Icon(MIcons.file_02),

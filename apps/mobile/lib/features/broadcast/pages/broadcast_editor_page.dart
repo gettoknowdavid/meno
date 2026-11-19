@@ -394,7 +394,7 @@ class _AvatarField extends WatchingWidget {
               'JPG or PNG accepted. Max size 10mb.',
               maxLines: 2,
               style: textTheme.microRegular,
-              textAlign: TextAlign.center,
+              textAlign: .center,
             ),
           ),
         ),
