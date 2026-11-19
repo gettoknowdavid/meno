@@ -39,13 +39,8 @@ class _FaqsPageState extends State<FaqsPage> {
       body: Column(
         crossAxisAlignment: .stretch,
         children: [
-          Padding(
-            padding: const .fromLTRB(
-              Insets.lg,
-              Insets.sm,
-              Insets.lg,
-              Insets.md,
-            ),
+          SizedBox(
+            height: 40,
             child: SearchBar(
               elevation: const WidgetStatePropertyAll(0),
               controller: _controller,
@@ -56,6 +51,12 @@ class _FaqsPageState extends State<FaqsPage> {
                 .symmetric(horizontal: Insets.md),
               ),
               leading: const Icon(MIcons.search, size: Insets.lg),
+              shape: const WidgetStatePropertyAll(
+                RoundedRectangleBorder(
+                  side: BorderSide(color: Color(0xFFC2C7D0)),
+                  borderRadius: Corners.sm,
+                ),
+              ),
               trailing: [
                 if (_query.isNotEmpty)
                   IconButton(
@@ -68,6 +69,7 @@ class _FaqsPageState extends State<FaqsPage> {
               ],
             ),
           ),
+          Spaces.verticalLarge,
           Expanded(
             child: sections.isEmpty
                 ? const _NoResults()
@@ -101,12 +103,7 @@ class _Section extends StatelessWidget {
       crossAxisAlignment: .stretch,
       children: [
         Padding(
-          padding: const .fromLTRB(
-            Insets.lg,
-            Insets.lg,
-            Insets.lg,
-            Insets.xs,
-          ),
+          padding: const .fromLTRB(0, Insets.lg, 0, Insets.xs),
           child: MText(
             section.title.toUpperCase(),
             style: textTheme.captionMedium,
@@ -194,7 +191,7 @@ class _SupportFooter extends StatelessWidget {
     final colors = MColorScheme.of(context);
 
     return Padding(
-      padding: const .fromLTRB(Insets.lg, Insets.lg, Insets.lg, 0),
+      padding: const .only(top: Insets.lg),
       child: Column(
         crossAxisAlignment: .stretch,
         children: [

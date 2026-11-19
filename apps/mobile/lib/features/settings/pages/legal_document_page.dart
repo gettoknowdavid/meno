@@ -62,9 +62,9 @@ class _LegalDocumentBody extends StatelessWidget {
 
     return ListView.separated(
       padding: const .fromLTRB(
-        Insets.lg,
+        Insets.xs,
         Insets.sm,
-        Insets.lg,
+        Insets.xs,
         Insets.xxxl,
       ),
       itemCount: document.sections.length,
