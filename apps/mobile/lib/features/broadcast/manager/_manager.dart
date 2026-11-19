@@ -7,3 +7,4 @@ export 'cohost_invitations_manager.dart';
 export 'cohost_search_manager.dart';
 export 'favourites_manager.dart';
 export 'participants_manager.dart';
+export 'scheduled_broadcast_manager.dart';

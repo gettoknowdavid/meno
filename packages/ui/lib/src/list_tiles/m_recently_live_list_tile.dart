@@ -1,4 +1,5 @@
 import 'package:cached_network_image/cached_network_image.dart';
+import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:skeletonizer/skeletonizer.dart';
@@ -40,6 +41,7 @@ class MRecentlyLiveListTile extends StatelessWidget {
     super.key,
     this.title,
     this.endTime,
+    this.startTime,
     this.creator,
     this.imageUrl,
     this.onTap,
@@ -50,6 +52,14 @@ class MRecentlyLiveListTile extends StatelessWidget {
 
   /// An optional end time of the recently live event.
   final DateTime? endTime;
+
+  /// When the event is scheduled to start, for a row that has not run yet.
+  ///
+  /// A scheduled broadcast has no end time, so the relative "ago" label had
+  /// nothing to measure and fell back to "A while back" — a statement about a
+  /// broadcast that had not happened. This is the other fact the same line can
+  /// state, and it is shown in the reader's own zone.
+  final DateTime? startTime;
 
   /// An optional creator of the recently live event.
   final String? creator;
@@ -79,7 +89,7 @@ class MRecentlyLiveListTile extends StatelessWidget {
         crossAxisAlignment: .start,
         children: [
           MText(
-            endTime != null ? _timeAgo(endTime!) : 'A while back',
+            _label(),
             style: textTheme.captionRegular,
             color: colors.onBackgroundVariant,
             maxLines: 1,
@@ -106,6 +116,22 @@ class MRecentlyLiveListTile extends StatelessWidget {
   }
 
   /// Formats a [DateTime] as a relative time string.
+  ///
+  /// The one line above the title says when this row's moment is: an end time
+  /// once it has run, a start time while it is still ahead, and the honest
+  /// fallback when the API stated neither.
+  String _label() {
+    final ends = endTime;
+    if (ends != null) return _timeAgo(ends);
+
+    final starts = startTime;
+    if (starts != null) {
+      return 'Scheduled for ${DateFormat('EEE, MMM d · h:mm a').format(starts.toLocal())}';
+    }
+
+    return 'A while back';
+  }
+
   String _timeAgo(DateTime dateTime) {
     final now = DateTime.now();
     final difference = now.difference(dateTime);

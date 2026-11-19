@@ -59,6 +59,9 @@ class HomePage extends WatchingWidget {
         child: Column(
           children: <Widget>[
             const LiveSessionBanner(),
+            // Under the live banner, and never beside it: the scheduled card
+            // hides itself while a room is open.
+            const ScheduledBroadcastBanner(),
             Spaces.verticalXLarge,
             if (isNewUser)
               const _LiveForYouSection()

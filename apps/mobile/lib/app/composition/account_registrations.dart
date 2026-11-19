@@ -358,6 +358,17 @@ Future<void> registerAccountScope(
     LiveSessionStore(di<LocalStorage>(), userId: credential.accountId),
   );
 
+  // The account's one open schedule, for the home banner. Lazily built, so a
+  // launch that opens on a screen without the banner does not ask about it.
+  scope.registerLazySingleton<ScheduledBroadcastManager>(
+    () => ScheduledBroadcastManager(
+      http: di<BroadcastHttpService>(),
+      socket: di<BroadcastSocketService>(),
+      accountId: credential.accountId,
+      logger: di<MenoLogger>(),
+    ),
+  );
+
   // The account's one live owner. Its session is built by the factory below —
   // an ordinary object, created and closed by the manager — so nothing about a
   // room is registered in the container.

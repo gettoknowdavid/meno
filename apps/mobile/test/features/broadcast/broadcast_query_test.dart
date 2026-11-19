@@ -30,6 +30,12 @@ Map<String, dynamic> _item(String id, {required String state}) => {
   'creatorName': 'Ada',
 };
 
+/// A scheduled row: inactive with a start time still ahead.
+Map<String, dynamic> _scheduledItem(String id) => {
+  ..._item(id, state: 'scheduled'),
+  'startTime': '2026-11-20T10:00:00Z',
+};
+
 /// Three ids the API could actually send: the model refuses anything that is
 /// not a UUID, and a refused row is silently skipped, which reads as an empty
 /// page.
@@ -37,6 +43,7 @@ const _liveOne = '018f2b1e-0000-7000-8000-000000000021';
 const _liveTwo = '018f2b1e-0000-7000-8000-000000000022';
 const _endedOne = '018f2b1e-0000-7000-8000-000000000023';
 const _draftOne = '018f2b1e-0000-7000-8000-000000000024';
+const _scheduledOne = '018f2b1e-0000-7000-8000-000000000026';
 const _creator = '018f2b1e-0000-7000-8000-000000000025';
 
 /// One page carrying [items].
@@ -97,6 +104,10 @@ void main() {
       expect(
         BroadcastQuery.section(BroadcastsType.recentlyLive).status,
         BroadcastStatus.inactive,
+      );
+      expect(
+        BroadcastQuery.section(BroadcastsType.scheduled).type,
+        BroadcastsType.scheduled,
       );
     });
 
@@ -282,6 +293,48 @@ void main() {
       // `status=inactive` is the closest the wire gets to "has ended" and it
       // carries drafts and live rows that are still shutting down with it.
       expect(source.items.map((item) => item.id.getOrCrash), [_endedOne]);
+    });
+
+    test('keeps only rows waiting for a start in a scheduled list', () async {
+      final api = StubApi([
+        _page([
+          _scheduledItem(_scheduledOne),
+          _item(_liveOne, state: 'live'),
+          _item(_draftOne, state: 'draft'),
+        ]),
+      ]);
+      final source = BroadcastFeedDataSource(
+        http: BroadcastHttpService(stubClient(api)),
+        query: const BroadcastQuery.scheduled(),
+      );
+      addTearDown(source.onDispose);
+
+      await source.updateDataCommand.runAsync();
+
+      expect(source.items.map((item) => item.id.getOrCrash), [_scheduledOne]);
+    });
+
+    test('all broadcasts leaves the scheduled ones to their own tab', () async {
+      final api = StubApi([
+        _page([
+          _scheduledItem(_scheduledOne),
+          _item(_liveOne, state: 'live'),
+          _item(_endedOne, state: 'ended'),
+        ]),
+      ]);
+      final source = BroadcastFeedDataSource(
+        http: BroadcastHttpService(stubClient(api)),
+        query: const BroadcastQuery.byCreator(_creator),
+        excludeScheduled: true,
+      );
+      addTearDown(source.onDispose);
+
+      await source.updateDataCommand.runAsync();
+
+      expect(source.items.map((item) => item.id.getOrCrash), [
+        _liveOne,
+        _endedOne,
+      ]);
     });
 
     test('keeps everything the endpoint sent in a live list', () async {

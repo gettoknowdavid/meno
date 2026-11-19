@@ -68,7 +68,7 @@ class MyProfilePage extends WatchingWidget {
     }
 
     return DefaultTabController(
-      length: 3,
+      length: 4,
       child: Scaffold(
         key: ValueKey(signedIn.id),
         backgroundColor: colors.background,
@@ -88,6 +88,7 @@ class MyProfilePage extends WatchingWidget {
               children: [
                 _RecentBroadcastsTab(),
                 _AllBroadcastsTab(),
+                _ScheduledBroadcastsTab(),
                 _FavouritesTab(),
               ],
             ),
@@ -153,6 +154,7 @@ class _ProfileAppBar extends StatelessWidget {
               tabs: const [
                 Tab(text: 'Recent broadcasts'),
                 Tab(text: 'All broadcasts'),
+                Tab(text: 'Scheduled broadcasts'),
                 Tab(text: 'Favorites'),
               ],
             ),
@@ -270,6 +272,10 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
         query: BroadcastQuery(creatorId: creatorId?.getOrNull),
+        // A schedule has a tab of its own. Leaving it here meant a broadcast
+        // that had not started yet sat among ones that had, with a relative
+        // "A while back" and no end time to measure it by.
+        excludeScheduled: true,
       );
     });
 
@@ -290,6 +296,58 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
           onTap: () async {
             await context.push(MRoutes.broadcastRoute(broadcast.id));
           },
+        );
+      },
+    );
+  }
+
+  @override
+  bool get wantKeepAlive => false;
+}
+
+/// [_ScheduledBroadcastsTab] displays the broadcasts waiting for their start.
+///
+/// One at a time, by the API's rule, so this list has right of way in showing
+/// the account's next promise: tapping one opens its lobby, where the host can
+/// go live, and the same three actions are on the home banner.
+class _ScheduledBroadcastsTab extends WatchingStatefulWidget {
+  const new();
+
+  @override
+  State<_ScheduledBroadcastsTab> createState() =>
+      __ScheduledBroadcastsTabState();
+}
+
+class __ScheduledBroadcastsTabState extends State<_ScheduledBroadcastsTab>
+    with AutomaticKeepAliveClientMixin {
+  @override
+  Widget build(BuildContext context) {
+    super.build(context);
+
+    final feedSource = createOnce(() {
+      final creatorId = di<UserManager>().currentUserId.value;
+      return BroadcastFeedDataSource(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        query: BroadcastQuery.scheduled(creatorId: creatorId?.getOrNull),
+      );
+    });
+
+    return FeedWidget(
+      feedSource: feedSource,
+      padding: const .all(Insets.lg),
+      topSlivers: [
+        SliverOverlapInjector(
+          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
+        ),
+      ],
+      skeletonItem: BroadcastCard.skeletonRecentlyLiveTile,
+      skeletonItemCount: 2,
+      itemBuilder: (context, broadcast) {
+        return BroadcastCard.rLiveTile(
+          broadcast,
+          key: ValueKey(broadcast.id),
+          onTap: () => PreStreamModal.show(context, broadcast.id),
         );
       },
     );

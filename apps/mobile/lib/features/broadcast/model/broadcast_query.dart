@@ -16,6 +16,13 @@ enum BroadcastsType {
   /// Everything that has ended, most recent first.
   recentlyLive('recentlyLive', 'Recently live'),
 
+  /// This account's broadcasts waiting for their start time.
+  ///
+  /// A section of its own rather than a corner of `recentlyLive`: a scheduled
+  /// broadcast has not happened yet, and reading it as history is what printed
+  /// "A while back" beside a broadcast that had not started.
+  scheduled('scheduled', 'Scheduled'),
+
   /// The accounts the viewer follows, as a list.
   subscriptions('subscriptions', 'Subscriptions');
 
@@ -138,6 +145,20 @@ class BroadcastQuery with Equatable {
       order = BroadcastOrder.newest,
       cursor = null;
 
+  /// One account's scheduled broadcasts, soonest first among the rows a page
+  /// carries.
+  ///
+  /// `inactive` is the only status a scheduled row ever holds, so the wire
+  /// filter is the same one the recently-live list sends; what separates the
+  /// two is the client-side predicate in `BroadcastFeedDataSource`, which keeps
+  /// rows with a future start time here and rows that ended there.
+  const new scheduled({this.limit = defaultLimit, this.creatorId})
+    : type = BroadcastsType.scheduled,
+      status = BroadcastStatus.inactive,
+      keywords = null,
+      order = BroadcastOrder.newest,
+      cursor = null;
+
   /// The live broadcasts for this viewer.
   ///
   /// Today that is every live broadcast: the endpoint filters by one
@@ -187,6 +208,7 @@ class BroadcastQuery with Equatable {
     BroadcastsType.forYou => BroadcastQuery.forYou(limit: limit),
     BroadcastsType.nowLive => BroadcastQuery.nowLive(limit: limit),
     BroadcastsType.recentlyLive => BroadcastQuery.recentlyLive(limit: limit),
+    BroadcastsType.scheduled => BroadcastQuery.scheduled(limit: limit),
     BroadcastsType.subscriptions => BroadcastQuery.subscriptions(limit: limit),
   };
 

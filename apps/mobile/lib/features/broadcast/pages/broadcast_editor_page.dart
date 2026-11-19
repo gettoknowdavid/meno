@@ -1,7 +1,6 @@
 import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
-import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:intl/intl.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -96,6 +95,14 @@ class _BroadcastEditorPageState extends State<BroadcastEditorPage> {
         // here would defeat the schedule.
         final broadcastId = manager.createdBroadcastId;
         await manager.finishScheduledCreation();
+
+        // A creation does not invalidate the home sections on the server — only
+        // going live does — so the banner that offers this schedule its three
+        // actions is told here, where the row was just made.
+        if (di.isRegistered<ScheduledBroadcastManager>()) {
+          di<ScheduledBroadcastManager>().refresh.run();
+        }
+
         if (!context.mounted) return;
 
         manager.resetForm.run();
@@ -578,93 +585,60 @@ class ScheduleField extends WatchingWidget {
     return _BroadcastEditorListTile(
       leadingText: 'Schedule for later',
       subtitleText: when,
-      trailing: SizedBox(
-        width: 48,
-        child: Switch(
-          value: local != null,
-          onChanged: isLoading
-              ? null
-              : (enabled) {
-                  if (!enabled) {
-                    manager.clearSchedule();
-                    return;
-                  }
-                  unawaited(_pick(context, manager));
-                },
-        ),
+      // Tapping the row re-opens the pickers once a time is chosen. The switch
+      // alone made editing a one-way trip — off, then on again — which is a
+      // strange way to ask for a different time.
+      onTap: isLoading || local == null
+          ? null
+          : () => unawaited(_pick(context, manager)),
+      trailing: Row(
+        mainAxisSize: .min,
+        children: [
+          if (local != null)
+            const Padding(
+              padding: .only(right: Insets.sm),
+              child: Tooltip(
+                message: 'Change the scheduled time',
+                child: Icon(MIcons.edit_02, size: 16),
+              ),
+            ),
+          SizedBox(
+            width: 48,
+            child: Switch(
+              value: local != null,
+              onChanged: isLoading
+                  ? null
+                  : (enabled) {
+                      if (!enabled) {
+                        manager.clearSchedule();
+                        return;
+                      }
+                      unawaited(_pick(context, manager));
+                    },
+            ),
+          ),
+        ],
       ),
     );
   }
 
-  /// Asks for a date, then a time, then records the instant in UTC.
+  /// Asks for a date and a time, then records the instant in UTC.
+  ///
+  /// The picker answers local wall-clock values; the manager converts the
+  /// choice to the instant it names, which is what the API stores. The same
+  /// helper is behind the banner's Reschedule action, so the two cannot drift
+  /// about which zone a selection belongs to.
   Future<void> _pick(
     BuildContext context,
     BroadcastEditorManager manager,
   ) async {
-    final now = DateTime.now();
-    final firstDate = DateUtils.dateOnly(now);
-    final lastDate = DateUtils.dateOnly(now.add(const Duration(days: 365)));
-    final previous = manager.startTime.value?.toLocal();
-    final initial = previous ?? now.add(const Duration(hours: 1));
-    final initialDate = DateUtils.dateOnly(initial);
-
-    final date = await showDatePicker(
-      context: context,
-      initialDate: initialDate.isBefore(firstDate)
-          ? firstDate
-          : initialDate.isAfter(lastDate)
-          ? lastDate
-          : initialDate,
-      firstDate: firstDate,
-      lastDate: lastDate,
+    final choice = await pickBroadcastStart(
+      context,
+      initial: manager.startTime.value,
     );
-    if (date == null || !context.mounted) return;
+    if (choice == null) return;
 
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-    );
-    if (time == null || !context.mounted) return;
-
-    final chosen = DateTime(
-      date.year,
-      date.month,
-      date.day,
-      time.hour,
-      time.minute,
-    );
-    if (!chosen.isAfter(DateTime.now())) {
-      context.showErrorToast('Choose a start time in the future.');
-      return;
-    }
-
-    // The API stores an IANA zone. The plugin is the only source of the
-    // device's real identifier; a failure here leaves the instant exact and
-    // merely omits the display zone rather than inventing an abbreviation.
-    String? zone;
-    try {
-      final identifier = (await FlutterTimezone.getLocalTimezone()).identifier;
-      zone = _ianaIdentifier(identifier);
-    } on Object {
-      zone = null;
-    }
-
-    manager.scheduleAt(chosen, zone: zone);
-  }
-
-  /// The API requires an IANA name with a region segment.
-  ///
-  /// The platform may answer `UTC` or a bare abbreviation. The instant is
-  /// already exact, so an unusable name is omitted rather than sent to be
-  /// refused; the two no-slash names that are genuinely IANA are folded into
-  /// their `Etc/` spelling.
-  static String? _ianaIdentifier(String raw) {
-    return switch (raw) {
-      'UTC' => 'Etc/UTC',
-      'GMT' => 'Etc/GMT',
-      _ when raw.contains('/') => raw,
-      _ => null,
-    };
+    manager.scheduleAt(choice.start, zone: choice.zone);
   }
 }
 
@@ -771,18 +745,28 @@ class _BroadcastEditorListTile extends StatelessWidget {
     required this.leadingText,
     required this.subtitleText,
     this.trailing,
+    this.onTap,
   });
 
   final String leadingText;
   final String subtitleText;
   final Widget? trailing;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return MInfoListTile(
+    final tile = MInfoListTile(
       leadingText: leadingText,
       subtitleText: subtitleText,
       trailing: trailing,
+    );
+
+    if (onTap == null) return tile;
+
+    return GestureDetector(
+      behavior: .opaque,
+      onTap: onTap,
+      child: tile,
     );
   }
 }

@@ -80,6 +80,7 @@ class BroadcastCard extends StatelessWidget {
         creator: creator.orEmpty,
         imageUrl: image?.getUrl,
         endTime: endTime,
+        startTime: broadcast.startTime,
         onTap: onTap,
       ),
     };
@@ -127,6 +128,7 @@ class _BroadcastCardSkeleton extends StatelessWidget {
           title: broadcast.title.orEmpty,
           creator: broadcast.hostName.orEmpty,
           endTime: broadcast.endTime,
+          startTime: broadcast.startTime,
           imageUrl: broadcast.image?.getUrl,
         ),
       ),

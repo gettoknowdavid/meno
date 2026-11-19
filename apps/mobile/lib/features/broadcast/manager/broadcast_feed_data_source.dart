@@ -45,10 +45,20 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
     required this._http,
     required this._query,
     this.socket,
+    this.excludeScheduled = false,
     super.fetchMoreEnabled = true,
   }) {
     unawaited(_rebind());
   }
+
+  /// Whether rows waiting for a start time are left out of this list.
+  ///
+  /// The profile's "All broadcasts" sets this: a schedule is not a broadcast
+  /// that happened, it is one that has not, and it has a tab of its own. The
+  /// endpoint cannot say "not scheduled" — `status=inactive` carries drafts and
+  /// schedules alike — so the row is dropped here, where the section's meaning
+  /// already lives.
+  final bool excludeScheduled;
 
   final BroadcastHttpService _http;
 
@@ -132,8 +142,22 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
       return false;
     }
 
+    // An ended broadcast kept its start time, so having one is not enough to
+    // be scheduled: only a row that has not ended is waiting for its moment.
+    if (excludeScheduled &&
+        broadcast.startTime != null &&
+        !broadcast.state.hasEnded) {
+      return false;
+    }
+
     return switch (_query.type) {
       BroadcastsType.recentlyLive => broadcast.state.hasEnded,
+      // A scheduled row keeps its place until it ends, even once its start time
+      // has passed without the host going live: it is still the promise the
+      // host has to keep or cancel, so it must not fall out of the tab that
+      // exists to let them do either.
+      BroadcastsType.scheduled =>
+        broadcast.startTime != null && !broadcast.state.hasEnded,
       _ => true,
     };
   }
@@ -194,6 +218,15 @@ class BroadcastFeedDataSource extends PagedFeedDataSource<Broadcast> {
       // by refetching, which is also where its real summary comes from.
       service.onEndedBroadcast.listen((_) => _refreshOnce()),
       service.onScheduledBroadcast.listen(_onScheduledBroadcast),
+    ],
+
+    // A list of promises changes when one is made, rescheduled, cancelled or
+    // ended, and the last two are not rows it already holds. Refetching is what
+    // keeps it complete; the reminder frame still patches a card in place.
+    BroadcastsType.scheduled => [
+      service.onScheduledBroadcast.listen(_onScheduledBroadcast),
+      service.onBroadcastDeleted.listen((_) => _refreshOnce()),
+      service.onEndedBroadcast.listen((_) => _refreshOnce()),
     ],
 
     null => [
