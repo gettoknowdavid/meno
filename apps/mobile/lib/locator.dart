@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -61,6 +62,31 @@ void _registerCore(Config config, {HttpClient? httpClient}) {
   di.registerSingleton<Config>(config);
   di.registerSingleton<Clock>(const SystemClock());
   di.registerSingleton<MenoLogger>(MenoLoggerImpl(config.env));
+
+  // Telemetry is device-wide, not the account's: a crash before sign-in is
+  // just as real, and the service outlives every session. The sink is built
+  // once and shared, so an event and a crash from one session agree on their
+  // fields. Which sink ships is a deployment decision —
+  // `docs/crash-reporting-and-analytics.md`.
+  final telemetrySink = LogTelemetrySink(logger: di<MenoLogger>());
+  final crashReporting = CrashReportingService(
+    sink: telemetrySink,
+    context: TelemetryContext(
+      env: config.env.name,
+      platform: defaultTargetPlatform.name,
+      appVersion: 'unknown',
+      buildNumber: 'unknown',
+    ),
+    logger: di<MenoLogger>(),
+  );
+  di.registerSingleton<CrashReportingService>(crashReporting);
+  di.registerSingleton<AnalyticsService>(
+    AnalyticsService(
+      sink: telemetrySink,
+      reporting: crashReporting,
+      logger: di<MenoLogger>(),
+    ),
+  );
   di.registerSingleton<FlutterSecureStorage>(const FlutterSecureStorage());
   di.registerLazySingleton<SecureStorage>(
     () => SecureStorage(di<FlutterSecureStorage>()),

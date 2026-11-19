@@ -1,18 +1,26 @@
+import 'dart:async';
+
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 
-/// Routes command failures that no handler claimed to the app log.
+/// Routes command failures that no handler claimed to the app log, and installs
+/// the crash handlers.
 ///
 /// Widgets own what the user sees: the same failures also reach
 /// `Command.globalErrors`, which the root widget turns into toasts. Keeping the
 /// two apart means logging never needs a `BuildContext`, and this stays the one
-/// place to add crash reporting later.
+/// place telemetry is switched on.
 ///
-/// Call it once from `main()`, after the locator is configured.
+/// Call it once from `main()`, after the locator is configured and before the
+/// first frame.
 void configureGlobalExceptionHandler() {
   // Captured once, not looked up per failure: a command can answer after the
   // container that started it is gone, and reporting that must not throw.
   final logger = di<MenoLogger>();
+
+  // Framework and platform errors are the ones nobody handled. Installed here,
+  // before `runApp`, so a failure in the first frame is captured too.
+  final telemetry = di<CrashReportingService>()..install();
 
   Command.globalExceptionHandler = (commandError, stackTrace) {
     final error = commandError.error;
@@ -55,12 +63,23 @@ void configureGlobalExceptionHandler() {
     }
 
     // Not one of the app's failures at all: a bug, or a failure mode nobody has
-    // classified yet, so only the type is known here.
+    // classified yet, so only the type is known here. This is the branch that
+    // is worth a crash report — a classified failure (a refused request, an
+    // expired session) is expected and handled, and is not a crash.
     logger.e(
       'Unhandled ${error.runtimeType}',
       tag: MenoLogTag.debug.label,
       error: error,
       stackTrace: stackTrace,
+    );
+
+    unawaited(
+      telemetry.report(
+        error,
+        stackTrace,
+        fatal: false,
+        scope: 'command',
+      ),
     );
   };
 }

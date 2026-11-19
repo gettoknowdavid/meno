@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
@@ -51,6 +53,14 @@ Future<void> bootstrap() async {
     di<MenoLogger>()
       ..i('App starting', tag: MenoLogTag.lifecycle.label)
       ..event('app_start', {'env': config.env.name});
+
+    // The packaged version is read from the platform, which answers after the
+    // first frame; reports before then say `unknown` rather than waiting for
+    // it. A launch is the one event that is useful with no session at all.
+    unawaited(di<CrashReportingService>().loadAppInfo());
+    unawaited(
+      di<AnalyticsService>().track('app_start', {'env': config.env.name}),
+    );
 
     runApp(const MenoApp(onRetryBootstrap: bootstrap));
 

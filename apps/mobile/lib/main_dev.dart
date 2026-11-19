@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/app.dart';
@@ -26,6 +28,13 @@ void main() {
   di<MenoLogger>()
     ..i('App starting', tag: MenoLogTag.lifecycle.label)
     ..event('app_start', {'env': config.env.name});
+
+  // Same as `main()`: the version lands after the first frame, and the launch
+  // event is recorded whether or not anybody signs in.
+  unawaited(di<CrashReportingService>().loadAppInfo());
+  unawaited(
+    di<AnalyticsService>().track('app_start', {'env': config.env.name}),
+  );
 
   runApp(const MenoApp());
 
