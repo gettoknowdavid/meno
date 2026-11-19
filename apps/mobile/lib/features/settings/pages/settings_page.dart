@@ -161,7 +161,7 @@ class SettingsPage extends WatchingWidget {
                 MSettingsListTile(
                   title: 'FAQs',
                   leadingIcon: MIcons.help_circle,
-                  onTap: () {},
+                  onTap: () => context.push(MRoutes.faqs),
                 ),
                 // Sharing is commented out until a share link resolves
                 // (docs/launch-readiness.md §2.2).

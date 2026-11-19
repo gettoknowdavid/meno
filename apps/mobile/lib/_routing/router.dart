@@ -372,6 +372,10 @@ List<RouteBase> get _settingsRoutes => [
         builder: (_, _) => const SecuritySettingsPage(),
       ),
       GoRoute(
+        path: 'faqs',
+        builder: (_, _) => const FaqsPage(),
+      ),
+      GoRoute(
         path: 'about',
         builder: (_, _) => const AboutPage(),
         routes: [

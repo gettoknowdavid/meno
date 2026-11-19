@@ -1,6 +1,8 @@
 //GENERATED BARREL FILE
 export 'about_page.dart';
+export 'faqs_page.dart';
 export 'legal_document_page.dart';
 export 'notifications_settings_page.dart';
 export 'security_settings_page.dart';
 export 'settings_page.dart';
+export 'support_sheet.dart';

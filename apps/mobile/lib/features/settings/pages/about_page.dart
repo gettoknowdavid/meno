@@ -1,7 +1,7 @@
 import 'package:go_router/go_router.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/routes.dart';
-import 'package:meno_mobile/features/settings/model/_model.dart';
+import 'package:meno_mobile/features/settings/pages/support_sheet.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
@@ -48,7 +48,7 @@ class _AboutPageState extends State<AboutPage> {
                 ),
                 MSettingsListTile(
                   title: 'Report an app problem',
-                  onTap: () => _reportProblem(context),
+                  onTap: () => showSupportSheet(context),
                 ),
                 MSettingsListTile(
                   title: 'Privacy Policy',
@@ -62,51 +62,6 @@ class _AboutPageState extends State<AboutPage> {
               ],
             ),
           ],
-        ),
-      ),
-    );
-  }
-
-  /// The support details, next to what a useful report contains.
-  ///
-  /// There is no support desk behind the app yet, so the address and the phone
-  /// number are the way through — and both are selectable, so they can be
-  /// copied out of the sheet.
-  Future<void> _reportProblem(BuildContext context) {
-    final colors = MColorScheme.of(context);
-    final textTheme = MTextTheme.of(context);
-
-    return showModalBottomSheet<void>(
-      context: context,
-      showDragHandle: true,
-      builder: (_) => SafeArea(
-        child: Padding(
-          padding: const .fromLTRB(
-            Insets.lg,
-            0,
-            Insets.lg,
-            Insets.lg,
-          ),
-          child: Column(
-            mainAxisSize: .min,
-            crossAxisAlignment: .stretch,
-            children: [
-              MText('Report an app problem', style: textTheme.subheadingBold),
-              Spaces.verticalSmall,
-              MText(
-                'Tell us what happened, what you expected, and which device '
-                'you are on. A screenshot helps us reproduce it.',
-                style: textTheme.captionRegular,
-                color: colors.onBackgroundVariant,
-              ),
-              Spaces.verticalLarge,
-              MText('Email', style: textTheme.captionMedium),
-              SelectableText(legalSupportEmail, style: textTheme.bodyRegular),
-              Spaces.verticalMedium,
-              MText('Phone', style: textTheme.captionMedium),
-              SelectableText(legalSupportPhone, style: textTheme.bodyRegular),
-            ],
-          ),
         ),
       ),
     );

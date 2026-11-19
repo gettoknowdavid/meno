@@ -131,6 +131,7 @@ final class MRoutes {
   static const String settings = '/settings';
   static const String notificationSettings = '/settings/notifications';
   static const String securitySettings = '/settings/security';
+  static const String faqs = '/settings/faqs';
   static const String about = '/settings/about';
   static const String privacyPolicy = '/settings/about/privacy';
   static const String termsOfUse = '/settings/about/terms';
