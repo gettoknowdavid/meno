@@ -57,8 +57,7 @@ class BroadcastInfoModal extends WatchingWidget {
               onTap: () => context.go(MRoutes.home),
             ),
           // Sharing and Copy Link are commented out: they do nothing, and the
-          // link they would build has no destination yet
-          // (docs/launch-readiness.md §2.2).
+          // link they would build has no destination yet.
           // MModalListTile(
           //   leading: const Icon(MIcons.share),
           //   title: 'Share',

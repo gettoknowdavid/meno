@@ -55,8 +55,7 @@ class MyProfileHeaderContent extends StatelessWidget {
                 child: Row(
                   children: [
                     Expanded(child: EditProfileButton(profile: profile)),
-                    // Sharing is commented out until a share link resolves
-                    // (docs/launch-readiness.md §2.2).
+                    // Sharing is commented out until a share link resolves.
                     // Spaces.horizontalLarge,
                     // Expanded(
                     //   child: ShareProfileButton(profile: profile.asProfile),
@@ -113,8 +112,7 @@ class UserProfileHeaderContent extends StatelessWidget {
               child: Row(
                 children: [
                   Expanded(child: SubscribeButton(profile: profile)),
-                  // Sharing is commented out until a share link resolves
-                  // (docs/launch-readiness.md §2.2).
+                  // Sharing is commented out until a share link resolves.
                   // Spaces.horizontalLarge,
                   // Expanded(
                   //   child: ShareProfileButton(profile: profile.target),

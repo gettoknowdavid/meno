@@ -1,8 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart' show ResponseBody;
-// The platform-channel import returns with the Copy Link test below
-// (docs/launch-readiness.md §2.2).
+// The platform-channel import returns with the Copy Link test below.
 // import 'package:flutter/services.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -189,8 +188,7 @@ void main() {
     await openSheet(tester);
 
     expect(find.text('Go to Profile'), findsOne);
-    // Copy Link is commented out until a share link resolves
-    // (docs/launch-readiness.md §2.2).
+    // Copy Link is commented out until a share link resolves.
     // expect(find.text('Copy Link'), findsOne);
 
     await tester.tap(find.text('Go to Profile'));
@@ -231,8 +229,8 @@ void main() {
     // expect(find.text('Copy Link'), findsOne);
   });
 
-  // Copy Link is commented out until a share link resolves
-  // (docs/launch-readiness.md §2.2). Restore with the sheet row.
+  // Copy Link is commented out until a share link resolves. Restore with
+  // the sheet row.
   //
   // testWidgets('Copy Link puts the broadcast deep link on the clipboard', (
   //   tester,

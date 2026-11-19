@@ -385,8 +385,7 @@ class _OptionsModal extends StatelessWidget {
           ],
           // Sharing and Copy Link are commented out: the link they build is
           // `https://meno.app/broadcasts/{id}`, and nothing serves that host
-          // yet, so a recipient gets a dead URL
-          // (docs/launch-readiness.md §2.2). The handlers stay below so the
+          // yet, so a recipient gets a dead URL. The handlers stay below so the
           // surface can be restored once the landing page exists.
           // Spaces.verticalSmall,
           // MModalListTile(

@@ -282,8 +282,7 @@ class PreStreamActionButtons extends WatchingWidget {
               },
             ),
           ),
-          // Sharing is commented out until a share link resolves
-          // (docs/launch-readiness.md §2.2).
+          // Sharing is commented out until a share link resolves.
           // Spaces.horizontalSmall,
           // Expanded(
           //   child: MSecondaryButton(label: 'Share', onPressed: () {}),

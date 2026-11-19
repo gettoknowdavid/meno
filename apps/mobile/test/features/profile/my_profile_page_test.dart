@@ -129,8 +129,7 @@ void main() {
     expect(find.text('Subscriptions'), findsOneWidget);
     expect(find.text('FREE ACCOUNT'), findsOneWidget);
     expect(find.text('Edit profile'), findsOneWidget);
-    // Sharing is commented out until a share link resolves
-    // (docs/launch-readiness.md §2.2).
+    // Sharing is commented out until a share link resolves.
     // expect(find.text('Share profile'), findsOneWidget);
 
     // The plan row: the tag, then the action as a plain text button beside it.
