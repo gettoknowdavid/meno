@@ -105,9 +105,11 @@ void main() {
 
     expect(termsBox(tester).value, isTrue);
 
+    // The link opens the terms themselves rather than only accepting them.
     await tester.tap(find.text('Terms of Service'));
     await tester.pumpAndSettle();
 
+    expect(find.text('Terms & Conditions'), findsOneWidget);
     expect(termsBox(tester).value, isTrue);
 
     await unmountTree(tester);

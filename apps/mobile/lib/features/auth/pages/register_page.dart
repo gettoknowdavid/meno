@@ -5,6 +5,8 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_routing/routes.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/onboarding/manager/onboarding_manager.dart';
+import 'package:meno_mobile/features/settings/model/legal_documents.dart';
+import 'package:meno_mobile/features/settings/pages/legal_document_page.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// Creates an account.
@@ -266,7 +268,7 @@ class _TermsAndConditionsCheckBox extends WatchingWidget {
       key: const Key('register_form_terms'),
       label: 'By continuing you agree to our ',
       actionLabel: 'Terms of Service',
-      onAction: () {},
+      onAction: () => showLegalDocumentSheet(context, legalTermsOfUse),
       enabled: !isRunning,
       value: terms.input,
       onChanged: di<RegisterFormManager>().onTermsChanged,

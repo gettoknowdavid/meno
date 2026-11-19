@@ -371,7 +371,22 @@ List<RouteBase> get _settingsRoutes => [
         path: 'security',
         builder: (_, _) => const SecuritySettingsPage(),
       ),
-      GoRoute(path: 'about', builder: (_, _) => const AboutPage()),
+      GoRoute(
+        path: 'about',
+        builder: (_, _) => const AboutPage(),
+        routes: [
+          GoRoute(
+            path: 'privacy',
+            builder: (_, _) =>
+                const LegalDocumentPage(document: legalPrivacyPolicy),
+          ),
+          GoRoute(
+            path: 'terms',
+            builder: (_, _) =>
+                const LegalDocumentPage(document: legalTermsOfUse),
+          ),
+        ],
+      ),
       GoRoute(
         path: 'bible/translations',
         builder: (_, _) => const BibleTranslationsPage(),
