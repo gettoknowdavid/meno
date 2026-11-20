@@ -633,25 +633,50 @@ async fn a_message_may_be_deleted_after_the_broadcast_ends() {
 // ── reactions ─────────────────────────────────────────────────────────────
 
 #[tokio::test]
-async fn a_reaction_from_a_participant_is_stored_and_announced() {
+async fn a_reaction_from_a_participant_is_announced() {
     let h = harness();
 
     let sent = h
         .service
-        .send_reaction(h.member(grace()), "👏")
+        .send_reaction(h.member(grace()), "clap")
         .await
         .expect("a participant may react");
 
-    assert_eq!(sent.content, "👏");
+    assert_eq!(sent.content, "clap");
     assert_eq!(sent.sender_id, grace());
     assert_eq!(sent.broadcast_id, room());
-    assert_eq!(h.repo.reactions().len(), 1);
 
     assert_eq!(h.announced(), vec![WsEvent::NewReaction]);
     let payload = only_announcement(&h);
-    assert_eq!(payload.data["content"], "👏");
+    assert_eq!(payload.data["content"], "clap");
     assert_eq!(payload.data["senderId"], grace().to_string());
+    assert_eq!(payload.data["id"], sent.id.to_string());
     assert_eq!(h.publisher.published()[0].0, room());
+}
+
+#[tokio::test]
+async fn two_identical_reactions_are_two_frames_with_two_ids() {
+    // Nothing stores a reaction, so nothing can hand one id to two taps. A client that
+    // deduplicates by id — `ReactionsManager` does — would draw one picture instead of
+    // two if the id were a row's.
+    let h = harness();
+
+    let first = h
+        .service
+        .send_reaction(h.member(grace()), "clap")
+        .await
+        .expect("a participant may react");
+    let second = h
+        .service
+        .send_reaction(h.member(grace()), "clap")
+        .await
+        .expect("and again");
+
+    assert_ne!(first.id, second.id);
+    assert_eq!(
+        h.announced(),
+        vec![WsEvent::NewReaction, WsEvent::NewReaction]
+    );
 }
 
 #[tokio::test]
@@ -661,12 +686,11 @@ async fn a_reaction_outside_a_live_broadcast_is_refused_and_silent() {
 
     let failure = h
         .service
-        .send_reaction(h.member(ada()), "👏")
+        .send_reaction(h.member(ada()), "clap")
         .await
         .expect_err("an ended broadcast accepts nothing");
 
     assert_eq!(failure.code(), ErrorCode::Conflict);
-    assert!(h.repo.reactions().is_empty());
     h.assert_silent();
 }
 
@@ -676,12 +700,30 @@ async fn a_reaction_from_somebody_outside_the_room_is_forbidden() {
 
     let failure = h
         .service
-        .send_reaction(h.member(stranger()), "👏")
+        .send_reaction(h.member(stranger()), "clap")
         .await
         .expect_err("only participants may react");
 
     assert_eq!(failure.code(), ErrorCode::NotParticipant);
-    assert!(h.repo.reactions().is_empty());
+    h.assert_silent();
+}
+
+#[tokio::test]
+async fn a_reaction_from_an_account_the_host_blocked_is_refused() {
+    // The third clause of the guard. A reaction used to inherit all three from the
+    // guarded insert; the read that replaced it has to keep them, and the block is the
+    // one a "is it live and are they in it" shortcut would drop.
+    let h = harness();
+    h.repo.set_creator(room(), ada());
+    h.repo.add_block(ada(), grace());
+
+    let failure = h
+        .service
+        .send_reaction(h.member(grace()), "clap")
+        .await
+        .expect_err("a host who blocked somebody does not hear them");
+
+    assert_eq!(failure.code(), ErrorCode::Forbidden);
     h.assert_silent();
 }
 
@@ -698,7 +740,7 @@ async fn every_announcement_names_the_room_it_belongs_to() {
         .await
         .expect("posts");
     h.service
-        .send_reaction(h.member(ada()), "👏")
+        .send_reaction(h.member(ada()), "clap")
         .await
         .expect("reacts");
 

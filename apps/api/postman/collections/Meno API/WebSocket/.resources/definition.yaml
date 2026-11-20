@@ -96,7 +96,7 @@ description: |-
   | `sendMessage` | `broadcastId`, `content` (1–2000 chars) | Send a chat message |
   | `editMessage` | `broadcastId`, `messageId`, `content` | Edit your own message |
   | `deleteMessage` | `broadcastId`, `messageId` | Delete your own message |
-  | `sendReaction` | `broadcastId`, `messageId`, `emoji` | React to a message |
+  | `sendReaction` | `broadcastId`, `content` (one of `clap`, `flame`, `like`, `raise`, `snap`) | React to the broadcast; at most 80 frames per 10 s per account |
 
   ## Error codes (`broadcastError.data.code`)
 

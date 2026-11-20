@@ -39,7 +39,7 @@
 #![allow(clippy::expect_used, clippy::unwrap_used, clippy::panic)]
 #![cfg(feature = "test-support")]
 
-use meno_api::modules::chat::model::{NewMessage, NewReaction};
+use meno_api::modules::chat::model::NewMessage;
 use meno_api::modules::chat::repository::{ChatRepo, MessageFilter, PgChatRepo};
 use meno_core::ErrorCode;
 use sqlx::PgPool;
@@ -276,32 +276,29 @@ async fn a_deleted_broadcast_admits_nothing(#[allow(unused_variables)] pool: PgP
 }
 
 #[sqlx::test(migrations = "../../crates/db/migrations")]
-async fn a_reaction_is_guarded_exactly_like_a_message(#[allow(unused_variables)] pool: PgPool) {
+async fn a_reaction_is_admitted_exactly_where_a_message_is(
+    #[allow(unused_variables)] pool: PgPool,
+) {
     with_pool!(|pool| {
         fixtures(&pool).await;
         let repo = PgChatRepo::new(pool.clone());
 
-        let reaction = repo
-            .insert_reaction(NewReaction {
-                broadcast_id: room(),
-                sender_id: ada(),
-                content: "👏",
-            })
-            .await
-            .expect("the statement runs")
-            .expect("a participant of a live broadcast may react");
-        assert_eq!(reaction.content, "👏");
-        assert_eq!(reaction.sender_id, ada());
-
-        let refused = repo
-            .insert_reaction(NewReaction {
-                broadcast_id: room(),
-                sender_id: grace(),
-                content: "👏",
-            })
-            .await
-            .expect("the statement runs");
-        assert!(refused.is_none(), "the same guard refuses the same states");
+        // The guard is a read now — no row is written — so this is the whole question a
+        // reaction asks Postgres, and it must answer the same way the message insert's
+        // `WHERE` clause does.
+        assert!(
+            repo.may_react(room(), ada())
+                .await
+                .expect("the statement runs"),
+            "a participant of a live broadcast may react"
+        );
+        assert!(
+            !repo
+                .may_react(room(), grace())
+                .await
+                .expect("the statement runs"),
+            "somebody outside the room may not"
+        );
 
         sqlx::query("UPDATE broadcasts SET status = 'ended', end_time = now() WHERE id = $1")
             .bind(room())
@@ -309,16 +306,11 @@ async fn a_reaction_is_guarded_exactly_like_a_message(#[allow(unused_variables)]
             .await
             .expect("the broadcast ends");
 
-        let after = repo
-            .insert_reaction(NewReaction {
-                broadcast_id: room(),
-                sender_id: ada(),
-                content: "👏",
-            })
-            .await
-            .expect("the statement runs");
         assert!(
-            after.is_none(),
+            !repo
+                .may_react(room(), ada())
+                .await
+                .expect("the statement runs"),
             "an ended broadcast accepts no reaction either"
         );
     });
@@ -617,10 +609,6 @@ async fn every_column_the_module_selects_exists_in_the_schema(
             ("chat_messages", "created_at"),
             ("chat_messages", "updated_at"),
             ("chat_messages", "deleted_at"),
-            ("chat_reactions", "content"),
-            ("chat_reactions", "sender_id"),
-            ("chat_reactions", "broadcast_id"),
-            ("chat_reactions", "created_at"),
         ] {
             let exists: bool = sqlx::query_scalar(
                 "SELECT EXISTS (SELECT 1 FROM information_schema.columns \

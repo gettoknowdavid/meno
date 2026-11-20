@@ -1,19 +1,21 @@
 import 'package:flutter_reaction_button/flutter_reaction_button.dart';
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/features/chat/model/reaction.dart';
 import 'package:meno_ui/meno_ui.dart';
 
-/// The reactions the design offers, in the design system's asset pack.
-enum ReactionType { clap, flame, like, raise, snap }
-
-/// One reaction: its value and the emoji that draws it.
+/// One reaction: its type and the emoji that draws it.
 class MenoReaction {
+  /// Creates one entry of the pack.
   const new(this.reactionType, this.icon);
 
+  /// Which of the five it is.
   final ReactionType reactionType;
+
+  /// The picture, at the size the pickers draw it.
   final Widget icon;
 }
 
-/// Every reaction, for a picker that lists them all.
+/// Every reaction the room offers, in the design system's asset pack.
 final reactions = <MenoReaction>[
   MenoReaction(
     ReactionType.clap,
@@ -41,42 +43,17 @@ final reactions = <MenoReaction>[
   ),
 ];
 
-/// The reactions the composer's strip offers.
+/// The same five, keyed for the overlay's sprites.
+final Map<ReactionType, MenoReaction> _byType = {
+  for (final reaction in reactions) reaction.reactionType: reaction,
+};
+
+/// The picture for [type], or nothing when this build has no asset for it.
+Widget reactionIcon(ReactionType type) =>
+    _byType[type]?.icon ?? const SizedBox.shrink();
+
+/// The reactions the composers' strips offer, built from the same five.
 final mainReactions = <Reaction<ReactionType>>[
-  Reaction(
-    value: ReactionType.clap,
-    icon: Assets.images.clappingHands.image(
-      package: 'meno_ui',
-      height: 20,
-      width: 20,
-    ),
-  ),
-  Reaction(
-    value: ReactionType.flame,
-    icon: Assets.images.flame.image(package: 'meno_ui', height: 20, width: 20),
-  ),
-  Reaction(
-    value: ReactionType.like,
-    icon: Assets.images.redHeart.image(
-      package: 'meno_ui',
-      height: 20,
-      width: 20,
-    ),
-  ),
-  Reaction(
-    value: ReactionType.raise,
-    icon: Assets.images.raisingHands.image(
-      package: 'meno_ui',
-      height: 20,
-      width: 20,
-    ),
-  ),
-  Reaction(
-    value: ReactionType.snap,
-    icon: Assets.images.fingerSnap.image(
-      package: 'meno_ui',
-      height: 20,
-      width: 20,
-    ),
-  ),
+  for (final reaction in reactions)
+    Reaction(value: reaction.reactionType, icon: reaction.icon),
 ];

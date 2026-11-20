@@ -42,9 +42,7 @@ use uuid::Uuid;
 use super::{ChatRepo, MessageFilter};
 use crate::infrastructure::query::{ColumnName, push_cursor_condition, push_order_and_limit};
 use crate::modules::chat::error;
-use crate::modules::chat::model::{
-    ChatMessage, ChatReaction, NewMessage, NewReaction, SenderSummary,
-};
+use crate::modules::chat::model::{ChatMessage, NewMessage, SenderSummary};
 use meno_core::Error as MenoError;
 
 /// Postgres-backed storage for the chat module.
@@ -175,17 +173,37 @@ fn insert_message_statement() -> AssertSqlSafe<String> {
     ))
 }
 
-/// Insert a reaction the guard admits, and return it.
+/// [`WRITE_GUARD`] asked as a question instead of enforced on a write.
 ///
-/// Spliced from [`WRITE_GUARD`], the same const the message insert uses, so the two can
-/// only ever admit the same states.
-fn insert_reaction_statement() -> AssertSqlSafe<String> {
-    statement(&format!(
-        "INSERT INTO chat_reactions (content, sender_id, broadcast_id)\n\
-         SELECT $1, $2, $3\n\
-         {WRITE_GUARD}\n\
-         RETURNING id, broadcast_id, sender_id, content, created_at"
-    ))
+/// The same three clauses — live, in the room, not blocked by the host — because a
+/// reaction is held to the same rule as a message. It is a `SELECT EXISTS` rather than an
+/// `INSERT … WHERE EXISTS` because there is nothing to write: the reaction exists as the
+/// frame that is published, so the only thing the repository still owes it is the answer.
+///
+/// `$1` is the broadcast and `$2` the account; the write guard numbers them `$3` and `$2`
+/// because its bind order is content-first.
+fn reaction_guard_statement() -> AssertSqlSafe<String> {
+    statement(
+        "SELECT EXISTS (\n\
+             SELECT 1\n\
+             FROM broadcasts b\n\
+             WHERE b.id = $1\n\
+               AND b.status = 'active'\n\
+               AND b.end_time IS NULL\n\
+               AND b.deleted_at IS NULL\n\
+               AND EXISTS (\n\
+                     SELECT 1 FROM broadcast_participants p\n\
+                     WHERE p.broadcast_id = b.id\n\
+                       AND p.participant_id = $2\n\
+                       AND p.left_at IS NULL\n\
+                 )\n\
+               AND NOT EXISTS (\n\
+                     SELECT 1 FROM user_blocks ub\n\
+                     WHERE ub.blocker_id = b.creator_id\n\
+                       AND ub.blocked_id = $2\n\
+                 )\n\
+         )",
+    )
 }
 
 #[async_trait::async_trait]
@@ -305,19 +323,13 @@ impl ChatRepo for PgChatRepo {
             .map_err(|e| database("list_messages", e))
     }
 
-    async fn insert_reaction(
-        &self,
-        new: NewReaction<'_>,
-    ) -> Result<Option<ChatReaction>, MenoError> {
-        // The same guard as `insert_message`, spliced from the same const: a reaction is
-        // as much a thing said into a live room as a message is.
-        sqlx::query_as::<_, ChatReaction>(insert_reaction_statement())
-            .bind(new.content)
-            .bind(new.sender_id)
-            .bind(new.broadcast_id)
-            .fetch_optional(&self.pool)
+    async fn may_react(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
+        sqlx::query_scalar::<_, bool>(reaction_guard_statement())
+            .bind(broadcast_id)
+            .bind(user_id)
+            .fetch_one(&self.pool)
             .await
-            .map_err(|e| database("insert_reaction", e))
+            .map_err(|e| database("may_react", e))
     }
 
     async fn is_live_broadcast(&self, broadcast_id: Uuid) -> Result<bool, MenoError> {
@@ -401,7 +413,7 @@ mod tests {
         let spliced = [
             insert_message_statement().0,
             statement("SELECT {MESSAGE_SELECT} FROM chat_messages m").0,
-            insert_reaction_statement().0,
+            reaction_guard_statement().0,
         ];
 
         for sql in &spliced {
@@ -413,11 +425,12 @@ mod tests {
     }
 
     #[test]
-    fn both_writes_carry_the_same_guard() {
-        // The two guarded inserts must refuse for the same two reasons. Stated as a
-        // check on the SQL the driver would receive, because that is what a divergence
-        // would look like: one write that admits a message into an ended broadcast.
-        for sql in [insert_message_statement().0, insert_reaction_statement().0] {
+    fn the_reaction_guard_asks_the_same_questions_as_the_write_guard() {
+        // A reaction and a message are held to one rule, and the rule is written twice
+        // now — once as a `WHERE` on a write, once as an `EXISTS` — so this is what
+        // notices if the two drift: a reaction admitted into an ended broadcast, or one
+        // from an account the host has blocked.
+        for sql in [insert_message_statement().0, reaction_guard_statement().0] {
             let normalised = sql.split_whitespace().collect::<Vec<_>>().join(" ");
             for clause in [
                 "b.status = 'active'",

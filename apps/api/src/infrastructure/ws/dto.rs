@@ -22,12 +22,14 @@
 //!   into a frame containing `null` and no error anywhere. This keeps the fallback but
 //!   logs it, so the failure is visible.
 
+use std::borrow::Cow;
+
 use super::errors::{WsError, WsErrorCode};
 use super::model::WsEvent;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
-use validator::Validate;
+use validator::{Validate, ValidationError};
 
 /// A message sent from the server to a client.
 ///
@@ -440,14 +442,43 @@ pub struct WsDeleteMessage {
     pub message_id: Uuid,
 }
 
+/// The five reactions a client may send, as the tokens both clients use.
+///
+/// Tokens rather than emoji or free-form labels: the server can refuse anything else, a
+/// picture never depends on a font, and a frame every listener parses carries five
+/// characters at most. `ReactionType.wire` in
+/// `apps/mobile/lib/features/chat/model/reaction.dart` is this list.
+pub const REACTION_TOKENS: [&str; 5] = ["clap", "flame", "like", "raise", "snap"];
+
+/// Accept a reaction only when it is one of [`REACTION_TOKENS`].
+///
+/// `validate(length(..))` cannot express a set, and the column behind a reaction is wide
+/// enough for any label, so without this a client could put thirty-two characters of
+/// anything into a frame every other socket in the room has to parse and drop.
+fn reaction_token(content: &str) -> Result<(), ValidationError> {
+    if REACTION_TOKENS.contains(&content) {
+        return Ok(());
+    }
+
+    let mut error = ValidationError::new("reaction");
+    error.message = Some(Cow::Borrowed(
+        "must be one of: clap, flame, like, raise, snap",
+    ));
+    Err(error)
+}
+
 /// `sendReaction` request body.
+///
+/// No `messageId`: a reaction is not attached to a message — it floats over the stage —
+/// and no `senderId`, because the read loop fills the identity in from the socket.
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Validate)]
 #[serde(rename_all = "camelCase")]
 pub struct WsSendReaction {
     /// Broadcast to react in.
     pub broadcast_id: Uuid,
-    /// Emoji or short label. 1–32 characters.
-    #[validate(length(min = 1, max = 32))]
+    /// One of [`REACTION_TOKENS`], checked by `Validate` so the accepted set is stated
+    /// next to the field it protects rather than in each caller.
+    #[validate(custom(function = "reaction_token"))]
     pub content: String,
 }
 
@@ -694,24 +725,38 @@ mod tests {
     }
 
     #[test]
-    fn send_reaction_bounds_the_content_length() {
-        let ok = WsSendReaction {
-            broadcast_id: id(1),
-            content: "x".repeat(32),
-        };
-        assert!(validator::Validate::validate(&ok).is_ok());
+    fn send_reaction_accepts_only_the_five_tokens() {
+        // The set, not a length: every token is a frame the boundary must admit, or a
+        // client that taps the last button is told its reaction is invalid.
+        for token in REACTION_TOKENS {
+            let ok = WsSendReaction {
+                broadcast_id: id(1),
+                content: token.to_owned(),
+            };
+            assert!(
+                validator::Validate::validate(&ok).is_ok(),
+                "`{token}` is one of the five"
+            );
+        }
 
-        let too_long = WsSendReaction {
-            content: "x".repeat(33),
-            ..ok.clone()
-        };
-        assert!(validator::Validate::validate(&too_long).is_err());
-
-        let empty = WsSendReaction {
-            content: String::new(),
-            ..ok
-        };
-        assert!(validator::Validate::validate(&empty).is_err());
+        // Frames that fit the old 32-character bound and are refused now: an empty tap,
+        // an emoji (what `master`'s clients sent), the token with a suffix, and a long
+        // label.
+        for refused in [
+            String::new(),
+            "👏".to_owned(),
+            "clapping".to_owned(),
+            "x".repeat(32),
+        ] {
+            let bad = WsSendReaction {
+                broadcast_id: id(1),
+                content: refused.clone(),
+            };
+            assert!(
+                validator::Validate::validate(&bad).is_err(),
+                "`{refused}` is not one of the five"
+            );
+        }
     }
 
     #[test]

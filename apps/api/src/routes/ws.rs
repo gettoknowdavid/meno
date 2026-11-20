@@ -90,6 +90,16 @@ use crate::state::MenoState;
 /// authenticate (HMAC + blocklist round trip) plus an upgrade per attempt, forever.
 const MAX_RECONNECTS_PER_WINDOW: u64 = 10;
 
+/// Reaction frames one account may send into one room per [`ttl::REACTION_RATE`].
+///
+/// The mobile client sends at most four a second — one leading frame plus one trailing
+/// per 250 ms (`ReactionsManager`) — so ten seconds is forty at its honest ceiling. The
+/// budget is twice that: a person tapping a burst, or a build that predates the client's
+/// own throttle, is normal, and what this bounds is a flood rather than enthusiasm.
+/// Without it, one socket can make every other listener in the room parse frames at
+/// whatever rate it cares to send.
+const MAX_REACTIONS_PER_WINDOW: u64 = 80;
+
 /// The message every refused handshake gets when it presents no usable token.
 ///
 /// One message for "missing", "empty" and "whitespace-only" so the response is not an
@@ -593,6 +603,58 @@ async fn handle_client_message(state: &MenoState, user_id: Uuid, raw: &str) {
     }
 }
 
+/// Whether this reaction frame is inside the account's budget for the room.
+///
+/// Counts every frame, including ones the service will refuse: a frame that costs a
+/// guard read and a Redis increment is worth counting whether or not a refused one is
+/// admitted, or a client could spend the budget twice by reacting to a room it is not in.
+///
+/// # A refused frame is dropped in silence, deliberately
+///
+/// Every other refusal on this path answers on the socket, because the client is showing
+/// the frame it sent and needs to know it did not land. A reaction is not that: it has no
+/// acknowledgement, and answering a flood with one error frame per refused frame doubles
+/// the traffic the flood causes. The crossing is logged once per refusal at `warn` so a
+/// room being hammered is visible without a line per dropped tap.
+///
+/// # It fails open, unlike [`check_reconnect_rate`]
+///
+/// That limiter is closed on a Redis failure because refusing connections is itself a
+/// defence against a reconnect storm. This one is open: with Redis down the room's
+/// pub/sub is down too, so the frame could not be delivered anyway, and refusing it would
+/// trade a missing emoji for an error the client cannot act on.
+async fn reaction_is_allowed(state: &MenoState, broadcast_id: Uuid, user_id: Uuid) -> bool {
+    let key = RedisKey::reaction_rate(broadcast_id, user_id, ttl::REACTION_RATE);
+
+    let count = match state.redis.incr_and_expire_if_first(&key).await {
+        Ok(count) => count,
+        Err(error) => {
+            // Logged, never returned: the client is not told about our cache (§9.1), and
+            // the frame itself is admitted.
+            tracing::warn!(
+                user.id = %user_id,
+                broadcast_id = %broadcast_id,
+                detail = %error,
+                "could not check the reaction rate"
+            );
+            return true;
+        }
+    };
+
+    if count > MAX_REACTIONS_PER_WINDOW {
+        tracing::warn!(
+            user.id = %user_id,
+            broadcast_id = %broadcast_id,
+            count,
+            limit = MAX_REACTIONS_PER_WINDOW,
+            "reaction flood suppressed"
+        );
+        return false;
+    }
+
+    true
+}
+
 /// Parse one chat frame, call the rule it names, and answer honestly.
 ///
 /// # Why the parse lives here rather than in the chat module
@@ -698,6 +760,11 @@ async fn handle_chat_frame(state: &MenoState, user_id: Uuid, message: &ClientMes
             let Ok(request) = parse_frame::<WsSendReaction>(state, user_id, message).await else {
                 return;
             };
+            // Before the service, so a flood never reaches the repository: the budget is
+            // the frame's own limit, not the room's rule.
+            if !reaction_is_allowed(state, request.broadcast_id, user_id).await {
+                return;
+            }
             match state
                 .chat
                 .service
@@ -882,6 +949,18 @@ mod tests {
         assert!(wrong_shape.is_err());
         let not_an_object: Result<WsSendMessage, String> = read_frame(&json!("hi"));
         assert!(not_an_object.is_err());
+    }
+
+    #[test]
+    fn the_reaction_budget_is_a_flood_limit_not_a_tap_limit() {
+        // The client sends at most four a second (leading frame plus a 250 ms trailing
+        // one), so the budget must sit above that over the whole window — or an honest
+        // person holding the button down is cut off — and far below what a socket can
+        // emit, or there is no guard at all.
+        const WINDOW_SECONDS: u64 = 10;
+        assert_eq!(ttl::REACTION_RATE.as_secs(), WINDOW_SECONDS);
+        assert!(MAX_REACTIONS_PER_WINDOW >= WINDOW_SECONDS * 4);
+        assert!(MAX_REACTIONS_PER_WINDOW <= WINDOW_SECONDS * 20);
     }
 
     #[test]

@@ -48,7 +48,7 @@ use uuid::Uuid;
 pub use memory::InMemoryChatRepo;
 pub use pg::PgChatRepo;
 
-use super::model::{ChatMessage, ChatReaction, NewMessage, NewReaction};
+use super::model::{ChatMessage, NewMessage};
 
 /// The chat module's storage.
 #[async_trait]
@@ -96,11 +96,17 @@ pub trait ChatRepo: Send + Sync + std::fmt::Debug {
     /// without a second `COUNT` query.
     async fn list_messages(&self, filter: MessageFilter) -> Result<Vec<ChatMessage>, MenoError>;
 
-    /// Store a reaction, guarded like [`Self::insert_message`].
-    async fn insert_reaction(
-        &self,
-        new: NewReaction<'_>,
-    ) -> Result<Option<ChatReaction>, MenoError>;
+    /// Whether this account may react in this broadcast right now: the broadcast is
+    /// live, the account is in the room, and its host has not blocked them.
+    ///
+    /// Asked rather than enforced, because a reaction is not stored. The message
+    /// insert's guard clauses exist to make a refused write write nothing; with no row
+    /// to write,
+    /// the same clauses are one question answered in one round trip, which is cheaper
+    /// than the insert it replaces and has no race to close — a frame that reaches a
+    /// room as it ends costs an emoji, not a row. See
+    /// [`super::service::ChatService::send_reaction`].
+    async fn may_react(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError>;
 
     /// Whether the broadcast is live right now: not ended, not deleted.
     ///

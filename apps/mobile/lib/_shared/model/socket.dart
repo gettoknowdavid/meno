@@ -55,12 +55,17 @@ enum SocketEvent {
   newMessage('newMessage'),
   editedMessage('editedMessage'),
   deletedMessage('deletedMessage'),
+  // Server → client: a reaction somebody in the room sent. It carries an id, a
+  // sender id and a short label, and belongs to the broadcast rather than to a
+  // message — YouTube-style live reactions, not per-message ones.
+  newReaction('newReaction'),
   notification('notification'),
-  // Client → server: chat (the only frames the server accepts besides
-  // heartbeat).
+  // Client → server: chat and reactions (the only frames the server accepts
+  // besides heartbeat).
   sendChatMessage('sendMessage'),
   editChatMessage('editMessage'),
-  deleteChatMessage('deleteMessage');
+  deleteChatMessage('deleteMessage'),
+  sendReaction('sendReaction');
 
   new(this.value);
 

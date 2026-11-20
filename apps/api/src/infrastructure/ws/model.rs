@@ -96,7 +96,10 @@ pub enum WsEvent {
     EditedMessage,
     /// Server → client: a chat message was deleted.
     DeletedMessage,
-    /// Server → client: a reaction was added or removed.
+    /// Server → client: somebody reacted, and the room should draw it.
+    ///
+    /// A reaction is never taken back: nothing removes one, so this event only ever
+    /// announces.
     NewReaction,
     /// Client → server: send a chat message.
     SendMessage,
@@ -104,7 +107,11 @@ pub enum WsEvent {
     EditMessage,
     /// Client → server: delete a chat message.
     DeleteMessage,
-    /// Client → server: react to a chat message.
+    /// Client → server: send one of the five reactions to the room.
+    ///
+    /// Not "react to a message": a reaction is not attached to one. The frame
+    /// ([`crate::infrastructure::ws::dto::WsSendReaction`]) carries a broadcast id and a
+    /// token, and the picture floats over the stage, where no message is involved.
     SendReaction,
 }
 

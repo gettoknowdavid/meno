@@ -10,4 +10,5 @@ export 'editing_message_widget.dart';
 export 'horizontal_popup_menu.dart';
 export 'live_chat_tab.dart';
 export 'reaction_button.dart';
+export 'reaction_overlay.dart';
 export 'reactions.dart';

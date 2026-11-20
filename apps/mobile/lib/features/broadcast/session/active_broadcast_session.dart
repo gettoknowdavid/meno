@@ -8,6 +8,7 @@ import 'package:meno_mobile/features/broadcast/manager/participants_manager.dart
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/chat/manager/chat_list_manager.dart';
 import 'package:meno_mobile/features/chat/manager/chat_manager.dart';
+import 'package:meno_mobile/features/chat/manager/reactions_manager.dart';
 
 /// Why a session is closing.
 ///
@@ -130,6 +131,7 @@ final class ActiveBroadcastSession {
     this.participants,
     this.chat,
     this.chatList,
+    this.reactions,
     this.cohostEvents,
     this._exitOnServer,
     Duration? initialElapsed,
@@ -185,6 +187,13 @@ final class ActiveBroadcastSession {
   /// The room's chat history and the frames that change it. Owned here too —
   /// the chat is per room, and a container lookup would outlive it.
   final ChatListManager? chatList;
+
+  /// The room's live reactions: what floats over the stage, and what both
+  /// reaction strips send through.
+  ///
+  /// Owned like the chat, because a reaction belongs to one room: closed here,
+  /// a frame that arrives after the room is gone has nowhere to be drawn.
+  final ReactionsManager? reactions;
 
   /// The on-air clock, owned for as long as this session is.
   late final BroadcastTimerManager timer;
@@ -493,6 +502,7 @@ final class ActiveBroadcastSession {
   Future<void> _detachChat() async {
     await chatList?.onDispose();
     await chat?.onDispose();
+    await reactions?.onDispose();
   }
 
   /// Runs one teardown step, logging a failure instead of letting it skip the

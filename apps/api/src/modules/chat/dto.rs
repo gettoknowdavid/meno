@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use super::model::{ChatMessage, ChatReaction, SenderSummary};
+use super::model::{ChatMessage, SenderSummary};
 
 /// `GET /broadcasts/{id}/chat/messages` — the page controls, and nothing else.
 ///
@@ -86,37 +86,29 @@ impl From<ChatMessage> for ChatMessageResponse {
     }
 }
 
-/// One reaction, as the `newReaction` frame and the HTTP answer to a reaction carry it.
+/// One reaction, as the `newReaction` frame carries it.
 ///
-/// `senderId` rather than a full sender summary: a reaction renders as an emoji under a
-/// message whose sender the client already has, so the extra join would be payload for
-/// nothing.
+/// `senderId` rather than a full sender summary: a reaction renders as a picture the
+/// room already has assets for, and the sender is only needed to tell this device's own
+/// frame from everybody else's, so the extra join would be payload for nothing.
+///
+/// This is the *only* place a reaction exists. Nothing stores one — see
+/// [`super::service::ChatService::send_reaction`] — so the `id` is minted per frame.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatReactionResponse {
-    /// The reaction id.
+    /// The reaction id, minted for this frame: two taps of the same button are two ids.
     pub id: Uuid,
     /// The broadcast it was sent in.
     pub broadcast_id: Uuid,
     /// Who reacted.
     pub sender_id: Uuid,
-    /// The emoji or short label.
+    /// Which of the five it is, as a token from
+    /// [`crate::infrastructure::ws::dto::REACTION_TOKENS`].
     pub content: String,
     /// When it was sent.
     #[serde(with = "time::serde::rfc3339")]
     pub created_at: OffsetDateTime,
-}
-
-impl From<ChatReaction> for ChatReactionResponse {
-    fn from(reaction: ChatReaction) -> Self {
-        Self {
-            id: reaction.id,
-            broadcast_id: reaction.broadcast_id,
-            sender_id: reaction.sender_id,
-            content: reaction.content,
-            created_at: reaction.created_at,
-        }
-    }
 }
 
 #[cfg(test)]
@@ -124,7 +116,7 @@ mod tests {
     //! The wire shape, asserted key by key.
 
     use super::*;
-    use crate::modules::chat::model::{EDIT_WINDOW_SECONDS, MESSAGE_MAX_CHARS, REACTION_MAX_CHARS};
+    use crate::modules::chat::model::{EDIT_WINDOW_SECONDS, MESSAGE_MAX_CHARS};
 
     fn message() -> ChatMessage {
         ChatMessage {
@@ -207,19 +199,19 @@ mod tests {
 
     #[test]
     fn a_reaction_carries_its_sender_id_and_no_summary() {
-        let reaction = ChatReaction {
+        let reaction = ChatReactionResponse {
             id: Uuid::from_u128(1),
             broadcast_id: Uuid::from_u128(2),
             sender_id: Uuid::from_u128(3),
-            content: "👏".to_owned(),
+            content: "clap".to_owned(),
             created_at: OffsetDateTime::from_unix_timestamp(1_700_000_000)
                 .expect("a plausible fixture instant"),
         };
 
-        let json = serde_json::to_value(ChatReactionResponse::from(reaction)).expect("serialises");
+        let json = serde_json::to_value(reaction).expect("serialises");
 
         assert_eq!(json["senderId"], Uuid::from_u128(3).to_string());
-        assert_eq!(json["content"], "👏");
+        assert_eq!(json["content"], "clap");
         assert!(json.get("sender").is_none(), "{json}");
     }
 
@@ -260,10 +252,10 @@ mod tests {
 
     #[test]
     fn the_limits_mirror_the_columns_they_protect() {
-        // The migration's `VARCHAR(256)` and `VARCHAR(32)` are the reason these are what
-        // they are; if a migration widens a column this test is what notices.
+        // The migration's `VARCHAR(256)` is the reason this is what it is; if a migration
+        // widens the column this test is what notices. A reaction has no length rule any
+        // more — the boundary admits five fixed tokens.
         assert_eq!(MESSAGE_MAX_CHARS, 256);
-        assert_eq!(REACTION_MAX_CHARS, 32);
         assert_eq!(EDIT_WINDOW_SECONDS, 900);
     }
 }

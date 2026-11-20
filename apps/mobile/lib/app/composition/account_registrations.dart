@@ -385,6 +385,7 @@ Future<void> registerAccountScope(
           socket: di<BroadcastSocketService>(),
           broadcastId: session.broadcast.id,
         );
+        
         // The room's chat, built with the session and closed with it. Both
         // managers take the room's ids rather than the session, so neither can
         // outlive the identity it writes into a frame.
@@ -394,8 +395,18 @@ Future<void> registerAccountScope(
           userId: session.userId,
           logger: di<MenoLogger>(),
         );
+        
         final chatList = ChatListManager(
           http: di<ChatHttpService>(),
+          socket: di<ChatSocketService>(),
+          broadcastId: session.broadcast.id,
+          userId: session.userId,
+          logger: di<MenoLogger>(),
+        );
+        
+        // The room's reactions: the floating layer's source and the one place
+        // both strips send through. Built with the room for the same reason.
+        final reactions = ReactionsManager(
           socket: di<ChatSocketService>(),
           broadcastId: session.broadcast.id,
           userId: session.userId,
@@ -409,6 +420,7 @@ Future<void> registerAccountScope(
           participants: participants,
           chat: chat,
           chatList: chatList,
+          reactions: reactions,
           cohostEvents: di<BroadcastSocketService>().onCohostEvent,
           clock: di<Clock>(),
           logger: di<MenoLogger>(),

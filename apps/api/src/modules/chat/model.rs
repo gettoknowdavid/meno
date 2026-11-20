@@ -14,6 +14,12 @@
 //!   the instant, so the boundary is asserted in a test instead of assumed.
 //! - **`is_edited` is derived, not stored.** `updated_at.is_some()` is the fact;
 //!   `master` carried a redundant field that could disagree with it.
+//! - **A reaction is not a row.** This tree inserted one `chat_reactions` row per tap
+//!   and nothing ever read it back: there is no endpoint, no page and no projection over
+//!   reactions, and the client draws them from the fan-out alone. At four taps a second
+//!   per listener that is a table of dead weight on a free-tier database, so
+//!   [`super::service::ChatService::send_reaction`] announces the frame and stores
+//!   nothing; the id it carries is minted for that frame.
 
 use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
@@ -33,12 +39,6 @@ pub const EDIT_WINDOW_SECONDS: i64 = 900;
 /// would be a truncation error from the driver rather than a validation message a
 /// client can act on. Stated once, next to the column it mirrors.
 pub const MESSAGE_MAX_CHARS: usize = 256;
-
-/// The largest reaction this API accepts, in characters.
-///
-/// `chat_reactions.content` is `VARCHAR(32)`: enough for an emoji (four code points) and
-/// a short label, short enough that a reaction cannot become a message.
-pub const REACTION_MAX_CHARS: usize = 32;
 
 /// A message as the chat module reads it: the row, plus who sent it.
 ///
@@ -88,27 +88,6 @@ impl ChatMessage {
     }
 }
 
-/// A reaction as the chat module reads it.
-///
-/// Reactions are append-only and never edited or deleted (§2's tree), so there is no
-/// `updated_at` and no window.
-///
-/// `FromRow`-able directly, unlike [`ChatMessage`]: a reaction carries its sender's id
-/// and nothing else, so there is no join to flatten.
-#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
-pub struct ChatReaction {
-    /// Primary key.
-    pub id: Uuid,
-    /// The broadcast the reaction was sent in.
-    pub broadcast_id: Uuid,
-    /// Who reacted.
-    pub sender_id: Uuid,
-    /// The emoji or short label, 1–[`REACTION_MAX_CHARS`] characters.
-    pub content: String,
-    /// When it was sent.
-    pub created_at: OffsetDateTime,
-}
-
 /// Who wrote a message, as the wire carries them.
 ///
 /// This module's own projection rather than `broadcast::model::UserSummary`, because the
@@ -143,17 +122,6 @@ pub struct NewMessage<'a> {
     /// Who is posting.
     pub sender_id: Uuid,
     /// The body, already validated by the boundary.
-    pub content: &'a str,
-}
-
-/// The fields a new `chat_reactions` row needs.
-#[derive(Debug, Clone, Copy)]
-pub struct NewReaction<'a> {
-    /// The broadcast to react in.
-    pub broadcast_id: Uuid,
-    /// Who is reacting.
-    pub sender_id: Uuid,
-    /// The reaction, already validated by the boundary.
     pub content: &'a str,
 }
 

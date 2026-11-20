@@ -101,3 +101,40 @@ abstract class DeleteMessageDto with _$DeleteMessageDto {
   factory fromJson(Map<String, dynamic> json) =>
       _$DeleteMessageDtoFromJson(json);
 }
+
+/// Reads one `newReaction` body as the room's entity.
+///
+/// A function rather than a DTO class: the frame is four flat fields whose
+/// whole purpose is to become a [ChatReaction] immediately, so an intermediate
+/// type would only be something to write and then unwrap. `createdAt` is on the
+/// wire and not read — see [ChatReaction].
+///
+/// The ids go through [Id.fromWire] rather than [Id.fromString]: a frame whose
+/// ids are not UUIDs is a response this build cannot act on, and the socket
+/// service turns that into one dropped frame and a log line.
+ChatReaction parseChatReaction(Map<String, dynamic> json) => ChatReaction(
+  id: json['id'] as String,
+  broadcastId: Id.fromWire(json['broadcastId'] as String),
+  senderId: Id.fromWire(json['senderId'] as String),
+  content: json['content'] as String,
+);
+
+/// What the client sends, as `WsSendReaction` names it.
+///
+/// No `senderId`: the API fills the identity in from the authenticated socket.
+final class SendReactionDto {
+  /// Creates the frame for one reaction.
+  const new({required this.broadcastId, required this.content});
+
+  /// The room to react in.
+  final String broadcastId;
+
+  /// The reaction's wire token, 1–32 characters.
+  final String content;
+
+  /// The frame's `data`.
+  Map<String, Object?> toJson() => {
+    'broadcastId': broadcastId,
+    'content': content,
+  };
+}

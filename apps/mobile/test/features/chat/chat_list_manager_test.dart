@@ -69,6 +69,7 @@ final class _FakeChannel implements ChatSocketChannel {
   final editedMessage = StreamController<Message>.broadcast();
   final deletedMessage = StreamController<DeletedMessageSignal>.broadcast();
   final reconnected = StreamController<void>.broadcast();
+  final reaction = StreamController<ChatReaction>.broadcast();
 
   @override
   Stream<Message> get onNewMessage => newMessage.stream;
@@ -78,6 +79,9 @@ final class _FakeChannel implements ChatSocketChannel {
 
   @override
   Stream<DeletedMessageSignal> get onDeletedMessage => deletedMessage.stream;
+
+  @override
+  Stream<ChatReaction> get onReaction => reaction.stream;
 
   @override
   Stream<void> get onReconnected => reconnected.stream;
@@ -95,11 +99,15 @@ final class _FakeChannel implements ChatSocketChannel {
   @override
   void deleteMessage({required Id broadcastId, required Id messageId}) {}
 
+  @override
+  void sendReaction({required Id broadcastId, required ReactionType type}) {}
+
   Future<void> close() async {
     await newMessage.close();
     await editedMessage.close();
     await deletedMessage.close();
     await reconnected.close();
+    await reaction.close();
   }
 }
 

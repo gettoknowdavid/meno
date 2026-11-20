@@ -22,8 +22,10 @@ class ChatInputContainer extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final colors = MColorScheme.of(context);
-    final chat = di<ActiveBroadcastManager>().session?.chat;
+    final session = di<ActiveBroadcastManager>().session;
+    final chat = session?.chat;
     if (chat == null) return const SizedBox.shrink();
+    final reactions = session?.reactions;
 
     return Container(
       alignment: .topCenter,
@@ -34,8 +36,9 @@ class ChatInputContainer extends WatchingWidget {
             children: [
               Expanded(child: _ChatTextField(manager: chat)),
               Spaces.horizontalLarge,
-              // Reactions are a placeholder in the design: the API has the
-              // frames for them, this screen has no reaction UI yet.
+              // The same five the stage's strip offers: a compact picker for
+              // somebody who is already typing, and the room's manager sends
+              // whatever is tapped.
               HorizontalPopupMenu(
                 icon: MIconButton(
                   size: 40,
@@ -51,7 +54,10 @@ class ChatInputContainer extends WatchingWidget {
                     icon: reaction.icon,
                     isFilled: true,
                     fillColor: colors.outlineVariant2,
-                    onPressed: () {},
+                    onPressed: () {
+                      final type = reaction.value;
+                      if (type != null) reactions?.send(type);
+                    },
                   );
                 }).toList(),
               ),

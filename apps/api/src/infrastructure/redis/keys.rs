@@ -63,6 +63,10 @@ pub mod ttl {
     pub const UNREAD_COUNT: Duration = Duration::from_secs(3_600);
     /// Reconnect flood protection.
     pub const RECONNECT_RATE: Duration = Duration::from_secs(60);
+    /// Reaction flood window. Short enough that a listener who was cut off is not cut
+    /// off for long, long enough to average a burst of taps rather than the gaps between
+    /// two frames.
+    pub const REACTION_RATE: Duration = Duration::from_secs(10);
     /// Generic rate-limit window.
     pub const RATE_LIMIT: Duration = Duration::from_secs(60);
     /// OAuth2 `state` parameter — the flow must complete well inside this.
@@ -246,6 +250,17 @@ impl RedisKey {
         Self::new(format!("rate:reconnect:{user_id}"), ttl)
     }
 
+    /// Reaction flood protection, per account **per broadcast**.
+    ///
+    /// The room is part of the key because a reaction only means anything inside one: an
+    /// account reacting quickly in two rooms is not flooding either, and one key for the
+    /// account alone would silence the second room for the first room's taps. Nothing
+    /// cross-room is shared here, so nothing needs a global counter.
+    #[must_use]
+    pub fn reaction_rate(broadcast_id: Uuid, user_id: Uuid, ttl: Duration) -> Self {
+        Self::new(format!("rate:reaction:{broadcast_id}:{user_id}"), ttl)
+    }
+
     /// Generic rate limit key.
     #[must_use]
     pub fn rate_limit(prefix: &str, identifier: &str, ttl: Duration) -> Self {
@@ -394,6 +409,7 @@ mod tests {
             RedisKey::session(id(2), ttl::SESSION),
             RedisKey::unread_count(id(2), ttl::UNREAD_COUNT),
             RedisKey::reconnect_rate(id(2), ttl::RECONNECT_RATE),
+            RedisKey::reaction_rate(id(1), id(2), ttl::REACTION_RATE),
             RedisKey::rate_limit("login", "1.2.3.4", ttl::RATE_LIMIT),
             RedisKey::oauth2_state("abc", ttl::OAUTH2_STATE),
             RedisKey::otp("a@b.c", "reset", ttl::OTP),
@@ -405,7 +421,7 @@ mod tests {
             RedisKey::new_raw("raw", ttl::CURSOR_CACHE),
         ];
 
-        assert_eq!(keys.len(), 25, "every constructor is covered by this test");
+        assert_eq!(keys.len(), 26, "every constructor is covered by this test");
         for key in &keys {
             assert!(
                 !key.ttl().is_zero(),
@@ -458,6 +474,27 @@ mod tests {
         let rate = RedisKey::reconnect_rate(id(1), ttl::RECONNECT_RATE);
         assert!(!per_user.as_str().starts_with("rate:"));
         assert!(!rate.as_str().starts_with("u:"));
+    }
+
+    #[test]
+    fn the_reaction_budget_is_per_account_and_per_room() {
+        // Sharing a counter between two rooms would let one busy room silence a quiet
+        // one for the same account, and sharing one between two accounts would let one
+        // listener spend another's budget.
+        let room_a = RedisKey::reaction_rate(id(1), id(9), ttl::REACTION_RATE);
+        assert_ne!(
+            room_a.as_str(),
+            RedisKey::reaction_rate(id(2), id(9), ttl::REACTION_RATE).as_str()
+        );
+        assert_ne!(
+            room_a.as_str(),
+            RedisKey::reaction_rate(id(1), id(8), ttl::REACTION_RATE).as_str()
+        );
+        // And it is not the reconnect limiter's key: two guards, two counters.
+        assert_ne!(
+            room_a.as_str(),
+            RedisKey::reconnect_rate(id(9), ttl::RECONNECT_RATE).as_str()
+        );
     }
 
     #[test]

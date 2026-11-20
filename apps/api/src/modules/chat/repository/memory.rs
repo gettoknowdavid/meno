@@ -22,9 +22,7 @@ use uuid::Uuid;
 
 use super::{ChatRepo, MessageFilter};
 use crate::modules::chat::error;
-use crate::modules::chat::model::{
-    ChatMessage, ChatReaction, NewMessage, NewReaction, SenderSummary,
-};
+use crate::modules::chat::model::{ChatMessage, NewMessage, SenderSummary};
 use meno_core::{Error as MenoError, Order};
 
 /// Everything the double remembers, behind one lock.
@@ -44,8 +42,6 @@ struct State {
     messages: Vec<ChatMessage>,
     /// Which of those are soft-deleted.
     deleted: HashSet<Uuid>,
-    /// Every reaction, append-only.
-    reactions: Vec<ChatReaction>,
 }
 
 /// The double the chat suite runs against.
@@ -121,12 +117,6 @@ impl InMemoryChatRepo {
     #[must_use]
     pub fn stored_message_count(&self) -> usize {
         self.lock().messages.len()
-    }
-
-    /// Everything that was announced as a reaction, for assertions.
-    #[must_use]
-    pub fn reactions(&self) -> Vec<ChatReaction> {
-        self.lock().reactions.clone()
     }
 
     fn lock(&self) -> MutexGuard<'_, State> {
@@ -275,25 +265,10 @@ impl ChatRepo for InMemoryChatRepo {
         Ok(rows)
     }
 
-    async fn insert_reaction(
-        &self,
-        new: NewReaction<'_>,
-    ) -> Result<Option<ChatReaction>, MenoError> {
-        let mut state = self.lock();
-        if !Self::admits(&state, new.broadcast_id, new.sender_id) {
-            return Ok(None);
-        }
-
-        let reaction = ChatReaction {
-            id: Uuid::new_v4(),
-            broadcast_id: new.broadcast_id,
-            sender_id: new.sender_id,
-            content: new.content.to_owned(),
-            created_at: OffsetDateTime::now_utc(),
-        };
-        state.reactions.push(reaction.clone());
-
-        Ok(Some(reaction))
+    async fn may_react(&self, broadcast_id: Uuid, user_id: Uuid) -> Result<bool, MenoError> {
+        // The guard's third clause is `admits`' own: the double is not more permissive
+        // than the SQL, so a blocked account is refused here for the same reason.
+        Ok(Self::admits(&self.lock(), broadcast_id, user_id))
     }
 
     async fn is_live_broadcast(&self, broadcast_id: Uuid) -> Result<bool, MenoError> {

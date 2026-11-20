@@ -1,5 +1,6 @@
 import 'package:freezed_annotation/freezed_annotation.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/features/chat/model/reaction.dart';
 
 part 'entities.freezed.dart';
 
@@ -62,4 +63,39 @@ abstract class Message with _$Message {
 
   static const int _editWindowMinutes = 15;
   static const int _deleteWindowMinutes = 30;
+}
+
+/// One reaction in a room, as `newReaction` carries it.
+///
+/// Deliberately not a [Message]: a reaction belongs to the broadcast rather
+/// than to a line of chat — the frame has no `messageId` — and it is never
+/// edited or deleted, so there is no window and nothing to update.
+///
+/// `content` stays the wire's string and [type] maps it, so a label this build
+/// does not know is dropped by the renderer rather than refusing the frame.
+/// `createdAt` is on the wire and not modelled: nothing draws when a reaction
+/// arrived, only that it did, and the frame is useful the moment it lands.
+final class ChatReaction {
+  /// Creates one reaction.
+  const new({
+    required this.id,
+    required this.broadcastId,
+    required this.senderId,
+    required this.content,
+  });
+
+  /// The reaction's id.
+  final String id;
+
+  /// The room it was sent in.
+  final Id broadcastId;
+
+  /// Who sent it.
+  final Id senderId;
+
+  /// The token or emoji the API stored.
+  final String content;
+
+  /// The reaction this build can draw, or null for one it cannot.
+  ReactionType? get type => ReactionType.fromWire(content);
 }

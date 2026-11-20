@@ -32,7 +32,7 @@ use uuid::Uuid;
 
 use super::dto::{ChatMessageResponse, ChatReactionResponse};
 use super::error;
-use super::model::{NewMessage, NewReaction};
+use super::model::NewMessage;
 use super::publisher::ChatPublisher;
 use super::repository::{ChatRepo, MessageFilter};
 use crate::infrastructure::ws::dto::WsPayload;
@@ -288,12 +288,24 @@ impl ChatService {
         Ok(())
     }
 
-    /// Store a reaction and announce it to the room.
+    /// Announce a reaction to the room.
+    ///
+    /// # A reaction is not stored, and that is the design
+    ///
+    /// `chat_reactions` had a row per tap and no reader: nothing in this API lists or
+    /// counts reactions, `messages` never joins them, and the client draws every reaction
+    /// from the `newReaction` frames it receives. What the row still bought was an id and
+    /// an atomic guard — both of which are cheaper here. The id is minted per frame, and
+    /// the guard is one `SELECT EXISTS` ([`ChatRepo::may_react`]) instead of an `INSERT`
+    /// whose only product nobody reads. A retention sweep would have bounded the table
+    /// without touching the write volume, which is the half that costs: at four taps a
+    /// second per listener, a busy room writes more rows than it sends messages.
     ///
     /// # Errors
     ///
     /// `409 CONFLICT` when the broadcast is not live,
-    /// `403 NOT_PARTICIPANT` when the sender is not in the room, a repository failure.
+    /// `403 NOT_PARTICIPANT` when the sender is not in the room, `403` when the host has
+    /// blocked them, a repository failure.
     #[tracing::instrument(
         name = "chat.send_reaction",
         skip(self, content),
@@ -304,20 +316,21 @@ impl ChatService {
         member: ChatMember,
         content: &str,
     ) -> Result<ChatReactionResponse, MenoError> {
-        let inserted = self
+        if !self
             .repo
-            .insert_reaction(NewReaction {
-                broadcast_id: member.broadcast_id,
-                sender_id: member.user_id,
-                content,
-            })
-            .await?;
-
-        let Some(reaction) = inserted else {
+            .may_react(member.broadcast_id, member.user_id)
+            .await?
+        {
             return Err(self.refusal_for(member).await);
-        };
+        }
 
-        let response = ChatReactionResponse::from(reaction);
+        let response = ChatReactionResponse {
+            id: Uuid::new_v4(),
+            broadcast_id: member.broadcast_id,
+            sender_id: member.user_id,
+            content: content.to_owned(),
+            created_at: OffsetDateTime::now_utc(),
+        };
         self.publisher
             .publish(member.broadcast_id, WsPayload::new_reaction(&response))
             .await;
