@@ -801,8 +801,8 @@ async fn handle_chat_frame(state: &MenoState, user_id: Uuid, message: &ClientMes
 ///
 /// # Errors
 ///
-/// A body that is not the frame it claims to be, or one whose fields break the length
-/// rules stated on the type.
+/// A body that is not the frame it claims to be, or one whose fields break the rules
+/// stated on the type — a message's length, a reaction's token.
 fn read_frame<T: DeserializeOwned + Validate>(data: &Value) -> Result<T, String> {
     let request: T = serde_json::from_value(data.clone())
         .map_err(|error| format!("unreadable body ({error})"))?;
@@ -958,9 +958,12 @@ mod tests {
         // person holding the button down is cut off — and far below what a socket can
         // emit, or there is no guard at all.
         const WINDOW_SECONDS: u64 = 10;
+        const {
+            assert!(MAX_REACTIONS_PER_WINDOW >= WINDOW_SECONDS * 4);
+            assert!(MAX_REACTIONS_PER_WINDOW <= WINDOW_SECONDS * 20);
+        }
+        // The window is the key's own TTL, so the counter and its expiry cannot drift.
         assert_eq!(ttl::REACTION_RATE.as_secs(), WINDOW_SECONDS);
-        assert!(MAX_REACTIONS_PER_WINDOW >= WINDOW_SECONDS * 4);
-        assert!(MAX_REACTIONS_PER_WINDOW <= WINDOW_SECONDS * 20);
     }
 
     #[test]
