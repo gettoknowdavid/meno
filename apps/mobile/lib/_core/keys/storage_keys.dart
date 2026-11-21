@@ -17,24 +17,6 @@ final class StorageKeys {
   /// This is the only key `SessionService` writes. Older keys are never read.
   static const String vaultV2 = 'auth.vault.v2';
 
-  @Deprecated('Use [vault] instead.')
-  static const String accessToken = 'current_user_token';
-
-  @Deprecated('Use [vault] instead.')
-  static const String refreshToken = 'current_refresh_token';
-
-  @Deprecated('Use [vault] instead.')
-  static const String sessionExpiry = 'session_expiry';
-
-  @Deprecated('Use [vault] instead.')
-  static const String credential = 'current_user_credential';
-
-  @Deprecated('Use [vault] instead.')
-  static const String accounts = 'all_accounts';
-
-  @Deprecated('Use [vault] instead.')
-  static const String userId = 'current_user_id';
-
   /// The FCM token for the device, used for push notifications.
   static const String fcmToken = 'fcm_token';
 

@@ -100,30 +100,3 @@ class EditProfileButton extends StatelessWidget {
     );
   }
 }
-
-/// Shares a profile as a link.
-///
-/// Not wired yet: sharing means the platform share sheet, and which package
-/// provides it — and whether the link is the web deep link or an app
-/// invite — is a decision for the feature that owns sharing. The button keeps
-/// its place in the layout until then.
-class ShareProfileButton extends StatelessWidget {
-  /// Creates the button for [profile].
-  const new({required this.profile, super.key});
-
-  /// The profile the link would point at.
-  final Profile profile;
-
-  @override
-  Widget build(BuildContext context) {
-    return MSecondaryButton.icon(
-      label: 'Share profile',
-      icon: const Icon(MIcons.share),
-      onPressed: () {},
-      style: OutlinedButton.styleFrom(
-        textStyle: MTextTheme.of(context).microMedium,
-        shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
-      ),
-    );
-  }
-}
