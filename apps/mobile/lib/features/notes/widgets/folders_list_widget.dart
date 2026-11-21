@@ -33,9 +33,17 @@ class FoldersListWidget extends StatelessWidget {
   @override
   Widget build(BuildContext ctx) {
     if (folders.isEmpty) {
-      return const Padding(
-        padding: .only(top: 158),
-        child: EmptyFolderListWidget(),
+      return Padding(
+        padding: const .only(top: 158),
+        child: EmptyNotesWidget(
+          image: Assets.images.folder.image(
+            height: 120,
+            width: 160,
+            package: 'meno_ui',
+          ),
+          message: 'Welcome! Organize your notes better through folders.',
+          action: const NewNotesButton.outlined(NotesCollection.folders),
+        ),
       );
     }
     return CustomScrollView(

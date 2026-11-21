@@ -119,8 +119,16 @@ class _ExitButton extends WatchingWidget {
 
     Future<void> onPressed() async {
       final manager = di<ActiveBroadcastManager>();
-      final confirmed = await BroadcastExitAlertDialog.show(context, isEnding);
-      if (!(confirmed ?? false)) return;
+      final confirmed = await MConfirmationDialog.show(
+        context,
+        title: isEnding ? 'Stop Broadcasting?' : 'Leave Broadcast?',
+        description: isEnding
+            ? 'Do you want to end this live broadcast?'
+            : 'Do you want to leave this live broadcast?',
+        confirmLabel: isEnding ? 'Stop' : 'Leave',
+        variant: MConfirmationDialogVariant.danger,
+      );
+      if (!confirmed) return;
       // The manager is resolved again after the dialog: a switch during it
       // takes the old one away with the account.
       if (!di.isRegistered<ActiveBroadcastManager>()) return;

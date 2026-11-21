@@ -4,7 +4,7 @@ import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
 import 'package:meno_mobile/features/chat/manager/chat_manager.dart';
 import 'package:meno_mobile/features/chat/model/_model.dart';
-import 'package:meno_mobile/features/chat/widgets/delete_comment_alert_dialog.dart';
+
 import 'package:meno_ui/meno_ui.dart';
 
 /// What may be done to one message.
@@ -87,8 +87,14 @@ class ChatMessageOptionsModal extends StatelessWidget {
     BuildContext context,
     ChatManager chat,
   ) async {
-    final result = await DeleteCommentAlertDialog.show(context);
-    if (result != true) return;
+    final confirmed = await MConfirmationDialog.show(
+      context,
+      title: 'Delete Comment?',
+      description: 'Delete your comment permanently?',
+      confirmLabel: 'Delete',
+      variant: MConfirmationDialogVariant.danger,
+    );
+    if (!confirmed) return;
     if (!context.mounted) return;
     chat.deleteMessage.run(message);
   }

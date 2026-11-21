@@ -41,11 +41,11 @@ class HomePage extends WatchingWidget {
     );
 
     // So, this is the check or flag I am using for now to determine which
-    // section to show - `_LiveForYouSection` or `_NowLiveSection`
+    // section to show - the for-you feed or the now-live feed.
     //
     // For now, I am checking if the currently authenticated user is
     // following at least one account, if they are, then we show live broadcasts
-    // from the `_LiveForYouSection`, else, we show the `_NowLiveSection`
+    // from the for-you feed, else, we show the now-live feed.
     final isNewUser = profile.stats.following > 0;
 
     return Scaffold(
@@ -64,11 +64,55 @@ class HomePage extends WatchingWidget {
             const ScheduledBroadcastBanner(),
             Spaces.verticalXLarge,
             if (isNewUser)
-              const _LiveForYouSection()
+              _HomeSection(
+                title: 'Live For You',
+                icon: Assets.images.sparkles.image(
+                  height: 24,
+                  width: 24,
+                  package: 'meno_ui',
+                ),
+                query: const BroadcastQuery.forYou(),
+                skeleton: BroadcastCard.skeletonLive,
+                itemBuilder: (context, broadcast) => BroadcastCard.nLive(
+                  broadcast,
+                  key: ValueKey(broadcast.id),
+                  onTap: () => PreStreamModal.show(context, broadcast.id),
+                ),
+              )
             else
-              const _NowLiveSection(),
+              _HomeSection(
+                title: 'Now Live',
+                icon: Assets.images.flame.image(
+                  height: 24,
+                  width: 24,
+                  package: 'meno_ui',
+                ),
+                query: const BroadcastQuery.nowLive(),
+                skeleton: BroadcastCard.skeletonLive,
+                itemBuilder: (context, broadcast) => BroadcastCard.nLive(
+                  broadcast,
+                  key: ValueKey(broadcast.id),
+                  onTap: () => PreStreamModal.show(context, broadcast.id),
+                ),
+              ),
             Spaces.verticalXXLarge,
-            const _RecentlyLiveSection(),
+            _HomeSection(
+              title: 'Recently Live',
+              icon: Assets.images.highVoltage.image(
+                height: 24,
+                width: 24,
+                package: 'meno_ui',
+              ),
+              query: const BroadcastQuery.recentlyLive(),
+              skeleton: BroadcastCard.skeletonRecentlyLive,
+              itemBuilder: (context, broadcast) => BroadcastCard.rLive(
+                broadcast,
+                key: ValueKey(broadcast.id),
+                onTap: () async {
+                  await context.push(MRoutes.broadcastRoute(broadcast.id));
+                },
+              ),
+            ),
           ],
         ),
       ),
@@ -165,8 +209,35 @@ class _AppBar extends WatchingWidget implements PreferredSizeWidget {
   }
 }
 
-class _LiveForYouSection extends WatchingWidget {
-  const new();
+/// One horizontal broadcast strip on Home.
+///
+/// The three sections were one shape with five values — heading, icon, query,
+/// skeleton and card — and three copies of the same feed wiring. A section is
+/// that shape and those values; the query is also what "See all" carries, so
+/// the link cannot drift from the list it sits above.
+class _HomeSection extends WatchingWidget {
+  const new({
+    required this.title,
+    required this.icon,
+    required this.query,
+    required this.skeleton,
+    required this.itemBuilder,
+  });
+
+  /// The heading, and the name of the section "See all" opens.
+  final String title;
+
+  /// The picture beside the heading.
+  final Widget icon;
+
+  /// What the strip lists.
+  final BroadcastQuery query;
+
+  /// The shape each card has while the first page is loading.
+  final Widget skeleton;
+
+  /// Builds one card, including what tapping it does.
+  final Widget Function(BuildContext context, Broadcast broadcast) itemBuilder;
 
   @override
   Widget build(BuildContext context) {
@@ -174,126 +245,26 @@ class _LiveForYouSection extends WatchingWidget {
       return BroadcastFeedDataSource(
         http: di<BroadcastHttpService>(),
         socket: di<BroadcastSocketService>(),
-        query: const BroadcastQuery.forYou(),
-        fetchMoreEnabled: false,
-      );
-    });
-
-    final params = feedSource.query.toRouterParams();
-
-    return MSection(
-      title: 'Live For You',
-      titleIcon: Assets.images.sparkles.image(
-        height: 24,
-        width: 24,
-        package: 'meno_ui',
-      ),
-      onSeeAll: () =>
-          context.pushNamed(MRoutes.broadcasts, queryParameters: params),
-      builder: (context) => FeedWidget(
-        feedSource: feedSource,
-        horizontalItemExtent: 148,
-        layout: .horizontalList,
-        skeletonItem: BroadcastCard.skeletonLive,
-        skeletonItemCount: 4,
-        padding: const .symmetric(horizontal: 16),
-        itemBuilder: (context, broadcast) {
-          return BroadcastCard.nLive(
-            broadcast,
-            key: ValueKey(broadcast.id),
-            onTap: () => PreStreamModal.show(context, broadcast.id),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _NowLiveSection extends WatchingWidget {
-  const new();
-
-  @override
-  Widget build(BuildContext context) {
-    final feedSource = createOnce(() {
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: const BroadcastQuery.nowLive(),
+        query: query,
         fetchMoreEnabled: false,
       );
     });
 
     return MSection(
-      title: 'Now Live',
-      titleIcon: Assets.images.flame.image(
-        height: 24,
-        width: 24,
-        package: 'meno_ui',
-      ),
+      title: title,
+      titleIcon: icon,
       onSeeAll: () => context.pushNamed(
         MRoutes.broadcasts,
-        queryParameters: feedSource.query.toRouterParams(),
+        queryParameters: query.toRouterParams(),
       ),
       builder: (context) => FeedWidget(
         feedSource: feedSource,
         horizontalItemExtent: 148,
         layout: .horizontalList,
-        skeletonItem: BroadcastCard.skeletonLive,
+        skeletonItem: skeleton,
         skeletonItemCount: 4,
         padding: const .symmetric(horizontal: 16),
-        itemBuilder: (context, broadcast) {
-          return BroadcastCard.nLive(
-            broadcast,
-            key: ValueKey(broadcast.id),
-            onTap: () => PreStreamModal.show(context, broadcast.id),
-          );
-        },
-      ),
-    );
-  }
-}
-
-class _RecentlyLiveSection extends WatchingWidget {
-  const new();
-
-  @override
-  Widget build(BuildContext context) {
-    final feedSource = createOnce(() {
-      return BroadcastFeedDataSource(
-        http: di<BroadcastHttpService>(),
-        socket: di<BroadcastSocketService>(),
-        query: const BroadcastQuery.recentlyLive(),
-        fetchMoreEnabled: false,
-      );
-    });
-
-    return MSection(
-      title: 'Recently Live',
-      titleIcon: Assets.images.highVoltage.image(
-        height: 24,
-        width: 24,
-        package: 'meno_ui',
-      ),
-      onSeeAll: () => context.pushNamed(
-        MRoutes.broadcasts,
-        queryParameters: const BroadcastQuery.recentlyLive().toRouterParams(),
-      ),
-      builder: (context) => FeedWidget(
-        feedSource: feedSource,
-        horizontalItemExtent: 148,
-        layout: .horizontalList,
-        skeletonItem: BroadcastCard.skeletonRecentlyLive,
-        skeletonItemCount: 4,
-        padding: const .symmetric(horizontal: 16),
-        itemBuilder: (context, broadcast) {
-          return BroadcastCard.rLive(
-            broadcast,
-            key: ValueKey(broadcast.id),
-            onTap: () async {
-              await context.push(MRoutes.broadcastRoute(broadcast.id));
-            },
-          );
-        },
+        itemBuilder: itemBuilder,
       ),
     );
   }

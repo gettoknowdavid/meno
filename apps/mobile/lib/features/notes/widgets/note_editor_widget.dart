@@ -73,7 +73,14 @@ class NoteEditorWidget extends WatchingWidget {
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: padding,
-                      child: FolderTag(folder: folder),
+                      child: Row(
+                        children: [
+                          MTag(
+                            title: folder.title.getOrCrash,
+                            style: textTheme.microMedium,
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                   const SliverToBoxAdapter(child: Spaces.verticalLarge),

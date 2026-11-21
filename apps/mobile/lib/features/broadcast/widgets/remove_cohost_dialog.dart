@@ -16,6 +16,10 @@ enum RemoveCohostChoice {
 /// The two destructive outcomes are separate choices rather than a checkbox:
 /// keeping a removed cohost listening is safe, while evicting them is not, and
 /// an ambiguous default is the wrong way to decide between them.
+///
+/// A three-way question cannot be `MConfirmationDialog`, which is deliberately
+/// two actions, so this keeps that dialog's copy and action styling instead: a
+/// dimmed cancel first, then the two outcomes.
 class RemoveCohostDialog extends StatelessWidget {
   const new _({required this.name}) : super(key: null);
 
@@ -37,21 +41,19 @@ class RemoveCohostDialog extends StatelessWidget {
 
     return AlertDialog(
       title: MText('Remove co-host?', style: textTheme.heading2Regular),
-      contentPadding: const .all(24),
+      contentPadding: const .all(Insets.xl),
       content: MText(
         '$name will no longer be able to publish. They can stay in the room '
         'as a listener, or be removed from the room as well.',
         style: textTheme.captionRegular,
       ),
       actions: [
-        SizedBox.fromSize(
-          size: const Size(85, 40),
-          child: MTextButton(
-            label: 'Cancel',
-            onPressed: () => Navigator.pop(context),
-            style: TextButton.styleFrom(
-              foregroundColor: colors.onDisabled.withValues(alpha: 0.5),
-            ),
+        MTextButton(
+          label: 'Cancel',
+          onPressed: () => Navigator.pop(context),
+          style: TextButton.styleFrom(
+            foregroundColor: colors.onDisabled.withValues(alpha: 0.5),
+            shape: const RoundedRectangleBorder(borderRadius: Corners.sm),
           ),
         ),
         MTextButton(

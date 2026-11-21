@@ -53,11 +53,16 @@ class LiveSessionBanner extends WatchingWidget {
     required Id broadcastId,
     required bool exitsByEnding,
   }) async {
-    final confirmed = await BroadcastExitAlertDialog.show(
+    final confirmed = await MConfirmationDialog.show(
       context,
-      exitsByEnding,
+      title: exitsByEnding ? 'Stop Broadcasting?' : 'Leave Broadcast?',
+      description: exitsByEnding
+          ? 'Do you want to end this live broadcast?'
+          : 'Do you want to leave this live broadcast?',
+      confirmLabel: exitsByEnding ? 'Stop' : 'Leave',
+      variant: MConfirmationDialogVariant.danger,
     );
-    if (!(confirmed ?? false)) return;
+    if (!confirmed) return;
 
     // A switch during the dialog takes the manager away with the account, and
     // a newer session in another broadcast is not the one the dialog asked

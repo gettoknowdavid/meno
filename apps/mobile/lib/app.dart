@@ -37,7 +37,7 @@ class MenoApp extends WatchingWidget {
   const new({super.key, this.onRetryBootstrap});
 
   /// Rebuilds the container and its registrations, then lets this widget wait
-  /// on the fresh ones. From `bootstrap()` in `main.dart`.
+  /// on the fresh ones. From `startApp()` in `bootstrap.dart`.
   final Future<void> Function()? onRetryBootstrap;
 
   @override

@@ -76,8 +76,8 @@ class _HeaderWidget extends StatelessWidget {
         ),
         actions: [
           switch (index.value) {
-            0 => const NewNoteButton.action(),
-            1 => const NewFolderButton.action(),
+            0 => const NewNotesButton.action(NotesCollection.notes),
+            1 => const NewNotesButton.action(NotesCollection.folders),
             _ => const SizedBox(),
           },
           Spaces.horizontalLarge,

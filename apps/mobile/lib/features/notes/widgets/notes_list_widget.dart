@@ -38,9 +38,17 @@ class NotesListWidget extends StatelessWidget {
   @override
   Widget build(BuildContext ctx) {
     if (notes.isEmpty) {
-      return const Padding(
-        padding: .only(top: 158),
-        child: EmptyNoteListWidget(),
+      return Padding(
+        padding: const .only(top: 158),
+        child: EmptyNotesWidget(
+          image: Assets.images.newFile.image(
+            height: 120,
+            width: 160,
+            package: 'meno_ui',
+          ),
+          message: 'Welcome! Start writing down everything you take in.',
+          action: const NewNotesButton.outlined(NotesCollection.notes),
+        ),
       );
     }
     return CustomScrollView(

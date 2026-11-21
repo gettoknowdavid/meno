@@ -1,18 +1,16 @@
 //GENERATED BARREL FILE
-export 'empty_folder_list_widget.dart';
-export 'empty_note_list_widget.dart';
+export 'empty_notes_widget.dart';
 export 'folder_card.dart';
 export 'folder_clipper.dart';
 export 'folder_editor_modal.dart';
 export 'folder_options_modal.dart';
-export 'folder_tag.dart';
+export 'folder_outline.dart';
 export 'folder_widget_border.dart';
 export 'folders_group_widget.dart';
 export 'folders_list_widget.dart';
 export 'folders_search_bar.dart';
 export 'live_notes_tab.dart';
-export 'new_folder_button.dart';
-export 'new_note_button.dart';
+export 'new_notes_button.dart';
 export 'note_card.dart';
 export 'note_editor_autosave_widget.dart';
 export 'note_editor_toolbar.dart';

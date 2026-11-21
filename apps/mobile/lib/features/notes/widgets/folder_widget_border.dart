@@ -1,54 +1,30 @@
 import 'package:material_ui/material_ui.dart';
+import 'package:meno_mobile/features/notes/widgets/folder_outline.dart';
 
+/// The folder header's fill.
+///
+/// It draws no stroke: the fill is the outline. The shape is here so `Material`
+/// paints and inks the header as a folder, which is why it keeps the path from
+/// [folderOutlinePath] rather than a rounded rectangle.
 class FolderWidgetBorder extends OutlinedBorder {
   const new({super.side});
-
-  Path customBorderPath(Rect rect) {
-    const r = 20.0;
-    final path = Path();
-    return path
-      ..moveTo(0, rect.height - r)
-      ..quadraticBezierTo(0, rect.height, r, rect.height)
-      ..lineTo(rect.width - r, rect.height)
-      ..quadraticBezierTo(rect.width, rect.height, rect.width, rect.height - r)
-      ..lineTo(rect.width, 6 + r)
-      ..quadraticBezierTo(rect.width, 6, rect.width - r, 6)
-      ..lineTo((rect.width * 0.55) + 6, 6)
-      ..lineTo((rect.width * 0.55) + 3, 3)
-      ..quadraticBezierTo(rect.width * 0.55, 0, rect.width * 0.55 - r, 0)
-      ..lineTo(r, 0)
-      ..quadraticBezierTo(0, 0, 0, r)
-      ..close();
-  }
 
   @override
   OutlinedBorder copyWith({BorderSide? side}) =>
       FolderWidgetBorder(side: side ?? this.side);
 
   @override
-  Path getInnerPath(Rect rect, {TextDirection? textDirection}) {
-    return customBorderPath(rect);
-  }
+  Path getInnerPath(Rect rect, {TextDirection? textDirection}) =>
+      folderOutlinePath(rect.size);
 
   @override
-  Path getOuterPath(Rect rect, {TextDirection? textDirection}) {
-    return customBorderPath(rect);
-  }
+  Path getOuterPath(Rect rect, {TextDirection? textDirection}) =>
+      folderOutlinePath(rect.size);
 
   @override
   void paint(Canvas canvas, Rect rect, {TextDirection? textDirection}) {
-    switch (side.style) {
-      case BorderStyle.none:
-        break;
-      case BorderStyle.solid:
-        canvas.drawPath(
-          customBorderPath(rect),
-          Paint()
-            ..style = PaintingStyle.stroke
-            ..color = Colors.transparent
-            ..strokeWidth = 0.0,
-        );
-    }
+    // A stroke here would draw a second outline on the fill's own edge; the
+    // shape exists for the fill and the ink, not for a border.
   }
 
   @override

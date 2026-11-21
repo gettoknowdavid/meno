@@ -29,8 +29,15 @@ class PreStreamModal extends WatchingWidget {
         return;
       }
 
-      final leave = await PreStreamLeaveDialog.show(ctx);
-      if (!(leave ?? false)) return;
+      final leave = await MConfirmationDialog.show(
+        ctx,
+        title: 'You are already in a broadcast',
+        description:
+            'Leave the current broadcast before joining another one?',
+        confirmLabel: 'Leave and join',
+        variant: MConfirmationDialogVariant.danger,
+      );
+      if (!leave) return;
       if (!di.isRegistered<ActiveBroadcastManager>()) return;
       await di<ActiveBroadcastManager>().exitRoom();
       if (!ctx.mounted) return;

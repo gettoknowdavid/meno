@@ -351,7 +351,7 @@ final class BibleSeedService implements Disposable {
   ///
   /// The app registers it as an async singleton because opening it awaits the
   /// documents directory, so this runs before that opening may have finished
-  /// (it is started from `bootstrap`, not from a dependency chain). A test
+  /// (it is started from `startApp`, not from a dependency chain). A test
   /// registers a plain singleton and gets it immediately.
   Future<Database> _resolveDatabase() {
     if (di.isRegistered<Database>()) {
