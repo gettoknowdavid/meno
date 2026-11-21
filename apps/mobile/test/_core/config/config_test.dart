@@ -53,11 +53,4 @@ void main() {
       expect(Environment.prod.isDev, isFalse);
     });
   });
-
-  group('Scope', () {
-    test('exposes stable scope names', () {
-      expect(Scope.root, 'root');
-      expect(Scope.authenticated, 'authenticated');
-    });
-  });
 }

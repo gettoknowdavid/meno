@@ -1,7 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_routing/_routing.dart';
-import 'package:meno_mobile/_shared/services/permission_prompts.dart';
+import 'package:meno_mobile/_shared/widgets/permission_prompts.dart';
 import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_ui/meno_ui.dart';
 import 'package:responsive_framework/responsive_framework.dart';

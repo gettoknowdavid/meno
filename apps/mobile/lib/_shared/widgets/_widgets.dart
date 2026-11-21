@@ -5,4 +5,5 @@ export 'dynamic_sliver_app_bar.dart';
 export 'feed_widget.dart';
 export 'm_custom_back_button.dart';
 export 'meno_error_widget.dart';
+export 'permission_prompts.dart';
 export 'user_avatar_widget.dart';

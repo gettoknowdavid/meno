@@ -6,7 +6,7 @@ import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
 import 'package:meno_mobile/features/discover/manager/discover_broadcasts_feed.dart';
-import 'package:meno_mobile/features/discover/services/_services.dart';
+import 'package:meno_mobile/features/discover/services/discover_local_service.dart';
 
 /// The broadcast search behind Discover: what was typed, what it found, and
 /// what was searched for before.
