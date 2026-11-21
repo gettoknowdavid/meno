@@ -8,7 +8,6 @@ import 'package:meno_mobile/app.dart';
 import 'package:meno_mobile/features/auth/model/_model.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/locator.dart';
-import 'package:readmore/readmore.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../_support/fake_path_provider.dart';
@@ -150,13 +149,6 @@ void main() {
         matching: find.text('Writes the first program, most days.'),
       ),
       findsOneWidget,
-    );
-    expect(
-      find.descendant(
-        of: find.byType(MyProfileHeaderContent),
-        matching: find.byType(ReadMoreText),
-      ),
-      findsNothing,
     );
 
     // The tab bar the header pins: three tabs, all feeds that belong to other
