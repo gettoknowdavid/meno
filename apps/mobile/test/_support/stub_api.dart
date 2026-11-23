@@ -28,8 +28,10 @@ ResponseBody envelope({Map<String, dynamic>? data, int status = 200}) {
 ///
 /// The app's own [HttpClient] is used on top of it, so a test exercises the
 /// real envelope parsing, error mapping and logging. An answer past the end of
-/// [answers] is an empty success, which keeps requests a test does not care
-/// about from failing it.
+/// [answers] is an empty cursor page, which keeps requests a test does not care
+/// about from failing it: a list read that answered `null` instead would raise
+/// `MalformedResponseException`, and the app's global handler turns that into
+/// an error toast over the screen under test.
 final class StubApi implements HttpClientAdapter {
   new([List<Future<ResponseBody> Function()>? answers])
     : answers = answers ?? <Future<ResponseBody> Function()>[];
@@ -48,7 +50,15 @@ final class StubApi implements HttpClientAdapter {
     requests.add(options);
     final index = requests.length - 1;
     if (index < answers.length) return answers[index]();
-    return Future<ResponseBody>.value(envelope());
+    return Future<ResponseBody>.value(
+      envelope(
+        data: {
+          'data': <dynamic>[],
+          'next_cursor': null,
+          'has_next_page': false,
+        },
+      ),
+    );
   }
 
   @override

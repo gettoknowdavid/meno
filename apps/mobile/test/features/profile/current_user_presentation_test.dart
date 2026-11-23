@@ -107,6 +107,9 @@ void main() {
     );
     expect(avatar.name, 'Grace Hopper');
 
+    // The inbox read answered, and its feed prunes the rows it no longer holds
+    // on a short timer of its own; let it run so none is pending at teardown.
+    await tester.pump(const Duration(milliseconds: 500));
     await unmountTree(tester);
   });
 }

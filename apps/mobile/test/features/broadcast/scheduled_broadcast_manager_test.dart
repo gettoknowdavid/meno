@@ -30,6 +30,13 @@ Future<ResponseBody> Function() _page(List<Map<String, dynamic>> items) =>
 
 final Future<ResponseBody> Function() _empty = _page(const []);
 
+/// An instant [minutes] from now, as the API writes it.
+///
+/// The manager decides whether a start is imminent from the clock, so a fixed
+/// date in a fixture turns into an imminent start once the date passes.
+String _fromNow(int minutes) =>
+    DateTime.now().toUtc().add(Duration(minutes: minutes)).toIso8601String();
+
 /// The record `PATCH /broadcasts/{id}` answers with: one broadcast, not a page.
 Future<ResponseBody> Function() _updated() => () async => envelope(
   data: {
@@ -45,7 +52,7 @@ Future<ResponseBody> Function() _updated() => () async => envelope(
     'recordingEnabled': false,
     'cohosts': <Map<String, dynamic>>[],
     'createdAt': '2026-11-19T09:00:00Z',
-    'startTime': '2026-11-21T13:37:00Z',
+    'startTime': _fromNow(120),
     'endTime': null,
   },
 );
@@ -68,8 +75,8 @@ void main() {
     test('asks for this account and keeps the earliest one', () async {
       final api = StubApi([
         _page([
-          _item(_later, startTime: '2026-11-20T18:00:00Z'),
-          _item(_soonest, startTime: '2026-11-20T10:00:00Z'),
+          _item(_later, startTime: _fromNow(60)),
+          _item(_soonest, startTime: _fromNow(30)),
         ]),
       ]);
       final manager = managerFor(api);
@@ -83,7 +90,7 @@ void main() {
 
     test('a start more than five minutes out can be hidden', () async {
       final api = StubApi([
-        _page([_item(_soonest, startTime: '2026-11-20T10:00:00Z')]),
+        _page([_item(_soonest, startTime: _fromNow(30))]),
       ]);
       final manager = managerFor(api);
       await manager.refresh.runAsync();
@@ -154,8 +161,8 @@ void main() {
 
     test('a new schedule gets its banner back after one was hidden', () async {
       final api = StubApi([
-        _page([_item(_soonest, startTime: '2026-11-20T10:00:00Z')]),
-        _page([_item(_later, startTime: '2026-11-21T10:00:00Z')]),
+        _page([_item(_soonest, startTime: _fromNow(30))]),
+        _page([_item(_later, startTime: _fromNow(90))]),
       ]);
       final manager = managerFor(api);
 
@@ -173,7 +180,7 @@ void main() {
   group('resolving the open schedule', () {
     test('cancel deletes it and re-reads', () async {
       final api = StubApi([
-        _page([_item(_soonest, startTime: '2026-11-20T10:00:00Z')]),
+        _page([_item(_soonest, startTime: _fromNow(30))]),
         _empty,
         _empty,
       ]);
@@ -190,7 +197,7 @@ void main() {
 
     test('reschedule patches the instant it was given, in UTC', () async {
       final api = StubApi([
-        _page([_item(_soonest, startTime: '2026-11-20T10:00:00Z')]),
+        _page([_item(_soonest, startTime: _fromNow(30))]),
         _updated(),
         _empty,
       ]);
