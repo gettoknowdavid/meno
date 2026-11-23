@@ -58,6 +58,24 @@ final class ScheduledBroadcastManager implements Disposable {
       debugName: 'broadcast.scheduled.reschedule',
     );
 
+    editDetails = .createAsyncNoResult<ScheduleEdit>(
+      (change) async {
+        // Only what changed travels: the API refuses a start time in the past,
+        // and a schedule that has missed its moment is exactly the row a host
+        // may still want to correct the title of.
+        await _http.update(
+          change.id,
+          title: change.title,
+          description: change.description,
+          startTime: change.start,
+          timeZone: change.zone,
+        );
+        await _load();
+      },
+      errorFilterFn: menoExceptionFilter,
+      debugName: 'broadcast.scheduled.edit',
+    );
+
     // The socket is the other half of "what is scheduled right now": a schedule
     // made on another device, a cancellation, or the reminder frame itself. One
     // deferred refresh collapses a burst into a single read.
@@ -113,6 +131,14 @@ final class ScheduledBroadcastManager implements Disposable {
   /// moment looking like it is about to begin.
   static const Duration graceWindow = Duration(minutes: 10);
 
+  /// How long after its start a schedule keeps its place in the home banner.
+  ///
+  /// Thirty minutes: the prompt has had its chance by then, and a card that
+  /// stays for a broadcast nobody started is a card that asks the same
+  /// question forever. It is not cancelled — the Scheduled tab still lists it —
+  /// so the host can go live late, reschedule or cancel from there.
+  static const Duration bannerWindow = Duration(minutes: 30);
+
   /// Re-reads the account's open schedule.
   late final Command<void, void> refresh;
 
@@ -122,10 +148,22 @@ final class ScheduledBroadcastManager implements Disposable {
   /// Moves it to a new time, keeping it the one open schedule.
   late final Command<ScheduleChange, void> reschedule;
 
+  /// Rewrites the details the host can see: title, description, start time.
+  late final Command<ScheduleEdit, void> editDetails;
+
   late final List<StreamSubscription<void>> _handles;
+
+  /// Every open schedule the last read returned, earliest first.
+  ///
+  /// The whole page rather than only the chosen one, so the banner can move on
+  /// to the next promise the moment this one's window closes, without another
+  /// request.
+  List<Broadcast> _open = const [];
+
   Timer? _imminentTimer;
   Timer? _dueTimer;
   Timer? _overdueTimer;
+  Timer? _expiryTimer;
   Timer? _refreshDebounce;
 
   bool _disposed = false;
@@ -163,12 +201,29 @@ final class ScheduledBroadcastManager implements Disposable {
       ),
     );
 
-    final open = [
+    _open = [
       for (final summary in page.items)
-        if (summary.startTime != null && !summary.hasEnded) summary,
+        if (summary.startTime != null && !summary.hasEnded)
+          summary.toBroadcast(),
     ]..sort((a, b) => a.startTime!.compareTo(b.startTime!));
 
-    final value = open.isEmpty ? null : open.first.toBroadcast();
+    _applyNext();
+  }
+
+  /// Chooses the banner's schedule from [_open].
+  ///
+  /// A start whose [bannerWindow] has closed is past being useful on the home
+  /// screen, but it is still an open promise: it is left to the Scheduled tab,
+  /// and the banner moves on to the next row (or nothing) instead.
+  void _applyNext() {
+    final now = DateTime.now();
+    final visible = [
+      for (final broadcast in _open)
+        if (broadcast.startTime!.toLocal().add(bannerWindow).isAfter(now))
+          broadcast,
+    ];
+
+    final value = visible.isEmpty ? null : visible.first;
     final previousId = next.value?.id;
 
     next.value = value;
@@ -188,11 +243,14 @@ final class ScheduledBroadcastManager implements Disposable {
     _dueTimer = null;
     _overdueTimer?.cancel();
     _overdueTimer = null;
+    _expiryTimer?.cancel();
+    _expiryTimer = null;
 
     final start = next.value?.startTime?.toLocal();
     if (start == null) {
       isImminent.value = false;
       isDue.value = false;
+      isOverdue.value = false;
       return;
     }
 
@@ -200,6 +258,17 @@ final class ScheduledBroadcastManager implements Disposable {
     final lead = start.subtract(const Duration(minutes: 5));
 
     final graceEnds = start.add(graceWindow);
+
+    // The moment the banner stops being the banner's business. Recompute from
+    // the page in hand instead of asking the API: nothing changed on the
+    // server, only the clock.
+    final expires = start.add(bannerWindow);
+    if (expires.isAfter(now)) {
+      _expiryTimer = Timer(expires.difference(now), () {
+        if (_disposed) return;
+        _applyNext();
+      });
+    }
 
     isImminent.value = !lead.isAfter(now);
     isDue.value = !start.isAfter(now);
@@ -244,6 +313,7 @@ final class ScheduledBroadcastManager implements Disposable {
     _imminentTimer?.cancel();
     _dueTimer?.cancel();
     _overdueTimer?.cancel();
+    _expiryTimer?.cancel();
     _refreshDebounce?.cancel();
 
     for (final handle in _handles) {
@@ -253,6 +323,7 @@ final class ScheduledBroadcastManager implements Disposable {
     refresh.dispose();
     cancel.dispose();
     reschedule.dispose();
+    editDetails.dispose();
     next.dispose();
     hidden.dispose();
     isImminent.dispose();
@@ -263,3 +334,16 @@ final class ScheduledBroadcastManager implements Disposable {
 
 /// A new time for an existing schedule.
 typedef ScheduleChange = ({Id id, DateTime start, String? zone});
+
+/// The details of a schedule a host can correct.
+///
+/// Null means "leave it alone": the API's patch is partial, and sending a
+/// start time it did not ask for is how an already-missed schedule would be
+/// refused for being in the past.
+typedef ScheduleEdit = ({
+  Id id,
+  String? title,
+  String? description,
+  DateTime? start,
+  String? zone,
+});

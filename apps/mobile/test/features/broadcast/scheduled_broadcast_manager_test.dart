@@ -140,6 +140,27 @@ void main() {
       expect(manager.isOverdue.value, isTrue);
     });
 
+    test('a start more than thirty minutes past leaves the banner', () async {
+      final start = DateTime.now().toUtc().subtract(
+        const Duration(minutes: 31),
+      );
+      final api = StubApi([
+        _page([_item(_soonest, startTime: start.toIso8601String())]),
+      ]);
+      final manager = managerFor(api);
+
+      await manager.refresh.runAsync();
+
+      // Nothing cancels it: the schedule is still an open promise in the
+      // Scheduled tab, it just no longer has a card on the home screen.
+      expect(
+        manager.next.value,
+        isNull,
+        reason: 'the banner window has closed',
+      );
+      expect(manager.isVisible, isFalse);
+    });
+
     test('a start that is a few minutes late is not overdue yet', () async {
       final start = DateTime.now().toUtc().subtract(
         const Duration(minutes: 2),

@@ -205,19 +205,36 @@ class _ScheduledBannerCard extends StatelessWidget {
 
 /// What a host can do with a schedule that has not started.
 ///
-/// The three answers are the only three there are: keep the promise now, move
-/// it, or withdraw it. Dismissing the sheet changes nothing.
+/// The four answers are: keep the promise now, correct it, move it, or
+/// withdraw it. Dismissing the sheet changes nothing.
+///
+/// Every action closes the sheet first and then continues on [hostContext].
+/// The sheet's own context is gone the moment it pops, so a picker, dialog,
+/// permission prompt or navigation started from it either did nothing or
+/// stopped after its first step — which is exactly what a tap on Go live or
+/// Cancel used to do.
 class ScheduledBroadcastActionsModal extends StatelessWidget {
-  const new({required this.broadcast, super.key});
+  const new({
+    required this.broadcast,
+    required this.hostContext,
+    super.key,
+  });
 
   final Broadcast broadcast;
+
+  /// The context of the screen that opened the sheet, used for everything the
+  /// action does after the sheet is gone.
+  final BuildContext hostContext;
 
   static Future<void> show(BuildContext context, Broadcast broadcast) {
     return showModalBottomSheet<void>(
       context: context,
       useRootNavigator: true,
       isScrollControlled: true,
-      builder: (_) => ScheduledBroadcastActionsModal(broadcast: broadcast),
+      builder: (_) => ScheduledBroadcastActionsModal(
+        broadcast: broadcast,
+        hostContext: context,
+      ),
     );
   }
 
@@ -225,30 +242,51 @@ class ScheduledBroadcastActionsModal extends StatelessWidget {
   Widget build(BuildContext context) {
     final textTheme = MTextTheme.of(context);
     final start = broadcast.startTime?.toLocal();
+    final description = broadcast.description?.orEmpty.trim() ?? '';
 
     return MModal(
       builder: (context) => Column(
         mainAxisSize: .min,
         children: [
-          MText(
-            broadcast.title.orEmpty,
-            style: textTheme.heading3Medium,
-            maxLines: 1,
-            overflow: .ellipsis,
+          BroadcastArtworkWidget(image: broadcast.image, radius: 40),
+          BroadcastTitleWidget(
+            key: const Key('scheduledBroadcast_title'),
+            title: broadcast.title.orEmpty,
           ),
-          Spaces.verticalSmall,
+          Spaces.verticalMicro,
           MText(
             start == null
                 ? 'Waiting for a start time'
                 : DateFormat('EEE, MMM d · h:mm a').format(start),
             style: textTheme.captionRegular,
+            textAlign: .center,
           ),
+          if (description.isNotEmpty) ...[
+            Spaces.verticalSmall,
+            Padding(
+              padding: const .symmetric(horizontal: Insets.lg),
+              child: MText(
+                description,
+                style: textTheme.captionRegular,
+                color: MColorScheme.of(context).onBackgroundVariant,
+                textAlign: .center,
+                maxLines: 2,
+                overflow: .ellipsis,
+              ),
+            ),
+          ],
           Spaces.verticalXLarge,
           MModalListTile(
             key: const Key('scheduledBroadcast_goLive'),
             leading: const Icon(MIcons.play_circle),
             title: 'Go live now',
             onTap: () => _goLive(context),
+          ),
+          MModalListTile(
+            key: const Key('scheduledBroadcast_edit'),
+            leading: const Icon(MIcons.edit_02),
+            title: 'Edit broadcast details',
+            onTap: () => _edit(context),
           ),
           MModalListTile(
             key: const Key('scheduledBroadcast_reschedule'),
@@ -270,34 +308,53 @@ class ScheduledBroadcastActionsModal extends StatelessWidget {
 
   Future<void> _goLive(BuildContext context) async {
     Navigator.of(context).pop();
+
+    final host = hostContext;
+    if (!host.mounted) return;
+
     // Opening the room is the host speaking, so the microphone is asked for
     // before the entry rather than after it fails.
-    if (!await PermissionPrompts.broadcast(context)) return;
-    if (!context.mounted) return;
+    if (!await PermissionPrompts.broadcast(host)) return;
+    if (!host.mounted) return;
 
     final live = di<ActiveBroadcastManager>();
     final result = await live.enter(
       LiveEnterRequest(broadcastId: broadcast.id, mode: LiveEnterMode.host),
     );
 
-    if (!context.mounted) return;
+    // The row is no longer waiting for its moment, so the home banner and the
+    // scheduled tab both have one less thing to offer.
+    if (di.isRegistered<ScheduledBroadcastManager>()) {
+      di<ScheduledBroadcastManager>().refresh.run();
+    }
+
+    if (!host.mounted) return;
     if (!result.isEntered) {
-      context.showErrorToast(
-        'Could not start this broadcast. Please try again.',
-      );
+      host.showErrorToast('Could not start this broadcast. Please try again.');
       return;
     }
-    await context.push(MRoutes.liveSessionInit);
+    await host.push(MRoutes.liveSessionInit);
+  }
+
+  Future<void> _edit(BuildContext context) async {
+    Navigator.of(context).pop();
+
+    final host = hostContext;
+    if (!host.mounted) return;
+
+    await ScheduledBroadcastEditModal.show(host, broadcast);
   }
 
   Future<void> _reschedule(BuildContext context) async {
     Navigator.of(context).pop();
 
-    final choice = await pickBroadcastStart(
-      context,
-      initial: broadcast.startTime,
-    );
-    if (choice == null || !context.mounted) return;
+    final host = hostContext;
+    if (!host.mounted) return;
+
+    // Date and time: the picker asks for both, and the sheet is out of the way
+    // so the dialogs sit on the screen that opened it.
+    final choice = await pickBroadcastStart(host, initial: broadcast.startTime);
+    if (choice == null || !host.mounted) return;
 
     try {
       await di<ScheduledBroadcastManager>().reschedule.runAsync((
@@ -305,19 +362,22 @@ class ScheduledBroadcastActionsModal extends StatelessWidget {
         start: choice.start,
         zone: choice.zone,
       ));
-      if (!context.mounted) return;
-      context.showSuccessToast('Broadcast rescheduled');
+      if (!host.mounted) return;
+      host.showSuccessToast('Broadcast rescheduled');
     } on Object catch (error) {
-      if (!context.mounted) return;
-      context.showErrorToast(errorMessage(error));
+      if (!host.mounted) return;
+      host.showErrorToast(errorMessage(error));
     }
   }
 
   Future<void> _cancel(BuildContext context) async {
     Navigator.of(context).pop();
 
+    final host = hostContext;
+    if (!host.mounted) return;
+
     final confirmed = await showDialog<bool>(
-      context: context,
+      context: host,
       builder: (context) => AlertDialog(
         title: MText(
           'Cancel this broadcast?',
@@ -343,14 +403,194 @@ class ScheduledBroadcastActionsModal extends StatelessWidget {
         ],
       ),
     );
-    if (!(confirmed ?? false) || !context.mounted) return;
+    if (!(confirmed ?? false) || !host.mounted) return;
 
     try {
       await di<ScheduledBroadcastManager>().cancel.runAsync(broadcast.id);
-      if (!context.mounted) return;
-      context.showSuccessToast('Scheduled broadcast cancelled');
+      if (!host.mounted) return;
+      host.showSuccessToast('Scheduled broadcast cancelled');
     } on Object catch (error) {
-      if (!context.mounted) return;
+      if (!host.mounted) return;
+      host.showErrorToast(errorMessage(error));
+    }
+  }
+}
+
+/// The details of a schedule, editable in place.
+///
+/// Title, description and start time are what a card draws and what the host
+/// can get wrong before the moment arrives; fixing a typo should not mean
+/// cancelling the promise and making a new one. The artwork is shown so the
+/// sheet is recognisably the same broadcast, and the start time opens the same
+/// date-then-time picker the editor uses.
+class ScheduledBroadcastEditModal extends StatefulWidget {
+  const new({required this.broadcast, super.key});
+
+  final Broadcast broadcast;
+
+  static Future<void> show(BuildContext context, Broadcast broadcast) {
+    return showModalBottomSheet<void>(
+      context: context,
+      useRootNavigator: true,
+      isScrollControlled: true,
+      builder: (_) => ScheduledBroadcastEditModal(broadcast: broadcast),
+    );
+  }
+
+  @override
+  State<ScheduledBroadcastEditModal> createState() =>
+      _ScheduledBroadcastEditModalState();
+}
+
+class _ScheduledBroadcastEditModalState
+    extends State<ScheduledBroadcastEditModal> {
+  late final TextEditingController _title;
+  late final TextEditingController _description;
+  late DateTime? _start;
+  String? _zone;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _title = TextEditingController(text: widget.broadcast.title.orEmpty);
+    _description = TextEditingController(
+      text: widget.broadcast.description?.orEmpty ?? '',
+    );
+    _start = widget.broadcast.startTime?.toLocal();
+    _zone = widget.broadcast.timeZone;
+  }
+
+  @override
+  void dispose() {
+    _title.dispose();
+    _description.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final textTheme = MTextTheme.of(context);
+    final start = _start;
+    final when = start == null
+        ? 'Choose a start time'
+        : '${DateFormat("EEE, MMM d 'at' h:mm a").format(start)}'
+              '${_zone == null ? '' : ' · $_zone'}';
+
+    return MModal(
+      title: 'Edit broadcast',
+      builder: (context) => SingleChildScrollView(
+        padding: EdgeInsets.only(
+          bottom: MediaQuery.viewInsetsOf(context).bottom,
+        ),
+        child: Column(
+          crossAxisAlignment: .stretch,
+          mainAxisSize: .min,
+          children: [
+            BroadcastArtworkWidget(image: widget.broadcast.image, radius: 40),
+            Spaces.verticalSmall,
+            MTextFormField(
+              key: const Key('scheduledBroadcastEdit_title'),
+              label: 'Broadcast title',
+              hint: "Jim Halpert's live audio",
+              controller: _title,
+              enabled: !_saving,
+            ),
+            Spaces.verticalLarge,
+            MTextArea(
+              key: const Key('scheduledBroadcastEdit_description'),
+              label: 'About broadcast',
+              hint: 'Enter a brief description',
+              maxLines: 4,
+              maxLength: 244,
+              controller: _description,
+              enabled: !_saving,
+            ),
+            Spaces.verticalLarge,
+            MModalListTile(
+              key: const Key('scheduledBroadcastEdit_startTime'),
+              leading: const Icon(MIcons.calendar_plus_02),
+              title: when,
+              trailing: MIcons.edit_02,
+              onTap: _saving ? null : () => unawaited(_pickStart(context)),
+            ),
+            Spaces.verticalXLarge,
+            MPrimaryButton(
+              key: const Key('scheduledBroadcastEdit_save'),
+              label: 'Save changes',
+              loading: _saving,
+              onPressed: _saving ? null : () => unawaited(_save()),
+            ),
+            Spaces.verticalLarge,
+            MText(
+              'The cover is kept as it is.',
+              style: textTheme.microRegular,
+              color: MColorScheme.of(context).onBackgroundVariant,
+              textAlign: .center,
+            ),
+            Spaces.verticalLarge,
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _pickStart(BuildContext context) async {
+    final choice = await pickBroadcastStart(context, initial: _start);
+    if (choice == null || !mounted) return;
+
+    setState(() {
+      _start = choice.start;
+      _zone = choice.zone ?? _zone;
+    });
+  }
+
+  Future<void> _save() async {
+    final title = _title.text.trim();
+    if (title.isEmpty) {
+      context.showErrorToast('A broadcast needs a title.');
+      return;
+    }
+
+    final description = _description.text.trim();
+    final originalDescription = (widget.broadcast.description?.orEmpty ?? '')
+        .trim();
+    final start = _start;
+    final original = widget.broadcast.startTime;
+    final startChanged =
+        start != null &&
+        (original == null ||
+            start.toUtc().difference(original.toUtc()).inSeconds.abs() > 60);
+
+    // Only what changed travels: a patch with a start time in the past is
+    // refused, and a schedule that has already missed its moment is exactly
+    // the row whose title a host may still want to correct.
+    final titleChanged = title != widget.broadcast.title.orEmpty.trim();
+    final descriptionChanged =
+        description.isNotEmpty && description != originalDescription;
+
+    if (!titleChanged && !descriptionChanged && !startChanged) {
+      context.showSuccessToast('Nothing to update');
+      Navigator.of(context).pop();
+      return;
+    }
+
+    setState(() => _saving = true);
+
+    try {
+      await di<ScheduledBroadcastManager>().editDetails.runAsync((
+        id: widget.broadcast.id,
+        title: titleChanged ? title : null,
+        description: descriptionChanged ? description : null,
+        start: startChanged ? start : null,
+        zone: startChanged ? _zone : null,
+      ));
+      if (!mounted) return;
+      context.showSuccessToast('Broadcast updated');
+      Navigator.of(context).pop();
+    } on Object catch (error) {
+      if (!mounted) return;
+      setState(() => _saving = false);
       context.showErrorToast(errorMessage(error));
     }
   }
