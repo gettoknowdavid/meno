@@ -2,6 +2,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
+import 'package:meno_mobile/features/chat/chat.dart';
 import 'package:meno_mobile/features/chat/manager/chat_manager.dart';
 import 'package:meno_mobile/features/chat/widgets/chat_send_button.dart';
 import 'package:meno_mobile/features/chat/widgets/horizontal_popup_menu.dart';

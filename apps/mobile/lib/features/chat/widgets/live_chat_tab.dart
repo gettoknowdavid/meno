@@ -1,9 +1,7 @@
 import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
-import 'package:meno_mobile/features/chat/widgets/chat_input_container.dart';
-import 'package:meno_mobile/features/chat/widgets/chat_list.dart';
-import 'package:meno_mobile/features/chat/widgets/chat_welcome_widget.dart';
-import 'package:meno_mobile/features/chat/widgets/editing_message_widget.dart';
+import 'package:meno_mobile/features/broadcast/manager/_manager.dart';
+import 'package:meno_mobile/features/chat/chat.dart';
 
 /// The room's chat tab: history above, composer below.
 ///
@@ -17,6 +15,8 @@ class LiveChatTab extends WatchingWidget {
   @override
   Widget build(BuildContext context) {
     final scrollController = createOnce(ScrollController.new);
+    final manager = di<ActiveBroadcastManager>();
+    final reactions = manager.session?.reactions;
 
     return LayoutBuilder(
       builder: (context, constraints) => Column(
@@ -24,7 +24,18 @@ class LiveChatTab extends WatchingWidget {
           Expanded(
             child: Align(
               alignment: Alignment.topCenter,
-              child: ChatList(scrollController: scrollController),
+              child: Stack(
+                children: [
+                  ChatList(scrollController: scrollController),
+                  if (reactions != null)
+                    Positioned.fill(
+                      child: ReactionOverlay(
+                        key: const Key('StageReactionOverlay'),
+                        reactions: reactions,
+                      ),
+                    ),
+                ],
+              ),
             ),
           ),
           SafeArea(

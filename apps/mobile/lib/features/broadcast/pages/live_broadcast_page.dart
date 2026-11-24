@@ -2,7 +2,6 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:material_ui/material_ui.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
-import 'package:meno_mobile/features/chat/chat.dart';
 import 'package:meno_ui/meno_ui.dart';
 
 /// The live room's own screen.
@@ -50,7 +49,6 @@ class _LiveBroadcastPageState extends State<LiveBroadcastPage>
 
     final broadcast = snapshot.broadcast ?? Broadcast.empty;
     final timer = manager.session?.timer;
-    final reactions = manager.session?.reactions;
 
     // The clock is the session's, so it is watched only while one is open.
     final time = timer == null ? '00:00:00' : watch(timer.formattedTime).value;
@@ -60,53 +58,33 @@ class _LiveBroadcastPageState extends State<LiveBroadcastPage>
     return Column(
       key: const ValueKey('LiveBroadcastPage'),
       children: [
-        Stack(
-          children: [
-            Padding(
-              padding: const .fromLTRB(16, 24, 16, 16),
-              child: Column(
-                crossAxisAlignment: .stretch,
+        Padding(
+          padding: const .fromLTRB(16, 24, 16, 16),
+          child: Column(
+            crossAxisAlignment: .stretch,
+            children: [
+              BroadcastArtworkWidget(image: broadcast.image),
+              Spaces.verticalSmall,
+              MTimerDisplay(
+                formattedTime: time,
+                isRunning: isRunning,
+                timeAgo: timeAgo,
+              ),
+              Spaces.verticalSmall,
+              BroadcastTitleWidget(title: broadcast.title.orEmpty),
+              Spaces.verticalSmall,
+              Row(
+                mainAxisAlignment: .center,
                 children: [
-                  BroadcastArtworkWidget(image: broadcast.image),
-                  Spaces.verticalSmall,
-                  MTimerDisplay(
-                    formattedTime: time,
-                    isRunning: isRunning,
-                    timeAgo: timeAgo,
-                  ),
-                  Spaces.verticalSmall,
-                  BroadcastTitleWidget(title: broadcast.title.orEmpty),
-                  Spaces.verticalSmall,
-                  Row(
-                    mainAxisAlignment: .center,
-                    children: [
-                      BroadcastCreatorWidget(name: broadcast.hostName.orEmpty),
-                      Spaces.horizontalSmall,
-                      const BroadcastStatusWidget(),
-                    ],
-                  ),
-                  Spaces.verticalXLarge,
-                  const BroadcastControlButtons(),
-                  if (reactions != null) ...[
-                    Spaces.verticalLarge,
-                    MReactionButton(
-                      key: const Key('StageReactionStrip'),
-                      onReaction: reactions.send,
-                    ),
-                  ],
+                  BroadcastCreatorWidget(name: broadcast.hostName.orEmpty),
+                  Spaces.horizontalSmall,
+                  const BroadcastStatusWidget(),
                 ],
               ),
-            ),
-            // After the stage, so it floats over it — and above it because a
-            // reaction should be visible over the artwork, not behind it.
-            if (reactions != null)
-              Positioned.fill(
-                child: ReactionOverlay(
-                  key: const Key('StageReactionOverlay'),
-                  reactions: reactions,
-                ),
-              ),
-          ],
+              Spaces.verticalXLarge,
+              const BroadcastControlButtons(),
+            ],
+          ),
         ),
         SizedBox(
           height: 40,
