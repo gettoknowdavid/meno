@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:dio/dio.dart';
+import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
@@ -43,11 +44,12 @@ void main() {
   ///
   /// It takes its account context, not a global selector: the account scope it
   /// lives in is what says which account it answers for (Step 26).
-  MyProfileManager newManager() {
+  MyProfileManager newManager({UserProfileRepository? profiles}) {
     final manager = MyProfileManager(
       context: AccountContext(accountId: _account, generation: 1),
       http: ProfileHttpService(stubClient(api)),
       cache: cache,
+      profiles: profiles ?? UserProfileRepository(),
       logger: MockMenoLogger(),
     );
     addTearDown(manager.onDispose);
@@ -99,6 +101,42 @@ void main() {
     expect(manager.profile.value.fullName.orEmpty, 'Jim Halpert');
     expect(cache.myProfile()?.fullName.orEmpty, 'Jim Halpert');
     expect(manager.isLoading.value, isFalse);
+  });
+
+  test("following somebody moves this account's own count at once", () async {
+    // The report behind this test: subscribing from a broadcast, then opening
+    // My Profile, showed the old "Subscriptions" number. The follow is decided
+    // on somebody else's page, but the count belongs to this account.
+    di.registerSingleton<ProfileHttpService>(
+      ProfileHttpService(stubClient(api)),
+    );
+    addTearDown(di.reset);
+
+    final profiles = UserProfileRepository();
+    api.answers.add(() async => envelope(data: _profileJson()));
+    final manager = await newManager(profiles: profiles).init();
+    await manager.refresh();
+    expect(manager.profile.value.stats.following, 0);
+
+    // The follow itself: a proxy for the account being subscribed to, over the
+    // same repository the manager listens to.
+    api.answers.add(() async => envelope(data: _profileJson()));
+    final proxy = profiles.acquire(Id.fromWire(_otherId));
+    addTearDown(() => profiles.release(proxy));
+
+    await proxy.toggleFollow.runAsync();
+
+    expect(proxy.isFollowing, isTrue);
+    expect(
+      manager.profile.value.stats.following,
+      1,
+      reason: 'the optimistic count must not wait for another read',
+    );
+    expect(
+      cache.myProfile()?.stats.following,
+      1,
+      reason: 'the next launch shows the same number',
+    );
   });
 
   test('an answer that lands after disposal is discarded', () async {

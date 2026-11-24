@@ -64,6 +64,7 @@ class FeedWidget<TItem> extends WatchingWidget {
     this.skeletonItemCount = 8,
     this.controller,
     this.topSlivers,
+    this.onRefresh,
     super.key,
   });
 
@@ -115,6 +116,15 @@ class FeedWidget<TItem> extends WatchingWidget {
 
   /// Optional slivers placed above the items. Vertical layouts only.
   final List<Widget>? topSlivers;
+
+  /// Extra work a pull-to-refresh should also do, alongside reloading the feed.
+  ///
+  /// A feed under a screen's header — the profile's broadcast tabs — is the
+  /// only scrollable the finger reaches, so its indicator is the one that
+  /// fires. A screen with something above the list that also comes from the API
+  /// passes that read here, and one gesture refreshes both instead of the list
+  /// alone.
+  final Future<void> Function()? onRefresh;
 
   @override
   Widget build(BuildContext context) {
@@ -196,6 +206,7 @@ class FeedWidget<TItem> extends WatchingWidget {
         physics: physics,
         controller: controller,
         topSlivers: topSlivers,
+        onRefresh: onRefresh,
       ),
       FeedLayout.verticalGrid => _GridList(
         feedSource: feedSource,
@@ -215,6 +226,7 @@ class FeedWidget<TItem> extends WatchingWidget {
         scrollDirection: .vertical,
         controller: controller,
         topSlivers: topSlivers,
+        onRefresh: onRefresh,
       ),
       FeedLayout.horizontalGrid => _GridList(
         feedSource: feedSource,
@@ -300,6 +312,7 @@ class _VerticalList<TItem> extends StatelessWidget {
     this.physics,
     this.controller,
     this.topSlivers,
+    this.onRefresh,
   });
 
   final PagedFeedDataSource<TItem> feedSource;
@@ -315,10 +328,24 @@ class _VerticalList<TItem> extends StatelessWidget {
   final ScrollController? controller;
   final List<Widget>? topSlivers;
 
+  /// See [FeedWidget.onRefresh].
+  final Future<void> Function()? onRefresh;
+
+  /// Reloads the first page, and whatever [onRefresh] adds to one pull.
+  Future<void> _refresh() async {
+    final also = onRefresh;
+    if (also == null) {
+      await feedSource.refresh();
+      return;
+    }
+
+    await Future.wait([feedSource.refresh(), also()]);
+  }
+
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: feedSource.refresh,
+      onRefresh: _refresh,
       child: CustomScrollView(
         shrinkWrap: shrinkWrap,
         physics: physics,
@@ -372,6 +399,7 @@ class _GridList<TItem> extends StatelessWidget {
     this.physics,
     this.controller,
     this.topSlivers,
+    this.onRefresh,
   });
 
   final PagedFeedDataSource<TItem> feedSource;
@@ -391,11 +419,23 @@ class _GridList<TItem> extends StatelessWidget {
   final Widget skeletonItem;
   final ScrollController? controller;
   final List<Widget>? topSlivers;
+  final Future<void> Function()? onRefresh;
+
+  /// Reloads the first page, and whatever [onRefresh] adds to one pull.
+  Future<void> _refresh() async {
+    final also = onRefresh;
+    if (also == null) {
+      await feedSource.refresh();
+      return;
+    }
+
+    await Future.wait([feedSource.refresh(), also()]);
+  }
 
   @override
   Widget build(BuildContext context) {
     return RefreshIndicator(
-      onRefresh: feedSource.refresh,
+      onRefresh: _refresh,
       child: CustomScrollView(
         controller: controller,
         scrollDirection: scrollDirection,
@@ -462,10 +502,7 @@ class _FeedFooter extends StatelessWidget {
       final textTheme = MTextTheme.of(context);
 
       return Padding(
-        padding: const .symmetric(
-          horizontal: Insets.lg,
-          vertical: Insets.lg,
-        ),
+        padding: const .symmetric(horizontal: Insets.lg, vertical: Insets.lg),
         child: Column(
           children: [
             MText(

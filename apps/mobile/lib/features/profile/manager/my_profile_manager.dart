@@ -26,6 +26,7 @@ final class MyProfileManager implements Disposable {
     required this._context,
     required this._http,
     required this._cache,
+    required this._profiles,
     required this._logger,
   }) {
     fetch = .createAsyncNoParamNoResult(
@@ -38,7 +39,18 @@ final class MyProfileManager implements Disposable {
   final AccountContext _context;
   final ProfileHttpService _http;
   final ProfileCacheService _cache;
+  final UserProfileRepository _profiles;
   final MenoLogger _logger;
+
+  /// The account's follows, for as long as this manager lives.
+  StreamSubscription<int>? _follows;
+
+  /// Deltas seen while a read was in flight.
+  ///
+  /// The read's answer was computed before those follows happened, so applying
+  /// them to the record it replaced would lose them. They are replayed onto the
+  /// fresh record instead of being counted twice.
+  int _deltaWhileLoading = 0;
 
   final ValueNotifier<MyProfile> _profile = ValueNotifier(.empty);
   final ValueNotifier<bool> _isLoading = ValueNotifier(false);
@@ -69,6 +81,12 @@ final class MyProfileManager implements Disposable {
   /// request cannot carry a token.
   Future<MyProfileManager> init() async {
     _adopt(_context.accountId);
+
+    // Subscribing to somebody moves this account's own "Subscriptions" count;
+    // the proxies are where that decision is made, so they are where it is
+    // heard from. Nothing else writes `stats.following` on this device.
+    _follows = _profiles.followChanges.listen(_applyFollowDelta);
+
     return this;
   }
 
@@ -86,6 +104,7 @@ final class MyProfileManager implements Disposable {
   /// an older copy.
   void update(MyProfile profile) {
     if (profile.isEmpty) return;
+    _deltaWhileLoading = 0;
     _profile.value = profile;
     unawaited(_cache.saveMyProfile(profile));
   }
@@ -94,9 +113,35 @@ final class MyProfileManager implements Disposable {
   FutureOr<dynamic> onDispose() {
     if (_disposed) return null;
     _disposed = true;
+    unawaited(_follows?.cancel());
     fetch.dispose();
     _profile.dispose();
     _isLoading.dispose();
+  }
+
+  /// Moves this account's following count by [delta].
+  ///
+  /// Optimistic and local: the follow has already been accepted by the API when
+  /// this runs, and the number the user sees should not wait for a read. The
+  /// next `GET /users/me` is still the truth, and replaces it.
+  void _applyFollowDelta(int delta) {
+    if (_loadingUserId != null) _deltaWhileLoading += delta;
+    _shiftFollowing(delta);
+  }
+
+  /// Rewrites the record's following count, clamped at zero.
+  void _shiftFollowing(int delta) {
+    final current = _profile.value;
+    if (current.isEmpty) return;
+
+    final following = (current.stats.following + delta).clamp(0, 1 << 31);
+    if (following == current.stats.following) return;
+
+    final updated = current.copyWith(
+      stats: current.stats.copyWith(following: following),
+    );
+    _profile.value = updated;
+    unawaited(_cache.saveMyProfile(updated));
   }
 
   /// Loads the record for whoever is signed in.
@@ -130,7 +175,14 @@ final class MyProfileManager implements Disposable {
       }
 
       _profile.value = remote;
-      await _cache.saveMyProfile(remote);
+
+      // Follows that happened while this read was in flight are newer than its
+      // answer, so they are replayed onto it rather than lost with it.
+      final pending = _deltaWhileLoading;
+      _deltaWhileLoading = 0;
+      if (pending != 0) _shiftFollowing(pending);
+
+      await _cache.saveMyProfile(_profile.value);
     } finally {
       if (!_disposed && _loadingUserId == userId) {
         _loadingUserId = null;

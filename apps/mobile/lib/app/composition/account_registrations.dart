@@ -260,6 +260,7 @@ Future<void> registerAccountScope(
     context: context,
     http: di<ProfileHttpService>(),
     cache: di<ProfileCacheService>(),
+    profiles: di<UserProfileRepository>(),
     logger: di<MenoLogger>(),
   );
   await profile.init();

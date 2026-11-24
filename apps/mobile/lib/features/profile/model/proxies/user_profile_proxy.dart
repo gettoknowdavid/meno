@@ -45,7 +45,8 @@ final class UserProfileProxy extends ChangeNotifier {
   /// already known, so a feed or a request can be started from it. [profile]
   /// fills it at construction for the places that were handed a profile as part
   /// of something else — a participant card — and never fetch one of their own.
-  new(this.subjectId, {Profile? profile}) : _target = profile {
+  new(this.subjectId, {Profile? profile, this.onFollowRecorded})
+    : _target = profile {
     if (profile != null && profile.id != subjectId) {
       throw MalformedResponseException(
         message:
@@ -58,6 +59,14 @@ final class UserProfileProxy extends ChangeNotifier {
 
   /// The account this proxy is about. Fixed for its whole life.
   final Id subjectId;
+
+  /// Told how a settled follow moved the *viewer's* own following count.
+  ///
+  /// `+1` when the viewer started following this account and `-1` when they
+  /// stopped, with the inverse on an undo. The viewer's own profile is the only
+  /// thing that can use it — a count of accounts followed is not part of this
+  /// subject's profile — and the profile repository forwards it there.
+  final void Function(int delta)? onFollowRecorded;
 
   Profile? _target;
 
@@ -161,17 +170,29 @@ final class UserProfileProxy extends ChangeNotifier {
   void _createCommands() {
     toggleFollow = .createUndoableNoParamNoResult<bool>(
       (stack) async {
-        stack.push(isFollowing);
+        // Read once, before the flip: `wasFollowing` is both what the undo
+        // stack restores and which request this is.
+        final wasFollowing = isFollowing;
+        stack.push(wasFollowing);
 
-        _setFollowing(!isFollowing);
+        _setFollowing(!wasFollowing);
         final service = di<ProfileHttpService>();
-        if (isFollowing) {
-          await service.follow(id);
-        } else {
+        if (wasFollowing) {
           await service.unfollow(id);
+        } else {
+          await service.follow(id);
         }
+
+        // The API accepted it, so the viewer's own "Subscriptions" counter has
+        // moved by one. Reported after the write, not with the optimistic flip:
+        // a request that fails is undone below, and the counter with it.
+        onFollowRecorded?.call(wasFollowing ? -1 : 1);
       },
-      undo: (stack, _) => _setFollowing(stack.pop()),
+      undo: (stack, _) {
+        final previous = stack.pop();
+        _setFollowing(previous);
+        onFollowRecorded?.call(previous ? 1 : -1);
+      },
       errorFilter: null,
       errorFilterFn: menoExceptionFilter,
       debugName: 'userProfile.toggleFollow',

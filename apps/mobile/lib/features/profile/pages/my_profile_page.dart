@@ -67,30 +67,37 @@ class MyProfilePage extends WatchingWidget {
       );
     }
 
-    return DefaultTabController(
-      length: 4,
-      child: Scaffold(
-        key: ValueKey(signedIn.id),
-        backgroundColor: colors.background,
-        body: RefreshIndicator(
-          onRefresh: manager.fetch.runAsync,
-          child: NestedScrollView(
-            controller: scrollCtrl,
-            headerSliverBuilder: (context, innerBoxIsScrolled) => [
-              _ProfileAppBar(
-                title: title,
-                profile: profile,
-                isSkeleton: !profile.fullName.isValid,
-                innerBoxIsScrolled: innerBoxIsScrolled,
-              ),
-            ],
-            body: const TabBarView(
-              children: [
-                _RecentBroadcastsTab(),
-                _AllBroadcastsTab(),
-                _ScheduledBroadcastsTab(),
-                _FavouritesTab(),
+    return _RefetchWhenShown(
+      onShown: manager.refresh,
+      child: DefaultTabController(
+        length: 4,
+        child: Scaffold(
+          key: ValueKey(signedIn.id),
+          backgroundColor: colors.background,
+          body: RefreshIndicator(
+            onRefresh: manager.fetch.runAsync,
+            child: NestedScrollView(
+              controller: scrollCtrl,
+              headerSliverBuilder: (context, innerBoxIsScrolled) => [
+                _ProfileAppBar(
+                  title: title,
+                  profile: profile,
+                  isSkeleton: !profile.fullName.isValid,
+                  innerBoxIsScrolled: innerBoxIsScrolled,
+                ),
               ],
+              // Each tab is its own scrollable, and a pull anywhere over one is
+              // answered by that tab's own indicator — so the header read is
+              // handed to every one of them. The page-level indicator above
+              // only ever fires for a pull on the header itself.
+              body: TabBarView(
+                children: [
+                  _RecentBroadcastsTab(onRefresh: manager.fetch.runAsync),
+                  _AllBroadcastsTab(onRefresh: manager.fetch.runAsync),
+                  _ScheduledBroadcastsTab(onRefresh: manager.fetch.runAsync),
+                  _FavouritesTab(onRefresh: manager.fetch.runAsync),
+                ],
+              ),
             ),
           ),
         ),
@@ -205,7 +212,10 @@ class _ProfileTitle extends StatelessWidget {
 
 /// [_RecentBroadcastsTab] displays the user's recent broadcasts.
 class _RecentBroadcastsTab extends WatchingStatefulWidget {
-  const new();
+  const new({required this.onRefresh});
+
+  /// Also run by a pull: this screen's header comes from the same API.
+  final Future<void> Function() onRefresh;
 
   @override
   State<_RecentBroadcastsTab> createState() => __RecentBroadcastsTabState();
@@ -228,6 +238,7 @@ class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
 
     return FeedWidget(
       feedSource: feedSource,
+      onRefresh: widget.onRefresh,
       padding: const .all(Insets.lg),
       topSlivers: [
         SliverOverlapInjector(
@@ -254,7 +265,10 @@ class __RecentBroadcastsTabState extends State<_RecentBroadcastsTab>
 
 /// [_AllBroadcastsTab] displays the user's all broadcasts feed.
 class _AllBroadcastsTab extends WatchingStatefulWidget {
-  const new();
+  const new({required this.onRefresh});
+
+  /// Also run by a pull: this screen's header comes from the same API.
+  final Future<void> Function() onRefresh;
 
   @override
   State<_AllBroadcastsTab> createState() => __AllBroadcastsTabState();
@@ -281,6 +295,7 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
 
     return FeedWidget(
       feedSource: feedSource,
+      onRefresh: widget.onRefresh,
       padding: const .all(Insets.lg),
       topSlivers: [
         SliverOverlapInjector(
@@ -311,7 +326,10 @@ class __AllBroadcastsTabState extends State<_AllBroadcastsTab>
 /// the account's next promise: tapping one opens its lobby, where the host can
 /// go live, and the same three actions are on the home banner.
 class _ScheduledBroadcastsTab extends WatchingStatefulWidget {
-  const new();
+  const new({required this.onRefresh});
+
+  /// Also run by a pull: this screen's header comes from the same API.
+  final Future<void> Function() onRefresh;
 
   @override
   State<_ScheduledBroadcastsTab> createState() =>
@@ -335,6 +353,7 @@ class __ScheduledBroadcastsTabState extends State<_ScheduledBroadcastsTab>
 
     return FeedWidget(
       feedSource: feedSource,
+      onRefresh: widget.onRefresh,
       padding: const .all(Insets.lg),
       topSlivers: [
         SliverOverlapInjector(
@@ -351,8 +370,7 @@ class __ScheduledBroadcastsTabState extends State<_ScheduledBroadcastsTab>
           // once the home banner is hidden this is the only place a schedule
           // can be cancelled, and the slot is held until it is. The same sheet
           // the banner opens, so both surfaces offer one set of answers.
-          onTap: () =>
-              ScheduledBroadcastActionsModal.show(context, broadcast),
+          onTap: () => ScheduledBroadcastActionsModal.show(context, broadcast),
         );
       },
     );
@@ -364,7 +382,10 @@ class __ScheduledBroadcastsTabState extends State<_ScheduledBroadcastsTab>
 
 /// [_FavouritesTab] displays the user's favourite broadcasts.
 class _FavouritesTab extends WatchingStatefulWidget {
-  const new();
+  const new({required this.onRefresh});
+
+  /// Also run by a pull: this screen's header comes from the same API.
+  final Future<void> Function() onRefresh;
 
   @override
   State<_FavouritesTab> createState() => __FavouritesTabState();
@@ -384,33 +405,85 @@ class __FavouritesTabState extends State<_FavouritesTab>
       return const MEmptyState(title: 'No favourite broadcasts yet');
     }
 
-    return CustomScrollView(
-      slivers: [
-        SliverOverlapInjector(
-          handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
-        ),
-        SliverPadding(
-          padding: const .all(Insets.lg),
-          sliver: SliverList.separated(
-            separatorBuilder: (_, _) => Spaces.verticalLarge,
-            itemCount: favourites.length,
-            itemBuilder: (ctx, index) {
-              final favourite = favourites[index];
-              return MRecentlyLiveListTile(
-                title: favourite.title.orEmpty,
-                creator: favourite.creatorName.orEmpty,
-                imageUrl: favourite.image?.getUrl,
-                onTap: () async {
-                  await ctx.push(MRoutes.broadcastRoute(favourite.broadcastId));
-                },
-              );
-            },
+    return RefreshIndicator(
+      onRefresh: widget.onRefresh,
+      child: CustomScrollView(
+        // This tab has no feed of its own, so a short list must still be
+        // pullable.
+        physics: const AlwaysScrollableScrollPhysics(),
+        slivers: [
+          SliverOverlapInjector(
+            handle: NestedScrollView.sliverOverlapAbsorberHandleFor(context),
           ),
-        ),
-      ],
+          SliverPadding(
+            padding: const .all(Insets.lg),
+            sliver: SliverList.separated(
+              separatorBuilder: (_, _) => Spaces.verticalLarge,
+              itemCount: favourites.length,
+              itemBuilder: (ctx, index) {
+                final favourite = favourites[index];
+                return MRecentlyLiveListTile(
+                  title: favourite.title.orEmpty,
+                  creator: favourite.creatorName.orEmpty,
+                  imageUrl: favourite.image?.getUrl,
+                  onTap: () async {
+                    await ctx.push(
+                      MRoutes.broadcastRoute(favourite.broadcastId),
+                    );
+                  },
+                );
+              },
+            ),
+          ),
+        ],
+      ),
     );
   }
 
   @override
   bool get wantKeepAlive => false;
+}
+
+/// Runs [onShown] each time the page comes back on screen.
+///
+/// The profile is a shell branch, so it stays alive behind the other tabs and
+/// nothing rebuilds it when it is selected again. go_router keeps an inactive
+/// branch mounted but disables its tickers, which makes [TickerMode] the exact
+/// signal for "this tab is the one being looked at": the account's counters are
+/// read again on every return to it, so a follow that happened elsewhere in the
+/// app — or somebody following this account — is on screen without a pull.
+///
+/// The first arrival is skipped: the read started when the account became ready
+/// is already on its way.
+class _RefetchWhenShown extends StatefulWidget {
+  const new({required this.onShown, required this.child});
+
+  final Future<void> Function() onShown;
+  final Widget child;
+
+  @override
+  State<_RefetchWhenShown> createState() => _RefetchWhenShownState();
+}
+
+class _RefetchWhenShownState extends State<_RefetchWhenShown> {
+  bool? _wasShown;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+
+    final isShown = TickerMode.valuesOf(context).enabled;
+    final wasShown = _wasShown;
+    _wasShown = isShown;
+
+    if (!isShown || wasShown != false) return;
+
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      widget.onShown().ignore();
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) => widget.child;
 }

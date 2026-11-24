@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/features/profile/model/entities.dart';
 import 'package:meno_mobile/features/profile/model/proxies/user_profile_proxy.dart';
@@ -33,6 +35,27 @@ import 'package:meno_mobile/features/profile/model/proxies/user_profile_proxy.da
 final class UserProfileRepository {
   final _proxies = <String, UserProfileProxy>{};
 
+  final _followChanges = StreamController<int>.broadcast();
+
+  /// Every follow this account makes, as a change to its own following count.
+  ///
+  /// A follow is decided inside a proxy, and this is how the signed-in
+  /// account's own profile hears about it: subscribing to somebody on their
+  /// page has to move the "Subscriptions" counter on My Profile, and waiting
+  /// for the next read of `GET /users/me` leaves it stale for the rest of the
+  /// session.
+  ///
+  /// `+1` for a follow and `-1` for an unfollow, relative to the count the
+  /// account's profile already holds. A failed request sends the inverse, so
+  /// the counter rolls back with the button.
+  Stream<int> get followChanges => _followChanges.stream;
+
+  /// Records [delta] for whoever is counting this account's subscriptions.
+  void _recordFollow(int delta) {
+    if (_followChanges.isClosed) return;
+    _followChanges.add(delta);
+  }
+
   /// The proxy for [subjectId], for one more holder.
   ///
   /// An id that is not a UUID is refused rather than turned into a key that
@@ -45,7 +68,10 @@ final class UserProfileRepository {
     }
 
     final key = subjectId.getOrCrash;
-    final proxy = _proxies[key] ??= UserProfileProxy(subjectId);
+    final proxy = _proxies[key] ??= UserProfileProxy(
+      subjectId,
+      onFollowRecorded: _recordFollow,
+    );
     proxy.retain();
     return proxy;
   }
