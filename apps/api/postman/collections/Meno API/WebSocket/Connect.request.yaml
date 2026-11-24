@@ -2,6 +2,7 @@ $kind: websocket-request
 description: ""
 url: "{{base_url_ws}}/ws?token={{access_token}}"
 settings: {}
+examples: .resources/Connect.resources/examples
 order: 1000
 queryParams:
   token: "{{access_token}}"

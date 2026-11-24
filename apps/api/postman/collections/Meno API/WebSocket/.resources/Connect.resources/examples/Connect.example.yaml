@@ -1,0 +1,11 @@
+$kind: websocket-example
+request:
+  url: "{{base_url_ws}}/ws?token={{access_token}}"
+  queryParams:
+    token: "{{access_token}}"
+response:
+  disconnectStatus: 1000 Normal Closure
+  events:
+    - id: 85f877af-2bea-47f1-8444-6453c98ca879
+      type: error
+order: 1000

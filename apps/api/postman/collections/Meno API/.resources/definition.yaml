@@ -51,8 +51,6 @@ description: |-
   | WebSocket | `/ws` | Real-time events — see folder description for full event catalogue |
   | Health | `/health` | Liveness and readiness probes |
 variables:
-  base_url: "{{base_url}}"
-  base_url_ws: "{{base_url_ws}}"
   access_token: ""
   refresh_token: ""
   user_id: ""
