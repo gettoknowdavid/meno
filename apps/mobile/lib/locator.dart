@@ -193,6 +193,14 @@ void _registerPlatformServices() {
     dependsOn: [LocalStorage],
   );
 
+  // The foreground service a live room runs behind. Device-wide rather than the
+  // account's: it wraps a platform capability, holds no identity, and its state
+  // is "a room is open" — which the account's own session is the one that
+  // knows.
+  di.registerLazySingleton<LiveBackgroundService>(
+    () => PlatformLiveBackgroundService(di<MenoLogger>()),
+  );
+
   // TODO(firebase): restore once the project has a Firebase app to talk to.
   //
   // `FirebaseMessaging.instance` throws `[core/no-app] No Firebase App

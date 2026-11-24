@@ -17,6 +17,12 @@
     <uses-permission
         android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE"
     />
+    <!-- A listener's room is audio playback, not a recording: the same service
+         carries both types, and Android 14 requires a permission for each one
+         the service declares. -->
+    <uses-permission
+        android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK"
+    />
 
     <uses-permission android:name="android.permission.READ_PHONE_STATE" />
     <uses-permission android:name="android.permission.INTERNET" />
@@ -75,7 +81,7 @@
             android:name="de.julianassmann.flutter_background.IsolateHolderService"
             android:enabled="true"
             android:exported="false"
-            android:foregroundServiceType="microphone|connectedDevice"
+            android:foregroundServiceType="microphone|connectedDevice|mediaPlayback"
         />
 
         <provider

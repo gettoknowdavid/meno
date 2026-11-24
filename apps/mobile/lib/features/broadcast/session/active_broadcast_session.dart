@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/services/live_background_service.dart';
 import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/broadcast/manager/broadcast_timer_manager.dart';
 import 'package:meno_mobile/features/broadcast/manager/participants_manager.dart';
@@ -133,6 +134,7 @@ final class ActiveBroadcastSession {
     this.chatList,
     this.reactions,
     this.cohostEvents,
+    this.background,
     this._exitOnServer,
     Duration? initialElapsed,
   }) : _session = session,
@@ -172,6 +174,13 @@ final class ActiveBroadcastSession {
   /// The invitee's `newCohost` and `cohostDemotion` carry the token that
   /// re-authorises them; `removedCohost` says the publishing role is gone.
   final Stream<CohostEvent>? cohostEvents;
+
+  /// What keeps the room alive once the app is off screen.
+  ///
+  /// Owned here, with the transport and the roster, because its lifetime is the
+  /// room's: started when the room connects, stopped in the same `finally` that
+  /// releases everything else. Null in a test that has no platform to ask.
+  final LiveBackgroundService? background;
 
   /// The roster the room's screens read, when there is one.
   ///
@@ -265,6 +274,19 @@ final class ActiveBroadcastSession {
     await _room.connect(token, canPublish: canPublish);
     _joinedToken = token;
     _joinedCanPublish = canPublish;
+
+    // Android suspends a backgrounded isolate — and its WebRTC engine — unless
+    // a foreground service is running. This is the only moment one can be
+    // started: the room is up and the app is still in the foreground. Best
+    // effort, so a refused service cannot tear down a room that is on air.
+    final background = this.background;
+    if (background != null) {
+      await _quietly(
+        () => background.start(isPublishing: canPublish),
+        'starting background execution',
+      );
+    }
+
     await _roster.attach();
 
     // Subscribes to the room's chat frames and reads the history once. Run
@@ -471,6 +493,13 @@ final class ActiveBroadcastSession {
       await _quietly(() async {
         await _room.onDispose();
       }, 'disposing the room');
+
+      // Last, so nothing above is cut short by the process being frozen: the
+      // service is what was keeping this isolate awake.
+      final background = this.background;
+      if (background != null) {
+        await _quietly(background.stop, 'stopping background execution');
+      }
 
       _closed = true;
     }

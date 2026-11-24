@@ -5,6 +5,7 @@ export 'services/account_data_purger.dart';
 export 'services/database.dart';
 export 'services/dev_room_token.dart';
 export 'services/http_client.dart';
+export 'services/live_background_service.dart';
 export 'services/livekit_client.dart';
 export 'services/local_notifications_service.dart';
 export 'services/local_storage.dart';

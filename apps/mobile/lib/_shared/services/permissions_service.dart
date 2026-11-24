@@ -5,6 +5,7 @@ import 'package:flutter/widgets.dart';
 import 'package:flutter_background/flutter_background.dart';
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_shared/services/live_background_service.dart';
 import 'package:meno_mobile/_shared/services/local_storage.dart';
 import 'package:permission_handler/permission_handler.dart';
 
@@ -256,13 +257,11 @@ final class PermissionsService implements Disposable {
     try {
       var granted = await FlutterBackground.hasPermissions;
       if (!granted) {
+        // The same notification the room's own service shows, so asking for the
+        // permission and then going live cannot leave two different
+        // notifications behind — and the icon is one that exists.
         granted = await FlutterBackground.initialize(
-          androidConfig: const FlutterBackgroundAndroidConfig(
-            notificationTitle: 'Menō Broadcasting',
-            notificationText: 'Broadcast is running in background',
-            notificationImportance: .high,
-            notificationIcon: AndroidResource(name: 'ic_stat_ic_notification'),
-          ),
+          androidConfig: liveBackgroundConfig(isPublishing: true),
         );
       }
 
