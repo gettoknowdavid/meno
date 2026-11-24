@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
+import 'package:meno_mobile/_routing/_routing.dart';
 import 'package:meno_mobile/_shared/_shared.dart';
 import 'package:meno_mobile/features/auth/auth.dart';
 import 'package:meno_mobile/features/broadcast/broadcast.dart';
@@ -445,6 +446,15 @@ Future<void> registerAccountScope(
       onExit: live.exitRoom,
       onMicrophoneChanged: (enabled) async {
         await live.session?.setMicrophoneEnabled(enabled);
+      },
+      // Expanding the window is the system bringing the app back. The room is
+      // normally still the screen underneath, but a reconnect or a dismissal
+      // can leave the app elsewhere, and the window promised the broadcast.
+      onReturned: () {
+        if (!live.hasSession || !di.isRegistered<GoRouter>()) return;
+        final router = di<GoRouter>();
+        if (router.state.uri.path == MRoutes.liveBroadcast) return;
+        router.go(MRoutes.liveBroadcast);
       },
     ),
   );

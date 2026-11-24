@@ -219,6 +219,15 @@ final class ActiveBroadcastSession {
 
   final _roleChanges = StreamController<void>.broadcast();
 
+  /// Whether this client's microphone is publishing, as a value that can be
+  /// followed.
+  ///
+  /// The room's screens read the flag once when they build, but the floating
+  /// window outlives its screen: it has to hear about a mute made in the app.
+  /// Every path that moves the microphone goes through this session, so this is
+  /// where the change is published.
+  final ValueNotifier<bool> _microphoneEnabled = ValueNotifier(false);
+
   /// Serialises role changes, so two frames cannot reconnect the room twice at
   /// once or apply their tokens out of order.
   Future<void> _roleUpdates = Future<void>.value();
@@ -274,6 +283,7 @@ final class ActiveBroadcastSession {
     await _room.connect(token, canPublish: canPublish);
     _joinedToken = token;
     _joinedCanPublish = canPublish;
+    _syncMicrophone();
 
     // Android suspends a backgrounded isolate — and its WebRTC engine — unless
     // a foreground service is running. This is the only moment one can be
@@ -296,8 +306,10 @@ final class ActiveBroadcastSession {
   }
 
   /// Mutes or unmutes the local microphone.
-  Future<void> setMicrophoneEnabled(bool enabled) =>
-      _room.setMicrophoneEnabled(enabled);
+  Future<void> setMicrophoneEnabled(bool enabled) async {
+    await _room.setMicrophoneEnabled(enabled);
+    _syncMicrophone();
+  }
 
   /// Applies the publish token from an invitation this account just accepted.
   ///
@@ -387,6 +399,7 @@ final class ActiveBroadcastSession {
       await _room.connect(token, canPublish: canPublish);
       _joinedToken = token;
       _joinedCanPublish = canPublish;
+      _syncMicrophone();
       if (!canPublish) await _muteQuietly();
     });
   }
@@ -436,6 +449,7 @@ final class ActiveBroadcastSession {
     if (!_room.isConnected) return;
     try {
       await _room.setMicrophoneEnabled(false);
+      _syncMicrophone();
     } on Object catch (error, stackTrace) {
       _logger.w(
         'The live session could not mute the microphone after a role change',
@@ -446,8 +460,17 @@ final class ActiveBroadcastSession {
     }
   }
 
+  /// Publishes the room's microphone flag for whoever follows it.
+  void _syncMicrophone() {
+    if (_closed) return;
+    _microphoneEnabled.value = _room.isMicrophoneEnabled;
+  }
+
   /// Whether this client is publishing its microphone.
   bool get isMicrophoneEnabled => _room.isMicrophoneEnabled;
+
+  /// The same flag as [isMicrophoneEnabled], for a window that must follow it.
+  ValueListenable<bool> get microphoneEnabled => _microphoneEnabled;
 
   /// Closes the session, once.
   ///
@@ -502,6 +525,7 @@ final class ActiveBroadcastSession {
       }
 
       _closed = true;
+      _microphoneEnabled.dispose();
     }
 
     return outcome;

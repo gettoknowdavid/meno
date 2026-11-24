@@ -734,7 +734,7 @@ final class ActiveBroadcastManager implements Disposable {
       await pip.arm(
         broadcast: session.broadcast,
         canPublish: session.canPublish,
-        isMicrophoneEnabled: session.isMicrophoneEnabled,
+        microphoneEnabled: session.microphoneEnabled,
         elapsed: session.timer.formattedTime,
       );
     } on Object catch (error, stackTrace) {

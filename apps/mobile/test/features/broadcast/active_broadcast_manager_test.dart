@@ -92,6 +92,7 @@ final class _RecordingPip implements LivePip {
   int arms = 0;
   int disarms = 0;
   bool? lastCanPublish;
+  ValueListenable<bool>? lastMicrophone;
   ValueListenable<String>? lastElapsed;
   int disposals = 0;
 
@@ -99,11 +100,12 @@ final class _RecordingPip implements LivePip {
   Future<void> arm({
     required Broadcast broadcast,
     required bool canPublish,
-    required bool isMicrophoneEnabled,
+    required ValueListenable<bool> microphoneEnabled,
     required ValueListenable<String> elapsed,
   }) async {
     arms++;
     lastCanPublish = canPublish;
+    lastMicrophone = microphoneEnabled;
     lastElapsed = elapsed;
   }
 
@@ -111,9 +113,6 @@ final class _RecordingPip implements LivePip {
   Future<void> disarm() async {
     disarms++;
   }
-
-  @override
-  Future<void> updateMicrophone(bool enabled) async {}
 
   @override
   void dispose() {
@@ -429,15 +428,15 @@ void main() {
     expect(cohostManager.snapshot.value.phase, LivePhase.ended);
   });
 
-    test("going live arms the window with the room's own state", () async {
-      await manager.enter(request);
-      await pumpUntil(() => pip.arms == 1);
+  test("going live arms the window with the room's own state", () async {
+    await manager.enter(request);
+    await pumpUntil(() => pip.arms == 1);
 
-      expect(pip.arms, 1);
-      expect(pip.lastCanPublish, isTrue);
-      expect(pip.lastElapsed, same(manager.session!.timer.formattedTime));
-    },
-  );
+    expect(pip.arms, 1);
+    expect(pip.lastCanPublish, isTrue);
+    expect(pip.lastElapsed, same(manager.session!.timer.formattedTime));
+    expect(pip.lastMicrophone, same(manager.session!.microphoneEnabled));
+  });
 
   test('a failed entry never arms the floating window', () async {
     gateway.failEnter = true;

@@ -82,22 +82,28 @@ void main() {
   late PipController pip;
   late ValueNotifier<LiveSnapshot> snapshot;
   late ValueNotifier<String> elapsed;
+
+  /// Stands in for the session's microphone flag.
+  late ValueNotifier<bool> microphone;
   late List<String> exits;
+  late List<String> returns;
   late List<bool> microphoneChanges;
   late LivePipController controller;
 
-  LivePipController build({
-    bool android = true,
-    bool canPublish = true,
-    bool isMicrophoneEnabled = true,
-  }) {
+  LivePipController build({bool android = true}) {
     return controller = LivePipController(
       pip: pip,
       logger: MockMenoLogger(),
       snapshot: snapshot,
       accountId: _account,
       onExit: () async => exits.add('exit'),
-      onMicrophoneChanged: (enabled) async => microphoneChanges.add(enabled),
+      // What the session does with the request: the flag moves, and the window
+      // follows it.
+      onMicrophoneChanged: (enabled) async {
+        microphoneChanges.add(enabled);
+        microphone.value = enabled;
+      },
+      onReturned: () => returns.add('returned'),
       isAndroid: () => android,
     );
   }
@@ -117,7 +123,9 @@ void main() {
       ),
     );
     elapsed = ValueNotifier<String>('00:01:00');
+    microphone = ValueNotifier<bool>(true);
     exits = [];
+    returns = [];
     microphoneChanges = [];
   });
 
@@ -125,18 +133,16 @@ void main() {
     controller.dispose();
     snapshot.dispose();
     elapsed.dispose();
+    microphone.dispose();
   });
 
-  Future<void> arm({
-    bool canPublish = true,
-    bool isMicrophoneEnabled = true,
-    Broadcast? broadcast,
-  }) => build().arm(
-    broadcast: broadcast ?? _broadcast(),
-    canPublish: canPublish,
-    isMicrophoneEnabled: isMicrophoneEnabled,
-    elapsed: elapsed,
-  );
+  Future<void> arm({bool canPublish = true, Broadcast? broadcast}) =>
+      build().arm(
+        broadcast: broadcast ?? _broadcast(),
+        canPublish: canPublish,
+        microphoneEnabled: microphone,
+        elapsed: elapsed,
+      );
 
   test('arming prepares a 16:9 window that opens on leaving the app', () async {
     await arm();
@@ -166,20 +172,34 @@ void main() {
     await controller.arm(
       broadcast: _broadcast(),
       canPublish: true,
-      isMicrophoneEnabled: true,
+      microphoneEnabled: microphone,
       elapsed: elapsed,
     );
 
     expect(platform.configureCalls, calls, reason: 'arming is idempotent');
   });
 
-  test('mute flips the action and the microphone it drives', () async {
+  test('mute from the window moves the microphone it drives', () async {
     await arm();
 
     platform.tap(LivePipController.toggleMuteAction);
     await Future<void>.delayed(Duration.zero);
 
     expect(microphoneChanges, [false]);
+    expect(pip.options.actions.first.label, 'Unmute');
+    expect(
+      pip.options.actions.first.icon,
+      const PipActionIcon.drawable(LivePipController.mutedIcon),
+    );
+  });
+
+  test('a mute made in the app shows on the window', () async {
+    await arm();
+    expect(pip.options.actions.first.label, 'Mute');
+
+    microphone.value = false;
+    await Future<void>.delayed(Duration.zero);
+
     expect(pip.options.actions.first.label, 'Unmute');
     expect(
       pip.options.actions.first.icon,
@@ -208,7 +228,7 @@ void main() {
     await build(android: false).arm(
       broadcast: _broadcast(),
       canPublish: true,
-      isMicrophoneEnabled: true,
+      microphoneEnabled: microphone,
       elapsed: elapsed,
     );
 
@@ -225,20 +245,43 @@ void main() {
 
     expect(controller.isArmed, isFalse);
     expect(platform.isOpen, isFalse, reason: 'the window must be exited');
-    expect(platform.releaseCalls, 1);
     expect(pip.content.value, isNull);
   });
 
-  test('an action after the room closed does nothing', () async {
+  test('expanding the window brings the app back to the room', () async {
     await arm();
+    await pip.enter();
+
+    await pip.exit();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(returns, ['returned']);
+  });
+
+  test('the window closing because the room ended is not a return', () async {
+    await arm();
+    await pip.enter();
+
+    // `disarm` closes the window itself; that must not pull anybody anywhere.
+    await controller.disarm();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(returns, isEmpty);
+  });
+
+  test('a mute after the room closed changes nothing', () async {
+    await arm();
+    final calls = platform.configureCalls;
     await controller.disarm();
 
+    microphone.value = false;
     platform.tap(LivePipController.leaveAction);
     platform.tap(LivePipController.toggleMuteAction);
     await Future<void>.delayed(Duration.zero);
 
     expect(exits, isEmpty);
     expect(microphoneChanges, isEmpty);
+    expect(platform.configureCalls, calls);
   });
 
   test("the window copy names the account's standing in the room", () async {
