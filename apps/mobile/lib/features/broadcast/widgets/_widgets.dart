@@ -4,6 +4,7 @@ export 'broadcast_card.dart';
 export 'broadcast_control_buttons.dart';
 export 'broadcast_draft_modal.dart';
 export 'broadcast_info_modal.dart';
+export 'broadcast_mini_stage.dart';
 export 'broadcast_schedule_picker.dart';
 export 'cohost_invitation_card.dart';
 export 'ended_broadcast_participants_widget.dart';

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart' show ValueListenable;
 import 'package:flutter_it/flutter_it.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:meno_mobile/_core/_core.dart';
@@ -7,6 +8,7 @@ import 'package:meno_mobile/_shared/services/local_storage.dart';
 import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/auth/model/auth_context.dart';
 import 'package:meno_mobile/features/broadcast/manager/active_broadcast_manager.dart';
+import 'package:meno_mobile/features/broadcast/manager/live_pip_controller.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/live_session_store.dart';
 import 'package:meno_mobile/features/broadcast/session/active_broadcast_session.dart';
@@ -85,6 +87,40 @@ final class _FakeRoster implements LiveRoster {
 }
 
 /// A gateway a test drives: entries can be held, the end can fail.
+/// Records what the manager asks of the floating window.
+final class _RecordingPip implements LivePip {
+  int arms = 0;
+  int disarms = 0;
+  bool? lastCanPublish;
+  ValueListenable<String>? lastElapsed;
+  int disposals = 0;
+
+  @override
+  Future<void> arm({
+    required Broadcast broadcast,
+    required bool canPublish,
+    required bool isMicrophoneEnabled,
+    required ValueListenable<String> elapsed,
+  }) async {
+    arms++;
+    lastCanPublish = canPublish;
+    lastElapsed = elapsed;
+  }
+
+  @override
+  Future<void> disarm() async {
+    disarms++;
+  }
+
+  @override
+  Future<void> updateMicrophone(bool enabled) async {}
+
+  @override
+  void dispose() {
+    disposals++;
+  }
+}
+
 final class _FakeGateway implements LiveGateway {
   int enterCalls = 0;
   int endCalls = 0;
@@ -138,6 +174,7 @@ void main() {
   late LiveSessionStore store;
   late List<_FakeRoom> rooms;
   late ActiveBroadcastManager manager;
+  late _RecordingPip pip;
   late StreamController<CohostEvent> cohostEvents;
   var failRooms = false;
 
@@ -173,6 +210,8 @@ void main() {
         );
       },
     );
+    pip = _RecordingPip();
+    manager.attachPip(pip);
     addTearDown(manager.onDispose);
   });
 
@@ -388,6 +427,50 @@ void main() {
     expect(gateway.endCalls, 0, reason: 'a cohost may not end the broadcast');
     expect(gateway.leaveCalls, 1);
     expect(cohostManager.snapshot.value.phase, LivePhase.ended);
+  });
+
+    test("going live arms the window with the room's own state", () async {
+      await manager.enter(request);
+      await pumpUntil(() => pip.arms == 1);
+
+      expect(pip.arms, 1);
+      expect(pip.lastCanPublish, isTrue);
+      expect(pip.lastElapsed, same(manager.session!.timer.formattedTime));
+    },
+  );
+
+  test('a failed entry never arms the floating window', () async {
+    gateway.failEnter = true;
+
+    await manager.enter(request);
+    await pumpUntil(() => manager.snapshot.value.phase == LivePhase.failed);
+
+    expect(pip.arms, 0);
+  });
+
+  test('ending the broadcast closes the floating window', () async {
+    await manager.enter(request);
+    await pumpUntil(() => pip.arms == 1);
+
+    await manager.leaveOrEnd.runAsync();
+
+    expect(pip.disarms, 1);
+    expect(manager.snapshot.value.phase, LivePhase.ended);
+  });
+
+  test('an account exit closes the floating window', () async {
+    await manager.enter(request);
+    await pumpUntil(() => pip.arms == 1);
+
+    await manager.closeForAccountExit();
+
+    expect(pip.disarms, 1);
+  });
+
+  test('disposing the manager releases the floating window', () async {
+    await manager.onDispose();
+
+    expect(pip.disposals, 1);
   });
 }
 

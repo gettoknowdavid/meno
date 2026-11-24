@@ -11,6 +11,7 @@ import 'package:meno_mobile/features/notes/notes.dart';
 import 'package:meno_mobile/features/notification/notification.dart';
 import 'package:meno_mobile/features/profile/profile.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
+import 'package:pip_kit/pip_kit.dart';
 
 /// Registers what belongs to one account, in that account's scope.
 ///
@@ -373,64 +374,81 @@ Future<void> registerAccountScope(
   // The account's one live owner. Its session is built by the factory below —
   // an ordinary object, created and closed by the manager — so nothing about a
   // room is registered in the container.
-  scope.registerSingleton<ActiveBroadcastManager>(
-    ActiveBroadcastManager(
-      context: context,
-      gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
-      store: di<LiveSessionStore>(),
-      logger: di<MenoLogger>(),
-      endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
-      createSession: ({required session, required exitOnServer}) {
-        final participants = ParticipantsManager(
-          http: di<BroadcastHttpService>(),
-          socket: di<BroadcastSocketService>(),
-          broadcastId: session.broadcast.id,
-        );
-        
-        // The room's chat, built with the session and closed with it. Both
-        // managers take the room's ids rather than the session, so neither can
-        // outlive the identity it writes into a frame.
-        final chat = ChatManager(
-          socket: di<ChatSocketService>(),
-          broadcastId: session.broadcast.id,
-          userId: session.userId,
-          logger: di<MenoLogger>(),
-        );
-        
-        final chatList = ChatListManager(
-          http: di<ChatHttpService>(),
-          socket: di<ChatSocketService>(),
-          broadcastId: session.broadcast.id,
-          userId: session.userId,
-          logger: di<MenoLogger>(),
-        );
-        
-        // The room's reactions: the floating layer's source and the one place
-        // both strips send through. Built with the room for the same reason.
-        final reactions = ReactionsManager(
-          socket: di<ChatSocketService>(),
-          broadcastId: session.broadcast.id,
-          userId: session.userId,
-          logger: di<MenoLogger>(),
-        );
+  final live = ActiveBroadcastManager(
+    context: context,
+    gateway: BroadcastLiveGateway(di<BroadcastHttpService>()),
+    store: di<LiveSessionStore>(),
+    logger: di<MenoLogger>(),
+    endedBroadcasts: di<BroadcastSocketService>().onEndedBroadcast,
+    createSession: ({required session, required exitOnServer}) {
+      final participants = ParticipantsManager(
+        http: di<BroadcastHttpService>(),
+        socket: di<BroadcastSocketService>(),
+        broadcastId: session.broadcast.id,
+      );
 
-        return ActiveBroadcastSession(
-          session: session,
-          room: _createRoomTransport(session.broadcast.id, session.userId),
-          roster: ParticipantsRoster(participants),
-          participants: participants,
-          chat: chat,
-          chatList: chatList,
-          reactions: reactions,
-          cohostEvents: di<BroadcastSocketService>().onCohostEvent,
-          background: di<LiveBackgroundService>(),
-          clock: di<Clock>(),
-          logger: di<MenoLogger>(),
-          exitOnServer: exitOnServer,
-        );
+      // The room's chat, built with the session and closed with it. Both
+      // managers take the room's ids rather than the session, so neither can
+      // outlive the identity it writes into a frame.
+      final chat = ChatManager(
+        socket: di<ChatSocketService>(),
+        broadcastId: session.broadcast.id,
+        userId: session.userId,
+        logger: di<MenoLogger>(),
+      );
+
+      final chatList = ChatListManager(
+        http: di<ChatHttpService>(),
+        socket: di<ChatSocketService>(),
+        broadcastId: session.broadcast.id,
+        userId: session.userId,
+        logger: di<MenoLogger>(),
+      );
+
+      // The room's reactions: the floating layer's source and the one place
+      // both strips send through. Built with the room for the same reason.
+      final reactions = ReactionsManager(
+        socket: di<ChatSocketService>(),
+        broadcastId: session.broadcast.id,
+        userId: session.userId,
+        logger: di<MenoLogger>(),
+      );
+
+      return ActiveBroadcastSession(
+        session: session,
+        room: _createRoomTransport(session.broadcast.id, session.userId),
+        roster: ParticipantsRoster(participants),
+        participants: participants,
+        chat: chat,
+        chatList: chatList,
+        reactions: reactions,
+        cohostEvents: di<BroadcastSocketService>().onCohostEvent,
+        background: di<LiveBackgroundService>(),
+        clock: di<Clock>(),
+        logger: di<MenoLogger>(),
+        exitOnServer: exitOnServer,
+      );
+    },
+  );
+
+  // The room's floating window. Attached after construction because it draws
+  // the manager's own snapshot, and handed the manager's own exit so the
+  // window's Leave/End is the same path as the room's. A desktop or iOS build
+  // never arms it (the controller asks the platform), and a test that attaches
+  // nothing gets a manager with no window at all.
+  live.attachPip(
+    LivePipController(
+      pip: PipController.instance,
+      logger: di<MenoLogger>(),
+      snapshot: live.snapshot,
+      accountId: context.accountId,
+      onExit: live.exitRoom,
+      onMicrophoneChanged: (enabled) async {
+        await live.session?.setMicrophoneEnabled(enabled);
       },
     ),
   );
+  scope.registerSingleton<ActiveBroadcastManager>(live);
 
   // A process that died inside a room comes back to it. Queued behind nothing
   // else yet, and refused once an account exit has begun.

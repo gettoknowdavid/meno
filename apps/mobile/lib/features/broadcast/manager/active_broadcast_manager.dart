@@ -5,6 +5,7 @@ import 'package:flutter_it/flutter_it.dart';
 import 'package:meno_mobile/_core/_core.dart';
 import 'package:meno_mobile/_shared/services/room_transport.dart';
 import 'package:meno_mobile/features/auth/model/auth_context.dart';
+import 'package:meno_mobile/features/broadcast/manager/live_pip_controller.dart';
 import 'package:meno_mobile/features/broadcast/model/_model.dart';
 import 'package:meno_mobile/features/broadcast/services/broadcast_http_service.dart';
 import 'package:meno_mobile/features/broadcast/services/live_session_store.dart';
@@ -135,13 +136,13 @@ final class BroadcastLiveGateway implements LiveGateway {
       // `routes::broadcasts` leaves the token endpoint uncached.
       LiveEnterMode.host => await _http.goLive(
         request.broadcastId,
-        idempotencyKey: request.idempotencyKey
-            ?? _operationKey(request.broadcastId),
+        idempotencyKey:
+            request.idempotencyKey ?? _operationKey(request.broadcastId),
       ),
       LiveEnterMode.listen => await _http.join(
         request.broadcastId,
-        idempotencyKey: request.idempotencyKey
-            ?? _operationKey(request.broadcastId),
+        idempotencyKey:
+            request.idempotencyKey ?? _operationKey(request.broadcastId),
       ),
       LiveEnterMode.resume => await _http.resume(request.broadcastId),
     };
@@ -248,6 +249,13 @@ final class ActiveBroadcastManager implements Disposable {
 
   ActiveBroadcastSession? _session;
 
+  /// The room's floating window, when this build has one.
+  ///
+  /// Attached by the composition root rather than injected through the
+  /// constructor: the window draws the manager's own snapshot, which does not
+  /// exist until the manager does. Null in every test that does not attach one.
+  LivePip? _pip;
+
   /// The request the last entry was made with, kept so a failed entry can be
   /// retried without the page guessing a mode.
   LiveEnterRequest? _lastRequest;
@@ -287,6 +295,11 @@ final class ActiveBroadcastManager implements Disposable {
 
   /// The user-facing end (creator) or leave (everyone else).
   late final Command<void, void> leaveOrEnd;
+
+  /// Attaches the floating window this room may use. Idempotent.
+  void attachPip(LivePip pip) {
+    _pip = pip;
+  }
 
   /// Whether a room is open right now.
   bool get hasSession => _session != null;
@@ -343,6 +356,10 @@ final class ActiveBroadcastManager implements Disposable {
     _closingRoom = true;
     _cancelRoomWatch();
 
+    // The window goes before the room does: a PiP surface over a broadcast
+    // that is ending would be a status that is no longer true.
+    await _disarmPip();
+
     snapshot.value = LiveSnapshot.room(
       phase: .ending,
       broadcast: session.broadcast,
@@ -385,6 +402,7 @@ final class ActiveBroadcastManager implements Disposable {
 
     _closingRoom = true;
     _cancelRoomWatch();
+    await _disarmPip();
 
     final session = _session;
     _session = null;
@@ -413,6 +431,7 @@ final class ActiveBroadcastManager implements Disposable {
     final previous = _session;
     if (previous != null) {
       _session = null;
+      await _disarmPip();
       await previous.close(LiveCloseReason.replaced);
     }
 
@@ -620,6 +639,10 @@ final class ActiveBroadcastManager implements Disposable {
     _cancelRoomWatch();
     _session = null;
 
+    // The window closes with the room it was showing, on every ending — the
+    // host's own exit, an admin force, a quota end, or the socket saying so.
+    await _disarmPip();
+
     await session.close(LiveCloseReason.ended);
     _closingRoom = false;
 
@@ -695,6 +718,47 @@ final class ActiveBroadcastManager implements Disposable {
       accountId: _context.accountId,
       canPublish: session.canPublish,
     );
+
+    // Arming is what makes "leaving the app keeps the broadcast on screen"
+    // true. It is repeated on a reconnect (the process may have been frozen and
+    // the window lost) and ignored by an already-armed controller.
+    unawaited(_armPip(session));
+  }
+
+  /// Prepares the floating window for a live room. Best effort.
+  Future<void> _armPip(ActiveBroadcastSession session) async {
+    final pip = _pip;
+    if (pip == null) return;
+
+    try {
+      await pip.arm(
+        broadcast: session.broadcast,
+        canPublish: session.canPublish,
+        isMicrophoneEnabled: session.isMicrophoneEnabled,
+        elapsed: session.timer.formattedTime,
+      );
+    } on Object catch (error, stackTrace) {
+      _logger.e(
+        'Could not arm the floating window',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  /// Closes the floating window, if this build has one. Best effort.
+  Future<void> _disarmPip() async {
+    try {
+      await _pip?.disarm();
+    } on Object catch (error, stackTrace) {
+      _logger.e(
+        'Could not disarm the floating window',
+        tag: MenoLogTag.lifecycle.label,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
   }
 
   /// A reason worth carrying, or null for the API's `none`.
@@ -749,6 +813,7 @@ final class ActiveBroadcastManager implements Disposable {
     await closeForAccountExit();
     await _endedSubscription?.cancel();
     _endedSubscription = null;
+    _pip?.dispose();
     join.dispose();
     leaveOrEnd.dispose();
     snapshot.dispose();

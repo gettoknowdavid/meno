@@ -11,6 +11,7 @@ import 'package:meno_mobile/app/layouts/root_shell.dart';
 import 'package:meno_mobile/features/auth/manager/auth_manager.dart';
 import 'package:meno_mobile/features/settings/settings.dart';
 import 'package:meno_ui/meno_ui.dart';
+import 'package:pip_kit/pip_kit.dart';
 import 'package:responsive_framework/responsive_framework.dart';
 
 /// How long the app waits for its services before surfacing the error state.
@@ -98,9 +99,14 @@ class MenoApp extends WatchingWidget {
         GlobalMaterialLocalizations.delegate,
         FlutterQuillLocalizations.delegate,
       ],
-      builder: (context, child) => ResponsiveBreakpoints.builder(
-        breakpoints: menoBreakpoints,
-        child: AccountGate(child: child ?? const SizedBox.shrink()),
+      // `PipHost` sits above the router so the floating window's content keeps
+      // drawing while the navigation stack changes underneath it. It is inert
+      // until a live room arms it.
+      builder: (context, child) => PipHost(
+        child: ResponsiveBreakpoints.builder(
+          breakpoints: menoBreakpoints,
+          child: AccountGate(child: child ?? const SizedBox.shrink()),
+        ),
       ),
     );
   }
