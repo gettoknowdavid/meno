@@ -144,6 +144,16 @@ pub trait BroadcastRepo: Send + Sync + std::fmt::Debug {
     /// How many people are in the room right now.
     async fn live_participant_count(&self, broadcast_id: Uuid) -> Result<i64, MenoError>;
 
+    /// Every account whose participant row on `broadcast_id` is still open.
+    ///
+    /// The room's audience as *this application* recorded it, which is not the same
+    /// set the media server reports: a listener who joined over HTTP has a row whether
+    /// or not their media client ever connected, and a fan-out that only asked LiveKit
+    /// therefore missed exactly the people it exists for.
+    ///
+    /// Unpaginated on purpose — this feeds a notification recipient list, not a screen.
+    async fn present_participant_ids(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError>;
+
     // ── participants (§7.6) ───────────────────────────────────────────────
 
     /// Record that `request.participant_id` is in the room.

@@ -676,24 +676,10 @@ impl BroadcastService {
         let ended_at = now();
 
         // Who has to hear it, computed *before* the room is torn down and the roster
-        // closed: both of those erase the answer. Presence comes from the media server
-        // for the same reason the reaper reads it there — `left_at` is written by a
-        // client that leaves politely, and the one this list matters for never does.
-        // A media outage is not a reason to refuse the host's End, so it degrades to
-        // "the people we know about".
-        let cohosts = self.repo.list_cohosts(id).await.unwrap_or_default();
-        let present = self.media.room_participants(id).await.unwrap_or_default();
-        let mut recipients = vec![existing.creator_id];
-        for id in cohosts
-            .iter()
-            .filter(|cohost| cohost.is_current())
-            .map(|cohost| cohost.cohost_id)
-            .chain(present)
-        {
-            if !recipients.contains(&id) {
-                recipients.push(id);
-            }
-        }
+        // closed: both of those erase the answer. One helper for every room-wide
+        // announcement, so a participant who is on this application's roster but not on
+        // the media server's cannot be missed by one path and reached by another.
+        let recipients = self.room_recipients(&existing).await;
 
         let row = self
             .repo
@@ -1657,33 +1643,36 @@ impl BroadcastService {
         Ok(())
     }
 
-    /// Who is in `row`'s room: its creator, its current cohosts, and everybody the media
-    /// server reports.
+    /// Who is in `row`'s room: its creator, its current cohosts, everybody on this
+    /// application's own roster, and everybody the media server additionally reports.
+    ///
+    /// The roster is the important half. Until it was consulted, a listener who joined
+    /// over HTTP was a recipient only if LiveKit also knew them — so a participant whose
+    /// socket was connected but whose media client was not (a build without a room
+    /// server, a media outage, a test client) never heard that the broadcast ended. The
+    /// database is the source of truth for who joined; the media server is an extra
+    /// source for who is still there.
     ///
     /// The same audience the reaper computes for an end, and degraded the same way: a
-    /// media outage means "the people we know about", not a failed announcement.
+    /// media outage, or a roster read that fails, means "the people we know about", not
+    /// a failed announcement.
     async fn room_recipients(&self, row: &Broadcast) -> Vec<Uuid> {
         let mut recipients = vec![row.creator_id];
 
-        for id in self
-            .repo
-            .list_cohosts(row.id)
-            .await
-            .unwrap_or_default()
-            .iter()
-            .filter(|cohost| cohost.is_current())
-            .map(|cohost| cohost.cohost_id)
-        {
-            if !recipients.contains(&id) {
-                recipients.push(id);
-            }
-        }
-
-        for id in self
+        let cohosts = self.repo.list_cohosts(row.id).await.unwrap_or_default();
+        let present = self.repo.present_participant_ids(row.id).await.unwrap_or_default();
+        let media = self
             .media
             .room_participants(row.id)
             .await
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        for id in cohosts
+            .iter()
+            .filter(|cohost| cohost.is_current())
+            .map(|cohost| cohost.cohost_id)
+            .chain(present)
+            .chain(media)
         {
             if !recipients.contains(&id) {
                 recipients.push(id);

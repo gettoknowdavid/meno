@@ -583,6 +583,17 @@ impl BroadcastRepo for PgBroadcastRepo {
         .map_err(|e| database("live_participant_count", e))
     }
 
+    async fn present_participant_ids(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        sqlx::query_scalar::<_, Uuid>(
+            "SELECT participant_id FROM broadcast_participants \
+             WHERE broadcast_id = $1 AND left_at IS NULL",
+        )
+        .bind(broadcast_id)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| database("present_participant_ids", e))
+    }
+
     async fn join(&self, request: JoinRequest) -> Result<JoinOutcome, MenoError> {
         let mut tx = self
             .pool

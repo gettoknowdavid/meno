@@ -572,6 +572,16 @@ impl BroadcastRepo for InMemoryBroadcastRepo {
             .count() as i64)
     }
 
+    async fn present_participant_ids(&self, broadcast_id: Uuid) -> Result<Vec<Uuid>, MenoError> {
+        Ok(self
+            .lock()
+            .participants
+            .iter()
+            .filter(|p| p.broadcast_id == broadcast_id && p.is_present())
+            .map(|p| p.participant_id)
+            .collect())
+    }
+
     async fn join(&self, request: JoinRequest) -> Result<JoinOutcome, MenoError> {
         let mut state = self.lock();
         let now = Self::now(&state);

@@ -1695,6 +1695,43 @@ async fn ending_announces_the_ending_and_the_home_change() {
 }
 
 #[tokio::test]
+async fn ending_reaches_a_participant_the_media_server_does_not_report() {
+    // The report behind this test: a broadcast ended and its participants' sockets saw
+    // `homeInvalidated` but never `endedBroadcast`. Recipients used to be the creator,
+    // the current cohosts and whoever LiveKit listed — so an account that joined over
+    // HTTP but whose media client was never in the room (a build without a room server,
+    // a media outage, a socket-only test client) was addressed by nothing.
+    let (svc, repo, media, events) = service_with_events();
+    seed(&repo);
+    let created = svc
+        .create(create_request(), user(1, "Ada Lovelace"))
+        .await
+        .expect("create");
+    svc.go_live(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("go live");
+    svc.join(created.id, &user(2, "Grace Hopper"))
+        .await
+        .expect("join");
+
+    // The media server reports an empty room: the exact case the old list missed.
+    media.set_room_participants(created.id, &[]);
+
+    svc.end(created.id, &user(1, "Ada Lovelace"))
+        .await
+        .expect("end");
+
+    let announced = events.ended_events();
+    assert_eq!(announced.len(), 1);
+    assert_eq!(announced[0].reason, EndReason::Normal);
+    assert_eq!(
+        announced[0].recipients,
+        [user(1, "Ada Lovelace").id, user(2, "Grace Hopper").id],
+        "the roster is the audience, whether or not the media server agrees"
+    );
+}
+
+#[tokio::test]
 async fn deleting_and_editing_a_broadcast_invalidate_the_home_screens() {
     let (svc, repo, _, events) = service_with_events();
     seed(&repo);
